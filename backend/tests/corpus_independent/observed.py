@@ -27,8 +27,8 @@ no knowledge of this repository, which is the whole point.
 THE ACCEPTANCE TEST FOR THIS FILE IS NOT WHAT THIS DOCSTRING USED TO SAY. It
 said "the verbatim-pattern rate is near ZERO", nothing ever computed it, and
 #530 computed it for the first time on 2026-08-26 and showed the criterion is
-the wrong one. These transcriptions match a strong engine pattern at 98.7%
-(confirmations), 82.7% (rejections), 82.0% (assessments) and 70.4% (pending).
+the wrong one. These transcriptions match a strong engine pattern at 93.3%
+(confirmations), 79.8% (rejections), 80.7% (assessments) and 68.3% (pending).
 Near-zero would not be a good result. It would mean these had drifted away from
 how ATS mail is actually written: real ATS mail says "thank you for applying",
 and the engine has that pattern BECAUSE real mail says it. **A verbatim match is
@@ -38,8 +38,11 @@ What actually bounds what this file can find is the DISCOVERY RATE — the share
 of its messages matching no strong pattern at all, which is the only place a
 corpus can find something the engine does not already know. Every invented
 family is 0.0% by construction. The four families here that carry an UPDATE run
-17.3-50.8%; the acknowledgements are 1.3%, which is not a counter-example — an
-acknowledgement is the shape the engine knows best. 1,600 of the corpus's
+19.3-52.5%; the acknowledgements are 6.7%, which is not a counter-example — an
+acknowledgement is the shape the engine knows best. (Both bands moved up with
+#451's demotion of the `applied` reference pattern out of `strong`; it was
+17.3-50.8% and 1.3%, and the four strong-match rates above were 98.7 · 82.7 ·
+82.0 · 70.4. Nothing here was edited — one rule changed tier.) 1,600 of the corpus's
 17,260 messages, and the whole of this product's non-circular evidence.
 ``tests/test_corpus_reach.py`` pins them with the direction that matters: the
 count of messages reaching nothing may not FALL.

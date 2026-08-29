@@ -71,17 +71,27 @@ the classifier does not already know, and every invented lifecycle family sits
 at **0.0%** by construction: they were written by the author of ``rules.py``, so
 their language is the language the engine was taught. All of the discovery power
 in 17,260 messages lives in the ``observed-*`` families — 1,600 messages from
-36 transcribed templates. The four that carry an UPDATE run 17.3–50.8%;
-``observed-confirmation`` is 1.3% because an acknowledgement is the shape the
+36 transcribed templates. The four that carry an UPDATE run 19.3–52.5%;
+``observed-confirmation`` is 6.7% because an acknowledgement is the shape the
 engine knows best, and ``observed-not-application`` is 100% because it is not
 job mail at all.
+
+ALL SIX ROSE WITH #451, which demoted the ``applied`` reference pattern
+``application.{0,20}(for|to).{0,40}(position|role|job)`` from ``strong`` to
+``weak``. ``no_strong`` counts messages reaching no STRONG pattern, so taking
+one out of the strong set can only raise it — the range was 17.3–50.8% and
+``observed-confirmation`` 1.3% before it. Attributed message by message rather
+than accepted: the messages whose ONLY strong match was that pattern number
+exactly 72·4·4·16·5·13 across ``hostile-zero-width`` and the five moved
+``observed-*`` families, and zero in the other 31, which is exactly the six
+deltas. ``test_corpus_reach.py`` carries the table and the arithmetic.
 
 SEED-STABILITY IS NOT THE SAME FOR ALL THREE. Metric 1 is seed-stable: the
 fired SET — not merely its size — is identical at seeds 20260822 (the default),
 12345 and 20260829. Metrics 2 and 3 are NOT. Which templates a family draws is a
 seeded choice, so at seeds 12345 and 20260829 ``observed-pending`` draws 24 of
-its 25 templates rather than all 25, and its ``no_strong`` reads 61 and 63
-against the 71 recorded at the default seed. Every per-family number pinned in
+its 25 templates rather than all 25, and its ``no_strong`` reads 65 and 69
+against the 76 recorded at the default seed. Every per-family number pinned in
 ``test_corpus_reach.py`` is therefore a number AT THE DEFAULT SEED, including the
 source-derived wording control, which fails at both of the other two. Re-seeding
 the corpus means re-recording that table; it does not mean the mask broke.

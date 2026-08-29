@@ -51,6 +51,7 @@ not need one, and a gate nobody can afford to run is a gate nobody runs.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 
 import pytest
@@ -106,7 +107,6 @@ POSITIVE_CATEGORIES = frozenset(
 #: 48 and the rule silently unexercised.
 RECORDED_FIRED: tuple[tuple[str, str, str], ...] = (
     # applied — 14 of 25
-    ('applied', 'strong', 'application.{0,20}(for|to).{0,40}(position|role|job)'),
     ('applied', 'strong', 'application.{0,20}received'),
     ('applied', 'strong', 'application.{0,30}has been (received|submitted)'),
     ('applied', 'strong', 'be in touch (soon|shortly|if)'),
@@ -115,6 +115,14 @@ RECORDED_FIRED: tuple[tuple[str, str, str], ...] = (
     ('applied', 'strong', 'thank(s| you) for applying'),
     ('applied', 'strong', "we (have |'ve )received your application"),
     ('applied', 'strong', 'we received your (job )?application'),
+    # DEMOTED, not lost. #451 moved this one from `applied`'s `strong` list to
+    # its `weak` list: it names WHICH application a message is about and says
+    # nothing about what happened to it, so at +3 it tied every offer and
+    # rejection that named its own thread and enum order broke the tie. Same
+    # regex, same category, same 17,260 messages firing it — only the tier
+    # moved, so the entry moves with it rather than leaving this ledger. The
+    # count is still 14 of 25 and `RECORDED_POSITIVE_PATTERNS` is still 159.
+    ('applied', 'weak', 'application.{0,20}(for|to).{0,40}(position|role|job)'),
     ('applied', 'weak', 'review your (application|resume|qualifications)'),
     ('applied', 'weak', 'thank you for your interest'),
     ('applied', 'weak', 'thank(s| you) for your application'),
@@ -199,13 +207,39 @@ RECORDED_NEVER_FIRED: dict[str, int] = {
 #:     that agree with the engine dilutes the rate without reading as
 #:     contamination. See ``_discovery_shortfalls``.
 #:
+#: SIX ``no_strong`` FIGURES ROSE WITH #451 and are re-recorded here rather than
+#: re-baselined. That PR demotes ``application.{0,20}(for|to).{0,40}(position|
+#: role|job)`` from ``applied``'s ``strong`` list to its ``weak`` list, and
+#: ``no_strong`` counts messages matching no STRONG pattern anywhere — so
+#: removing one from the strong set can only ever raise it. Up is the only
+#: direction the demotion can produce; that is a proof from the mechanism, not a
+#: direction check, so the moves are attributed message by message as well.
+#:
+#: Measured on the pre-#451 tree: the messages whose ONLY strong match was the
+#: demoted pattern number exactly 72 · 4 · 4 · 16 · 5 · 13 in
+#: ``hostile-zero-width``, ``observed-assessment``, ``observed-closure``,
+#: ``observed-confirmation``, ``observed-pending`` and ``observed-rejection``
+#: — and ZERO in every one of the other 31 families. Those six counts are
+#: exactly the six deltas below (28+72, 54+4, 122+4, 4+16, 71+5, 76+13), so
+#: every message that moved is accounted for and no family that did not move
+#: could have. Nothing else in this file changes: ``total_patterns`` is still
+#: 159, the fired set is still 48 (the entry moved tier, it did not leave),
+#: every ``never_fired`` count is unchanged, and no ``messages`` or ``wordings``
+#: figure moves at all.
+#:
+#: ``hostile-zero-width`` 28 -> 100 is the largest and reads as a finding rather
+#: than a loss: that family's mail is a zero-width-obfuscated acknowledgement,
+#: and the ONE strong pattern 72 of its 100 messages could reach was the
+#: demoted reference. It now reaches none, which is #451's argument — naming a
+#: thread is not reporting on it — applied to the most adversarial mail here.
+#:
 #: EVERY NUMBER IN THIS TABLE IS A NUMBER AT THE DEFAULT SEED (20260822), and
 #: unlike metric 1 these two do not survive a re-seed. Metric 1's fired SET is
 #: identical at seeds 20260822, 12345 and 20260829 — the same 48 patterns, not
 #: merely the same count. Metrics 2 and 3 are draws from a template pool, so
 #: they move: at seed 12345 ``observed-pending`` measures 24 wordings against
-#: the 25 recorded here and ``no_strong`` 61 against 71; at seed 20260829, 24
-#: and 63. Both would red the directions above, and the source-derived control
+#: the 25 recorded here and ``no_strong`` 65 against 76; at seed 20260829, 24
+#: and 69. Both would red the directions above, and the source-derived control
 #: below fails at both. That is a property of a seeded draw and not a broken
 #: mask — but it means the per-family half of this gate is pinned at ONE SEED
 #: rather than universally, and a re-seed is a re-recording of this table.
@@ -248,7 +282,7 @@ RECORDED_FAMILIES: dict[str, tuple[int, int, int]] = {
     # different kind — lifecycle patterns starting to match mail that must
     # never become an application.
     "ats-relay-noise": (400, 5, 400),
-    "hostile-zero-width": (100, 1, 28),
+    "hostile-zero-width": (100, 1, 100),  # 28 before #451 — see above
     "not-job-mail": (700, 6, 700),
     "rejection-past-the-snippet": (700, 3, 350),
     # ── TRANSCRIBED. All of the corpus's discovery power, in 1,600 of 17,260
@@ -256,17 +290,19 @@ RECORDED_FAMILIES: dict[str, tuple[int, int, int]] = {
     # with no knowledge of this repository, so a message here matching no strong
     # pattern is real ATS mail the engine has never been shown.
     #
-    # THE FOUR THAT CARRY AN UPDATE run 17.3-50.8%, which is the range #530
-    # quotes. The other two are not counter-examples and are not averaged in:
-    # observed-confirmation is 1.3% because an acknowledgement is the shape the
-    # engine knows best, and observed-not-application is 100% because it is not
-    # job mail at all and no lifecycle pattern should touch it.
-    "observed-assessment": (300, 26, 54),
-    "observed-closure": (240, 24, 122),
-    "observed-confirmation": (300, 23, 4),
+    # THE FOUR THAT CARRY AN UPDATE run 19.3-52.5%, which is the range #530
+    # quotes -- 17.3-50.8% before #451 raised all four, and rejection rather
+    # than assessment used to be the floor. The other two are not
+    # counter-examples and are not averaged in: observed-confirmation is 6.7%
+    # (1.3% before #451) because an acknowledgement is the shape the engine
+    # knows best, and observed-not-application is 100% because it is not job
+    # mail at all and no lifecycle pattern should touch it.
+    "observed-assessment": (300, 26, 58),  # 54 before #451
+    "observed-closure": (240, 24, 126),  # 122 before #451
+    "observed-confirmation": (300, 23, 20),  # 4 before #451
     "observed-not-application": (80, 1, 80),
-    "observed-pending": (240, 25, 71),
-    "observed-rejection": (440, 29, 76),
+    "observed-pending": (240, 25, 76),  # 71 before #451
+    "observed-rejection": (440, 29, 89),  # 76 before #451
 }
 
 #: Which of ``observed.py``'s template tuples each transcribed family draws
@@ -307,6 +343,44 @@ def measured(cases):
 # ── the record's own arithmetic ──────────────────────────────────────────────
 
 
+def _engine_shortfall(measured) -> str | None:
+    """The complaint for a ``rules.py`` holding FEWER positive patterns than recorded.
+
+    A FUNCTION and not an inline assert, for the same reason
+    ``_discovery_shortfalls`` is one: this is the only line in the file that
+    reads the engine rather than comparing two of this file's own constants, so
+    it is the only one whose ability to fail has to be demonstrated rather than
+    assumed. ``test_the_pattern_floor_reads_the_engine_and_not_the_ledger``
+    below is that demonstration.
+    """
+
+    if measured.total_patterns >= RECORDED_POSITIVE_PATTERNS:
+        return None
+    return (
+        f"`rules.py` holds {measured.total_patterns} positive patterns and "
+        f"{RECORDED_POSITIVE_PATTERNS} were recorded, so a rule was deleted or "
+        f"moved under EmailCategory.OTHER. Nothing else in this file notices: a "
+        f"never-fired pattern is absent from RECORDED_FIRED, and removing it "
+        f"LOWERS never_fired for its category, which is the passing direction. "
+        f"If the removal is deliberate, re-record — and say which rule went and "
+        f"why the mail it was there for no longer needs it."
+    )
+
+
+def _every_pattern_in(table) -> int:
+    """Every regex in ``PATTERNS``, positive and negative alike.
+
+    The NAIVE counter — the same int, one attribute wider — and it exists here
+    only so the swap below can show it standing still while the real one moves.
+    """
+
+    return sum(
+        len(getattr(entry, tier))
+        for entry in table.values()
+        for tier in ("strong", "weak", "negative", "veto")
+    )
+
+
 def test_the_record_is_arithmetically_whole(measured) -> None:
     """48 fired plus 111 never fired is 159, AND the engine still holds 159.
 
@@ -335,20 +409,101 @@ def test_the_record_is_arithmetically_whole(measured) -> None:
         f"{len(RECORDED_FIRED)} fired + {sum(RECORDED_NEVER_FIRED.values())} never "
         f"fired != {RECORDED_POSITIVE_PATTERNS} positive patterns"
     )
-    assert measured.total_patterns >= RECORDED_POSITIVE_PATTERNS, (
-        f"`rules.py` holds {measured.total_patterns} positive patterns and "
-        f"{RECORDED_POSITIVE_PATTERNS} were recorded, so a rule was deleted or "
-        f"moved under EmailCategory.OTHER. Nothing else in this file notices: a "
-        f"never-fired pattern is absent from RECORDED_FIRED, and removing it "
-        f"LOWERS never_fired for its category, which is the passing direction. "
-        f"If the removal is deliberate, re-record — and say which rule went and "
-        f"why the mail it was there for no longer needs it."
-    )
+    shortfall = _engine_shortfall(measured)
+    assert shortfall is None, shortfall
     assert len(RECORDED_FIRED) / RECORDED_POSITIVE_PATTERNS == pytest.approx(
         0.302, abs=0.0005
     ), (
         "the 30.2% this gate's docstring publishes. Two constants divided: this "
         "catches a mistyped ledger, never a moved engine."
+    )
+
+
+def test_the_pattern_floor_reads_the_engine_and_not_the_ledger(
+    monkeypatch: pytest.MonkeyPatch, measured
+) -> None:
+    """THE CONTROL ON THE ONE LINE HERE THAT TOUCHES ``rules.py``.
+
+    The floor's failure message claims to catch a rule "deleted or moved under
+    EmailCategory.OTHER". A deletion was proved by hand — 159 to 158 left all 17
+    tests green before the floor existed — and that proof lived in a commit
+    message. It runs here now, and it is only half of what is owed: DELETION
+    PROVES AN ASSERTION IS PRESENT, A SAME-TYPED OPERAND SWAP PROVES IT READS
+    THE RIGHT VALUE.
+
+    The swap is the MOVE, and it is a swap in the precise sense: one pattern
+    taken out of ``applied``'s ``strong`` list and put into
+    ``EmailCategory.OTHER``'s. ``rules.py`` still holds exactly as many regexes
+    as before — same type, same total, one dict key different — so a floor that
+    counted the whole of ``PATTERNS`` reads 220 both times and stays silent. Only
+    a floor reading ``positive_patterns()``, which skips ``OTHER`` because its
+    entries are vetoes rather than evidence, sees 158. Deleting a rule moves BOTH
+    counters and therefore cannot tell them apart; this is the mutation that can.
+
+    ``positive_patterns()`` resolves ``PATTERNS`` at call time, so the move is
+    made on the module attribute and undone by ``monkeypatch``. No corpus is
+    scanned: ``measure_texts(())`` reports ``total_patterns`` off an empty
+    stream, which is the only field under test.
+
+    THE COMPOSITION AND ITS EDGE. The two halves say "the floor reds one below
+    the record" and "the move takes the engine one below where it is". Today the
+    engine sits exactly on the record, so together they say the move reds. If a
+    rule is legitimately ADDED tomorrow the engine sits at 160, the move leaves
+    159, and that is NOT a red — correctly, because the floor is a ``>=`` and
+    the "a delete and an add in one commit" hole is already named on
+    ``RECORDED_POSITIVE_PATTERNS``. The control degrades to a weaker true claim
+    rather than to a false one; it is not written as an ``if``, which would make
+    it a check that stops evaluating.
+    """
+
+    def _with_total(total: int):
+        return reach.Reach(measured.fired, total, measured.families)
+
+    # ── half one: the deletion, in CI rather than quoted from a session ──
+    assert _engine_shortfall(measured) is None, "the tree is clean"
+    assert _engine_shortfall(_with_total(RECORDED_POSITIVE_PATTERNS - 1)), (
+        "one rule fewer than the record and the floor said nothing"
+    )
+    assert _engine_shortfall(_with_total(RECORDED_POSITIVE_PATTERNS + 1)) is None, (
+        "a rule ADDED and exercised is a good change; the floor must not red on it"
+    )
+
+    # ── half two: the operand swap — a MOVE, which keeps the file's size ──
+    live = reach.PATTERNS
+    before_total = reach.measure_texts(()).total_patterns
+    assert before_total == measured.total_patterns, "the same engine, unscanned"
+
+    donor = reach.EmailCategory.APPLIED
+    other = reach.EmailCategory.OTHER
+    moved = live[donor].strong[0]
+
+    swapped = dict(live)
+    swapped[donor] = dataclasses.replace(
+        live[donor], strong=[p for p in live[donor].strong if p != moved]
+    )
+    # ``EmailCategory.OTHER`` HAS NO ENTRY IN ``PATTERNS`` TODAY — the skip in
+    # ``positive_patterns()`` is defensive rather than load-bearing, which is
+    # itself worth knowing, because it means "moved under OTHER" is an ADDED key
+    # and not an edited one. The naive count is still unchanged: one regex left
+    # ``applied`` and one arrived under ``other``.
+    existing_other = live.get(other)
+    swapped[other] = (
+        dataclasses.replace(existing_other, strong=[*existing_other.strong, moved])
+        if existing_other is not None
+        else type(live[donor])(strong=[moved])
+    )
+
+    assert _every_pattern_in(swapped) == _every_pattern_in(live), (
+        "the swap has to leave the file the same size, or it is a deletion "
+        "wearing a different hat and proves nothing a deletion did not"
+    )
+
+    monkeypatch.setattr(reach, "PATTERNS", swapped)
+    after_total = reach.measure_texts(()).total_patterns
+    assert after_total == before_total - 1, (
+        f"a rule moved under EmailCategory.OTHER and the positive count read "
+        f"{after_total} against {before_total}; the floor is counting the whole "
+        f"of PATTERNS and cannot see a move at all"
     )
 
 
@@ -555,8 +710,8 @@ def _discovery_shortfalls(measured) -> list[str]:
     cases below: transcribe more wordings that AGREE with the engine and the
     denominator grows while the numerator does not, so the rate falls. That is
     not contamination — a randomly chosen real ATS wording matches a strong
-    pattern about 83% of the time in this very corpus (``observed-rejection``,
-    364 of 440), so ordinary honest growth lands there more often than not, and
+    pattern about 80% of the time in this very corpus (``observed-rejection``,
+    351 of 440), so ordinary honest growth lands there more often than not, and
     a rate floor would meet it with an accusation the ``observed.py`` docstring
     says is wrong. The COUNT only falls when a message that used to reach
     nothing now reaches something, which is the two cases the failure names.
@@ -723,7 +878,7 @@ def test_copying_an_engine_pattern_into_an_observed_wording_reds_this_gate(
     The mutation is the one the issue names — one engine pattern copied verbatim
     into one ``observed.py`` template — applied to the wording behind
     ``observed-closure``, the family with the most discovery power per message
-    (50.8%). It is applied to the TEXT rather than to the file so the proof is
+    (52.5%). It is applied to the TEXT rather than to the file so the proof is
     permanent and runs in CI; the same edit made to ``observed.py`` on disk
     produces the same numbers and is quoted in the PR.
 
@@ -733,12 +888,12 @@ def test_copying_an_engine_pattern_into_an_observed_wording_reds_this_gate(
     * pattern coverage RISES, 48 -> 49, and ``interview``'s ledger of
       unexercised rules falls 26 -> 25. Coverage alone would call that an
       improvement, which is exactly why coverage alone is not the gate.
-    * ``observed-closure``'s discovery rate COLLAPSES, 50.8% -> 0.8%, and
+    * ``observed-closure``'s discovery rate COLLAPSES, 52.5% -> 2.5%, and
       ``_discovery_shortfalls`` names it. Real evidence was replaced by an echo
       of the rule list, and the number that says so is the discovery rate.
 
     WHAT THE 120 DOES AND DOES NOT PROVE. ``observed-closure`` is named above as
-    the family with the most discovery power per message, and 50.8% is the
+    the family with the most discovery power per message, and 52.5% is the
     highest of the four that carry an update — but ``OBSERVED_CLOSURES`` holds
     exactly ONE template. The family's 24 wordings are that one closure plus the
     23 acknowledgements every observed family opens with. So ``touched == 120``
@@ -747,7 +902,7 @@ def test_copying_an_engine_pattern_into_an_observed_wording_reds_this_gate(
     That proves the gate can fail, which is the obligation. It does NOT show the
     gate catching PARTIAL drift across a multi-wording family: one of
     ``observed-rejection``'s six closures edited would move ``no_strong`` by a
-    fraction of 76, and the floor might well still hold. The smallest edit this
+    fraction of 89, and the floor might well still hold. The smallest edit this
     gate can notice is not measured anywhere, and #531 — which adds wordings to
     exactly these families — is when that starts to matter.
     """
@@ -779,8 +934,24 @@ def test_copying_an_engine_pattern_into_an_observed_wording_reds_this_gate(
 
     closure = mutated.families["observed-closure"]
     assert closure.messages == 240, "the denominator is untouched"
-    assert closure.no_strong == 2, f"122 -> {closure.no_strong}"
-    assert closure.discovery_rate < 0.01
+    # SIX, NOT TWO. 126 of these 240 messages reach no strong pattern; the
+    # mutation gives 120 of them one, and the 6 left over are the messages the
+    # #451 demotion freed -- four of the family's own, plus the two that always
+    # sat outside the 120 the marker reaches. Re-recorded with the row above
+    # rather than widened: the equality is the point.
+    assert closure.no_strong == 6, (
+        f"{RECORDED_FAMILIES['observed-closure'][2]} -> {closure.no_strong}"
+    )
+    # THE CLAIM IS A COLLAPSE, and it is stated as one instead of as a literal
+    # threshold. `< 0.01` was true at 0.8% and false at 2.5%, and the repair
+    # that widens a constant until the number fits is the re-baseline this file
+    # exists to refuse. An order of magnitude off the RECORDED rate says the
+    # same thing and cannot be met by nudging a digit.
+    recorded_rate = RECORDED_FAMILIES["observed-closure"][2] / closure.messages
+    assert closure.discovery_rate < recorded_rate / 10, (
+        f"{recorded_rate:.1%} -> {closure.discovery_rate:.1%} is a fall, and "
+        f"what this asserts is a collapse"
+    )
 
     shortfalls = _discovery_shortfalls(mutated)
     assert any(s.startswith("observed-closure:") for s in shortfalls), (
