@@ -5,6 +5,7 @@ import { MailSnippet, OpenInGmail } from "@/components/mail/MailPreview";
 import { ReclassifyControl } from "@/components/mail/ReclassifyControl";
 import { GateMeter } from "@/components/viz/GateMeter";
 import { shortDate } from "@/lib/dashboard/dates";
+import { REVIEW_QUEUE_LABEL } from "@/lib/dashboard/review";
 import { categoryChips, CATEGORY_META, chipTotal } from "@/lib/gmail/types";
 import { filedMailHref, filedPageCount, type FiledMailPage } from "@/lib/mail/filed";
 import { cn } from "@/lib/utils";
@@ -119,6 +120,23 @@ function CategoryChips({
           </Link>
         );
       })}
+      {/* WHAT THESE NUMBERS ARE, said on the screen rather than in a tooltip
+          (#445). The dashboard's "N to review" is a work queue — it drops a
+          message the moment you decide it or it gets linked to a row. These
+          count every message stored under the verdict, so "held for review"
+          here is always the larger number, and the reader who saw 8 on one
+          page and 9 on this one gets to learn why without asking. Full width
+          under the chips so it reads as a note about all of them. */}
+      <p className="basis-full text-xs text-dim">
+        counts every stored message, reviewed or not — the dashboard&apos;s{" "}
+        <Link
+          href="/dashboard#needs-classification"
+          className="underline-offset-4 transition-colors hover:text-strong hover:underline"
+        >
+          &ldquo;{REVIEW_QUEUE_LABEL}&rdquo;
+        </Link>{" "}
+        counts only what still needs you
+      </p>
     </div>
   );
 }
