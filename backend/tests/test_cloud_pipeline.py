@@ -352,9 +352,15 @@ def test_the_two_cases_this_rule_still_gets_wrong() -> None:
     """
     # 1. No at-sign, so nothing separates the role from a company: the
     #    preposition's object wins and it is a job title.
+    #
+    #    The SPELLING of that wrong answer changed with #532 and the answer did
+    #    not. It read "Research Engineer" while `_clean_company_display` ran an
+    #    unanchored `_CORP_TAIL`, which deleted the leading "Systems" — so the
+    #    rule was wrong AND was hiding a word. It is still a job title, which is
+    #    the thing this line pins; nothing here has gone green.
     assert (
         p._employer_from_subject("Your application to Systems Research Engineer", ats_relay=True)
-        == "Research Engineer"
+        == "Systems Research Engineer"
     )
     # 2. The at-sign path does not ask whether it just named the COURIER.
     assert (
