@@ -223,13 +223,22 @@ export interface paths {
          *
          *     - ``GROUP BY status`` → per-status counts (≤7 rows regardless of how many
          *       applications the user has). ``total`` is their sum.
-         *     - a windowed ``COUNT(*)`` for applications the user APPLIED to since this
+         *     - a windowed ``COUNT(*)`` for applications the user APPLIED to since a
          *       calendar week's Monday (see :func:`_week_start`). Not "created", which is
          *       when our sync inserted the row, and not a trailing seven days.
          *
          *     Both are O(1) in transfer and index-assisted in the DB, so this endpoint
          *     stays flat as an account scales from 10 to 10,000 applications — the whole
          *     reason it exists instead of counting client-side over the full list.
+         *
+         *     WHOSE MONDAY (#518). Counts alone cannot carry a zone, so this used to be
+         *     the UTC Monday and nothing else, while the momentum caption on the same
+         *     screen counted the READER's — and for a reader west of UTC there was a
+         *     window each week, the size of their offset, in which the header had rolled
+         *     over and the caption had not. The reader's Monday is now an optional
+         *     parameter, validated by :func:`_reader_week_start`, and the Monday actually
+         *     counted comes back in the response so the client can tell whether it needs
+         *     to ask again. Absent the parameter the behaviour is exactly what it was.
          */
         get: operations["application_summary_cloud_applications_summary_get"];
         put?: never;
@@ -993,6 +1002,11 @@ export interface components {
             total: number;
             /** This Week */
             this_week: number;
+            /**
+             * Week Start
+             * Format: date
+             */
+            week_start: string;
             /** Status Counts */
             status_counts: {
                 [key: string]: number;
@@ -2053,7 +2067,10 @@ export interface operations {
     };
     application_summary_cloud_applications_summary_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The READER's own week-start Monday, `YYYY-MM-DD`. Optional, and omitted on every server render — the server does not know the caller's zone at first paint, so the count is measured from its own UTC Monday and `week_start` in the response says so. The browser sends its Monday once it has hydrated. Must be a Monday within seven days of the server's; anything else is 422 rather than snapped (#518). */
+                week_start?: string | null;
+            };
             header?: {
                 authorization?: string | null;
             };
