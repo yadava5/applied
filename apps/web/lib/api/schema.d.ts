@@ -252,8 +252,10 @@ export interface paths {
          * @description The needs-classification queue: uncertain verdicts awaiting a decision.
          *
          *     These are the metadata-only Email rows the sync flagged ``needs_review``
-         *     (unlinked, un-reviewed) — the real target of the dashboard's "N need
-         *     classification" number, which is otherwise a dead count. Newest-first.
+         *     that no card the user can see already answers for
+         *     (:func:`_not_filed_on_a_live_application`) and that the user has not already
+         *     reviewed — the real target of the dashboard's "N need classification"
+         *     number, which is otherwise a dead count. Newest-first.
          *
          *     ONE ENTRY PER GMAIL THREAD. A conversation is one application, so being
          *     asked about it twice is being asked to do the same work twice: the owner's
@@ -361,17 +363,18 @@ export interface paths {
          *     WHY THIS EXISTS
          *     ---------------
          *     ``/review`` is the only other listing of classified mail, and it filters to
-         *     ``needs_review AND unlinked AND not-yet-reviewed``. That is the right set
-         *     for a work queue and the wrong set for a correction surface, because those
-         *     three predicates make a verdict unreachable the moment it is touched:
+         *     ``needs_review AND not-filed-on-a-live-card AND not-yet-reviewed``. That is
+         *     the right set for a work queue and the wrong set for a correction surface,
+         *     because those three predicates make a verdict unreachable the moment it is
+         *     touched:
          *
          *     * a message already reviewed once drops out for good — emails 58 and 59 of
          *       the owner's account sit at ``needs_review`` with ``is_reviewed = true``
          *       and no endpoint in the product could name them, so no screen could
          *       change them;
-         *     * a message linked to an application drops out too, so a ``rejection``
-         *       filed as ``applied`` is a wrong stored verdict a user can see on the
-         *       board and never correct at its source;
+         *     * a message filed on an application the user can see drops out too, so a
+         *       ``rejection`` filed as ``applied`` is a wrong stored verdict a user can
+         *       see on the board and never correct at its source;
          *     * and for an account whose mail all classified confidently, ``/review``
          *       returns zero rows and the review UI never renders at all.
          *
