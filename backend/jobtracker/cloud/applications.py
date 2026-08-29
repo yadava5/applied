@@ -34,7 +34,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import status as http_status
 from pydantic import BaseModel, Field, StrictBool
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import func, or_
+from sqlalchemy import exists, func, or_
 from sqlalchemy import update as sa_update
 from sqlmodel import select
 
@@ -3784,12 +3784,34 @@ async def _settle_thread_siblings(
     of the user. Emails 58 and 73 on the owner's account are one thread asked
     about twice.
 
-    Narrow on purpose: only siblings that are still unlinked AND un-reviewed are
-    touched, so a message already filed elsewhere or already decided is left
-    alone. They are marked reviewed, given the chosen category and linked to the
-    same application — but NOT flagged ``user_corrected``, and no training
-    example is written for them: the human read one message, and only that one
-    is honest evidence of what they were labelling.
+    Narrow on purpose: only siblings that NO LIVE CARD ANSWERS FOR and that are
+    un-reviewed are touched, so a message already filed on a card the user can
+    see, or already decided, is left alone. They are marked reviewed, given the
+    chosen category and linked to the same application — but NOT flagged
+    ``user_corrected``, and no training example is written for them: the human
+    read one message, and only that one is honest evidence of what they were
+    labelling.
+
+    THE SETTLED-TEST IS :func:`_not_filed_on_a_live_application`, THE SAME ONE
+    THE QUEUE READS. It used to be ``application_id IS NULL`` spelled out here,
+    which is the predicate the queue replaced — and the two disagreeing is worse
+    than either being wrong alone. A thread whose messages all link to one
+    dismissed card surfaces as ONE queue entry; the user answers it; under the
+    old clause every sibling was read as "already filed elsewhere" and left
+    un-reviewed, so it stayed in the queue and the ``needs_review`` tile did not
+    move. A count that does not change when you answer it is #445/#576's defect
+    arriving for exactly the rows the queue was just taught to show.
+
+    NOT A RELINK DECISION, which is what #591 assumed. ``application_id`` here
+    is the answer's own landing, and for this shape it is the dismissed row the
+    sibling already pointed at: :func:`_resolve_application_for_email` consults
+    the message's OWN link first and returns it as ``LANDED_LINKED``. So the
+    assignment below is a write of the id the sibling already held, and
+    ``is_reviewed`` is the flag that actually settles it. Where the user's
+    answer DOES land somewhere else, the sibling belongs there by construction —
+    it is only in this list because it shares the answered message's
+    :func:`pipeline.review_dedup_key`, which is to say it is about the same
+    application.
     """
 
     if not email.thread_id:
@@ -3801,7 +3823,7 @@ async def _settle_thread_siblings(
                 Email.user_id == user_id,
                 Email.thread_id == email.thread_id,
                 Email.message_id != email.message_id,
-                Email.application_id.is_(None),
+                _not_filed_on_a_live_application(user_id),
                 Email.is_reviewed == False,  # noqa: E712 — SQL boolean
             )
         )
@@ -4151,6 +4173,81 @@ async def list_applications_cloud(
     )
 
 
+def _not_filed_on_a_live_application(user_id: uuid.UUID):
+    """The review queue's settled-test: "no card the user can SEE answers this".
+
+    ONE predicate, read by ``GET /applications/review`` and by the
+    ``needs_review`` tile on ``GET /applications/summary``, because the tile is
+    a link to the queue and a tile counting a different set sends the user to a
+    screen that disagrees with the number they clicked. This repo has the scar
+    twice over — the header said "+50 this wk" beside a momentum panel reading
+    7 — so the two share the accessor rather than each spelling it out.
+
+    This used to be ``Email.application_id IS NULL``, which encodes "a linked
+    message is already filed, so there is nothing to ask". True of a message
+    linked to a card on the board, FALSE of one linked to a card that was
+    dismissed: dismissal takes the row off the board, out of the funnel and out
+    of every tile, so nothing about its mail is settled from the user's side.
+
+    Issue #481 found the state on the owner's account. The 2026-08-22 05:02Z
+    re-sync dismissed application 115 (``dismissed_reason = 'resync'``) and, in
+    the same pass, re-classified email 108 below the auto-file gate to
+    ``NEEDS_REVIEW``. The additive persist rewrites ``classified_as`` and never
+    clears ``application_id``, so the link outlived the verdict that justified
+    it. Two independently reasonable behaviours; the combination was a real
+    Microsoft message on no board, in no queue, actionable from no screen.
+
+    WHY ``NOT EXISTS`` AND NOT ``IS NULL OR application_id IN (dismissed)``.
+    The positive form has to enumerate the ways a link can fail to name a
+    visible card, and it misses one: a link pointing at a row that no longer
+    exists, or (a stale link) at another user's. Asked the other way round —
+    "is there a LIVE application of MINE behind this link?" — all three answer
+    the same way, and the answer for a link we cannot resolve is "no", which
+    surfaces the message rather than stranding it. That is the safe direction:
+    a surfaced message costs one question, a stranded one is unreachable
+    forever. The subquery is scoped to ``user_id`` for the same reason the mail
+    listing scopes its employer lookup (#489) — a stale link must not read
+    across users.
+
+    NOT a widening of ``is_reviewed``. A message the user already answered
+    stays out even when its card is later dismissed: ``is_reviewed`` records
+    that the question was asked and answered, and removing the row does not
+    un-answer it. Callers keep that clause alongside this one.
+
+    THE INDEX COST, MEASURED. ``ix_emails_review_queue`` (revision
+    ``c8f3a1d64b27``) is PARTIAL on ``classified_as = 'NEEDS_REVIEW' AND
+    application_id IS NULL AND is_reviewed = false``, and a partial index is
+    usable only while its predicate is implied by the query's. This one no
+    longer implies ``application_id IS NULL``, so the queue stops using it.
+    EXPLAIN (ANALYZE, BUFFERS) against that module's 20,000-row seeded corpus,
+    both statements compiled from the ORM:
+
+        before — Index Scan using ix_emails_review_queue …… 37 buffers, 0.04 ms
+        after  — Nested Loop Anti Join over
+                 ix_emails_user_id_classified_as_received_at
+                 + applications_pkey ………………………………………………… 42 buffers, 0.31 ms
+
+    Not a fallback to a sequential scan: the same migration's mail index carries
+    ``(user_id, classified_as, received_at DESC)``, which is the whole outer
+    side, and the anti-join probes the applications PRIMARY KEY once per row it
+    keeps. Five buffers, on tables holding 52 and 65 rows in production. Left
+    as it is rather than re-cut, and recorded here because
+    ``tests/test_read_path_indexes_postgres.py`` will NOT tell the next reader:
+    it retypes the handlers' predicates as literals instead of importing them,
+    so it still measures the old query and stays green. (It has drifted once
+    already — its ``SUMMARY_TILE`` literal is a ``count(DISTINCT coalesce(…))``
+    the tile stopped issuing in #454.)
+    """
+
+    return ~exists(
+        select(Application.id).where(
+            Application.id == Email.application_id,
+            Application.user_id == user_id,
+            Application.dismissed_at.is_(None),
+        )
+    )
+
+
 @router.get("/summary", response_model=ApplicationSummaryResponse)
 async def application_summary_cloud(
     user_id: uuid.UUID = Depends(current_user),
@@ -4242,8 +4339,11 @@ async def application_summary_cloud(
         # rows come back and :func:`pipeline.review_dedup_key` counts them —
         # the same function the endpoint uses, so the two cannot drift.
         #
-        # Bounded by the queue itself: unlinked, un-reviewed ``needs_review``
-        # rows only, and four columns of each.
+        # Bounded by the queue itself: un-reviewed ``needs_review`` rows that no
+        # LIVE card answers for — see
+        # :func:`_not_filed_on_a_live_application`, which ``GET
+        # /applications/review`` reads too so the tile and the queue it links to
+        # cannot count different sets. Four columns of each.
         pending = (
             await session.exec(
                 select(
@@ -4261,7 +4361,7 @@ async def application_summary_cloud(
                 ).where(
                     Email.user_id == user_id,
                     Email.classified_as == EmailCategory.NEEDS_REVIEW,
-                    Email.application_id.is_(None),
+                    _not_filed_on_a_live_application(user_id),
                     Email.is_reviewed == False,  # noqa: E712
                 )
             )
@@ -4500,8 +4600,10 @@ async def review_queue_cloud(
     """The needs-classification queue: uncertain verdicts awaiting a decision.
 
     These are the metadata-only Email rows the sync flagged ``needs_review``
-    (unlinked, un-reviewed) — the real target of the dashboard's "N need
-    classification" number, which is otherwise a dead count. Newest-first.
+    that no card the user can see already answers for
+    (:func:`_not_filed_on_a_live_application`) and that the user has not already
+    reviewed — the real target of the dashboard's "N need classification"
+    number, which is otherwise a dead count. Newest-first.
 
     ONE ENTRY PER GMAIL THREAD. A conversation is one application, so being
     asked about it twice is being asked to do the same work twice: the owner's
@@ -4520,7 +4622,7 @@ async def review_queue_cloud(
                 .where(
                     Email.user_id == user_id,
                     Email.classified_as == EmailCategory.NEEDS_REVIEW,
-                    Email.application_id.is_(None),
+                    _not_filed_on_a_live_application(user_id),
                     Email.is_reviewed == False,  # noqa: E712
                 )
                 .order_by(Email.received_at.desc())
@@ -4715,17 +4817,18 @@ async def mail_listing_cloud(
     WHY THIS EXISTS
     ---------------
     ``/review`` is the only other listing of classified mail, and it filters to
-    ``needs_review AND unlinked AND not-yet-reviewed``. That is the right set
-    for a work queue and the wrong set for a correction surface, because those
-    three predicates make a verdict unreachable the moment it is touched:
+    ``needs_review AND not-filed-on-a-live-card AND not-yet-reviewed``. That is
+    the right set for a work queue and the wrong set for a correction surface,
+    because those three predicates make a verdict unreachable the moment it is
+    touched:
 
     * a message already reviewed once drops out for good — emails 58 and 59 of
       the owner's account sit at ``needs_review`` with ``is_reviewed = true``
       and no endpoint in the product could name them, so no screen could
       change them;
-    * a message linked to an application drops out too, so a ``rejection``
-      filed as ``applied`` is a wrong stored verdict a user can see on the
-      board and never correct at its source;
+    * a message filed on an application the user can see drops out too, so a
+      ``rejection`` filed as ``applied`` is a wrong stored verdict a user can
+      see on the board and never correct at its source;
     * and for an account whose mail all classified confidently, ``/review``
       returns zero rows and the review UI never renders at all.
 
