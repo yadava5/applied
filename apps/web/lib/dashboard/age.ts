@@ -191,29 +191,31 @@ export interface WeekOverWeek {
  * `date.weekday()` uses the same convention, so the backend agrees by
  * construction rather than by coincidence.
  *
- * WHOSE MONDAY, stated because the two surfaces do NOT share one and it would
- * be easy to claim they do. This function is given whatever day its caller
- * holds, and the callers differ on purpose:
+ * WHOSE MONDAY, stated because this function is given whatever day its caller
+ * holds and the callers do not all hold the same one:
  *
  *  - `PipelinePulse` passes `useLocalToday()` — the READER's day. "How many
  *    have I filed this week" is a question about the week the reader is
  *    living in, and the bars beside the caption are bucketed on that same day,
  *    so the panel is internally consistent.
- *  - `summarize()` (the demo twin) passes `todayISO` — the UTC day — because
- *    it renders on the server and must hydrate without a text mismatch.
- *  - the signed-in HEADER does not come through here at all. It is
- *    `GET /applications/summary`, counted server-side from `_week_start`
- *    against `datetime.utcnow()`, and a counts-only endpoint cannot know the
- *    reader's zone.
+ *  - the signed-in HEADER does not come through here at all: it is
+ *    `GET /applications/summary`, counted in the database. It used to be the
+ *    UTC week and nothing else, so for a reader west of UTC there was a window
+ *    each week — Sunday 20:00 to midnight in Eastern, the size of their offset
+ *    — where the header had rolled over and this caption had not. Since #518
+ *    the endpoint takes the reader's Monday as `?week_start=` and says which
+ *    Monday it counted; `lib/dashboard/readerWeek.ts` decides when to ask and
+ *    `BoardSubtitle` does the asking, after hydration, on the same
+ *    server-value-then-client-value pattern `useLocalToday` is built on.
+ *  - `summarize()` (the demo twin) still passes `todayISO` — the UTC day — so
+ *    on /demo the split described above is still there. It is a fixture
+ *    surface, and the fix is one line (pass the `useLocalToday()` value the
+ *    twin already holds), but it moves numbers the demo Playwright projects
+ *    measure in two non-UTC zones, so it is not smuggled in here.
  *
- * So for a reader west of UTC there is a window each week — Sunday 20:00 to
- * midnight in Eastern, the size of their offset — where the header has rolled
- * into the new week and this caption has not. That split is not new; under a
- * trailing window it moved a single day's filings and nobody could see it.
- * A calendar boundary makes it the whole week's worth, which is why it is
- * written down here and filed as #518 rather than left to be rediscovered.
- * Closing it needs the reader's day on the wire, which is a change to the
- * endpoint, not to this function.
+ * The split was never new. Under a trailing window it moved a single day's
+ * filings and nobody could see it; a calendar boundary made it a whole week's
+ * worth, which is what got it filed rather than rediscovered.
  *
  * TWO BASELINES, because a partial week cannot honestly be compared with a
  * whole one. On a Monday `thisWeek` covers one day and `lastWeek` covers

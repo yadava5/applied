@@ -358,22 +358,117 @@ def _week_start(today: date) -> date:
     together, which is the next best thing and is what this repo's scar from
     two independent derivations of one number asks for.
 
-    UTC, and that is NOT the same clock the momentum caption on the same
-    screen uses. ``PipelinePulse`` reads ``useLocalToday()`` — the reader's own
-    day — because "what have I filed this week" is a question about the week
-    they are living in. A counts-only endpoint cannot know that zone, so for a
-    reader west of UTC there is a window each week (Sunday 20:00 to midnight in
-    Eastern, the size of their offset) where this tile has rolled into the new
-    week and the caption below it has not.
+    UTC, AND SINCE #518 THAT IS THE DEFAULT RATHER THAN THE ANSWER. The momentum
+    caption on the same screen reads ``useLocalToday()`` — the reader's own day
+    — because "what have I filed this week" is a question about the week they
+    are living in, and the bars beside the caption bucket on that same day.
+    This function is handed ``datetime.utcnow().date()`` on any request that
+    says nothing about the reader, which is every server render: at first paint
+    the server does not know the zone, so UTC is the only day it can name
+    without inventing one.
 
-    The split is not new: under the trailing window it moved a single day's
-    filings and was invisible. A calendar boundary makes it a whole week's
-    worth, so it is written down here instead of being rediscovered as a bug.
-    Closing it means putting the reader's day on the wire — a change to this
-    endpoint's contract — and is filed as #518.
+    For a reader west of UTC that used to be the whole story, and it was wrong
+    for the width of their offset every week — Sunday 20:00 to midnight in
+    Eastern, where this tile had rolled into the new week and the caption below
+    it had not. Under the trailing window the same split moved a single day's
+    filings and was invisible; a calendar boundary made it a whole week's worth.
+
+    The reader's Monday travels on the wire now. ``GET /applications/summary``
+    takes an optional ``week_start`` (:func:`_reader_week_start` states what it
+    will accept), the client sends it once it has hydrated and knows the zone,
+    and the response reports which Monday it counted. This function is still
+    the only definition of where a week begins: it computes the SSR answer AND
+    it is what a supplied Monday is validated against.
     """
 
     return today - timedelta(days=today.weekday())
+
+
+#: How far a client-supplied ``week_start`` may sit from the server's own, in
+#: days. DERIVED rather than picked: UTC offsets run from -12 to +14, so a
+#: browser's local calendar day is at most one day either side of the UTC day,
+#: and therefore the reader's Monday is the server's Monday, the one before it
+#: or the one after it — never further. It also absorbs a request that crosses
+#: midnight in flight, which moves the server's Monday by exactly seven days.
+_WEEK_START_SLACK_DAYS = 7
+
+
+def _reader_week_start(value: str | None, utc_today: date) -> date | None:
+    """The reader's own Monday, taken off the query string — or 422 (#518).
+
+    ``None`` when nothing was supplied, which is every server render and the
+    hydrating pass: the caller gets :func:`_week_start` of the UTC day instead.
+
+    REJECTED, NEVER SNAPPED — for all three ways a value can be wrong. This
+    parameter is not authored by a person; it is
+    ``weekStartOf(localTodayISO())`` in ``apps/web/lib/dashboard/readerWeek.ts``,
+    machine-generated from a clock. A value that is not a Monday, or that names
+    a week the reader cannot be standing in, is therefore a bug in the caller
+    or a request no browser made, and snapping it to the nearest Monday would
+    answer a question nobody asked while the client rendered the number as
+    though it had. That is this repo's "two renderers, one number" scar in a
+    new place. A refusal is the safe failure instead: the client keeps the
+    server-rendered UTC answer it already has on screen, which is exactly what
+    it displayed before this parameter existed.
+
+    THE THREE REFUSALS.
+
+    * NOT A DAY. ``pattern`` on the ``Query`` admits only ``YYYY-MM-DD`` —
+      deliberately narrower than either ``date.fromisoformat`` (which also
+      takes ``20260824`` and ``2026-W35-1`` on 3.11) or pydantic's ``date``
+      (which also takes ``2026-08-24T00:00:00``). One spelling on the wire
+      means one thing to compare. This function still parses, because
+      ``2026-02-30`` satisfies the pattern and is not a date.
+    * NOT A MONDAY. ``date.weekday() == 0``, the same convention
+      :func:`_week_start` and the frontend's ``weekdayOf`` share.
+    * NOT A WEEK THIS READER CAN BE IN. Bounded by
+      :data:`_WEEK_START_SLACK_DAYS` against the server's own Monday, so an
+      account cannot be made to report a count for an arbitrary historical or
+      future week through a parameter added to fix a timezone seam.
+    """
+
+    if value is None:
+        return None
+
+    try:
+        requested = date.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"week_start must be an ISO-8601 calendar date (YYYY-MM-DD); "
+                f"got {value!r}."
+            ),
+        ) from exc
+
+    if requested.weekday() != 0:
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"week_start must be a Monday — a week begins on one here, and "
+                f"{requested.isoformat()} is a "
+                f"{requested.strftime('%A')}. It is not snapped to the nearest "
+                f"Monday: this value is derived from the reader's clock, so a "
+                f"non-Monday means the caller is wrong and the count would "
+                f"answer a question it did not ask."
+            ),
+        )
+
+    server_week_start = _week_start(utc_today)
+    drift = abs((requested - server_week_start).days)
+    if drift > _WEEK_START_SLACK_DAYS:
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"week_start must name the week the reader is actually in: "
+                f"{requested.isoformat()} is {drift} days from this server's "
+                f"week start ({server_week_start.isoformat()}), and no "
+                f"timezone puts a reader more than "
+                f"{_WEEK_START_SLACK_DAYS} days away."
+            ),
+        )
+
+    return requested
 
 
 def _application_mail_truncated(
@@ -818,6 +913,14 @@ class ApplicationSummaryResponse(BaseModel):
 
     total: int
     this_week: int
+    #: The Monday ``this_week`` was counted from: the server's UTC Monday
+    #: unless the caller supplied its own (``?week_start=``). Reported rather
+    #: than left implicit because the client's correction turns on it (#518) —
+    #: the browser compares the reader's Monday against the one that was
+    #: ACTUALLY counted and only re-asks when the two differ. Re-deriving it in
+    #: the browser from a second clock read is how these two surfaces came to
+    #: disagree about one number in the first place.
+    week_start: date
     status_counts: dict[str, int]
     # Uncertain verdicts awaiting a human decision — the live source for the
     # dashboard's "N need classification" number (previously a dead count).
@@ -4154,6 +4257,19 @@ async def list_applications_cloud(
 @router.get("/summary", response_model=ApplicationSummaryResponse)
 async def application_summary_cloud(
     user_id: uuid.UUID = Depends(current_user),
+    week_start: str | None = Query(
+        None,
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+        description=(
+            "The READER's own week-start Monday, `YYYY-MM-DD`. Optional, and "
+            "omitted on every server render — the server does not know the "
+            "caller's zone at first paint, so the count is measured from its "
+            "own UTC Monday and `week_start` in the response says so. The "
+            "browser sends its Monday once it has hydrated. Must be a Monday "
+            "within seven days of the server's; anything else is 422 rather "
+            "than snapped (#518)."
+        ),
+    ),
 ) -> ApplicationSummaryResponse:
     """Return counts-only pipeline summary for the authenticated user.
 
@@ -4163,17 +4279,46 @@ async def application_summary_cloud(
 
     - ``GROUP BY status`` → per-status counts (≤7 rows regardless of how many
       applications the user has). ``total`` is their sum.
-    - a windowed ``COUNT(*)`` for applications the user APPLIED to since this
+    - a windowed ``COUNT(*)`` for applications the user APPLIED to since a
       calendar week's Monday (see :func:`_week_start`). Not "created", which is
       when our sync inserted the row, and not a trailing seven days.
 
     Both are O(1) in transfer and index-assisted in the DB, so this endpoint
     stays flat as an account scales from 10 to 10,000 applications — the whole
     reason it exists instead of counting client-side over the full list.
+
+    WHOSE MONDAY (#518). Counts alone cannot carry a zone, so this used to be
+    the UTC Monday and nothing else, while the momentum caption on the same
+    screen counted the READER's — and for a reader west of UTC there was a
+    window each week, the size of their offset, in which the header had rolled
+    over and the caption had not. The reader's Monday is now an optional
+    parameter, validated by :func:`_reader_week_start`, and the Monday actually
+    counted comes back in the response so the client can tell whether it needs
+    to ask again. Absent the parameter the behaviour is exactly what it was.
     """
 
     now = datetime.utcnow()
-    week_start = _week_start(now.date())
+    # THE MONDAY, and the ``or`` is the whole SSR contract: no parameter means
+    # no reader to ask about, so the answer is the UTC week — byte-identical to
+    # what this endpoint returned before #518, which is what makes the
+    # server-rendered header safe to hydrate.
+    counted_week_start = _reader_week_start(week_start, now.date()) or _week_start(now.date())
+    # THE LAST DAY OF IT, and it is a `min` rather than either bound alone.
+    #
+    # `week_start + 6` is the week's own far edge, and it is what stops a
+    # reader whose Monday is AHEAD of the server's (east of UTC, in their early
+    # Monday while UTC is still Sunday) from being counted across eight days.
+    #
+    # `now.date()` is the "we do not count the future" rule this window has
+    # always carried, and it has to stay: `POST /applications` accepts any ISO
+    # `applied_date` with no upper bound (`_parse_applied_date`), so a row dated
+    # next month is reachable by hand. The momentum caption drops those too —
+    # `dailyCounts` discards a negative age — so keeping the clamp is what makes
+    # the two surfaces agree rather than a leftover.
+    #
+    # With no parameter this is `min(utc_week_start + 6, today)`, which is
+    # `today` on every day of the week: the default path is unchanged.
+    counted_week_end = min(counted_week_start + timedelta(days=6), now.date())
 
     async with get_session() as session:
         # Dismissed rows are off the board, so they are out of every tile too —
@@ -4224,8 +4369,8 @@ async def application_summary_cloud(
                 .where(
                     Application.user_id == user_id,
                     Application.dismissed_at.is_(None),
-                    Application.applied_date >= week_start,
-                    Application.applied_date <= now.date(),
+                    Application.applied_date >= counted_week_start,
+                    Application.applied_date <= counted_week_end,
                 )
             )
         ).one()
@@ -4297,6 +4442,11 @@ async def application_summary_cloud(
     return ApplicationSummaryResponse(
         total=total,
         this_week=this_week,
+        # Said out loud, not left for the client to re-derive. The browser
+        # compares this with the reader's own Monday and re-asks only when they
+        # differ — which is also what keeps a page rendered just before UTC
+        # midnight from correcting itself against the wrong server day.
+        week_start=counted_week_start,
         status_counts=status_counts,
         needs_review=needs_review,
     )
