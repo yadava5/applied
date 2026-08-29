@@ -5,7 +5,11 @@ import { MailSnippet, OpenInGmail } from "@/components/mail/MailPreview";
 import { ReclassifyControl } from "@/components/mail/ReclassifyControl";
 import { GateMeter } from "@/components/viz/GateMeter";
 import { shortDate } from "@/lib/dashboard/dates";
-import { REVIEW_QUEUE_LABEL } from "@/lib/dashboard/review";
+import {
+  REVIEW_QUEUE_LABEL,
+  reviewCandidates,
+  type CandidateApplication,
+} from "@/lib/dashboard/review";
 import { categoryChips, CATEGORY_META, chipTotal } from "@/lib/gmail/types";
 import { filedMailHref, filedPageCount, type FiledMailPage } from "@/lib/mail/filed";
 import { cn } from "@/lib/utils";
@@ -145,10 +149,22 @@ export function FiledMailList({
   page,
   activeCategory,
   q,
+  board = [],
 }: {
   page: FiledMailPage;
   activeCategory: string | null;
   q: string | null;
+  /**
+   * The reader's board, for the "which application is this about?" question on
+   * each row's correction (#560).
+   *
+   * Defaults to empty, and the default is the FAILURE path, not a convenience:
+   * the page fetches the board beside the mail, and a board call that fails
+   * must not take the ledger down with it. Empty means every row's control
+   * asks nothing and behaves exactly as it did before #560 — the pre-fix
+   * behaviour, which is a degradation and is why the page fetches it at all.
+   */
+  board?: readonly CandidateApplication[];
 }) {
   const pages = filedPageCount(page.total, page.pageSize);
 
@@ -304,6 +320,22 @@ export function FiledMailList({
                     messageId={m.message_id}
                     subject={subject}
                     company={m.company}
+                    // The employer's rows, matched from this message's own
+                    // sender and subject AND from the employer token the
+                    // backend resolved for it (`m.employer_token`) — the same
+                    // conservative client-side pass the review queue uses, so
+                    // the two surfaces offer the same options for the same
+                    // mail. The token arm is what makes this fire on an ATS
+                    // relay and on a board row whose name is longer than the
+                    // one the mail uses; without it this list hands over an
+                    // empty set and the control asks nothing (#560).
+                    candidates={reviewCandidates(m, board)}
+                    // A filed row usually HAS a link, and that is why this is
+                    // the quiet case: the link outranks the backend's tie-break,
+                    // so there is nothing to ask. The rows that are asked are
+                    // the unlinked ones — a held verdict, a dismissal, a
+                    // message the sync could not place.
+                    linkedApplicationId={m.application_id}
                   />
                 </span>
               </li>

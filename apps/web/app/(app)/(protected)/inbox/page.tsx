@@ -10,7 +10,9 @@ import {
   LOCKED_PAGE_CLASS,
 } from "@/components/shell/geometry";
 import { PageHeader } from "@/components/shell/PageHeader";
-import { getMail } from "@/lib/applications/server";
+import { getBoardPage, getMail } from "@/lib/applications/server";
+import { BOARD_PAGE_SIZE } from "@/lib/dashboard/boardPage";
+import type { CandidateApplication } from "@/lib/dashboard/review";
 import { getGmailStatus } from "@/lib/gmail/server";
 import { FILED_PAGE_SIZE, readFiledMailPage } from "@/lib/mail/filed";
 import { cn } from "@/lib/utils";
@@ -209,6 +211,30 @@ function ScanFallback({ configured }: { configured: boolean }) {
   );
 }
 
+/**
+ * The board slice the row corrections' picker needs, read defensively.
+ *
+ * Only four fields, and any row missing one of them is dropped rather than
+ * rendered as a blank option: an option a reader cannot tell apart from
+ * another is not an answer to "which application is this about?".
+ */
+function readBoardCandidates(data: unknown): CandidateApplication[] {
+  const rows = (data as { applications?: unknown })?.applications;
+  if (!Array.isArray(rows)) return [];
+  const out: CandidateApplication[] = [];
+  for (const raw of rows) {
+    const row = raw as Record<string, unknown>;
+    if (typeof row?.id !== "number" || typeof row?.company !== "string") continue;
+    out.push({
+      id: row.id,
+      company: row.company,
+      position: typeof row.position === "string" ? row.position : "",
+      status: typeof row.status === "string" ? row.status : "",
+    });
+  }
+  return out;
+}
+
 export default async function InboxPage({
   searchParams,
 }: {
@@ -281,8 +307,40 @@ export default async function InboxPage({
   search.set("page_size", String(FILED_PAGE_SIZE));
   if (category) search.set("category", category);
   if (q) search.set("q", q);
-  const result = await getMail(search);
+  // IN PARALLEL, not in series. The board is only needed to ask each row's
+  // correction "which application is this about?" (#560), and a question the
+  // reader may never open must not add a second ~850 ms backend wait to the
+  // page they did open. Issue #203 measured concurrency, not idleness, as what
+  // triggers a cold start; this takes /inbox's fan-out from 1 to 2.
+  //
+  // THE CANDIDATE POOL IS ONE PAGE — `BOARD_PAGE_SIZE` (200) ROWS — AND THAT
+  // IS A STATED LIMIT, not an oversight. Past 200 applications the newest rows
+  // fall off this page, so an employer whose siblings sit beyond it can show
+  // fewer than two candidates here; the question is then not asked and the
+  // backend's tie-break files the correction on that employer's oldest live
+  // row — #560's behaviour, with no signal on screen.
+  //
+  // It is not fixed by raising the number, which only moves the cliff, and the
+  // honest fix is server-side: the endpoint knows the employer token already
+  // (`employer_token` below) and could return that employer's rows instead of
+  // a page of the board. That is a bigger change than this one and is not
+  // smuggled in here. The number is deliberately the SAME constant the
+  // dashboard reads, so the question can only ever offer rows the reader can
+  // also see on their board.
+  const [result, boardResult] = await Promise.all([
+    getMail(search),
+    getBoardPage(BOARD_PAGE_SIZE),
+  ]);
   const page = result.ok ? readFiledMailPage(result.data) : null;
+  // A board that did not load costs the QUESTION, never the ledger: the rows
+  // still render and still correct, they just cannot be asked which
+  // application they are about — which is exactly how this page behaved before
+  // #560. Read structurally rather than through the generated schema, for the
+  // same reason `readFiledMailPage` does: a shape the backend changes should
+  // degrade to "no candidates", not throw on a page of mail.
+  const board: CandidateApplication[] = boardResult.ok
+    ? readBoardCandidates(boardResult.data)
+    : [];
 
   return (
     <section className={cn("relative", LOCKED_PAGE_CLASS)}>
@@ -292,7 +350,7 @@ export default async function InboxPage({
         <ViewSwitch scan={false} />
       </PageHeader>
       {page ? (
-        <FiledMailList page={page} activeCategory={category} q={q} />
+        <FiledMailList page={page} activeCategory={category} q={q} board={board} />
       ) : (
         // Honest failure — never an empty inbox that reads as "no mail". The
         // distinct next step per status mirrors the dashboard's rule.

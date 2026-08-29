@@ -194,6 +194,32 @@ export function getMail(search: URLSearchParams): Promise<ApiCallResult> {
 }
 
 /**
+ * GET /applications — one bounded page of the board, for a surface that needs
+ * to ask WHICH application a message is about (#560).
+ *
+ * The same call and the same page size the dashboard makes, deliberately: the
+ * question can only offer rows the reader can also see on their board, and a
+ * second page size here would make the two disagree about which employers hold
+ * "several" applications.
+ *
+ * The dashboard reaches this endpoint through the GENERATED schema client and
+ * this does not, which is a real difference and a deliberate one: every helper
+ * in this module hands back `unknown` for the reason the module docstring
+ * gives, the caller parses it defensively (`readBoardCandidates`), and a board
+ * whose shape the backend changed must degrade to "no candidates" on a page of
+ * mail rather than throw. Moving THIS one onto the typed client while its
+ * eleven neighbours stay untyped would leave two conventions in one file;
+ * moving the file is the follow-up the module docstring already names.
+ *
+ * ONE BOUNDED PAGE, and the cap is visible to the user: see the call site in
+ * `app/(app)/(protected)/inbox/page.tsx` for what happens to an account with
+ * more applications than `BOARD_PAGE_SIZE`.
+ */
+export function getBoardPage(pageSize: number): Promise<ApiCallResult> {
+  return call(`/applications?page=1&page_size=${pageSize}`, { method: "GET" });
+}
+
+/**
  * POST /applications/review/{messageId}/classify — classify + persist + train.
  *
  * `company` is the second half of the `needs_employer` round trip: the backend

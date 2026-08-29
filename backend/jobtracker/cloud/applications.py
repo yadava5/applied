@@ -821,6 +821,30 @@ class MailMessageResponse(BaseModel):
     # would break recovery. The two facts are reported separately because they
     # are two facts.
     on_board: bool = False
+    # The employer TOKEN :func:`pipeline.resolve_employer` names for this
+    # message, or ``None`` when it refuses to name one. Computed for EVERY row,
+    # linked or not.
+    #
+    # WHY IT IS NOT ``company``. ``company`` above is the LINKED application's
+    # display name, so it is populated only on rows that already have an
+    # answer. The surface that needs an employer is the opposite population:
+    # the filed ledger asks "which application is this about?" precisely on
+    # UNLINKED rows, where ``company`` is null by construction. A client
+    # matching on ``company`` therefore cannot match anything it would ever
+    # ask about, which is what shipped and what this field replaces.
+    #
+    # WHY THE TOKEN AND NOT THE DISPLAY NAME. It is the match key
+    # :func:`_company_rows` and :func:`_chosen_application` narrow on, so a
+    # client that offers the rows matching this token offers exactly the rows
+    # the backend would accept as an answer. Compared against a stored row's
+    # name by :func:`pipeline.matches_company_token` — see that function for
+    # the rule and for the web mirror of it.
+    #
+    # FILING GRADE, USED AT DISPLAY GRADE, which is the safe direction:
+    # ``resolve_employer`` reads only the sender's own domain, the subject and
+    # (for relays) the display name. It never reads the body or the snippet, so
+    # nothing here stamps a row with something the decider did not read.
+    employer_token: str | None = None
     gmail_link: str | None = None
 
 
@@ -1703,8 +1727,13 @@ async def _resolve_application_for_email(
     The residual is stated rather than fixed: an UNLINKED anonymous message at an
     employer holding several rows still lands on the oldest by rule 4. Minting
     instead would answer "which of your three Google applications?" by inventing
-    a fourth, which is worse, and the review queue already asks the user directly
-    (:func:`_chosen_application`) on the path where the question can be put.
+    a fourth, which is worse — and this is only ever reached when NOBODY WAS
+    ASKED. Both correction surfaces put the question directly where it can be
+    put (:func:`_chosen_application`): the needs-review queue since #554, and the
+    filed ledger's reclassify control since #560. What still arrives here
+    unanswered is a sync, a single-candidate employer, or a correction to a
+    message that already carries a link — and for the last of those the branch
+    above has already answered.
     """
 
     rows = await _company_rows(session, user_id, token)
@@ -4680,6 +4709,29 @@ def _message_ref_response(
     )
 
 
+def _employer_token_for(email: Email) -> str | None:
+    """The employer match TOKEN this stored message resolves to, or ``None``.
+
+    ONE ACCESSOR, because two readers need the same answer and they used to
+    reach it separately: the review queue's hold reason counts an employer's
+    siblings under this token, and the mail listing ships it so the filed
+    ledger can ask which of those siblings a correction is about. A second
+    call site spelling the arguments differently is how "two readers, one
+    shape" starts, and the argument order here is not obvious — subject is
+    second, the display name third.
+
+    Returns the token half of :func:`pipeline.resolve_employer`, which is the
+    key :func:`_company_rows` narrows on. The display half is deliberately not
+    returned: nothing that consumes this renders it, and a display name is a
+    different grade of claim (see :func:`pipeline.employer_named_in_body`).
+    """
+
+    resolved = pipeline.resolve_employer(
+        email.sender_email or "", email.subject or "", email.sender_name
+    )
+    return resolved[0] if resolved else None
+
+
 def _sibling_counts(company_names: Sequence[str | None]) -> Counter[str]:
     """How many applications sit under each employer TOKEN the resolver can emit.
 
@@ -4757,10 +4809,11 @@ def _hold_reason_for(
     sender_email = email.sender_email or ""
     snippet = (email.body_snippet or "")[: pipeline.STORED_SNIPPET_CHARS]
 
-    resolved = pipeline.resolve_employer(sender_email, subject, email.sender_name)
-    # ``resolve_employer`` returns (token, display); the token is the match key
-    # the counter was built under.
-    sibling_count = siblings.get(resolved[0], 0) if resolved else 0
+    # The token is the match key the counter was built under. Read through the
+    # one accessor the mail listing also uses, so the queue and the ledger
+    # cannot disagree about which employer a message names.
+    token = _employer_token_for(email)
+    sibling_count = siblings.get(token, 0) if token else 0
 
     reason = pipeline.hold_reason(
         confidence=email.classification_confidence,
@@ -5172,6 +5225,9 @@ async def mail_listing_cloud(
                 else None
             ),
             on_board=e.application_id in on_board_applications,
+            # Unconditional: the population that needs it is the UNLINKED one.
+            # Pure CPU over fields already loaded — no query, no body read.
+            employer_token=_employer_token_for(e),
             gmail_link=pipeline.gmail_deeplink(
                 thread_id=e.thread_id,
                 message_id=e.message_id,

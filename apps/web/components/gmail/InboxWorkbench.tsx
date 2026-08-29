@@ -181,6 +181,33 @@ function VerdictRow({
             messageId={v.message_id}
             subject={v.subject}
             company={v.company || null}
+            // THE SCAN ASKS NOTHING, AND THAT IS THE DECISION (#560).
+            //
+            // This view reads GOOGLE, not the store: it has the mail in front
+            // of it and no board rows in reach at all. The signed-in filed
+            // ledger fetches the board beside its mail and can therefore ask
+            // which application a correction is about; this one would have to
+            // fetch a board to have options — and in the `/demo/scan` twin
+            // there is no board to fetch, only fixtures.
+            //
+            // A question with no options is worse than no question: it reads
+            // as "none of these — track it as a new application" being the
+            // only answer, which is the one answer that MINTS a row. So the
+            // control is told, explicitly, that this mount cannot see the
+            // board, and it asks nothing; a correction from here carries no
+            // assignment and the backend answers that silence exactly as it
+            // did before #560 — the message's own link first, then the
+            // tie-break. That residual is real and it is named in the PR
+            // rather than papered over.
+            //
+            // Passed rather than defaulted BECAUSE it is a decision. The prop
+            // is required, so the next mount of this control has to state its
+            // answer instead of inheriting silence from an empty default.
+            candidates={[]}
+            // A scan row is a verdict about mail that may not be stored yet, so
+            // it has no link to speak of. `[]` above already means no question
+            // is put; this says why there would be nothing to outrank one.
+            linkedApplicationId={null}
             message={payload}
             classify={classify}
             onCorrected={(category) => onCorrected(v.message_id, category)}

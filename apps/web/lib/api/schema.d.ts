@@ -1428,6 +1428,8 @@ export interface components {
              * @default false
              */
             on_board: boolean;
+            /** Employer Token */
+            employer_token?: string | null;
             /** Gmail Link */
             gmail_link?: string | null;
         };
