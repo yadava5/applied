@@ -470,25 +470,50 @@ def test_the_production_rejection_now_files_an_anthropic_row() -> None:
     assert [(r.company_display, r.status) for r in rolled] == [("Anthropic", "rejected")]
 
 
-def test_follow_up_verdicts_reach_no_persist_path() -> None:
-    """CHARACTERISATION, not an endorsement. Measured 2026-08-12.
+def test_a_follow_up_verdict_files_nothing_and_now_reaches_a_person() -> None:
+    """The characterisation above, and the half of it that is fixed (#458).
 
-    This is why the message was absent from the ``emails`` table entirely
-    rather than merely mis-staged, and it is a defect in its own right:
-    ``follow_up`` is excluded from ``_qualifies_for_hard_row`` AND from
+    Measured 2026-08-12, this test explained why the message was absent from
+    the ``emails`` table entirely rather than merely mis-staged: ``follow_up``
+    is excluded from ``_qualifies_for_hard_row`` AND from
     ``collect_review_items``, and those two lists are the ONLY inputs
     ``cloud.applications._persist_message_refs`` is ever called with. So a
-    ``follow_up`` verdict is discarded — no row, no queue entry, no stored
+    ``follow_up`` verdict was discarded — no row, no queue entry, no stored
     message — whatever the scan window was.
 
-    Deliberately NOT fixed here. Giving an entire category a persist path is a
-    product decision about what the needs-classification queue is for, and it
-    belongs in ``cloud/applications.py`` and ``cloud/pipeline.py``, not in the
-    pattern list. Pinned as a test so the next person finds it stated rather
-    than having to rediscover it from a missing row.
+    It said the fix was a product decision about what the queue is for, that it
+    belonged in ``cloud/pipeline.py`` rather than in the pattern list, and it
+    pinned the defect so the next person would find it stated. That decision
+    was taken in #458 and it is exactly there: the exclusion rests on
+    ``follow_up`` being the reader's OWN chasing mail, and a message Greenhouse
+    relayed is not mail the reader sent. THIS message is the evidence — a real
+    rejection, read as a follow-up because its subject says "Follow-Up".
+
+    The filing half is unchanged and must stay unchanged: the queue is where it
+    goes, not a card. Nothing about this makes the verdict right; it makes it
+    somebody's to correct.
     """
     item = _item("follow_up", 0.90)
 
     assert pipeline._qualifies_for_hard_row(item) is None
     assert pipeline.roll_up_applications([item]) == []
-    assert pipeline.collect_review_items([item]) == []
+
+    queued = pipeline.collect_review_items([item])
+    assert [r.message_id for r in queued] == ["19ff4d11faa3721d"]
+    assert queued[0].company_display == "Anthropic"
+
+    # THE CONTROL, and the direction of the whole argument: the same verdict on
+    # a message the reader sent still reaches nothing at all.
+    own = pipeline.PipelineItem(
+        message_id="own-chasing-mail",
+        category="follow_up",
+        sender_email="ayush@example.com",
+        subject=ANTHROPIC_SUBJECT,
+        sender_name=None,
+        received_at=None,
+        confidence=0.90,
+        thread_id=None,
+        snippet=ANTHROPIC_SNIPPET,
+    )
+    assert pipeline._qualifies_for_hard_row(own) is None
+    assert pipeline.collect_review_items([own]) == []
