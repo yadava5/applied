@@ -157,6 +157,31 @@ class GmailStatusResponse(BaseModel):
     has_cursor: bool = False
     sync_status: str | None = None
     sync_error: str | None = None
+    # WHAT THE LAST SUCCESSFUL SYNC LOOKED AT (#422). The same partition
+    # ``POST /gmail/sync`` returns, read back out of ``sync_state`` — because a
+    # sync response is gone when the tab closes and the question it answers
+    # ("did you see my mail?") is asked days later. One ``pipeline.ScanLedger``
+    # writes FIVE of these and the sync response's five, so this endpoint and
+    # that one cannot disagree about them.
+    #
+    # ``last_scanned`` is the sixth and it is NOT on the ledger — the pipeline
+    # cannot know how many messages the scan read, only how many became items.
+    # It still has one source: the handler's ``scanned`` local fills the sync
+    # response's ``scanned`` and the row this reads back, in the same call. One
+    # value, two surfaces; just not the same object as the other five.
+    #
+    # ``null`` and ``0`` are different answers and are kept different: null
+    # means no sync has recorded a ledger yet (every row predating revision
+    # ``a3f7d21c60be``, and any account whose only syncs failed), while 0 means
+    # a sync ran and read nothing. Collapsing them would turn "we have never
+    # looked" into "we looked and your mailbox was empty", which is the exact
+    # confusion this issue is about.
+    last_scanned: int | None = None
+    last_classified: int | None = None
+    last_filed: int | None = None
+    last_queued: int | None = None
+    last_dropped: int | None = None
+    last_reached_nothing: int | None = None
 
 
 class GmailAuthorizeResponse(BaseModel):
@@ -440,6 +465,47 @@ class SyncResponse(BaseModel):
     # message id; a response that listed them would be re-deriving the review
     # queue with a different name and no way to act on it.
     dropped: int = 0
+    # THE REST OF THE LEDGER — where every message this run looked at ended up.
+    #
+    # ``dropped`` above closed half of #422: a lifecycle verdict thrown away
+    # under the review floor now leaves a number. The other half stayed open,
+    # and it is the bigger one. A message the classifier scored ``other`` leaves
+    # through the same terminal door, writes no ``emails`` row, and was counted
+    # by nothing at all — so "we read your mail and discarded it" was still the
+    # same response as "your mailbox was quiet", just with a different message
+    # in it. These three fields are what make the difference statable.
+    #
+    # THEY PARTITION, and the partition is the point:
+    #
+    #     classified == filed + queued + dropped + reached_nothing
+    #
+    # An accounting that does not close is how messages go missing silently, so
+    # it is asserted rather than assumed — over hand-built shapes and over the
+    # 17,260-message adversarial corpus, in
+    # ``tests/test_gmail_sync_says_what_it_looked_at.py``.
+    #
+    # ``classified`` is NOT ``scanned``. ``scanned`` is what the scan read from
+    # Gmail; ``_classify_messages`` then skips the user's own sent mail before a
+    # pipeline item exists, so the difference is that skip. The partition closes
+    # over the narrower number because a message that never became an item was
+    # never routed anywhere.
+    #
+    # ``queued`` is NOT ``needs_review``, and the two will legitimately
+    # disagree. This is what the SCAN routed to the queue; ``needs_review`` is
+    # what the MERGE then persisted, and the additive merge drops refs whose
+    # thread already holds a settled sibling. Two questions, two numbers, named
+    # apart on purpose — a single field would have to lie to one of them.
+    #
+    # ``reached_nothing`` is the one the issue is about. See
+    # ``pipeline.ScanLedger``: it is the corpus harness's ``LOST`` widened to
+    # what the product can compute without ground truth, so it holds genuine
+    # misses and correctly-ignored noise together. Non-zero on every healthy
+    # sync of a real mailbox — a newsletter belongs in it — which is why it is
+    # reported beside ``classified`` and never alone.
+    classified: int = 0
+    filed: int = 0
+    queued: int = 0
+    reached_nothing: int = 0
 
 
 # =============================================================================
@@ -1133,6 +1199,17 @@ async def gmail_status(
         has_cursor=bool(state is not None and state.gmail_history_id),
         sync_status=state.status if state is not None else None,
         sync_error=state.error_message if state is not None else None,
+        # Straight through, NULLs included. ``state is None`` and a row whose
+        # ledger columns are NULL are the same answer here — "no sync has
+        # recorded one" — and neither is turned into a zero.
+        last_scanned=state.last_scanned if state is not None else None,
+        last_classified=state.last_classified if state is not None else None,
+        last_filed=state.last_filed if state is not None else None,
+        last_queued=state.last_queued if state is not None else None,
+        last_dropped=state.last_dropped if state is not None else None,
+        last_reached_nothing=(
+            state.last_reached_nothing if state is not None else None
+        ),
     )
 
 
@@ -2318,7 +2395,7 @@ async def gmail_sync(
 
     try:
         if payload.items is not None:
-            items = [
+            relayed = [
                 pipeline.PipelineItem(
                     message_id=item.message_id,
                     category=item.category,
@@ -2332,7 +2409,39 @@ async def gmail_sync(
                 )
                 for item in payload.items[: settings.gmail_fetch_hard_cap]
             ]
-            scanned = len(items)
+            # WHAT THE CLIENT SAID IT READ, counted BEFORE the dedup below, so a
+            # message relayed twice shows up as ``scanned > classified`` — the
+            # same shape a server scan's sent-mail skip produces, and the reason
+            # ``ScanLedger``'s partition closes over ``classified`` and not this.
+            scanned = len(relayed)
+            # ONE ITEM PER MESSAGE ID, FIRST OCCURRENCE WINS.
+            #
+            # ``SyncRequest.items`` has no uniqueness validator and the client
+            # mine is a page loop, so one id arriving twice is reachable input,
+            # not a hypothetical. Without this the SAME message could be routed
+            # by two different categories and land in two buckets at once —
+            # measured: a ``filed`` shape and a ``needs_review`` shape sharing
+            # one id gave ``classified=1, filed=1, queued=1``, which does not
+            # close, logged the overlap warning, and returned counts the
+            # migration's docstring promises cannot happen.
+            #
+            # It was only ever a COUNTING defect — ``emails`` carries
+            # ``UNIQUE ix_emails_user_id_message_id`` and ``_persist_message_refs``
+            # upserts, so the second copy wrote nothing either way. Deduping
+            # here rather than inside ``ledger_for_scan`` keeps the counters
+            # derived from the routing outputs instead of correcting them after.
+            #
+            # FIRST OCCURRENCE, deliberately, and it is a real choice: two
+            # copies under two categories would otherwise both be routed. Taking
+            # the higher-confidence or later-ranked one would put a routing
+            # PRECEDENCE rule in this handler, which is exactly the second
+            # reader of a shape this module refuses to grow. A client that
+            # relays one id under two categories has a bug; the sync answers it
+            # with the copy it sent first, and says so in ``scanned``.
+            by_message_id: dict[str, pipeline.PipelineItem] = {}
+            for relayed_item in relayed:
+                by_message_id.setdefault(relayed_item.message_id, relayed_item)
+            items = list(by_message_id.values())
             incremental = False
             # The server did not read this mail and cannot characterise the
             # scan behind it: how far the client got, and what it lost getting
@@ -2404,6 +2513,17 @@ async def gmail_sync(
                 merged = await sync_gmail_pipeline_additive(
                     session, user_id, rolled, review
                 )
+            # WHERE EVERY MESSAGE THIS RUN LOOKED AT ENDED UP (#422). Built here
+            # because here is the one place all three routing outputs exist at
+            # once — and built from those outputs rather than from a second
+            # reading of their conditions, so the counts cannot drift from the
+            # routing the way a mirrored implementation would.
+            #
+            # AFTER the merge, deliberately. The partition describes the SCAN,
+            # not the merge, and every field of it is already fixed by this
+            # point; computing it earlier would work and would put an
+            # observability calculation in front of the write that matters.
+            ledger = pipeline.ledger_for_scan(items, rolled, review, dropped_verdicts)
             created = merged.created
             updated = merged.updated
             purged = merged.purged
@@ -2495,6 +2615,24 @@ async def gmail_sync(
                     user_id,
                     account_email=account_email,
                     history_id=cursor_to_record,
+                    # The durable half of #422. A response answers "did you see
+                    # my mail?" only for as long as the tab is open; the person
+                    # diagnosing the report reads Postgres days later, which is
+                    # where the answer was missing entirely.
+                    #
+                    # ``scanned`` is passed separately because the pipeline
+                    # cannot know it: it counts what Gmail handed back, and
+                    # ``_classify_messages`` skips the user's own sent mail
+                    # before an item exists.
+                    #
+                    # ONLY REACHED WHEN ``account_email`` IS SET, which is the
+                    # one gap and it is stated rather than hidden: an
+                    # items-relay from a user with no Gmail connected has no row
+                    # to key on and gets the response's numbers only. That is
+                    # the same limit ``last_sync_at`` has had since this row
+                    # existed, not a new one.
+                    ledger=ledger,
+                    scanned=scanned,
                 )
                 await session.commit()
 
@@ -2531,7 +2669,8 @@ async def gmail_sync(
     logger.info(
         "Gmail sync for user_id=%s: mode=%s incremental=%s created=%s updated=%s "
         "purged=%s needs_review=%s total=%s scanned=%s unreadable=%s stopped_by=%s "
-        "estimate=%s removed_application_id=%s",
+        "estimate=%s classified=%s filed=%s queued=%s dropped=%s "
+        "reached_nothing=%s removed_application_id=%s",
         user_id,
         mode,
         incremental,
@@ -2544,6 +2683,14 @@ async def gmail_sync(
         unreadable,
         stopped_by,
         result_size_estimate,
+        # The partition, on the one surface a deployment always has. It closes
+        # against ``classified`` — see ``pipeline.ScanLedger`` — so a line where
+        # it does not is itself the finding.
+        ledger.classified,
+        ledger.filed,
+        ledger.queued,
+        ledger.dropped,
+        ledger.reached_nothing,
         # Ids, not company names: this record already carries ``user_id``, and
         # a company name beside it says where the user applied (see
         # ``_warn_if_capped`` in cloud/applications.py). The ids name the same
@@ -2563,5 +2710,13 @@ async def gmail_sync(
         removed=[
             RemovedApplicationOut(id=r.id, company=r.company) for r in merged.removed
         ],
-        dropped=len(dropped_verdicts),
+        # ONE ledger fills all five, ``dropped`` included — it used to be
+        # ``len(dropped_verdicts)`` here and is now read off the same object the
+        # stored row is written from, so the response and ``sync_state`` are
+        # structurally incapable of reporting different numbers.
+        dropped=ledger.dropped,
+        classified=ledger.classified,
+        filed=ledger.filed,
+        queued=ledger.queued,
+        reached_nothing=ledger.reached_nothing,
     )
