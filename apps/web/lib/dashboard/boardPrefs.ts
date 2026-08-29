@@ -16,12 +16,16 @@
  * is what makes the twin's e2e a real gate on the signed-in page's wiring
  * rather than a test of a parallel implementation.
  *
- * Both imports below are type-only and therefore erased before Node ever
- * resolves them — the discipline `lib/dashboard/summary.ts` documents about
- * its own `@/` alias, and what keeps this module dependency-free.
+ * The two `@/` imports below are type-only and therefore erased before Node
+ * ever resolves them — the discipline `lib/dashboard/summary.ts` documents
+ * about its own alias. The one VALUE import spells the real filename
+ * (`./review.ts`), which is what Node's literal ESM resolution needs and what
+ * `allowImportingTsExtensions` exists for here; `lib/dashboard/pulseFilter.ts`
+ * imports four of its neighbours the same way.
  */
 import type { NotificationPrefs } from "@/components/settings/NotificationsSection";
 import type { PipelineSummary } from "@/lib/dashboard/summary";
+import { REVIEW_QUEUE_LABEL } from "./review.ts";
 
 /** Which of `PipelineBoard`'s two slots the needs-review queue lands in. */
 export type ReviewSlot = "before" | "after";
@@ -90,7 +94,12 @@ export function buildSubtitle(
  * `needsReview` is folded in rather than left to the pulse, and that is not a
  * duplicate of the rule `buildSubtitle` follows: on an empty board there is no
  * board for the pulse to sit on, so this line is the only place the held count
- * can be said at all. Zero folds in nothing — "· 0 need review" is not news.
+ * can be said at all. Zero folds in nothing — "· 0 to review" is not news.
+ *
+ * The phrase is `REVIEW_QUEUE_LABEL`, shared with every other surface that
+ * counts this queue, and it stops the plural branch this line used to carry:
+ * "to review" is one string for 1 and for 4. That is the point — the Inbox's
+ * chip counts a different, larger set and must not wear the same words (#445).
  */
 export function emptySubtitle(input: {
   /** What we know about the mailbox. `unknown` is a failed probe, not "no". */
@@ -101,10 +110,7 @@ export function emptySubtitle(input: {
   needsReview: number;
 }): string {
   const { gmailState, scanCompleted, needsReview } = input;
-  const reviewNote =
-    needsReview > 0
-      ? ` · ${needsReview} ${needsReview === 1 ? "needs" : "need"} review`
-      : "";
+  const reviewNote = needsReview > 0 ? ` · ${needsReview} ${REVIEW_QUEUE_LABEL}` : "";
 
   if (gmailState === "connected") {
     const detail = scanCompleted

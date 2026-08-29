@@ -111,7 +111,13 @@ const MUTATIONS = [
   // adding an entry to either list automatically demands a fixture that covers
   // it — the suite cannot go green on an allowlist it does not exercise.
   ...allowlistMutations('api', 'api requirements.txt backend/jobtracker vercel.json .vercelignore'),
-  ...allowlistMutations('web', 'apps/web .vercelignore'),
+  // The web list now carries git's exclude pathspec for apps/web/tests, and the
+  // generator mutates it like any other entry: dropping it means a tests-only
+  // commit builds the app again, which the two tests-only fixtures in the suite
+  // catch. The `find` anchor is the exact text between the parentheses, so the
+  // quoting has to match the script character for character or this reports a
+  // failure instead of silently mutating nothing.
+  ...allowlistMutations('web', "apps/web ':!apps/web/tests' .vercelignore"),
   {
     name: 'the head-not-in-clone guard skips instead of building',
     find: '  log "head ${head_sha} is not in this clone; building"\n  exit "$BUILD"',
