@@ -321,3 +321,332 @@ def test_write_still_writes_when_the_merge_is_finished(tmp_path) -> None:
         pass
     after = (root / "README.md").read_text(encoding="utf-8")
     assert "7,654,321" not in after, "--write left the wrong number in place"
+
+
+# ── the recording cannot hide a skip, and the static parse models collection ──
+#
+# Issue #351. Three separable holes, each with its own cases below:
+#
+#   1. `--record` wrote whatever it observed. On a machine without Docker or
+#      without the test extras, five `*_postgres` modules skip, skipped tests
+#      are still COLLECTED, so `testsCollected >= testFunctions` still held and
+#      the page's guarantee slid from "0 skipped" to "N skipped" with every gate
+#      green. The documented local recipe produced exactly that artifact.
+#   2. The static parse used `ast.walk` and counted things pytest never
+#      collects. Diffing it against `pytest --collect-only` over the real tree
+#      found TWO causes, not the one the issue named.
+#   3. The file's own docstring claimed "a recorded figure cannot go stale
+#      without a static one noticing", which the one-sided invariant does not
+#      deliver. That claim is corrected and the drift is now printed instead.
+
+
+GREEN = {
+    "passed": 1768,
+    "failed": 0,
+    "skipped": 0,
+    "errors": 0,
+    "exitCode": 0,
+    "allGreen": True,
+    "dockerAvailable": True,
+}
+
+
+def test_a_clean_provisioned_run_is_recordable() -> None:
+    """The positive control. Without it every refusal below proves nothing."""
+
+    assert _load().refuse_reason(GREEN) is None
+
+
+def test_a_run_without_docker_is_refused_even_when_nothing_skipped() -> None:
+    """The #351 case exactly: 0 skipped is not evidence the suite was whole.
+
+    Docker unreachable and `skipped == 0` is the combination that reads as a
+    perfect run from every angle the old code looked from.
+    """
+
+    reason = _load().refuse_reason({**GREEN, "dockerAvailable": False})
+    assert reason is not None
+    assert "Docker" in reason
+
+
+def test_a_run_that_skipped_is_refused() -> None:
+    reason = _load().refuse_reason({**GREEN, "skipped": 53})
+    assert reason is not None
+    assert "53" in reason and "skip" in reason.lower()
+
+
+def test_a_red_run_is_refused() -> None:
+    reason = _load().refuse_reason(
+        {**GREEN, "failed": 2, "exitCode": 1, "allGreen": False}
+    )
+    assert reason is not None
+    assert "not green" in reason
+
+
+def test_the_refusal_happens_before_the_file_is_written(tmp_path, capsys) -> None:
+    """The whole point: a refusal after the write changes only the exit code.
+
+    The artifact must not exist afterwards — not "must be unchanged", which a
+    write followed by a raise would also satisfy on a machine where the file
+    happened to be identical.
+    """
+
+    rf = _load()
+    target = tmp_path / "docs" / "readme-facts.json"
+    artifact = {"recordedAt": "2026-08-28", "suiteOutcome": {**GREEN, "skipped": 53}}
+
+    with pytest.raises(SystemExit) as excinfo:
+        rf.write_artifact(artifact, target)
+
+    assert excinfo.value.code == 1
+    assert not target.exists(), "the refusal let the artifact reach the disk"
+    assert "refusing to record" in capsys.readouterr().err
+
+
+def test_a_clean_run_still_reaches_the_disk(tmp_path) -> None:
+    """Directional control for the case above: the refusal is not unconditional."""
+
+    rf = _load()
+    target = tmp_path / "docs" / "readme-facts.json"
+    rf.write_artifact({"recordedAt": "2026-08-28", "suiteOutcome": GREEN}, target)
+    assert target.exists()
+
+
+# ── the static parse ──────────────────────────────────────────────────────
+
+SYNTHETIC = '''
+import pytest
+
+
+@pytest.fixture
+def test_session():
+    """Named like a test, collected by nobody."""
+    yield 1
+
+
+@pytest.fixture(scope="module")
+def test_engine():
+    yield 2
+
+
+def test_a_real_one():
+    def test_a_nested_helper():
+        pass
+    test_a_nested_helper()
+
+
+def test_shadowed():
+    pass
+
+
+def test_shadowed():
+    pass
+
+
+class TestAGroup:
+    def test_a_method(self):
+        pass
+
+
+class NotATestClass:
+    def test_not_collected_here(self):
+        pass
+'''
+
+
+def test_the_parse_counts_what_pytest_would_collect(tmp_path) -> None:
+    """Five distinct AST-only shapes, one fixture per real defect found.
+
+    `ast.walk` over this module returns 8. pytest collects 3:
+    `test_a_real_one`, `test_shadowed` (once), and `TestAGroup::test_a_method`.
+    """
+
+    module = tmp_path / "test_synthetic.py"
+    module.write_text(SYNTHETIC)
+    assert _load().collectable_tests(module) == {
+        "test_a_real_one",
+        "test_shadowed",
+        "test_a_method",
+    }
+
+
+def test_the_old_walk_really_did_overcount_this(tmp_path) -> None:
+    """The negative control: prove the shapes above are actually adversarial.
+
+    Without this, the assertion above passes just as happily against a parser
+    that was never wrong.
+    """
+
+    import ast
+
+    module = tmp_path / "test_synthetic.py"
+    module.write_text(SYNTHETIC)
+    walked = sum(
+        1
+        for node in ast.walk(ast.parse(module.read_text()))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name.startswith("test_")
+    )
+    assert walked == 8, f"expected the old parse to see 8, saw {walked}"
+
+
+def test_a_fixture_is_not_a_test_whichever_way_it_is_spelled(tmp_path) -> None:
+    """`@pytest.fixture`, `@fixture` and `@pytest_asyncio.fixture`, called or bare.
+
+    A threshold needs a case sitting on it and a set needs one per member; this
+    is the set.
+    """
+
+    module = tmp_path / "test_spellings.py"
+    module.write_text(
+        "import pytest\n"
+        "import pytest_asyncio\n"
+        "from pytest import fixture\n"
+        "\n"
+        "@pytest.fixture\n"
+        "def test_a(): ...\n"
+        "\n"
+        "@fixture\n"
+        "def test_b(): ...\n"
+        "\n"
+        "@pytest_asyncio.fixture\n"
+        "def test_c(): ...\n"
+        "\n"
+        "@pytest.fixture(scope='session')\n"
+        "def test_d(): ...\n"
+        "\n"
+        "def test_e(): ...\n"
+    )
+    assert _load().collectable_tests(module) == {"test_e"}
+
+
+def test_no_test_module_defines_the_same_test_twice() -> None:
+    """A shadowed test is dead code that still reads as coverage.
+
+    `test_hold_reason_and_employer_gaps.py` carried a byte-identical copy of
+    `test_the_web_knows_every_reason_this_module_can_emit`; Python bound the
+    second and the first had never run. Nothing said so, and the published
+    count included it.
+    """
+
+    import ast
+    from collections import Counter
+
+    rf = _load()
+    shadowed: dict[str, list[str]] = {}
+    for path in rf.test_modules():
+        names = Counter()
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name.startswith("test_")
+                and not rf._is_fixture(node)
+            ):
+                names[node.name] += 1
+        dupes = [n for n, c in names.items() if c > 1]
+        if dupes:
+            shadowed[path.name] = dupes
+
+    assert shadowed == {}, f"tests defined twice, so the first never runs: {shadowed}"
+
+
+# ── staleness is visible, not fatal ───────────────────────────────────────
+
+
+def test_a_fresh_recording_produces_no_drift_note() -> None:
+    rf = _load()
+    fresh = {
+        "recordedAt": "2026-08-28",
+        "recordedCommit": "0" * 40,
+        "testFunctionsAtRecord": rf.test_functions(),
+        "testModulesAtRecord": len(rf.test_modules()),
+    }
+    assert rf.staleness_note(fresh) is None
+
+
+def test_a_moved_suite_is_named_in_the_note() -> None:
+    rf = _load()
+    now = rf.test_functions()
+    note = rf.staleness_note(
+        {
+            "recordedAt": "2026-08-24",
+            "recordedCommit": "d2c50c4" + "0" * 33,
+            "testFunctionsAtRecord": now - 148,
+            "testModulesAtRecord": len(rf.test_modules()) - 12,
+        }
+    )
+    assert note is not None
+    assert str(now - 148) in note and str(now) in note
+
+
+def test_an_artifact_predating_the_field_says_so_rather_than_guessing() -> None:
+    note = _load().staleness_note({"recordedAt": "2026-08-15"})
+    assert note is not None and "predates" in note
+
+
+def test_pytest_itself_agrees_with_the_parse(tmp_path) -> None:
+    """Ask pytest, rather than asserting what pytest would say.
+
+    Every case above encodes MY model of collection. This one runs the real
+    collector over the same adversarial module and requires the two to match,
+    so the model cannot drift from the tool it is modelling.
+    """
+
+    import subprocess
+    import sys as _sys
+
+    module = tmp_path / "test_synthetic.py"
+    module.write_text(SYNTHETIC)
+
+    proc = subprocess.run(
+        [
+            _sys.executable, "-m", "pytest", str(module),
+            "--collect-only", "-q", "-p", "no:cacheprovider",
+            "--override-ini=addopts=", "--rootdir", str(tmp_path),
+        ],
+        capture_output=True, text=True, cwd=tmp_path, timeout=300,
+    )
+    assert proc.returncode == 0, proc.stdout[-2000:] + proc.stderr[-2000:]
+
+    collected = {
+        line.partition("::")[2].split("[")[0].split("::")[-1]
+        for line in proc.stdout.splitlines()
+        if "::" in line
+    }
+    assert collected, f"the collector returned nothing:\n{proc.stdout}"
+    assert collected == _load().collectable_tests(module)
+
+
+def test_the_recorded_machine_names_the_interpreter_that_ran_the_suite(tmp_path) -> None:
+    """`--record` runs under `python3`; the suite runs under `.venv311/bin/python`.
+
+    Those are different interpreters here — 3.14.4 and 3.11.14 — and the field
+    reported the SCRIPT's version while the counts and coverage came from the
+    venv's. It had always been capable of that and only began lying once
+    `python3` on PATH stopped being a 3.11, so nothing in the artifact's own
+    history would have shown it.
+
+    The stand-in interpreter is deliberate: comparing two real interpreters
+    would skip on a machine where they happen to match, and a skip is green —
+    which is the defect this whole file is about.
+    """
+
+    import platform
+    import stat
+    import sys as _sys
+
+    rf = _load()
+
+    # positive control: asked about THIS interpreter, it says what THIS is
+    assert rf.interpreter_version(_sys.executable) == platform.python_version()
+
+    shim = tmp_path / "pretend-python"
+    shim.write_text("#!/bin/sh\necho 9.9.9\n")
+    shim.chmod(shim.stat().st_mode | stat.S_IEXEC)
+
+    assert platform.python_version() != "9.9.9"
+    assert rf.interpreter_version(str(shim)) == "9.9.9", (
+        "the version is being read from the running script rather than from "
+        "the interpreter it was handed"
+    )
