@@ -168,8 +168,11 @@ RECORDED_NEVER_FIRED: dict[str, int] = {
 #:   * ``messages`` may only grow. It is here as the denominator, so that a
 #:     rate cannot be improved by deleting the mail it is computed over.
 #:   * ``wordings`` may only grow. A wording removed is evidence removed.
-#:   * ``no_strong`` is a FLOOR as a RATE where it is non-zero, and an EQUALITY
-#:     where it is zero. See the two tests for why those are different claims.
+#:   * ``no_strong`` is a FLOOR ON THE COUNT where it is non-zero, and an
+#:     EQUALITY where it is zero. Two different claims, two tests — and a floor
+#:     on the COUNT rather than on the rate, so that transcribing more wordings
+#:     that agree with the engine dilutes the rate without reading as
+#:     contamination. See ``_discovery_shortfalls``.
 RECORDED_FAMILIES: dict[str, tuple[int, int, int]] = {
     # ── the invented lifecycle. Written by the author of ``rules.py``, so its
     # discovery rate is 0.0% BY CONSTRUCTION: there is no sentence here the
@@ -350,6 +353,19 @@ def test_no_family_loses_a_wording_or_a_message(measured) -> None:
 
     missing = sorted(set(RECORDED_FAMILIES) - set(measured.families))
     assert not missing, f"families that no longer exist: {missing}"
+    # AND THE OTHER DIRECTION, which is the one that matters here. Every check
+    # in this file iterates RECORDED_FAMILIES, so a family that is ADDED and not
+    # recorded gets no wording pin, no discovery pin and no share of the growth
+    # trap below — it is simply invisible. The families #531 will add are
+    # `observed-interview` and `observed-offer`, which is to say the gate built
+    # to measure the interview and offer gap would have had nothing to say about
+    # the evidence that closes it.
+    unrecorded = sorted(set(measured.families) - set(RECORDED_FAMILIES))
+    assert not unrecorded, (
+        f"families with no recorded reach: {unrecorded}. Record "
+        f"(messages, wordings, no_strong) for each — until you do, nothing in "
+        f"this file measures them."
+    )
     shrunk = []
     for family, (messages, wordings, _) in sorted(RECORDED_FAMILIES.items()):
         now = measured.families[family]
@@ -383,9 +399,23 @@ def test_an_observed_family_has_exactly_its_templates_wordings(
     )
 
 
-@pytest.mark.parametrize("family", OBSERVED_FAMILIES)
+def _copies_without_evidence(measured) -> list[str]:
+    """Observed families that grew their messages and not their wordings."""
+
+    out = []
+    for family in OBSERVED_FAMILIES:
+        messages, wordings, _ = RECORDED_FAMILIES[family]
+        now = measured.families[family]
+        if now.messages > messages and now.wordings <= wordings:
+            out.append(
+                f"{family}: {messages} -> {now.messages} messages, still "
+                f"{now.wordings} wordings"
+            )
+    return out
+
+
 def test_an_observed_family_cannot_grow_messages_without_growing_wordings(
-    measured, family: str
+    measured,
 ) -> None:
     """THE 10,000-MESSAGES-36-WORDINGS TRAP, named in #530's close.
 
@@ -396,22 +426,64 @@ def test_an_observed_family_cannot_grow_messages_without_growing_wordings(
     message count while their wording count stands still.
     """
 
-    messages, wordings, _ = RECORDED_FAMILIES[family]
-    now = measured.families[family]
-    if now.messages > messages:
-        assert now.wordings > wordings, (
-            f"{family} grew from {messages} to {now.messages} messages and is "
-            f"still {wordings} wordings. More copies of the same letter is more "
-            f"rows and no more evidence; transcribe a new one (#531) or leave "
-            f"the count alone."
-        )
+    trapped = _copies_without_evidence(measured)
+    assert not trapped, (
+        "more copies of the same letter is more rows and no more evidence:\n  "
+        + "\n  ".join(trapped)
+        + "\n\nTranscribe a new wording (#531) or leave the count alone."
+    )
+
+
+def test_the_copies_without_evidence_trap_can_actually_spring(measured) -> None:
+    """THE CONTROL ON IT, because on this tree the check above is DORMANT.
+
+    Nothing has grown, so its predicate is false for every family and it cannot
+    fail today — which is this estate's recurring defect, a check that passes
+    because it never evaluates anything. So the predicate is fed the shape it
+    exists to catch: an observed family's messages multiplied while its wordings
+    stand still, which is exactly what shipping 10,000 messages of 36 templates
+    looks like.
+
+    Directional in both halves. Growing the messages AND the wordings must NOT
+    trip it, or the check would forbid the good change as well as the bad one.
+    """
+
+    family = "observed-rejection"
+    messages, wordings, no_strong = RECORDED_FAMILIES[family]
+
+    def _as(msgs: int, words: int):
+        families = dict(measured.families)
+        families[family] = reach.FamilyReach(msgs, words, no_strong)
+        return reach.Reach(measured.fired, measured.total_patterns, families)
+
+    assert not _copies_without_evidence(measured), "the tree is clean"
+    sprung = _copies_without_evidence(_as(messages * 10, wordings))
+    assert len(sprung) == 1 and sprung[0].startswith(family), (
+        f"440 -> 4400 messages on the same 29 wordings and the trap said "
+        f"{sprung}"
+    )
+    assert not _copies_without_evidence(_as(messages * 10, wordings + 1)), (
+        "one new transcription with the growth is the change this is FOR; "
+        "forbidding it would make the check an obstacle rather than a gate"
+    )
 
 
 # ── metric 3: discovery rate ─────────────────────────────────────────────────
 
 
 def _discovery_shortfalls(measured) -> list[str]:
-    """Families whose discovery rate has fallen below what was recorded.
+    """Families that have LOST discovery power against what was recorded.
+
+    THE FLOOR IS ON THE COUNT AND THE REPORT IS IN RATES, and those are not the
+    same claim. A rate floor reds on a third thing that is neither of the two
+    cases below: transcribe more wordings that AGREE with the engine and the
+    denominator grows while the numerator does not, so the rate falls. That is
+    not contamination — a randomly chosen real ATS wording matches a strong
+    pattern about 83% of the time in this very corpus (``observed-rejection``,
+    364 of 440), so ordinary honest growth lands there more often than not, and
+    a rate floor would meet it with an accusation the ``observed.py`` docstring
+    says is wrong. The COUNT only falls when a message that used to reach
+    nothing now reaches something, which is the two cases the failure names.
 
     A function rather than an inline assert because the mutation test below has
     to be able to ask "would this have failed", which is the only way to prove a
@@ -422,21 +494,20 @@ def _discovery_shortfalls(measured) -> list[str]:
     for family, (messages, _, no_strong) in sorted(RECORDED_FAMILIES.items()):
         if not no_strong:
             continue
-        floor = no_strong / messages
         now = measured.families[family]
-        if now.discovery_rate < floor:
+        if now.no_strong < no_strong:
             out.append(
-                f"{family}: {floor:.1%} ({no_strong}/{messages}) -> "
+                f"{family}: {no_strong / messages:.1%} ({no_strong}/{messages}) -> "
                 f"{now.discovery_rate:.1%} ({now.no_strong}/{now.messages})"
             )
     return out
 
 
 def test_the_corpus_keeps_the_discovery_power_it_has(measured) -> None:
-    """DIRECTION: a non-zero discovery rate is a FLOOR.
+    """DIRECTION: the messages that reach nothing are a FLOOR.
 
-    Two very different things can lower one of these and the failure has to say
-    which, so it reports whether the fired set grew:
+    Exactly two things can lower that count, they call for opposite responses,
+    and the failure has to say which — so it reports whether the fired set grew:
 
     * **The corpus drifted toward the engine.** Somebody edited a transcribed
       wording until it matched a rule. ``observed.py`` forbids it in terms and
@@ -449,6 +520,9 @@ def test_the_corpus_keeps_the_discovery_power_it_has(measured) -> None:
       previously matched nothing — a genuine gap closed, and the honest outcome
       of reading this table. This is the case where the fired set GREW, and it
       is a legitimate reason to re-record.
+
+    A third thing that lowers the RATE is deliberately not a failure; see
+    ``_discovery_shortfalls`` for why the floor is on the count.
 
     For the noise families (``ats-relay-noise``, ``not-job-mail``) a fall means
     neither: it means lifecycle patterns have started matching mail that must
