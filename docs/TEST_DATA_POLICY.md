@@ -47,9 +47,11 @@ the module **docstring** above them, where it sits on `main` today.
 
 The allowlist is not a matter of taste, which is why it is closed to argument.
 RFC 2606 §2 reserves the `.test`, `.example`, `.invalid` and `.localhost`
-top-level domains; §3 reserves `example.com`, `example.net` and `example.org`;
-RFC 6761 §6.3 makes `.localhost` un-routable by definition. Nothing in that set
-can ever reach a real mailbox, and that is the only property being asserted.
+top-level domains; §3 reserves `example.com`, `example.net` and `example.org`
+**and everything under them**, so `email.careers.example.com` is as un-routable
+as the bare name; RFC 6761 §6.3 makes `.localhost` un-routable by definition.
+Nothing in that set can ever reach a real mailbox, and that is the only property
+being asserted.
 
 A domain that merely *looks* invented is not in the set. `acme.com`,
 `northwind.com` and `initech.com` are real registrations owned by somebody else,
@@ -86,9 +88,10 @@ recurring defect.
 
 ## The baseline is a ratchet, not a backlog
 
-`scripts/test_data_baseline.json` lists 83 tracked files that already contain
+`scripts/test_data_baseline.json` lists the tracked files that already contain
 addresses on non-reserved domains. **It is not a to-do list, and working it down
-is not an improvement.**
+is not an improvement.** (No count is written here on purpose: a number in prose
+drifts silently and nothing gates this file. The baseline is its own authority.)
 
 Three reasons, and the first is the one that settles it:
 
@@ -169,6 +172,9 @@ file, in a public repository. The check is on shape.
 - **It reads files.** Commit messages, PR bodies and issue bodies are in the
   rule's scope and out of the gate's reach entirely. Six public issues already
   carry this material; nothing mechanical will catch the seventh.
+- **It reports a rename badly.** Moving a baselined file shows as a new file
+  *and* a cleared one, and the headline says "new sender addresses" when nothing
+  was added. Read the two lines together before believing it.
 - **It does not read history.** It measures the working tree. Everything in
   section [The baseline is a ratchet](#the-baseline-is-a-ratchet-not-a-backlog)
   applies.
@@ -185,4 +191,7 @@ throwaway git tree and asserts three things, which are the three the gate
 claims: a count going up in a baselined file reds, a brand-new file with a hit
 reds, and an address on a reserved domain stays green. That last case is not
 padding — a gate that reddened on `careers@halberd.test` would punish the shape
-this document tells you to write.
+this document tells you to write. It nearly did: review found that the first cut
+matched `example.com` exactly and so flagged
+`donotreply@email.careers.example.com`, the `.com` analogue of the address cited
+above as the shape to copy. Subdomain cases are in the test now.

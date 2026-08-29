@@ -169,7 +169,15 @@ def test_a_reserved_domain_stays_green(tree: Path) -> None:
     new.write_text(
         f'A = "{_reserved()}"\nB = "careers@halberd.test"\n'
         'C = "hiring@northwind.example"\nD = "x@y.invalid"\n'
-        'E = "dev@example.com"\n',
+        'E = "dev@example.com"\n'
+        # SUBDOMAINS of the reserved second-level names. RFC 2606 §3 reserves
+        # them too, and the first cut of the gate did not: it matched
+        # `example.com` exactly and reddened on the `.com` analogue of the very
+        # address the policy holds up as the shape to copy. Caught in review;
+        # these four lines are what keeps it caught.
+        'F = "donotreply@email.careers.example.com"\n'
+        'G = "hr@mail.example.org"\n'
+        'H = "no-reply@ats.example.net"\n',
         encoding="utf-8",
     )
     subprocess.run(
@@ -215,6 +223,40 @@ def test_a_docstring_is_scanned_not_just_a_literal(tree: Path) -> None:
         ["git", "add", "-A"], cwd=tree, check=True, capture_output=True
     )
     assert _check(gate, tree) == 1
+
+
+@pytest.mark.parametrize(
+    "domain",
+    [
+        "example.com",
+        "email.careers.example.com",
+        "mail.example.org",
+        "ats.example.net",
+        "halberd.test",
+        "ironvale.example.test",
+        "northwind.example",
+        "y.invalid",
+        "localhost",
+    ],
+)
+def test_reserved_domains_are_allowed(domain: str) -> None:
+    assert _load().is_allowed(domain) is True
+
+
+@pytest.mark.parametrize(
+    "domain",
+    [
+        # Real registrations that merely LOOK invented, and two near-misses that
+        # a naive `"example" in domain` would wave through.
+        "acme.com",
+        "northwind.com",
+        "notexample.com",
+        "fakeexample.org",
+        "example.com.attacker.io",
+    ],
+)
+def test_lookalike_domains_are_not_allowed(domain: str) -> None:
+    assert _load().is_allowed(domain) is False
 
 
 def test_this_module_is_not_itself_a_finding() -> None:

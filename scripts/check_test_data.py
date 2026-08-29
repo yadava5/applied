@@ -72,6 +72,14 @@ RESERVED_TLDS = (".test", ".example", ".invalid", ".localhost")
 RESERVED_DOMAINS = frozenset(
     {"example.com", "example.net", "example.org", "localhost"}
 )
+#: RFC 2606 §3 reserves those second-level names *and everything under them*, so
+#: `email.careers.example.com` is as un-routable as the bare name. Matching the
+#: bare name only is not a near-miss, it is an inverted gate: it reds on
+#: `donotreply@email.careers.example.com` — the direct `.com` analogue of the
+#: `email.careers.example.test` this repository already uses and this gate's own
+#: failure message recommends — and the reader is then told by that message that
+#: `example.com` is fine. Caught in review before merge.
+RESERVED_SUFFIXES = tuple("." + d for d in ("example.com", "example.net", "example.org"))
 
 #: Deliberately loose on the left of the `@` and strict on the right: the point
 #: is to notice an address at all, not to validate one. Anchoring the TLD at two
@@ -88,7 +96,7 @@ def is_allowed(domain: str) -> bool:
     domain = domain.lower().rstrip(".")
     if domain in RESERVED_DOMAINS:
         return True
-    return domain.endswith(RESERVED_TLDS)
+    return domain.endswith(RESERVED_TLDS) or domain.endswith(RESERVED_SUFFIXES)
 
 
 def tracked_files(repo_root: Path) -> list[str]:
@@ -204,6 +212,16 @@ def report(counts: dict[str, int], baseline: dict[str, int]) -> int:
         return 0
 
     print("\nFAIL — new sender addresses on domains that are not RFC-reserved.\n")
+    if new_files and cleared:
+        # Printed only when both halves of a rename are present, so it is never
+        # noise on a failure it does not explain. A gate whose message says
+        # things that do not apply is one people stop reading.
+        print(
+            "  (A `new file` beside a `cleared` below with the same count is a\n"
+            "   RENAME, not an addition. Re-record the baseline and say so.)\n"
+        )
+        for path in cleared:
+            print(f"  cleared: {path} {baseline[path]} -> 0")
     for path in new_files:
         print(f"  new file: {path} ({counts[path]})")
     for path in grown:
@@ -212,8 +230,9 @@ def report(counts: dict[str, int], baseline: dict[str, int]) -> int:
     print(
         f"""
 Every address in a fixture, docstring, comment or sample must sit on a domain
-that cannot route: `example.test`, `example.com`, or anything under `.test`,
-`.example` or `.invalid`. Copy the shape in
+that cannot route: anything under `.test`, `.example` or `.invalid`, or under
+`example.com` / `.net` / `.org` — `email.careers.example.com` counts. Copy the
+shape in
 `backend/tests/test_dismissed_card_does_not_settle_its_mail.py` — invented
 employers, `careers@halberd.test`, `careers@ironvale.example.test`.
 
