@@ -48,8 +48,18 @@ TWO CLASSES OF FACT
              checker is how drift starts. So the fast path never runs the
              suite; `--record` does, deliberately.
 
-The two classes are tied together by INVARIANTS (see below), so a recorded
-figure cannot go stale without a static one noticing.
+The two classes are tied together by INVARIANTS (see below). That coupling is
+weaker than this file used to claim, and the claim is corrected here rather than
+deleted: the only invariant joining them is `testsCollected >= testFunctions`,
+which is ONE-SIDED. A recording can rot for weeks under a ceiling it never
+crosses — measured on #351, where 194 tests of drift were invisible, and again
+on 2026-08-28, where the 2026-08-24 recording sat 148 static functions and 12
+modules behind HEAD while every gate stayed green. Parametrization means the
+two counts are not comparable in the other direction, so no invariant can close
+this; `--check` therefore PRINTS the drift on every run (see `staleness_note`)
+and the README says out loud that the recorded figure moves only on `--record`.
+Visible staleness, not a gate that would be red every other day and deleted
+within the week.
 
 COUNT AT THE DEFINITION SITE, NOT THE USE SITE
 
@@ -649,15 +659,63 @@ def test_modules() -> list[Path]:
     return sorted((REPO / "backend" / "tests").glob("test_*.py"))
 
 
+_FIXTURE_DECORATORS = {"fixture", "pytest.fixture", "pytest_asyncio.fixture"}
+
+
+def _is_fixture(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """A ``@pytest.fixture`` named ``test_*`` is a fixture, and pytest skips it."""
+
+    for dec in node.decorator_list:
+        target = dec.func if isinstance(dec, ast.Call) else dec
+        if ast.unparse(target) in _FIXTURE_DECORATORS:
+            return True
+    return False
+
+
+def collectable_tests(path: Path) -> set[str]:
+    """The names pytest would collect from one module, by the rules it uses.
+
+    ``ast.walk`` is the wrong tool here and produced two wrong numbers, both
+    found by diffing this against ``pytest --collect-only`` over the real tree:
+
+    * ``test_database.py``'s ``test_session`` is a ``@pytest.fixture`` that
+      happens to be named like a test. pytest never collects a fixture.
+    * ``test_hold_reason_and_employer_gaps.py`` defined
+      ``test_the_web_knows_every_reason_this_module_can_emit`` TWICE at module
+      scope. Python binds the second, pytest collects one, and ``ast.walk``
+      counted two — so the published figure included a function that could
+      never run.
+
+    Both are the same class of error: a static count that does not model
+    collection will drift from it in ways no invariant here can see, because
+    every number it is compared against is derived from the same wrong parse.
+    Returning a SET of names, from module scope and ``Test*`` class bodies only,
+    matches what pytest does — a nested ``def test_…`` helper is not collected
+    either.
+    """
+
+    names: set[str] = set()
+
+    def take(body: list[ast.stmt]) -> None:
+        for node in body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if node.name.startswith("test_") and not _is_fixture(node):
+                    names.add(node.name)
+
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    take(tree.body)
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+            take(node.body)
+    return names
+
+
 def test_functions(only: str | None = None) -> int:
-    total = 0
-    for p in test_modules():
-        if only and p.name != only:
-            continue
-        for node in ast.walk(ast.parse(p.read_text(encoding="utf-8"), filename=str(p))):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"):
-                total += 1
-    return total
+    return sum(
+        len(collectable_tests(p))
+        for p in test_modules()
+        if not only or p.name == only
+    )
 
 
 def ci_min_macro_f1() -> float:
@@ -1872,6 +1930,22 @@ INVARIANTS = [
 # ── resolve ──────────────────────────────────────────────────────────────
 
 
+
+def _rel(path: Path) -> str:
+    """``path`` relative to the repo when it is inside it, else the path itself.
+
+    ``_rel(ARTIFACT)`` raises when the two disagree, which happens
+    whenever a caller redirects ``REPO`` — the writer's own tests do exactly
+    that. A checker whose job is to REPORT a disagreement must not raise while
+    formatting the sentence that reports it.
+    """
+
+    try:
+        return str(path.relative_to(REPO))
+    except ValueError:
+        return str(path)
+
+
 def fail(msg: str) -> None:
     print(f"\n  ✗ {msg}\n", file=sys.stderr)
     raise SystemExit(1)
@@ -1880,7 +1954,7 @@ def fail(msg: str) -> None:
 def load_artifact() -> dict:
     if not ARTIFACT.exists():
         fail(
-            f"{ARTIFACT.relative_to(REPO)} is missing.\n"
+            f"{_rel(ARTIFACT)} is missing.\n"
             f"      Recorded facts (test counts, coverage) have no source without it.\n"
             f"      Run: python3 scripts/readme_facts.py --record"
         )
@@ -1897,7 +1971,7 @@ def resolve_facts() -> tuple[dict, dict]:
             rec = (artifact.get("facts") or {}).get(fid)
             if rec is None:
                 fail(
-                    f'fact "{fid}" is recorded, but {ARTIFACT.relative_to(REPO)} has no entry '
+                    f'fact "{fid}" is recorded, but {_rel(ARTIFACT)} has no entry '
                     f"for it.\n      Run: python3 scripts/readme_facts.py --record"
                 )
             values[fid] = rec["value"]
@@ -2087,7 +2161,7 @@ def run(mode: str) -> None:
         else:
             problems.append(
                 f"the README says the recorded figures were taken on {dm.group(1)}, but "
-                f"{ARTIFACT.relative_to(REPO)} was recorded {artifact['recordedAt']}."
+                f"{_rel(ARTIFACT)} was recorded {artifact['recordedAt']}."
             )
 
     # The recorded figures are only worth anything if the run that produced them
@@ -2098,7 +2172,7 @@ def run(mode: str) -> None:
     outcome = artifact.get("suiteOutcome") or {}
     if not outcome:
         problems.append(
-            f"{ARTIFACT.relative_to(REPO)} carries no suiteOutcome, so there is no "
+            f"{_rel(ARTIFACT)} carries no suiteOutcome, so there is no "
             "evidence the run behind these figures passed. Re-run --record."
         )
     elif not outcome.get("allGreen"):
@@ -2159,6 +2233,13 @@ def run(mode: str) -> None:
         f"  ✓ {n} facts, asserted at {sites} sites across {len(files)} file(s), "
         f"all agree with the code ({len(INVARIANTS)} invariants hold)."
     )
+    # Never fatal. The recorded figures legitimately describe an earlier tree —
+    # that is what "recorded" means — and a gate here would be red every other
+    # day and deleted within the week. Printing it is what makes the drift
+    # something a reader can see rather than something only #351 could find.
+    note = staleness_note(artifact)
+    if note is not None:
+        print(f"  · {note}")
 
 
 # ── record ───────────────────────────────────────────────────────────────
@@ -2214,9 +2295,16 @@ def record() -> None:
     print(f"  → (cd backend && {printable})")
 
     env = dict(os.environ, JOBTRACKER_ENVIRONMENT="test")
-    # pytest exits non-zero on a failing test but still prints its summary. We
-    # want the summary either way — a red suite still has a real count, and
-    # recording it is more honest than refusing to.
+    # pytest exits non-zero on a failing test but still prints its summary, and
+    # we parse it either way so the refusal below can NAME what went wrong.
+    #
+    # This reverses a deliberate earlier choice, so it is stated rather than
+    # slipped in: recording a red run used to be the policy, on the argument
+    # that a red run and a clean one must not leave identical files behind.
+    # That argument is about the artifact carrying the outcome, and it is
+    # satisfied more simply by not producing an artifact at all. These figures
+    # are PUBLISHED to README.md; coverage measured on a broken tree is a
+    # number with a command behind it and no meaning in front of it.
     proc = subprocess.run(cmd, cwd=backend, env=env, capture_output=True, text=True)
     out = proc.stdout + proc.stderr
     counts = parse_pytest(out)
@@ -2249,7 +2337,14 @@ def record() -> None:
             "a command behind them."
         ),
         "recordedAt": date.today().isoformat(),
-        "machine": f"{platform.system()}-{platform.machine()}, {platform.python_version()}",
+        "machine": f"{platform.system()}-{platform.machine()}, {interpreter_version(python)}",
+        # What the drift note measures against. `testsCollected` cannot be
+        # compared with a later static count — parametrization lifts one and
+        # not the other — but the static count CAN be compared with itself at
+        # two times, which is what makes rot visible without a second suite run.
+        "recordedCommit": _head_commit(),
+        "testFunctionsAtRecord": test_functions(),
+        "testModulesAtRecord": len(test_modules()),
         "facts": {
             "testsCollected": {"value": counts["collected"], "command": cmd_text},
             "testsSkipped": {"value": counts.get("skipped", 0), "command": cmd_text},
@@ -2264,12 +2359,13 @@ def record() -> None:
             "scriptsZeroModules": {"value": len(zero), "command": cmd_text},
             "scriptsZeroStatements": {"value": sum(s for _, s in zero), "command": cmd_text},
         },
-        # Recorded but deliberately NOT asserted anywhere in the README. A green
-        # artifact must not be mistakable for a green suite: --record keeps the
-        # counts from a failing run on purpose, so without this block a red run
-        # and a clean one leave identical files behind. `dockerAvailable` is here
-        # because the RLS tests skip silently without it, and "0 skipped" is
-        # the one claim on the page that a skip would quietly satisfy.
+        # The provisioning record. `refuse_reason` reads this block and reads
+        # nothing else, so what gets published is decided by what is written
+        # down here rather than by ambient state at check time. `dockerAvailable`
+        # is here because the postgres modules skip silently without it, and
+        # "0 skipped" is the one claim on the page that a skip would quietly
+        # satisfy — for a long time this field was recorded and then never read
+        # by anything, which is the whole of #351.
         "suiteOutcome": {
             "passed": counts.get("passed", 0),
             "failed": counts.get("failed", 0),
@@ -2284,13 +2380,136 @@ def record() -> None:
             else False,
         },
     }
-    ARTIFACT.parent.mkdir(parents=True, exist_ok=True)
-    ARTIFACT.write_text(json.dumps(artifact, indent=2) + "\n", encoding="utf-8")
-    print(f"\n  ✓ wrote {ARTIFACT.relative_to(REPO)} (recorded {artifact['recordedAt']})")
-    if not artifact["suiteOutcome"]["allGreen"]:
-        print("    NOTE: the suite was NOT green. The counts are recorded anyway; the outcome")
-        print("          is in suiteOutcome so this file cannot be mistaken for a pass.")
+    write_artifact(artifact, ARTIFACT)
     print("    Now run: python3 scripts/readme_facts.py --write")
+
+
+
+def refuse_reason(outcome: dict) -> str | None:
+    """Why this run must not become the recording, or ``None`` if it may.
+
+    WHAT THIS EXISTS TO STOP, measured on #351. ``--record`` used to write
+    whatever it observed. On a machine without Docker — or without the
+    ``testcontainers[postgres]`` / ``psycopg[binary]`` extras — the five
+    ``*_postgres`` modules skip, and skipped tests are still COLLECTED, so
+    ``testsCollected >= testFunctions`` holds and every gate stays green while
+    the page's guarantee quietly weakens from "0 skipped" to "N skipped". The
+    documented local recipe produced exactly that artifact; it was caught by a
+    human questioning the recipe, which is not a mechanism.
+
+    So provisioning is now enforced rather than described. A recording is
+    refused when anything skipped, when Docker was unreachable, or when the
+    suite was not green — each of which makes the published figures answer a
+    different question from the one the README asks.
+
+    Pure on purpose: ``--record`` runs rarely and needs a Docker daemon, so a
+    refusal that could only be exercised by actually breaking a machine would
+    be a check nobody ever fires. This takes a dict, so every combination is
+    testable in milliseconds.
+    """
+
+    if not outcome.get("dockerAvailable"):
+        return (
+            "Docker was not reachable, so the postgres modules could not run. "
+            "A recording from this machine would publish a skip count as though "
+            "it were a full run."
+        )
+    if outcome.get("skipped"):
+        return (
+            f"{outcome['skipped']} test(s) skipped. A skip is green: the count "
+            "would be published as if those tests had passed. Install the test "
+            "extras (testcontainers[postgres], psycopg[binary]) and re-run."
+        )
+    if not outcome.get("allGreen"):
+        return (
+            f"the suite was not green (failed={outcome.get('failed')}, "
+            f"exitCode={outcome.get('exitCode')}). Fix the suite, then record."
+        )
+    return None
+
+
+
+def _head_commit() -> str:
+    """The commit the recording describes, or ``""`` outside a git checkout."""
+
+    proc = subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=REPO
+    )
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def staleness_note(artifact: dict) -> str | None:
+    """One line naming how far the recording has drifted, or ``None`` if fresh.
+
+    Printed by ``--check``, never fatal. The figures it compares are the static
+    test count then and now, which is the same measurement taken twice — unlike
+    `testsCollected`, which parametrization makes incomparable with any static
+    parse. An artifact recorded before this field existed says so instead of
+    guessing.
+    """
+
+    then = artifact.get("testFunctionsAtRecord")
+    if then is None:
+        return (
+            f"recorded {artifact.get('recordedAt', '?')}; drift is unmeasurable "
+            "because this artifact predates testFunctionsAtRecord. Re-run --record."
+        )
+    now = test_functions()
+    mods_then = artifact.get("testModulesAtRecord")
+    mods_now = len(test_modules())
+    if now == then and mods_then == mods_now:
+        return None
+    return (
+        f"recorded {artifact.get('recordedAt', '?')} at "
+        f"{(artifact.get('recordedCommit') or '?')[:8]}; the suite has moved since: "
+        f"{then} -> {now} test functions across {mods_then} -> {mods_now} modules. "
+        "The recorded counts and coverage describe the earlier tree. "
+        "Re-run --record when the gap matters."
+    )
+
+
+
+def write_artifact(artifact: dict, path: Path) -> None:
+    """Refuse or write. The refusal happens BEFORE anything touches the disk.
+
+    A gate that raises once the file is already on disk has changed the exit
+    code and nothing else: the next ``--write`` reads the bad artifact and
+    publishes it. So this is one function, the check is its first statement,
+    and the two cannot be reordered by accident in a caller.
+    """
+
+    refusal = refuse_reason(artifact["suiteOutcome"])
+    if refusal is not None:
+        print(f"\n  ✗ refusing to record: {refusal}", file=sys.stderr)
+        print(f"    observed: {json.dumps(artifact['suiteOutcome'])}", file=sys.stderr)
+        print(f"    {path} is unchanged.\n", file=sys.stderr)
+        raise SystemExit(1)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(artifact, indent=2) + "\n", encoding="utf-8")
+    print(f"\n  ✓ wrote {path} (recorded {artifact['recordedAt']})")
+
+
+
+def interpreter_version(python: str) -> str:
+    """The version of the interpreter that will RUN the suite, not this script.
+
+    `--record` is a stdlib-only script usually invoked as `python3`, but it
+    runs pytest under `backend/.venv311/bin/python`. Those are different
+    interpreters — 3.14.4 and 3.11.14 on this machine — and `platform.python_version()`
+    reports the first while the recorded counts and coverage come from the
+    second. It happened to agree for as long as whoever recorded had a 3.11
+    `python3` on PATH, so a field that had always been capable of lying only
+    started lying once that stopped being true. Ask the interpreter that does
+    the work.
+    """
+
+    proc = subprocess.run(
+        [python, "-c", "import platform; print(platform.python_version())"],
+        capture_output=True,
+        text=True,
+    )
+    return proc.stdout.strip() if proc.returncode == 0 else "unknown"
 
 
 def _which(prog: str) -> str | None:

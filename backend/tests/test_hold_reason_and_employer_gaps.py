@@ -474,34 +474,3 @@ def test_the_web_knows_every_reason_this_module_can_emit() -> None:
         f"backend only: {sorted(set(pipeline.HOLD_REASONS) - on_the_web)}, "
         f"web only: {sorted(on_the_web - set(pipeline.HOLD_REASONS))}"
     )
-
-
-def test_the_web_knows_every_reason_this_module_can_emit() -> None:
-    """THE CROSS-LANGUAGE LOCKSTEP.
-
-    `holdReasonSentence` renders NOTHING for a reason it does not recognise —
-    deliberately, so an unknown reason degrades to silence instead of a guess.
-    That safety property is also what makes a drift invisible: add a member
-    here, forget the web, and the row simply stops explaining itself while
-    every suite stays green. This is the only thing that would say so.
-    """
-
-    web = (
-        pathlib.Path(__file__).resolve().parents[2]
-        / "apps"
-        / "web"
-        / "lib"
-        / "dashboard"
-        / "review.ts"
-    )
-    assert web.exists(), f"{web} is missing — the parity guard cannot run"
-
-    source = web.read_text()
-    block = source[source.index("export const HOLD_REASONS") : source.index("] as const;")]
-    on_the_web = set(re.findall(r'"([a-z_]+)"', block))
-
-    assert on_the_web == set(pipeline.HOLD_REASONS), (
-        "the hold-reason vocabularies have drifted — "
-        f"backend only: {sorted(set(pipeline.HOLD_REASONS) - on_the_web)}, "
-        f"web only: {sorted(on_the_web - set(pipeline.HOLD_REASONS))}"
-    )
