@@ -372,6 +372,15 @@ def matches_company_token(company_name: str, token: str) -> bool:
     already applies when it collapses a company's mail under one token. Two
     employers sharing a first word therefore merge — but they would have shared
     a rolled row anyway, whereas the alternative is the duplicate above.
+
+    THIS RULE HAS A WEB MIRROR: ``matchesEmployerToken`` in
+    ``apps/web/lib/dashboard/review.ts``. The filed ledger asks the user which
+    application a correction is about, and it may only offer rows this function
+    would accept as an answer — offering one it would reject files the mail
+    somewhere else, and offering none asks nothing and lets the backend's
+    tie-break move a live application unasked (#560). The two are held together
+    by ``apps/web/tests/fixtures/employer-token-match.json``, a table both
+    sides execute; add a case there, not to one side.
     """
 
     left = _normalize_token(company_name or "")
@@ -2073,6 +2082,149 @@ class DroppedVerdict:
     message_id: str
     category: str
     confidence: float
+
+
+@dataclass(frozen=True)
+class ScanLedger:
+    """Where every message a scan looked at ENDED UP. One partition, it closes.
+
+    THE QUESTION THIS ANSWERS is the most common one a user asks about this
+    product — "did you see my mail?" — and until now neither the response nor
+    the database could answer it. On 2026-08-21 four Microsoft confirmations
+    were read by a sync and produced no application, no queue entry and no
+    ``emails`` row (:class:`DroppedVerdict` is that half, and it is counted
+    here as ``dropped``). What was still missing afterwards is the OTHER
+    terminal exit: a message the classifier scored ``other``, which leaves
+    through the same door and is not counted by anything. From the database
+    it is indistinguishable from mail that never arrived.
+
+    THE PARTITION, over the messages that entered the pipeline::
+
+        classified == filed + queued + dropped + reached_nothing
+
+    · ``classified`` — messages that reached :func:`roll_up_applications` and
+      :func:`collect_review_items`. NOT the same as the scan's ``scanned``:
+      ``scanned - classified`` is everything the run dropped BEFORE an item
+      existed. Today that is the user's own sent mail, which
+      ``_classify_messages`` skips structurally, plus — since this counts
+      DISTINCT ids — any message id a caller relayed twice (``gmail_sync``
+      keeps one item per id, first occurrence, so a repeat widens this gap
+      instead of landing the same message in two buckets). The partition
+      closes over this number and not over ``scanned``, because a message that
+      never became an item was never routed anywhere.
+    · ``filed`` — landed in a rolled-up application, so it becomes an
+      ``emails`` row attached to a card.
+    · ``queued`` — routed to the needs-classification queue. This is what the
+      SCAN produced, not what the queue then held: the additive merge drops
+      refs whose thread is already settled, so ``SyncResponse.needs_review``
+      is legitimately smaller. Two numbers, two questions, named apart.
+    · ``dropped`` — a lifecycle verdict under :data:`REVIEW_FLOOR`. Counted
+      and NAMED per message; see :class:`DroppedVerdict`.
+    · ``reached_nothing`` — everything else. It left no row, no queue entry
+      and, until this class, no number.
+
+    ``reached_nothing`` IS THE HARNESS'S ``LOST``, WIDENED TO WHAT THE PRODUCT
+    CAN ACTUALLY COMPUTE. ``tests/corpus_independent/harness.py`` scores a
+    message LOST when it is about a real application and reached nothing, and
+    DROPPED when it went under the review floor — "one of these is invisible
+    and the other is merely bad". That distinction is reused here verbatim:
+    ``dropped`` is the harness's DROPPED. But LOST needs ground truth, and at
+    runtime there is none — a newsletter and a missed confirmation both score
+    ``other`` and both reach nothing. So this bucket is the SUPERSET the
+    product can honestly compute: LOST plus the noise that was correctly
+    ignored. It is a haystack with a needle in it sometimes, and the point is
+    that until now there was not even a haystack.
+
+    Three shapes land in it, and only the first is a defect:
+
+      · ``other`` — a classifier miss, or ordinary inbox noise. The bulk of it.
+      · ``follow_up`` — the user's own chasing mail, excluded by design.
+      · a message whose thread was already represented in the queue.
+        :func:`collect_review_items` keeps one entry per thread-and-application,
+        and the siblings it deduplicates are persisted nowhere, so they really
+        did reach nothing. Counting them anywhere else would be a lie.
+
+    COUNTS, NOTHING ELSE. This is a privacy-sensitive product: the message ids
+    behind these numbers are used to compute them and are thrown away with the
+    sets. A ledger that listed what was ignored would store subjects and
+    senders for mail the product decided not to file, which is the one thing
+    ``apps/web/app/(app)/privacy/page.tsx`` promises it does not do.
+    """
+
+    classified: int
+    filed: int
+    queued: int
+    dropped: int
+    reached_nothing: int
+
+    @property
+    def closes(self) -> bool:
+        """Whether the four buckets account for every classified message."""
+
+        return (
+            self.filed + self.queued + self.dropped + self.reached_nothing
+            == self.classified
+        )
+
+
+def ledger_for_scan(
+    items: Iterable[PipelineItem],
+    rolled: Iterable[RolledApplication],
+    review: Iterable[ReviewItem],
+    dropped: Iterable[DroppedVerdict],
+) -> ScanLedger:
+    """Partition one scan's messages by where they ended up.
+
+    Derived from the OUTPUTS of the three functions that route a scan, not from
+    a re-implementation of their branch conditions. A counter that re-derives a
+    routing decision is a second reader of the same shape and drifts from the
+    first — the corpus's incremental layer was exactly that mirror and was
+    reporting merges the product no longer had.
+
+    ``reached_nothing`` is a SET DIFFERENCE, not a subtraction. Computed as
+    ``classified - filed - queued - dropped`` on the ids, it cannot go negative
+    and the partition closes by construction rather than by luck.
+
+    WHEN IT CANNOT CLOSE it logs and reports anyway. The buckets are disjoint
+    for every shape measured — including the 17,260-message adversarial corpus,
+    where they partition it exactly — but a future routing change could make
+    one message both filed and queued, and a 500 on the user's sync to defend a
+    counter would be a worse bug than the silence this replaces.
+
+    ONE SHAPE ALREADY REACHED IT, and it was fixed at the caller rather than
+    here: two relayed items sharing a ``message_id`` under two categories were
+    routed twice and landed in two buckets at once. That is a duplicate INPUT,
+    not overlapping routing, so ``gmail_sync`` now keeps one item per id and
+    this function is left deriving counts from the routing outputs rather than
+    correcting them. The hard
+    assertion lives in the tests, where a violation is a red build rather than
+    a failed sync.
+    """
+
+    scanned_ids = {item.message_id for item in items}
+    filed_ids = {m.message_id for r in rolled for m in r.messages} & scanned_ids
+    queued_ids = {r.message_id for r in review} & scanned_ids
+    dropped_ids = {d.message_id for d in dropped} & scanned_ids
+
+    overlap = (
+        (filed_ids & queued_ids) | (filed_ids & dropped_ids) | (queued_ids & dropped_ids)
+    )
+    if overlap:
+        logger.warning(
+            "Scan ledger buckets overlap on %s message(s); the partition does "
+            "not close and the counts below under-report. This is a routing "
+            "change, not a counting one: a message reached two of filed / "
+            "queued / dropped.",
+            len(overlap),
+        )
+
+    return ScanLedger(
+        classified=len(scanned_ids),
+        filed=len(filed_ids),
+        queued=len(queued_ids),
+        dropped=len(dropped_ids),
+        reached_nothing=len(scanned_ids - filed_ids - queued_ids - dropped_ids),
+    )
 
 
 def _rank_to_status(rank: int) -> str:

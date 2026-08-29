@@ -256,11 +256,51 @@ def test_real_rejections_are_classified_as_confirmations(
     result, item = _item(subject, snippet, sender, "probe")
 
     assert result.category is EmailCategory.APPLIED, result.scores
-    # At REVIEW_FLOOR and under AUTO_FILE_GATE: the review queue, which is the
-    # only reason these two were recoverable at all.
-    assert result.confidence >= pipeline.REVIEW_FLOOR
+    # THE ROUTE, NOT THE NUMBER, and that is a rewrite rather than a
+    # relaxation — the same rewrite this file's docstring records having made
+    # once already, for the same reason.
+    #
+    # This used to read ``confidence >= REVIEW_FLOOR``, which was a PROXY for
+    # "a human still sees it". That proxy was true when it was written and a
+    # later change superseded it: the ATS floor (#447, section 3 below) routes
+    # an ATS-relayed LIFECYCLE verdict to the queue at ANY confidence, so the
+    # floor is no longer the only road in. Both of these arrive from a relay on
+    # ``rules.ATS_DOMAINS``, so after #451 demoted the reference pattern out of
+    # ``strong`` they take DIFFERENT roads to the same place — Verkada still
+    # clears the floor on its subject's weak match, Supernova now arrives at
+    # 0.65 and is carried by the floor. Asserting 0.70 would have failed a
+    # message that is not lost, which is the only thing the number was ever
+    # standing in for.
+    #
+    # So ask the pipeline directly. What must be true of a real rejection the
+    # classifier misreads is that a person is asked about it and the board is
+    # never told: it reaches ``collect_review_items`` and never
+    # ``roll_up_applications``.
+    assert pipeline.collect_review_items([item]), result.scores
+    assert not pipeline.roll_up_applications([item]), result.scores
     assert result.confidence < pipeline.AUTO_FILE_GATE
     assert _leaves_a_trace(item)
+
+
+def test_the_two_real_rejections_take_two_different_roads_into_the_queue() -> None:
+    """And exactly one of them is carried by the ATS floor.
+
+    The test above deliberately asserts only "reaches the queue", because that
+    is the guarantee. This one records WHICH road each takes, so the pair
+    cannot both quietly become floor-only — which would mean the classifier had
+    stopped scoring these messages at all and the assertion above would still
+    be green. ``_qualifies_only_by_the_ats_floor`` is the file's own route
+    reader; it is used here rather than a confidence comparison.
+    """
+    _, verkada = _item(VERKADA_SUBJECT, VERKADA_SNIPPET, GREENHOUSE, "verkada")
+    _, supernova = _item(SUPERNOVA_SUBJECT, SUPERNOVA_SNIPPET, RIPPLING, "supernova")
+
+    # Verkada's subject carries an `applied` weak match worth +2 — the +2 this
+    # whole file is about — so it clears the floor on its own.
+    assert not _qualifies_only_by_the_ats_floor(verkada)
+    # Supernova's subject matches nothing. Its only evidence was the reference
+    # pattern #451 demoted, so the floor is now what keeps it.
+    assert _qualifies_only_by_the_ats_floor(supernova)
 
 
 # ===========================================================================
@@ -453,15 +493,20 @@ def test_the_ats_bonus_moves_no_message_across_the_auto_file_gate() -> None:
             delivered.confidence >= pipeline.AUTO_FILE_GATE
         ), (subject, ladder.confidence, delivered.confidence)
 
-    # And the two messages that DO stay under the gate still do, at the value
-    # this file was written about.
+    # And the two messages that DO stay under the gate still do.
+    #
+    # The ``== approx(0.75)`` that stood here was the exact assertion the
+    # paragraph above forbids: a delivered value, pinned in a test about which
+    # RUNG the bonus is added to. #451 took Supernova's ladder from 0.70 to
+    # 0.60 (its only evidence was a reference pattern, now weak), so delivered
+    # is 0.65 — a different number for a reason that has nothing to do with
+    # this test. The invariant is the gate, and it is asserted below.
     for subject, snippet, sender in (
         (VERKADA_SUBJECT, VERKADA_SNIPPET, GREENHOUSE),
         (SUPERNOVA_SUBJECT, SUPERNOVA_SNIPPET, RIPPLING),
     ):
         result = CLASSIFIER.classify(subject, snippet, sender)
-        assert result.confidence == pytest.approx(0.75), (subject, result.scores)
-        assert result.confidence < pipeline.AUTO_FILE_GATE
+        assert result.confidence < pipeline.AUTO_FILE_GATE, (subject, result.scores)
 
 
 # ===========================================================================

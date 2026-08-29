@@ -93,6 +93,7 @@ from jobtracker.database.models import EmailCategory
 from jobtracker.cloud.applications import (
     Application,
     Email,
+    _not_filed_on_a_live_application,
     _persist_review_items,
     classify_review_item,
     employers_with_several_applications,
@@ -376,19 +377,25 @@ async def _read_the_board(session, dropped: set[str]) -> Replay:
     filed: dict[int, list[str]] = defaultdict(list)
     for e in emails:
         filed[e.application_id].append(e.message_id)
-    # THE REVIEW QUEUE, by the predicate the product itself uses.
+    # THE REVIEW QUEUE, by the predicate the product itself uses — IMPORTED,
+    # not retyped.
     #
     # ``GET /applications/summary`` and ``GET /applications/review`` both filter
-    # on all three of these (``applications.py``), and getting it wrong here is
-    # not neutral: a looser predicate counts any unlinked row as "the user was
-    # asked about it", which makes LOST an undercount and errs toward the gate
-    # passing. The first version of this read ``application_id IS NULL`` alone
-    # and claimed in a comment to match the product. It did not.
+    # on these three clauses, and getting it wrong here is not neutral: a looser
+    # predicate counts any unlinked row as "the user was asked about it", which
+    # makes LOST an undercount and errs toward the gate passing. This has now
+    # drifted twice. The first version read ``application_id IS NULL`` alone and
+    # claimed in a comment to match the product; it did not. The second spelled
+    # the product's three clauses out by hand, and #587 then replaced the link
+    # clause with :func:`_not_filed_on_a_live_application` — "no card the user
+    # can SEE answers this" — leaving this copy asserting the OLD product while
+    # its comment said it asserted the current one. A copy cannot be kept
+    # honest by a comment, so the middle clause is the function itself.
     queued = (
         await session.exec(
             select(Email.message_id).where(
                 Email.user_id == _USER,
-                Email.application_id.is_(None),
+                _not_filed_on_a_live_application(_USER),
                 Email.classified_as == EmailCategory.NEEDS_REVIEW,
                 Email.is_reviewed == False,  # noqa: E712 — SQL boolean
             )
@@ -469,7 +476,7 @@ _ANSWERS = {
 
 
 async def _still_in_the_queue(session, message_id: str) -> bool:
-    """The product's own three-clause predicate, re-asked per message.
+    """The product's own queue predicate, IMPORTED and re-asked per message.
 
     `_settle_thread_siblings` marks same-identity siblings reviewed and linked
     when one of them is answered, and `classify_review_item` has no
@@ -484,7 +491,7 @@ async def _still_in_the_queue(session, message_id: str) -> bool:
             select(Email.message_id).where(
                 Email.user_id == _USER,
                 Email.message_id == message_id,
-                Email.application_id.is_(None),
+                _not_filed_on_a_live_application(_USER),
                 Email.classified_as == EmailCategory.NEEDS_REVIEW,
                 Email.is_reviewed == False,  # noqa: E712 — SQL boolean
             )

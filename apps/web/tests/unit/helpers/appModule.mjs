@@ -22,13 +22,24 @@
  * real one.
  *
  * WHAT THIS DOES INSTEAD. Registers loader hooks, so the rewrites apply to
- * every module in the graph rather than to one file, and Node keeps doing the
- * type-stripping itself. No transpiler, and nothing to keep in step with
- * tsconfig beyond the alias.
+ * every module in the graph rather than to one file. Node keeps doing the
+ * type-stripping for `.ts`; only `.tsx`, which it refuses outright, is handed
+ * to the TypeScript compiler.
  *
- * WHAT IT IS NOT. Still not a Next.js environment: this loads library modules,
- * not components. A module reaching for `next/*` or a browser global will fail
- * here and belongs to `renderTsx.mjs` or to Playwright.
+ * IT NOW LOADS COMPONENTS TOO (#560). It did not when it was written — the
+ * paragraph here said so — and the cost of that was measured: the filed
+ * ledger's mount, the line that decides whether the reader is ever asked which
+ * application a correction is about, was held by a regex over the source. Both
+ * `board.slice(0, 1)` at the mount and `const showPicker = false` inside the
+ * control left the whole web suite green, because a regex reads intent and not
+ * behaviour. Loading a `.tsx` graph is what makes that a real assertion; see
+ * `helpers/mountApp.mjs`, which adds the DOM the components need.
+ *
+ * WHAT IT IS STILL NOT. Not a Next.js environment. `next/link` loads because
+ * it is an ordinary React component; a module that needs the router, the
+ * request or a bundler-injected global does not, and `mountApp.mjs` provides
+ * the router context explicitly rather than pretending otherwise. Anything
+ * beyond that belongs to Playwright.
  */
 import { register } from "node:module";
 import { resolve as resolvePath } from "node:path";

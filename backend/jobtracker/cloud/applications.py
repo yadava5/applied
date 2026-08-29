@@ -34,7 +34,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import status as http_status
 from pydantic import BaseModel, Field, StrictBool
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import func, or_
+from sqlalchemy import exists, func, or_
 from sqlalchemy import update as sa_update
 from sqlmodel import select
 
@@ -93,6 +93,39 @@ ROLE_FROM_USER = "user"
 # ``position`` and the column is unbounded TEXT, so the ceiling lives at the
 # write.
 _MAX_ROLE_LEN = 200
+
+# THE ONE BOUND POSTGRES ENFORCES FOR US, AND ONLY POSTGRES. ``company`` is
+# indexed — ``ix_applications_company`` on the raw column, and
+# ``ix_applications_user_id_lower_company`` on ``lower(company)`` — and a btree
+# version 4 index row may not exceed 2704 bytes. Measured against the schema the
+# real migrations build (issue #406):
+#
+#     company len=2000  -> INSERT OK
+#     company len=2700  -> ProgramLimitExceeded: index row size 2712 exceeds
+#                          btree version 4 maximum 2704
+#     smallest rejected incompressible company: 2677 characters
+#     position len=5,000,000 -> INSERT OK      # unindexed, so this is `company`
+#
+# SQLite has no such limit, which is why the whole backend suite passes with the
+# field unbounded and this is invisible on a laptop. The API accepted a
+# 5,000,000-character company and answered 201, so the failure landed on the
+# INSERT rather than at the door.
+#
+# WHERE 300 COMES FROM. It is a character count and the ceiling is a byte count,
+# so the conversion has to assume the worst: a UTF-8 code point is up to 4
+# bytes, making 300 characters at most 1,200 bytes — well under half the 2,704
+# available, with the remainder covering the index tuple's own overhead, the
+# ``user_id`` in the composite index, and the rare code point whose ``lower()``
+# is longer than itself. A registered company name does not approach it; the
+# longest in the owner's own board is 34 characters.
+_MAX_COMPANY_LEN = 300
+
+# Notes are prose a person types, and unindexed, so no engine limit applies.
+# This is here for the same reason every string on ``PipelineItemIn`` is bounded:
+# Pydantic materialises the whole body before a field is read, so an unbounded
+# string is memory the process allocates on the caller's say-so inside a
+# function with a fixed memory ceiling.
+_MAX_NOTES_LEN = 10_000
 
 # ``Application.source`` doubles as an origin+ownership tag so a re-sync can
 # safely REPLACE the Gmail-derived pipeline while preserving anything the user
@@ -358,22 +391,117 @@ def _week_start(today: date) -> date:
     together, which is the next best thing and is what this repo's scar from
     two independent derivations of one number asks for.
 
-    UTC, and that is NOT the same clock the momentum caption on the same
-    screen uses. ``PipelinePulse`` reads ``useLocalToday()`` — the reader's own
-    day — because "what have I filed this week" is a question about the week
-    they are living in. A counts-only endpoint cannot know that zone, so for a
-    reader west of UTC there is a window each week (Sunday 20:00 to midnight in
-    Eastern, the size of their offset) where this tile has rolled into the new
-    week and the caption below it has not.
+    UTC, AND SINCE #518 THAT IS THE DEFAULT RATHER THAN THE ANSWER. The momentum
+    caption on the same screen reads ``useLocalToday()`` — the reader's own day
+    — because "what have I filed this week" is a question about the week they
+    are living in, and the bars beside the caption bucket on that same day.
+    This function is handed ``datetime.utcnow().date()`` on any request that
+    says nothing about the reader, which is every server render: at first paint
+    the server does not know the zone, so UTC is the only day it can name
+    without inventing one.
 
-    The split is not new: under the trailing window it moved a single day's
-    filings and was invisible. A calendar boundary makes it a whole week's
-    worth, so it is written down here instead of being rediscovered as a bug.
-    Closing it means putting the reader's day on the wire — a change to this
-    endpoint's contract — and is filed as #518.
+    For a reader west of UTC that used to be the whole story, and it was wrong
+    for the width of their offset every week — Sunday 20:00 to midnight in
+    Eastern, where this tile had rolled into the new week and the caption below
+    it had not. Under the trailing window the same split moved a single day's
+    filings and was invisible; a calendar boundary made it a whole week's worth.
+
+    The reader's Monday travels on the wire now. ``GET /applications/summary``
+    takes an optional ``week_start`` (:func:`_reader_week_start` states what it
+    will accept), the client sends it once it has hydrated and knows the zone,
+    and the response reports which Monday it counted. This function is still
+    the only definition of where a week begins: it computes the SSR answer AND
+    it is what a supplied Monday is validated against.
     """
 
     return today - timedelta(days=today.weekday())
+
+
+#: How far a client-supplied ``week_start`` may sit from the server's own, in
+#: days. DERIVED rather than picked: UTC offsets run from -12 to +14, so a
+#: browser's local calendar day is at most one day either side of the UTC day,
+#: and therefore the reader's Monday is the server's Monday, the one before it
+#: or the one after it — never further. It also absorbs a request that crosses
+#: midnight in flight, which moves the server's Monday by exactly seven days.
+_WEEK_START_SLACK_DAYS = 7
+
+
+def _reader_week_start(value: str | None, utc_today: date) -> date | None:
+    """The reader's own Monday, taken off the query string — or 422 (#518).
+
+    ``None`` when nothing was supplied, which is every server render and the
+    hydrating pass: the caller gets :func:`_week_start` of the UTC day instead.
+
+    REJECTED, NEVER SNAPPED — for all three ways a value can be wrong. This
+    parameter is not authored by a person; it is
+    ``weekStartOf(localTodayISO())`` in ``apps/web/lib/dashboard/readerWeek.ts``,
+    machine-generated from a clock. A value that is not a Monday, or that names
+    a week the reader cannot be standing in, is therefore a bug in the caller
+    or a request no browser made, and snapping it to the nearest Monday would
+    answer a question nobody asked while the client rendered the number as
+    though it had. That is this repo's "two renderers, one number" scar in a
+    new place. A refusal is the safe failure instead: the client keeps the
+    server-rendered UTC answer it already has on screen, which is exactly what
+    it displayed before this parameter existed.
+
+    THE THREE REFUSALS.
+
+    * NOT A DAY. ``pattern`` on the ``Query`` admits only ``YYYY-MM-DD`` —
+      deliberately narrower than either ``date.fromisoformat`` (which also
+      takes ``20260824`` and ``2026-W35-1`` on 3.11) or pydantic's ``date``
+      (which also takes ``2026-08-24T00:00:00``). One spelling on the wire
+      means one thing to compare. This function still parses, because
+      ``2026-02-30`` satisfies the pattern and is not a date.
+    * NOT A MONDAY. ``date.weekday() == 0``, the same convention
+      :func:`_week_start` and the frontend's ``weekdayOf`` share.
+    * NOT A WEEK THIS READER CAN BE IN. Bounded by
+      :data:`_WEEK_START_SLACK_DAYS` against the server's own Monday, so an
+      account cannot be made to report a count for an arbitrary historical or
+      future week through a parameter added to fix a timezone seam.
+    """
+
+    if value is None:
+        return None
+
+    try:
+        requested = date.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"week_start must be an ISO-8601 calendar date (YYYY-MM-DD); "
+                f"got {value!r}."
+            ),
+        ) from exc
+
+    if requested.weekday() != 0:
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"week_start must be a Monday — a week begins on one here, and "
+                f"{requested.isoformat()} is a "
+                f"{requested.strftime('%A')}. It is not snapped to the nearest "
+                f"Monday: this value is derived from the reader's clock, so a "
+                f"non-Monday means the caller is wrong and the count would "
+                f"answer a question it did not ask."
+            ),
+        )
+
+    server_week_start = _week_start(utc_today)
+    drift = abs((requested - server_week_start).days)
+    if drift > _WEEK_START_SLACK_DAYS:
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"week_start must name the week the reader is actually in: "
+                f"{requested.isoformat()} is {drift} days from this server's "
+                f"week start ({server_week_start.isoformat()}), and no "
+                f"timezone puts a reader more than "
+                f"{_WEEK_START_SLACK_DAYS} days away."
+            ),
+        )
+
+    return requested
 
 
 def _application_mail_truncated(
@@ -416,12 +544,26 @@ class CloudApplicationCreate(BaseModel):
     ``Date.toISOString()`` produces) is accepted and truncated to its date;
     anything else is REJECTED with a 422 rather than silently dropped, which is
     the failure being fixed.
+
+    THE THREE FREE-TEXT FIELDS ARE BOUNDED HERE, ON THE REQUEST, and not on
+    :class:`~jobtracker.database.models.Application`. The table model is written
+    by the sync as well as by this endpoint, and the failure being fixed is that
+    an oversized ``company`` reached the INSERT and broke it on production
+    Postgres while answering 201 on SQLite (issue #406). A bound on the wire
+    refuses it with a 422 before anything is allocated or written, and says so
+    in the OpenAPI document the web app's bindings are generated from — the same
+    argument :class:`ApplicationRoleUpdate` makes for ``role``.
+
+    ``position`` takes ``_MAX_ROLE_LEN`` rather than a number of its own,
+    because ``ApplicationRoleUpdate.role`` writes THE SAME COLUMN: two different
+    ceilings on one field would mean a title this endpoint accepts that the
+    PUT then refuses.
     """
 
-    company: str
-    position: str
+    company: str = Field(max_length=_MAX_COMPANY_LEN)
+    position: str = Field(max_length=_MAX_ROLE_LEN)
     status: ApplicationStatus = ApplicationStatus.APPLIED
-    notes: str | None = None
+    notes: str | None = Field(default=None, max_length=_MAX_NOTES_LEN)
     applied_date: str | None = None
     url: str | None = None
 
@@ -679,6 +821,30 @@ class MailMessageResponse(BaseModel):
     # would break recovery. The two facts are reported separately because they
     # are two facts.
     on_board: bool = False
+    # The employer TOKEN :func:`pipeline.resolve_employer` names for this
+    # message, or ``None`` when it refuses to name one. Computed for EVERY row,
+    # linked or not.
+    #
+    # WHY IT IS NOT ``company``. ``company`` above is the LINKED application's
+    # display name, so it is populated only on rows that already have an
+    # answer. The surface that needs an employer is the opposite population:
+    # the filed ledger asks "which application is this about?" precisely on
+    # UNLINKED rows, where ``company`` is null by construction. A client
+    # matching on ``company`` therefore cannot match anything it would ever
+    # ask about, which is what shipped and what this field replaces.
+    #
+    # WHY THE TOKEN AND NOT THE DISPLAY NAME. It is the match key
+    # :func:`_company_rows` and :func:`_chosen_application` narrow on, so a
+    # client that offers the rows matching this token offers exactly the rows
+    # the backend would accept as an answer. Compared against a stored row's
+    # name by :func:`pipeline.matches_company_token` — see that function for
+    # the rule and for the web mirror of it.
+    #
+    # FILING GRADE, USED AT DISPLAY GRADE, which is the safe direction:
+    # ``resolve_employer`` reads only the sender's own domain, the subject and
+    # (for relays) the display name. It never reads the body or the snippet, so
+    # nothing here stamps a row with something the decider did not read.
+    employer_token: str | None = None
     gmail_link: str | None = None
 
 
@@ -818,6 +984,14 @@ class ApplicationSummaryResponse(BaseModel):
 
     total: int
     this_week: int
+    #: The Monday ``this_week`` was counted from: the server's UTC Monday
+    #: unless the caller supplied its own (``?week_start=``). Reported rather
+    #: than left implicit because the client's correction turns on it (#518) —
+    #: the browser compares the reader's Monday against the one that was
+    #: ACTUALLY counted and only re-asks when the two differ. Re-deriving it in
+    #: the browser from a second clock read is how these two surfaces came to
+    #: disagree about one number in the first place.
+    week_start: date
     status_counts: dict[str, int]
     # Uncertain verdicts awaiting a human decision — the live source for the
     # dashboard's "N need classification" number (previously a dead count).
@@ -1553,8 +1727,13 @@ async def _resolve_application_for_email(
     The residual is stated rather than fixed: an UNLINKED anonymous message at an
     employer holding several rows still lands on the oldest by rule 4. Minting
     instead would answer "which of your three Google applications?" by inventing
-    a fourth, which is worse, and the review queue already asks the user directly
-    (:func:`_chosen_application`) on the path where the question can be put.
+    a fourth, which is worse — and this is only ever reached when NOBODY WAS
+    ASKED. Both correction surfaces put the question directly where it can be
+    put (:func:`_chosen_application`): the needs-review queue since #554, and the
+    filed ledger's reclassify control since #560. What still arrives here
+    unanswered is a sync, a single-candidate employer, or a correction to a
+    message that already carries a link — and for the last of those the branch
+    above has already answered.
     """
 
     rows = await _company_rows(session, user_id, token)
@@ -3784,12 +3963,34 @@ async def _settle_thread_siblings(
     of the user. Emails 58 and 73 on the owner's account are one thread asked
     about twice.
 
-    Narrow on purpose: only siblings that are still unlinked AND un-reviewed are
-    touched, so a message already filed elsewhere or already decided is left
-    alone. They are marked reviewed, given the chosen category and linked to the
-    same application — but NOT flagged ``user_corrected``, and no training
-    example is written for them: the human read one message, and only that one
-    is honest evidence of what they were labelling.
+    Narrow on purpose: only siblings that NO LIVE CARD ANSWERS FOR and that are
+    un-reviewed are touched, so a message already filed on a card the user can
+    see, or already decided, is left alone. They are marked reviewed, given the
+    chosen category and linked to the same application — but NOT flagged
+    ``user_corrected``, and no training example is written for them: the human
+    read one message, and only that one is honest evidence of what they were
+    labelling.
+
+    THE SETTLED-TEST IS :func:`_not_filed_on_a_live_application`, THE SAME ONE
+    THE QUEUE READS. It used to be ``application_id IS NULL`` spelled out here,
+    which is the predicate the queue replaced — and the two disagreeing is worse
+    than either being wrong alone. A thread whose messages all link to one
+    dismissed card surfaces as ONE queue entry; the user answers it; under the
+    old clause every sibling was read as "already filed elsewhere" and left
+    un-reviewed, so it stayed in the queue and the ``needs_review`` tile did not
+    move. A count that does not change when you answer it is #445/#576's defect
+    arriving for exactly the rows the queue was just taught to show.
+
+    NOT A RELINK DECISION, which is what #591 assumed. ``application_id`` here
+    is the answer's own landing, and for this shape it is the dismissed row the
+    sibling already pointed at: :func:`_resolve_application_for_email` consults
+    the message's OWN link first and returns it as ``LANDED_LINKED``. So the
+    assignment below is a write of the id the sibling already held, and
+    ``is_reviewed`` is the flag that actually settles it. Where the user's
+    answer DOES land somewhere else, the sibling belongs there by construction —
+    it is only in this list because it shares the answered message's
+    :func:`pipeline.review_dedup_key`, which is to say it is about the same
+    application.
     """
 
     if not email.thread_id:
@@ -3801,7 +4002,7 @@ async def _settle_thread_siblings(
                 Email.user_id == user_id,
                 Email.thread_id == email.thread_id,
                 Email.message_id != email.message_id,
-                Email.application_id.is_(None),
+                _not_filed_on_a_live_application(user_id),
                 Email.is_reviewed == False,  # noqa: E712 — SQL boolean
             )
         )
@@ -4151,9 +4352,97 @@ async def list_applications_cloud(
     )
 
 
+def _not_filed_on_a_live_application(user_id: uuid.UUID):
+    """The review queue's settled-test: "no card the user can SEE answers this".
+
+    ONE predicate, read by ``GET /applications/review`` and by the
+    ``needs_review`` tile on ``GET /applications/summary``, because the tile is
+    a link to the queue and a tile counting a different set sends the user to a
+    screen that disagrees with the number they clicked. This repo has the scar
+    twice over — the header said "+50 this wk" beside a momentum panel reading
+    7 — so the two share the accessor rather than each spelling it out.
+
+    This used to be ``Email.application_id IS NULL``, which encodes "a linked
+    message is already filed, so there is nothing to ask". True of a message
+    linked to a card on the board, FALSE of one linked to a card that was
+    dismissed: dismissal takes the row off the board, out of the funnel and out
+    of every tile, so nothing about its mail is settled from the user's side.
+
+    Issue #481 found the state on the owner's account. The 2026-08-22 05:02Z
+    re-sync dismissed application 115 (``dismissed_reason = 'resync'``) and, in
+    the same pass, re-classified email 108 below the auto-file gate to
+    ``NEEDS_REVIEW``. The additive persist rewrites ``classified_as`` and never
+    clears ``application_id``, so the link outlived the verdict that justified
+    it. Two independently reasonable behaviours; the combination was a real
+    Microsoft message on no board, in no queue, actionable from no screen.
+
+    WHY ``NOT EXISTS`` AND NOT ``IS NULL OR application_id IN (dismissed)``.
+    The positive form has to enumerate the ways a link can fail to name a
+    visible card, and it misses one: a link pointing at a row that no longer
+    exists, or (a stale link) at another user's. Asked the other way round —
+    "is there a LIVE application of MINE behind this link?" — all three answer
+    the same way, and the answer for a link we cannot resolve is "no", which
+    surfaces the message rather than stranding it. That is the safe direction:
+    a surfaced message costs one question, a stranded one is unreachable
+    forever. The subquery is scoped to ``user_id`` for the same reason the mail
+    listing scopes its employer lookup (#489) — a stale link must not read
+    across users.
+
+    NOT a widening of ``is_reviewed``. A message the user already answered
+    stays out even when its card is later dismissed: ``is_reviewed`` records
+    that the question was asked and answered, and removing the row does not
+    un-answer it. Callers keep that clause alongside this one.
+
+    THE INDEX COST, MEASURED. ``ix_emails_review_queue`` (revision
+    ``c8f3a1d64b27``) is PARTIAL on ``classified_as = 'NEEDS_REVIEW' AND
+    application_id IS NULL AND is_reviewed = false``, and a partial index is
+    usable only while its predicate is implied by the query's. This one no
+    longer implies ``application_id IS NULL``, so the queue stops using it.
+    EXPLAIN (ANALYZE, BUFFERS) against that module's 20,000-row seeded corpus,
+    both statements compiled from the ORM:
+
+        before — Index Scan using ix_emails_review_queue …… 37 buffers, 0.04 ms
+        after  — Nested Loop Anti Join over
+                 ix_emails_user_id_classified_as_received_at
+                 + applications_pkey ………………………………………………… 42 buffers, 0.31 ms
+
+    Not a fallback to a sequential scan: the same migration's mail index carries
+    ``(user_id, classified_as, received_at DESC)``, which is the whole outer
+    side, and the anti-join probes the applications PRIMARY KEY once per row it
+    keeps. Five buffers, on tables holding 52 and 65 rows in production. Left
+    as it is rather than re-cut, and recorded here because
+    ``tests/test_read_path_indexes_postgres.py`` will NOT tell the next reader:
+    it retypes the handlers' predicates as literals instead of importing them,
+    so it still measures the old query and stays green. (It has drifted once
+    already — its ``SUMMARY_TILE`` literal is a ``count(DISTINCT coalesce(…))``
+    the tile stopped issuing in #454.)
+    """
+
+    return ~exists(
+        select(Application.id).where(
+            Application.id == Email.application_id,
+            Application.user_id == user_id,
+            Application.dismissed_at.is_(None),
+        )
+    )
+
+
 @router.get("/summary", response_model=ApplicationSummaryResponse)
 async def application_summary_cloud(
     user_id: uuid.UUID = Depends(current_user),
+    week_start: str | None = Query(
+        None,
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+        description=(
+            "The READER's own week-start Monday, `YYYY-MM-DD`. Optional, and "
+            "omitted on every server render — the server does not know the "
+            "caller's zone at first paint, so the count is measured from its "
+            "own UTC Monday and `week_start` in the response says so. The "
+            "browser sends its Monday once it has hydrated. Must be a Monday "
+            "within seven days of the server's; anything else is 422 rather "
+            "than snapped (#518)."
+        ),
+    ),
 ) -> ApplicationSummaryResponse:
     """Return counts-only pipeline summary for the authenticated user.
 
@@ -4163,17 +4452,46 @@ async def application_summary_cloud(
 
     - ``GROUP BY status`` → per-status counts (≤7 rows regardless of how many
       applications the user has). ``total`` is their sum.
-    - a windowed ``COUNT(*)`` for applications the user APPLIED to since this
+    - a windowed ``COUNT(*)`` for applications the user APPLIED to since a
       calendar week's Monday (see :func:`_week_start`). Not "created", which is
       when our sync inserted the row, and not a trailing seven days.
 
     Both are O(1) in transfer and index-assisted in the DB, so this endpoint
     stays flat as an account scales from 10 to 10,000 applications — the whole
     reason it exists instead of counting client-side over the full list.
+
+    WHOSE MONDAY (#518). Counts alone cannot carry a zone, so this used to be
+    the UTC Monday and nothing else, while the momentum caption on the same
+    screen counted the READER's — and for a reader west of UTC there was a
+    window each week, the size of their offset, in which the header had rolled
+    over and the caption had not. The reader's Monday is now an optional
+    parameter, validated by :func:`_reader_week_start`, and the Monday actually
+    counted comes back in the response so the client can tell whether it needs
+    to ask again. Absent the parameter the behaviour is exactly what it was.
     """
 
     now = datetime.utcnow()
-    week_start = _week_start(now.date())
+    # THE MONDAY, and the ``or`` is the whole SSR contract: no parameter means
+    # no reader to ask about, so the answer is the UTC week — byte-identical to
+    # what this endpoint returned before #518, which is what makes the
+    # server-rendered header safe to hydrate.
+    counted_week_start = _reader_week_start(week_start, now.date()) or _week_start(now.date())
+    # THE LAST DAY OF IT, and it is a `min` rather than either bound alone.
+    #
+    # `week_start + 6` is the week's own far edge, and it is what stops a
+    # reader whose Monday is AHEAD of the server's (east of UTC, in their early
+    # Monday while UTC is still Sunday) from being counted across eight days.
+    #
+    # `now.date()` is the "we do not count the future" rule this window has
+    # always carried, and it has to stay: `POST /applications` accepts any ISO
+    # `applied_date` with no upper bound (`_parse_applied_date`), so a row dated
+    # next month is reachable by hand. The momentum caption drops those too —
+    # `dailyCounts` discards a negative age — so keeping the clamp is what makes
+    # the two surfaces agree rather than a leftover.
+    #
+    # With no parameter this is `min(utc_week_start + 6, today)`, which is
+    # `today` on every day of the week: the default path is unchanged.
+    counted_week_end = min(counted_week_start + timedelta(days=6), now.date())
 
     async with get_session() as session:
         # Dismissed rows are off the board, so they are out of every tile too —
@@ -4224,8 +4542,8 @@ async def application_summary_cloud(
                 .where(
                     Application.user_id == user_id,
                     Application.dismissed_at.is_(None),
-                    Application.applied_date >= week_start,
-                    Application.applied_date <= now.date(),
+                    Application.applied_date >= counted_week_start,
+                    Application.applied_date <= counted_week_end,
                 )
             )
         ).one()
@@ -4242,8 +4560,11 @@ async def application_summary_cloud(
         # rows come back and :func:`pipeline.review_dedup_key` counts them —
         # the same function the endpoint uses, so the two cannot drift.
         #
-        # Bounded by the queue itself: unlinked, un-reviewed ``needs_review``
-        # rows only, and four columns of each.
+        # Bounded by the queue itself: un-reviewed ``needs_review`` rows that no
+        # LIVE card answers for — see
+        # :func:`_not_filed_on_a_live_application`, which ``GET
+        # /applications/review`` reads too so the tile and the queue it links to
+        # cannot count different sets. Four columns of each.
         pending = (
             await session.exec(
                 select(
@@ -4261,7 +4582,7 @@ async def application_summary_cloud(
                 ).where(
                     Email.user_id == user_id,
                     Email.classified_as == EmailCategory.NEEDS_REVIEW,
-                    Email.application_id.is_(None),
+                    _not_filed_on_a_live_application(user_id),
                     Email.is_reviewed == False,  # noqa: E712
                 )
             )
@@ -4297,6 +4618,11 @@ async def application_summary_cloud(
     return ApplicationSummaryResponse(
         total=total,
         this_week=this_week,
+        # Said out loud, not left for the client to re-derive. The browser
+        # compares this with the reader's own Monday and re-asks only when they
+        # differ — which is also what keeps a page rendered just before UTC
+        # midnight from correcting itself against the wrong server day.
+        week_start=counted_week_start,
         status_counts=status_counts,
         needs_review=needs_review,
     )
@@ -4383,6 +4709,29 @@ def _message_ref_response(
     )
 
 
+def _employer_token_for(email: Email) -> str | None:
+    """The employer match TOKEN this stored message resolves to, or ``None``.
+
+    ONE ACCESSOR, because two readers need the same answer and they used to
+    reach it separately: the review queue's hold reason counts an employer's
+    siblings under this token, and the mail listing ships it so the filed
+    ledger can ask which of those siblings a correction is about. A second
+    call site spelling the arguments differently is how "two readers, one
+    shape" starts, and the argument order here is not obvious — subject is
+    second, the display name third.
+
+    Returns the token half of :func:`pipeline.resolve_employer`, which is the
+    key :func:`_company_rows` narrows on. The display half is deliberately not
+    returned: nothing that consumes this renders it, and a display name is a
+    different grade of claim (see :func:`pipeline.employer_named_in_body`).
+    """
+
+    resolved = pipeline.resolve_employer(
+        email.sender_email or "", email.subject or "", email.sender_name
+    )
+    return resolved[0] if resolved else None
+
+
 def _sibling_counts(company_names: Sequence[str | None]) -> Counter[str]:
     """How many applications sit under each employer TOKEN the resolver can emit.
 
@@ -4460,10 +4809,11 @@ def _hold_reason_for(
     sender_email = email.sender_email or ""
     snippet = (email.body_snippet or "")[: pipeline.STORED_SNIPPET_CHARS]
 
-    resolved = pipeline.resolve_employer(sender_email, subject, email.sender_name)
-    # ``resolve_employer`` returns (token, display); the token is the match key
-    # the counter was built under.
-    sibling_count = siblings.get(resolved[0], 0) if resolved else 0
+    # The token is the match key the counter was built under. Read through the
+    # one accessor the mail listing also uses, so the queue and the ledger
+    # cannot disagree about which employer a message names.
+    token = _employer_token_for(email)
+    sibling_count = siblings.get(token, 0) if token else 0
 
     reason = pipeline.hold_reason(
         confidence=email.classification_confidence,
@@ -4500,8 +4850,10 @@ async def review_queue_cloud(
     """The needs-classification queue: uncertain verdicts awaiting a decision.
 
     These are the metadata-only Email rows the sync flagged ``needs_review``
-    (unlinked, un-reviewed) — the real target of the dashboard's "N need
-    classification" number, which is otherwise a dead count. Newest-first.
+    that no card the user can see already answers for
+    (:func:`_not_filed_on_a_live_application`) and that the user has not already
+    reviewed — the real target of the dashboard's "N need classification"
+    number, which is otherwise a dead count. Newest-first.
 
     ONE ENTRY PER GMAIL THREAD. A conversation is one application, so being
     asked about it twice is being asked to do the same work twice: the owner's
@@ -4520,7 +4872,7 @@ async def review_queue_cloud(
                 .where(
                     Email.user_id == user_id,
                     Email.classified_as == EmailCategory.NEEDS_REVIEW,
-                    Email.application_id.is_(None),
+                    _not_filed_on_a_live_application(user_id),
                     Email.is_reviewed == False,  # noqa: E712
                 )
                 .order_by(Email.received_at.desc())
@@ -4715,17 +5067,18 @@ async def mail_listing_cloud(
     WHY THIS EXISTS
     ---------------
     ``/review`` is the only other listing of classified mail, and it filters to
-    ``needs_review AND unlinked AND not-yet-reviewed``. That is the right set
-    for a work queue and the wrong set for a correction surface, because those
-    three predicates make a verdict unreachable the moment it is touched:
+    ``needs_review AND not-filed-on-a-live-card AND not-yet-reviewed``. That is
+    the right set for a work queue and the wrong set for a correction surface,
+    because those three predicates make a verdict unreachable the moment it is
+    touched:
 
     * a message already reviewed once drops out for good — emails 58 and 59 of
       the owner's account sit at ``needs_review`` with ``is_reviewed = true``
       and no endpoint in the product could name them, so no screen could
       change them;
-    * a message linked to an application drops out too, so a ``rejection``
-      filed as ``applied`` is a wrong stored verdict a user can see on the
-      board and never correct at its source;
+    * a message filed on an application the user can see drops out too, so a
+      ``rejection`` filed as ``applied`` is a wrong stored verdict a user can
+      see on the board and never correct at its source;
     * and for an account whose mail all classified confidently, ``/review``
       returns zero rows and the review UI never renders at all.
 
@@ -4872,6 +5225,9 @@ async def mail_listing_cloud(
                 else None
             ),
             on_board=e.application_id in on_board_applications,
+            # Unconditional: the population that needs it is the UNLINKED one.
+            # Pure CPU over fields already loaded — no query, no body read.
+            employer_token=_employer_token_for(e),
             gmail_link=pipeline.gmail_deeplink(
                 thread_id=e.thread_id,
                 message_id=e.message_id,

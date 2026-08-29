@@ -1,0 +1,102 @@
+{
+  "why": "The ONE table of 'is this board row this employer?', read by both suites. The rule is derived twice — backend/jobtracker/cloud/pipeline.py::matches_company_token and apps/web/lib/dashboard/review.ts::matchesEmployerToken — and the two cannot share an implementation across Python and TypeScript. They can be made to fail together, and this file is how: backend/tests/test_one_employer_rule.py and apps/web/tests/unit/reclassify-asks-which-application.test.mjs both assert exactly these rows. Editing one side's answer without the other is impossible, because there is only one answer to edit. The divergence this exists to prevent is measured: a client asking `haystack.includes(row.company)` offered NO candidates for a board named 'Northwind Traders' when the mail's token was 'northwind', so the ledger asked nothing and the backend — which does match it — tie-broke a category correction onto that employer's oldest live row (#560).",
+  "rule": "normalize both sides (lowercase, collapse to [a-z0-9] words, single-space joined), then accept a full match OR a match on the leading word",
+  "cases": [
+    {
+      "company": "Northwind",
+      "token": "northwind",
+      "matches": true,
+      "why": "the trivial case: a single-word name normalizes to the token itself"
+    },
+    {
+      "company": "Northwind Traders",
+      "token": "northwind",
+      "matches": true,
+      "why": "THE CASE THIS TABLE EXISTS FOR. A board name LONGER than the name the mail uses is the normal shape, not an edge one: the token is built from the FIRST WORD of a display name, so 'Northwind Hiring Team' resolves to 'northwind' while the row is stored as the human name. A substring test in the other direction ('northwind traders' inside the mail's text) finds nothing."
+    },
+    {
+      "company": "Together AI",
+      "token": "together",
+      "matches": true,
+      "why": "the duplicate that motivated the Python original: lower('Together AI') != 'together', and reading it that way filed a second row on every sync"
+    },
+    {
+      "company": "IXL",
+      "token": "ixl learning",
+      "matches": true,
+      "why": "and in the other direction — a token carrying two words still matches the row that stores only the first"
+    },
+    {
+      "company": "Y Combinator",
+      "token": "y-combinator",
+      "matches": true,
+      "why": "normalization is what makes a hyphenated domain brand and a spaced display name the same employer; a raw string compare says no"
+    },
+    {
+      "company": "NORTHWIND traders",
+      "token": "Northwind",
+      "matches": true,
+      "why": "case is normalized on BOTH sides, not just the token"
+    },
+    {
+      "company": "Northwind Traders",
+      "token": "northwind traders",
+      "matches": true,
+      "why": "full equality still matches — the leading-word arm is an addition, not a replacement"
+    },
+    {
+      "company": "Path Analytics",
+      "token": "path",
+      "matches": true,
+      "why": "two employers sharing a leading word land on one key ON PURPOSE. The resolver cannot tell 'Path Robotics' from 'Path Analytics' either, so the honest answer is to offer both and let the user say which — asking beats guessing one."
+    },
+    {
+      "company": "Northwind Traders",
+      "token": "acme",
+      "matches": false,
+      "why": "the negative control: without it every assertion above passes on a function that returns true"
+    },
+    {
+      "company": "Wind",
+      "token": "northwind",
+      "matches": false,
+      "why": "the row's name is a SUBSTRING of the token and that is not a match — this is the loose rule the web side must not drift back into"
+    },
+    {
+      "company": "Northwind Traders",
+      "token": "north",
+      "matches": false,
+      "why": "a prefix of a word is not a word. 'north' would otherwise pull in every employer whose name starts with those letters."
+    },
+    {
+      "company": "GE",
+      "token": "ge",
+      "matches": true,
+      "why": "a two-character name is a real employer and an exact token match is exact evidence — the length rule elsewhere is about finding it inside a haystack, not about matching it"
+    },
+    {
+      "company": "GE",
+      "token": "general",
+      "matches": false,
+      "why": "and a two-character name is not the leading word of a longer token"
+    },
+    {
+      "company": "Traders Northwind",
+      "token": "northwind",
+      "matches": false,
+      "why": "the LEADING word, not any word. Matching anywhere in the name would merge employers that only share a common noun."
+    },
+    {
+      "company": "",
+      "token": "northwind",
+      "matches": false,
+      "why": "an unnamed row identifies no employer"
+    },
+    {
+      "company": "Northwind",
+      "token": "",
+      "matches": false,
+      "why": "and a message the resolver refused to name asks nothing of the board — an empty token must not match everything"
+    }
+  ]
+}

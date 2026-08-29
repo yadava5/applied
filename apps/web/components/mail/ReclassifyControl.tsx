@@ -4,14 +4,19 @@ import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { ApplicationPicker } from "@/components/review/ApplicationPicker";
 import {
   CLASSIFY_FAILED,
+  asksWhichApplication,
   canNameCompany,
-  classifyRequestBody,
+  canSubmitReview,
+  classifyDecisionBody,
   confirmCompanyPrompt,
   employerPromptFor,
   readClassifyOutcome,
   rowStaysInQueue,
+  type CandidateApplication,
+  type ReviewAssignment,
 } from "@/lib/dashboard/review";
 import type { ScanMessagePayload } from "@/lib/gmail/scan-correction";
 import { liveClassify, type ClassifyFn } from "@/lib/gmail/transport";
@@ -31,6 +36,29 @@ import { liveClassify, type ClassifyFn } from "@/lib/gmail/transport";
  * answer for the user (a preselected value is how absent-minded clicks become
  * training examples). Choices mirror the review queue's: classifier categories
  * the classify endpoint accepts, with "other" meaning "not job related".
+ *
+ * IT ALSO ASKS WHICH APPLICATION (#560). This control used to send a literal
+ * `null` in the `application_id` position — it never asked, so it never had an
+ * answer to send. For a message NOT already filed against a row, at an employer
+ * holding several, the backend then had no link to outrank its tie-break and
+ * `_pick_application` rule 4 filed the correction onto the employer's OLDEST
+ * row: measured, two Northwind rows and a blind correction moved row 1 to
+ * `interviewing` on the strength of a message nobody had said was about it.
+ * That is #554's defect on this surface, and it is answered with #554's picker
+ * — the same `ApplicationPicker`, the same `asksWhichApplication` predicate,
+ * the same wire — not with a second way of asking the same question.
+ *
+ * The three cases, and the two of them that must ask NOTHING are as
+ * load-bearing as the one that asks:
+ *
+ *   - ALREADY FILED against a row → no question. The message's own link beats
+ *     every tie-break in `_resolve_application_for_email` (#546 / #548), so
+ *     the correction lands where the human already put it. This is the common
+ *     case in the filed ledger and it costs the reader nothing.
+ *   - UNLINKED, one candidate (or none) → no question. One option is not a
+ *     question, and the tie-break has the right row to land on anyway.
+ *   - UNLINKED, several candidates, a lifecycle category → asked, and the
+ *     answer rides the request as `application_id` / `none_of_these`.
  */
 const CATEGORY_CHOICES: { value: string; label: string }[] = [
   { value: "applied", label: "applied" },
@@ -47,6 +75,8 @@ export function ReclassifyControl({
   messageId,
   subject,
   company,
+  candidates,
+  linkedApplicationId,
   message,
   onCorrected,
   classify = liveClassify,
@@ -55,8 +85,38 @@ export function ReclassifyControl({
   /** For the control's accessible name — three bare "reclassify" buttons in a
    *  list are indistinguishable to a screen reader. */
   subject: string;
-  /** The row's resolved employer token, if any — prefills the employer ask. */
+  /**
+   * The LINKED application's employer name, if this message has one — it
+   * prefills the "we couldn't name the employer" ask.
+   *
+   * Not the employer the mail itself names, and not what decides which rows
+   * are offered: it is null on every unlinked row, which is the whole
+   * population the picker is for. `candidates` carries that answer, matched
+   * from `employer_token` (#560).
+   */
   company: string | null;
+  /**
+   * The board rows this message could be about — its employer's, matched by
+   * `reviewCandidates`. REQUIRED, and deliberately not defaulted to `[]`: a
+   * mount that cannot see the user's board has to say so, rather than inherit
+   * silence from a default and quietly stop asking a question this control
+   * exists to ask. The live scan is the mount that says so, and says why.
+   *
+   * Fewer than two is not a question and renders nothing.
+   */
+  candidates: readonly CandidateApplication[];
+  /**
+   * The application this message is already filed against, or `null`.
+   *
+   * With a link there is nothing to ask: it outranks the backend's tie-break
+   * (#546 / #548), so the correction cannot walk onto a sibling row. It is the
+   * row id and not a boolean because the two surfaces that pass it read it
+   * from `application_id` directly, and a boolean derived at the call site is
+   * one more place for the two to disagree. A DISMISSED row still counts as a
+   * link: `_company_rows` returns dismissed rows deliberately, so the backend's
+   * link-first branch still finds it.
+   */
+  linkedApplicationId: number | null;
   /**
    * The message's own metadata, for a row that may not be STORED yet — every
    * row in the live-scan view. Absent for the filed ledger, whose rows are
@@ -88,8 +148,23 @@ export function ReclassifyControl({
   const [namedCompany, setNamedCompany] = useState(company ?? "");
   /** The spelling already on the board that the typed company looks like. */
   const [suggestion, setSuggestion] = useState<string | null>(null);
+  /**
+   * Which application this correction is about. `null` is UNANSWERED and
+   * nothing is checked; `"none"` is a deliberate choice. The two used to share
+   * `null` in the queue's copy of this control, with the discarding option
+   * pre-selected, and that is the defect #554 measured — see `ReviewAssignment`.
+   */
+  const [assignment, setAssignment] = useState<ReviewAssignment>(null);
+
+  const showPicker = asksWhichApplication({ category, candidates, linkedApplicationId });
+  const canSend = canSubmitReview(category, showPicker, assignment);
 
   async function apply(answer?: { company?: string; confirmNewCompany?: boolean }) {
+    // ENFORCED HERE, NOT ON THE BUTTON, for the reason `canSubmitReview`'s own
+    // docstring gives: the two confirmation buttons and the employer prompt all
+    // re-send this decision without consulting the apply button's `disabled`.
+    // A gate written only there is a gate with three side doors.
+    if (!canSend) return;
     setBusy(true);
     setError(null);
     const named = (answer?.company ?? namedCompany).trim();
@@ -97,15 +172,20 @@ export function ReclassifyControl({
     try {
       const res = await classify(
         messageId,
-        // Only send the company once the backend has asked for it — sending
-        // it up front would override an employer the mail itself names.
-        classifyRequestBody(
+        // Built by the SHARED builder, which is what puts the user's answer on
+        // the wire. The `null` that used to sit in the assignment position here
+        // is #560.
+        classifyDecisionBody({
           category,
-          sendCompany ? named : null,
-          null,
+          // Only send the company once the backend has asked for it — sending
+          // it up front would override an employer the mail itself names.
+          company: sendCompany ? named : null,
+          candidates,
+          linkedApplicationId,
+          assignment,
           message,
-          answer?.confirmNewCompany,
-        ),
+          confirmNewCompany: answer?.confirmNewCompany,
+        }),
       );
       const outcome = readClassifyOutcome(res.ok, res.body);
       if (rowStaysInQueue(outcome)) {
@@ -176,7 +256,13 @@ export function ReclassifyControl({
         id={`reclass-${messageId}`}
         value={category}
         disabled={busy}
-        onChange={(e) => setCategory(e.target.value)}
+        onChange={(e) => {
+          setCategory(e.target.value);
+          // The pick belonged to the PREVIOUS stage's question. Leaving it
+          // mounted is what let a re-send fire against a question the user is
+          // no longer looking at (#554).
+          setAssignment(null);
+        }}
         className="rounded border border-line-soft bg-surface px-1.5 py-1 text-xs text-muted outline-none transition-colors hover:border-line focus:border-line-strong disabled:opacity-50"
       >
         <option value={PLACEHOLDER} disabled>
@@ -191,7 +277,9 @@ export function ReclassifyControl({
       <button
         type="button"
         onClick={() => void apply()}
-        disabled={busy || category === PLACEHOLDER || (employerPrompt !== null && !canNameCompany(namedCompany))}
+        disabled={
+          busy || !canSend || (employerPrompt !== null && !canNameCompany(namedCompany))
+        }
         className="inline-flex items-center gap-1 rounded border border-line px-2 py-1 text-xs font-medium text-foreground transition-colors hover:border-line-strong hover:text-strong disabled:opacity-50"
       >
         {busy ? <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden /> : null}
@@ -210,6 +298,21 @@ export function ReclassifyControl({
       >
         cancel
       </button>
+
+      {/* --- Which application is this about? ------------------------------
+          `basis-full` because this control's root is a flex ROW: the question
+          takes its own line under the stage select rather than being squeezed
+          beside it. */}
+      {showPicker ? (
+        <ApplicationPicker
+          className="basis-full"
+          name={`reclass-assign-${messageId}`}
+          candidates={candidates}
+          assignment={assignment}
+          onChange={setAssignment}
+          disabled={busy}
+        />
+      ) : null}
 
       {/* The company named is one edit from one already on the board. Nothing
           was filed and nothing was merged — the same closeness that catches a

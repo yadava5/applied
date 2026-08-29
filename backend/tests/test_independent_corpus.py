@@ -98,13 +98,13 @@ RECORDED_AFTER_ANSWERING = {
     # 75 -> 71 WITH #458, AND THIS END MOVED ALONE, which is the opposite of
     # the paragraph above and is right here. The eleven recovered messages are
     # REJECTIONS that reach the queue; the sync files nothing for them either
-    # way, so the before-answering figure stays at 62. Four of the eleven are
-    # answered onto a card that had no title, and answering reads the role off
-    # the message. The other seven land on cards that already had one. That
-    # split is DERIVED, not inspected: `cards` and `minted_a_card` are both
-    # unchanged, so all eleven filed onto cards that already existed, and the
-    # only input that differs between the two readings is those eleven
-    # answers.
+    # way, so the before-answering figure stays where #451 left it, at 63.
+    # Four of the eleven are answered onto a card that had no title, and
+    # answering reads the role off the message. The other seven land on cards
+    # that already had one. That split is DERIVED, not inspected: `cards`
+    # (9569) and `minted_a_card` (421) are both unchanged, so all eleven filed
+    # onto cards that already existed, and the only input that differs between
+    # the two readings is those eleven answers.
     "role_missing": 71,
     # ZERO AGAINST A DENOMINATOR THAT HAS TO BE SAID OUT LOUD. #548 refuses to
     # stamp a title on a blind landing, and 421 of the 2,341 filed answers
@@ -130,15 +130,20 @@ RECORDED_AFTER_ANSWERING = {
 
 #: What answering DOES, per call — the outcomes the board cannot show.
 RECORDED_ANSWERS = {
-    # 2,701 -> 2,712 WITH #458, and the eleven are exactly the eleven that used
+    # 2701 -> 2862 (#451). +161 held for a person, and the two counters move
+    # together because everything held is answered. This is the queue side of
+    # the trade recorded on `auto_filed_wrong`: 107 messages left the
+    # auto-filed bucket and 54 left the DROPPED counter, which is 161.
+    #
+    # 2862 -> 2873 WITH #458, and the eleven are exactly the eleven that used
     # to be LOST: a relayed `follow_up` now reaches the queue instead of the
-    # terminal drop. They travel together through the three counters below —
-    # `answered` +11, `filed_on_an_existing_card` +11,
-    # `landed_where_one_card_existed` +11 — and nothing else on this score
-    # moves. A queue that grew without those three moving with it would mean
-    # the fix had found messages it cannot settle.
-    "queued": 2712,
-    "answered": 2712,
+    # terminal drop. They travel together through the two counters below —
+    # `filed_on_an_existing_card` +11 and `landed_where_one_card_existed` +11
+    # — and nothing else on this score moves. A queue that grew without those
+    # two moving with it would mean the fix had found messages it cannot
+    # settle.
+    "queued": 2873,
+    "answered": 2873,
     # THE GUARD THAT NEVER FIRES, said plainly rather than left to read as
     # coverage. `_settle_thread_siblings` can remove a queue entry when a
     # sibling is answered, and `classify_review_item` has no `is_reviewed`
@@ -152,10 +157,16 @@ RECORDED_ANSWERS = {
     # resolve no employer from sender + subject — all 200 `bare-relay`, and 160
     # of 320 `verdict-past-the-body-cap`. Every one of them is here.
     "refused_needs_employer": 360,
-    # 2,024 -> 2,035: the eleven relayed follow-ups #458 recovered are all
-    # answered onto a card their employer already had. None minted one.
-    "filed_on_an_existing_card": 2035,
-    "minted_a_card": 317,
+    # 2024 -> 2081 (#451), 2081 -> 2092 (#458): the eleven relayed follow-ups
+    # #458 recovered are all answered onto a card their employer already had.
+    # None minted one, which is why `minted_a_card` below does not move.
+    "filed_on_an_existing_card": 2092,
+    # 317 -> 421 (#451), and +104 is EXACTLY the number of cards the board no
+    # longer produces on its own (`RECORDED["cards"]` 9252 -> 9148). The cards
+    # are not lost; a person mints them by answering the question the product
+    # now asks instead of guessing. `RECORDED_AFTER_ANSWERING["cards"]` is
+    # unchanged at 9569, which is the same fact stated as a total.
+    "minted_a_card": 421,
     "not_a_lifecycle_answer": 0,
     # HOW MUCH CHOICE THERE WAS. A landing at an employer holding one live card
     # is right by cardinality, not by understanding; folding the two together
@@ -181,10 +192,15 @@ RECORDED_ANSWERS = {
     #
     # 376 tokens collapsed to a single spelling and NONE gained one. So these
     # two answers always had a choice; the board just could not see it.
-    # 1,918 -> 1,929 with #458: all eleven recovered messages land at an
-    # employer holding exactly one live card, so none of them exercises rule
-    # 4's choice and `landed_where_several_did` is unchanged at 423.
-    "landed_where_one_card_existed": 1929,
+    # 1918 -> 2079 (#451). `landed_where_several_did` does NOT move, so all
+    # 161 extra answers landed at an employer holding exactly one live card
+    # — right by cardinality, and keeping the two apart is what stops that
+    # reading as understanding.
+    #
+    # 2079 -> 2090 (#458): all eleven recovered messages land at an employer
+    # holding exactly one live card, so none of them exercises rule 4's choice
+    # and `landed_where_several_did` is unchanged at 423.
+    "landed_where_one_card_existed": 2090,
     "landed_where_several_did": 423,
 }
 
@@ -226,9 +242,27 @@ RECORDED = {
     # A published number nothing recomputes is a claim, which is the sentence
     # at the top of this dict, so it is now asserted below like the rest.
     "companies": 8020,
-    "correct": 15886,
-    "wrong": 361,
-    "abstained": 1013,
+    # ── #451 MOVED EVERY NUMBER BELOW THAT CARRIES A "451" NOTE ─────────────
+    #
+    # Two changes in one commit: the reference pattern
+    # `application.{0,20}(for|to).{0,40}(position|role|job)` demoted from
+    # `strong` to `weak` for `applied`, and ties broken by what a category
+    # CLAIMS (a report of a later stage outranks an assertion that an
+    # application exists) instead of by `EmailCategory` declaration order.
+    # Baseline measured on 53f191b, the merge-base, at this seed.
+    # 15886 -> 16030 (#451). +144, and 50 of them are the `observed-pending`
+    # family alone: "please verify your email before we can review your
+    # application" was read as a confirmation because the reference pattern
+    # gave `applied` a report's worth of evidence. They are CORRECT now, not
+    # merely abstained — that family's `correct` goes 120 -> 170.
+    "correct": 16030,
+    # 361 -> 304 (#451).
+    "wrong": 304,
+    # 1013 -> 926 (#451). It FELL, which is not what a demotion is supposed
+    # to do and is worth saying plainly: the tie-break half moves messages
+    # OUT of abstention by giving a tied report the verdict, and that more
+    # than covers what the demotion pushed in.
+    "abstained": 926,
     # The number that matters more than `wrong`: how many wrong verdicts are
     # stated to the user as fact rather than held for them to settle.
     #
@@ -244,8 +278,29 @@ RECORDED = {
     # other 2 are `ats-relay-noise` scoring a profile-completion nudge as job
     # mail. The number is pinned so a fix MOVES it; nothing here is blessed by
     # being pinned. See #455 and #451.
-    "auto_filed_wrong": 72,
-    "cards": 9252,
+    # 72 -> 0 (#451), and this is the headline of that change: the number
+    # this repository calls the one that matters more than `wrong` — a
+    # verdict stated to the user as fact without anyone being asked.
+    #
+    # ZERO IS NOT "ELIMINATED", and the difference is measurable. At the two
+    # other seeds this file re-samples it reads 0 and 1 (from 72 and 82). So
+    # the pinned 0 is this seed's value, not a proof that no wording can
+    # still reach the gate wrongly. Nothing here is blessed by being pinned.
+    #
+    # WHAT IT COST, because it was not free. `auto_filed` goes 13824 ->
+    # 13717, so 107 messages left the auto-filed bucket: the 72 wrong ones
+    # and 35 CORRECT ones, which now wait in the review queue instead of
+    # arriving on the board by themselves. That trade was taken
+    # deliberately — a product whose pitch is that it can be trusted with a
+    # job search should prefer asking to guessing — and it is recorded here
+    # rather than left for someone to rediscover from `cards`.
+    "auto_filed_wrong": 0,
+    # 9252 -> 9148 (#451). 104 applications that used to appear on the board
+    # by themselves now wait for the user. Fully accounted for and nothing
+    # became unreachable: `lost` does not move, `dropped` goes 54 -> 0, and
+    # `update_held` rises 631 -> 685. The messages moved from a card the
+    # product guessed at to a question it asks. THE STATED COST OF #451.
+    "cards": 9148,
     # Mail about a real application that the product did nothing with. Two
     # numbers because both are unaddressed and only one is invisible; see #447.
     #
@@ -278,7 +333,9 @@ RECORDED = {
     # NOTHING is the one outcome indistinguishable from a mailbox that never
     # received it.
     "lost": 0,
-    "dropped": 54,
+    # 54 -> 0 (#451). The whole `update-from-another-domain` family leaves
+    # "counted by the product but on no screen" and enters the queue.
+    "dropped": 0,
     # Noise that MINTED A CARD. Went 0 -> 2 on 2026-08-22, when the corpus first
     # contained ATS mail that is not about the user at all (a profile-completion
     # nudge scoring `assessment` at 0.90), and back to 0 once the reference
@@ -306,7 +363,9 @@ RECORDED = {
     # `joins` it should always have had. The extra 260 are not new behaviour —
     # they were always held, and the corpus simply had no way to say which card
     # they belonged to.
-    "update_held": 631,
+    # 631 -> 685 (#451). +54, which is exactly the `dropped` family above:
+    # those updates are now ASKED ABOUT rather than counted and discarded.
+    "update_held": 685,
     # THE CARD IS AHEAD OF THE USER'S LIFE. A KNOWN, OPEN DEFECT, pinned so a
     # fix moves it; it is not blessed by being here.
     #
@@ -339,7 +398,8 @@ RECORDED = {
     # The two denominators are pinned FIRST and on purpose. Three zeroes with
     # nothing behind them is the shape this repository keeps shipping; a grader
     # that graded nothing would report a perfect board.
-    "titles_graded": 9252,
+    # 9252 -> 9148 (#451): the denominator follows `cards` exactly.
+    "titles_graded": 9148,
     # Smaller, because a card whose ground truth keys on a requisition id, or
     # whose mail names no job at all, has a title this corpus either cannot
     # settle or must assert BLANK. See ``Case.role_truth``.
@@ -347,7 +407,8 @@ RECORDED = {
     # 7892 -> 7746 with #533: 146 identities were carrying a role drawn from the
     # invented pool that appears in NO message on the card. They move to
     # `blank_required`, which is a stronger assertion than the grading they left.
-    "roles_graded": 7746,
+    # 7746 -> 7642 (#451), following `cards` for the same reason.
+    "roles_graded": 7642,
     # The card names an employer nobody applied to. This is what a user would
     # call hallucinating, and the live filing path can do it: while fixing #512
     # the subject "Senior Software Engineer Interview | <name>" resolved to a
@@ -465,7 +526,9 @@ RECORDED = {
     # `roles_graded` 7746 are all exactly where they were, so nothing moved
     # except five cards inside one population. Measured across all 17,260 cases,
     # the reader fires on 40 subjects and matches ground truth on 40 of 40.
-    "role_missing": 62,
+    # 62 -> 63 (#451): one more card whose ground truth names a role and
+    # whose title is blank. An absence, not a lie, and out of `total`.
+    "role_missing": 63,
     # Mail that names NO job title, where the only correct card is a blank one.
     # These were SKIPPED entirely until the two counters below existed: "no role
     # to grade against" read as "nothing to assert", and 960 cards — 10.4% of
@@ -607,7 +670,10 @@ def test_no_wrong_verdict_is_stated_as_fact(verdicts) -> None:
         ),
         (
             "observed-rejection",
-            39,
+            32,
+            "39 -> 32 with #451: seven of these were a rejection tying `applied` "
+            "on a reference to the application it rejects, and enum order gave "
+            "the tie to `applied`. The rest are the original defect, unchanged. "
             "REAL rejection wordings, half of them delivered as Gmail's snippet "
             "because that is what production receives when no body part can be "
             "extracted. Measured: these six wordings score 6/6 on the full body "
@@ -617,15 +683,29 @@ def test_no_wrong_verdict_is_stated_as_fact(verdicts) -> None:
         ),
         (
             "observed-pending",
-            50,
+            0,
+            "50 -> 0 with #451, and they became CORRECT rather than merely "
+            "abstaining: this family's `correct` goes 120 -> 170 while its "
+            "`abstained` does not move. `pending_application` is a category "
+            "that REPORTS on an application ('please verify your email before "
+            "we can review your application' is an outstanding step in one that "
+            "exists), so it was losing to `applied` on the reference pattern's "
+            "+3 and then on the enum-order tie-break. Both halves of #451 were "
+            "needed and neither alone would have done it. "
+            ""
+            "EXACT AND NOT A BAND, which is a real change from what stood here: "
+            "it was 50/51/55 across the three seeds because which of two real "
+            "wordings a case drew decided whether the defect fired. It is 0 at "
+            "all three now, because the cause was removed rather than a score "
+            "shifted — the same reason `rejection-past-the-snippet` is exact. "
+            ""
+            "The history, kept because the trade it records still stands: "
             "#493. This was 0, closed by `(verify|confirm) your e.?mail`, and "
-            "the pattern has been DELETED — so these 50 are back, deliberately, "
-            "and this number is the price. Read what they cost before moving "
-            "it: they return as `applied` 0.75, which is UNDER the auto-file "
-            "gate, so they are held for a person as a wrong SUGGESTION. They "
-            "do not reach the board. The two counters that say so are asserted "
-            "elsewhere in this file and did not move: `auto_filed_wrong` "
-            "stayed at 72 and `splits` stayed at 0. "
+            "the pattern was DELETED — so these 50 came back, deliberately, "
+            "and this number was the price. They returned as "
+            "`applied` 0.75, which is UNDER the auto-file "
+            "gate, so they were held for a person as a wrong SUGGESTION. They "
+            "did not reach the board. "
             ""
             "What the pattern cost instead was measured on a real mailbox: it "
             "required no job-related evidence at all, so of the four messages "
@@ -720,31 +800,43 @@ def test_the_defects_are_not_a_seed_artefact(seed: int) -> None:
     )
     # OBSERVED REJECTIONS, banded. It moves with the seed for the same reason
     # the #455 band does: which real wording and which role title a case draws
-    # is seeded, and the defect fires on one or the other. Measured 42/42/44 at
-    # the three seeds.
-    obs_rej = score.by_family["observed-rejection"]["wrong"]
-    assert 36 <= obs_rej <= 44, (
-        f"{obs_rej} real rejections stated as fact at this seed, outside the "
-        "measured band of 36..44. These are transcribed wordings, so a move "
-        "here is the product changing, never the corpus."
-    )
-    # WAS A BAND OF 55..66, THEN EXACTLY ZERO, AND IS A BAND AGAIN — 50/51/55
-    # measured at the three seeds. #493 deleted the pattern that closed it, so
-    # the width is back for the original reason: which of the two real wordings
-    # a case draws is seeded.
+    # is seeded, and the defect fires on one or the other.
     #
-    # This assertion deliberately does NOT say "a number here means a rival
-    # card came back" any more, because that sentence is now false and a
-    # message that lies is worse than no message. These 50 are held for review,
-    # not filed. The claim about rival cards is carried by `splits` and the
-    # claim about stated-as-fact by `auto_filed_wrong`, both asserted exactly
-    # rather than banded, and both unmoved by this change. A move HERE is the
-    # seed; a move THERE is the product.
+    # WAS 36..44, ON MEASUREMENTS OF 39/37/42. #451 took it to 32/20/28 — the
+    # cases it removed are the ones where a rejection TIED `applied` on a
+    # reference to the application it rejects. The band is re-measured with
+    # slack on both sides rather than clamped to the new min and max: the width
+    # here is a property of which title each case draws, and a band pinned to a
+    # passing measurement reds on the next seed for no reason.
+    # A CEILING AND NOT A BAND, unlike the version this replaces. A floor under
+    # a defect count reds when somebody FIXES it — the inverted-gate shape this
+    # repository keeps shipping — and the `auto_filed_wrong` ceiling twenty
+    # lines below had its floor removed in this same commit for that reason.
+    # One convention, not two.
+    obs_rej = score.by_family["observed-rejection"]["wrong"]
+    assert obs_rej <= 38, (
+        f"{obs_rej} real rejections stated as fact at this seed, above the "
+        "measured ceiling of 38 (20/28/32 at the three seeds). These are "
+        "transcribed wordings, so a move here is the product changing, never "
+        "the corpus."
+    )
+    # BACK TO EXACTLY ZERO, AT EVERY SEED, and the history is why that is
+    # worth a sentence rather than a number. It was a band of 55..66, then 0
+    # when `(verify|confirm) your e.?mail` closed it, then a band of 44..61
+    # when #493 deleted that pattern as too broad. It is 0/0/0 now for a third
+    # reason, and the only one that is about the message: `pending_application`
+    # REPORTS on an application, so #451 stopped a reference pattern outscoring
+    # it and stopped enum order breaking the tie when it did not.
+    #
+    # EXACT rather than banded, deliberately. A band was honest while the
+    # trigger was "which of two real wordings a case drew"; the cause is gone
+    # now, not the score shifted, so the width would be slack nobody measured.
     obs_pend = score.by_family["observed-pending"]["wrong"]
-    assert 44 <= obs_pend <= 61, (
+    assert obs_pend == 0, (
         f"{obs_pend} real action-required messages read as confirmations at "
-        "this seed, outside the measured band of 44..61. These are transcribed "
-        "wordings, so a move here is the product changing, never the corpus."
+        "this seed. This is 0 at every seed since #451, and it is EXACT rather "
+        "than a band because the fix removed a cause rather than shifting a "
+        "score."
     )
     # The closure wording NEVER lands, at any seed, and that steadiness is the
     # point: "your application is no longer active" is not a wording problem
@@ -795,19 +887,29 @@ def test_the_defects_are_not_a_seed_artefact(seed: int) -> None:
     # profile nudge in `ats-relay-noise` — both fire on a drawn role title, so
     # both move with the seed.
     #
-    # 115..119 BEFORE #459, 100..102 AFTER, and 70..84 since #466 put realistic
-    # job titles in the corpus. The #459 drop was the point of that fix — 17
-    # real "please verify your email" messages per seed were auto-filed as fresh
-    # confirmations. The #466 drop is NOT a fix: every case re-drew its title,
-    # and several patterns stop matching when the title is long, so mail that
-    # used to be confidently wrong now abstains. Fewer wrong verdicts stated as
-    # fact, reached by understanding less. Measured 72 / 72 / 82 at the three
-    # seeds.
-    assert 70 <= score.auto_filed_wrong <= 84, (
+    # 115..119 BEFORE #459, 100..102 AFTER, 70..84 once #466 put realistic job
+    # titles in the corpus, and 0..1 since #451. The #459 drop was the point of
+    # that fix — 17 real "please verify your email" messages per seed were
+    # auto-filed as fresh confirmations. The #466 drop was NOT a fix: every case
+    # re-drew its title and several patterns stop matching when the title is
+    # long, so mail that used to be confidently wrong now abstains — fewer wrong
+    # verdicts stated as fact, reached by understanding less.
+    #
+    # #451 IS A FIX, and it is the difference between the two: the reference
+    # pattern was giving `applied` a report's worth of evidence on every
+    # category's mail, and it is the evidence that carried those verdicts over
+    # the gate. Measured 72 / 72 / 82 before and 0 / 0 / 1 after.
+    #
+    # THE ONE IS NOT NOISE AND IS NOT ROUNDED AWAY. `auto_filed_wrong` is pinned
+    # at exactly 0 for the recorded seed elsewhere in this file; a re-sample
+    # still produces one. So the honest reading is "this defect no longer has a
+    # population", not "it is impossible". The ceiling carries slack for the
+    # same reason every band here does — the width is which title a case drew.
+    assert score.auto_filed_wrong <= 3, (
         f"{score.auto_filed_wrong} wrong verdict(s) were stated as fact at this "
-        "seed, outside the measured band of 70..84. The number that reaches "
-        "the board without anyone being asked is the one worth watching across "
-        "a re-sample."
+        "seed, above the measured ceiling of 3 (0 / 0 / 1 at the three seeds). "
+        "The number that reaches the board without anyone being asked is the "
+        "one worth watching across a re-sample."
     )
     # ``correct`` WAS exactly equal at every seed, and stopped being so when the
     # update-routing families landed. That is honest rather than a regression:
@@ -1055,10 +1157,19 @@ async def test_the_board_is_clean(cases, verdicts, test_session) -> None:
             f"recorded {RECORDED_AFTER_ANSWERING[name]}"
         )
 
-    for name, want in RECORDED_ANSWERS.items():
-        assert getattr(answers, name) == want, (
-            f"{name} is {getattr(answers, name)}, recorded {want}"
-        )
+    # ALL OF THEM AT ONCE, not the first mismatch. These counters move
+    # together — holding more mail raises `queued`, `answered` and whichever
+    # landing bucket receives it — so a loop that stops at the first one makes a
+    # single change look like a single number and costs a full replay per round
+    # to discover otherwise.
+    drifted = {
+        name: (getattr(answers, name), want)
+        for name, want in RECORDED_ANSWERS.items()
+        if getattr(answers, name) != want
+    }
+    assert not drifted, "answering counters moved (measured vs recorded): " + ", ".join(
+        f"{name}: {got} vs {want}" for name, (got, want) in sorted(drifted.items())
+    )
 
 
 @pytest.mark.asyncio
@@ -1771,9 +1882,9 @@ async def test_every_application_mail_is_addressed(
         # that outranks the follow-up pattern never fires. `follow_up` is
         # dropped by filing, by the queue and by `DroppedVerdict` alike, on a
         # premise — "it is the reader's own chasing mail" — that is false for a
-        # message an ATS relayed. Both wording extensions would have missed
-        # them: the reference clause is scoped to `other` and never sees a
-        # `follow_up` verdict.
+        # message an ATS relayed. Both wording extensions the issue proposes
+        # would have missed them: `_APPLICATION_REFERENCE` is consulted only
+        # when the category is `other`, and never sees a `follow_up` verdict.
         #
         # The 5 that used to sit alongside were #466: `_APPLICATION_REFERENCE`
         # spanned the job title with `[\w,\ \-/]{0,60}?`, a character class
@@ -1784,14 +1895,19 @@ async def test_every_application_mail_is_addressed(
         # nobody had anticipated.
     }, dict(lost)
 
-    # 54 updates from the company's own domain rather than the ATS relay,
-    # scored `applied` at 0.60 and dropped under the review floor. The product
-    # NAMES these, so they are recoverable by someone who goes looking, which is
-    # the whole difference from the 610 that used to sit above. Not closed by
-    # #447: the reference clause floors ATS-relayed mail, and by construction
-    # this family does not arrive on an ATS relay. See #451.
+    # EMPTY SINCE #451, and it held `{"update-from-another-domain": 54}` until
+    # then. Those 54 are updates from the company's own domain rather than an
+    # ATS relay, so the #447 reference clause could not floor them: they scored
+    # `applied` at 0.60 on the reference pattern alone and left under the review
+    # floor, counted by the product and on no screen. Demoting that pattern out
+    # of `strong` does not raise their score — it stops `applied` OWNING them,
+    # so the update reads as the update it is and reaches the queue. They are in
+    # `update_held` now, which rose 631 -> 685 by exactly this 54.
+    #
+    # Asserted as the empty dict, like `lost` above: a family here at ANY size
+    # is mail the product received and did nothing visible with.
     dropped = Counter(f.family for f in score.failures if f.mode == "DROPPED")
-    assert dict(dropped) == {"update-from-another-domain": 54}, dict(dropped)
+    assert dict(dropped) == {}, dict(dropped)
 
     # THE CONTROL FOR THE FIX ABOVE, and the reason `lost == 0` means anything.
     #
