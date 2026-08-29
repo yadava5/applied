@@ -49,7 +49,6 @@ every tenant table including ``training_data``, which
 from __future__ import annotations
 
 import ast
-import importlib
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -99,56 +98,46 @@ def _headers() -> dict[str, str]:
 async def cloud_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
     """Cloud app on the in-memory DB — the reload sequence the cloud tests use."""
 
-    monkeypatch.setenv("JOBTRACKER_DEPLOYMENT", "cloud")
-    monkeypatch.setenv("JOBTRACKER_ENVIRONMENT", "test")
-    monkeypatch.setenv("JOBTRACKER_SUPABASE_JWT_SECRET", JWT_SECRET)
-    monkeypatch.setenv("JOBTRACKER_SECRET_ENCRYPTION_KEY", ENC_KEY)
-    monkeypatch.setenv("JOBTRACKER_GOOGLE_OAUTH_CLIENT_ID", CLIENT_ID)
-    monkeypatch.setenv("JOBTRACKER_GOOGLE_OAUTH_CLIENT_SECRET", CLIENT_SECRET)
-    monkeypatch.setenv("JOBTRACKER_GMAIL_OAUTH_REDIRECT_URI", REDIRECT_URI)
-    monkeypatch.setenv("JOBTRACKER_WEB_APP_URL", WEB_APP_URL)
-    # See the same pair in `test_gmail_oauth_cloud.py`: the return host must be
-    # one this deployment trusts, so the fixture declares it.
-    monkeypatch.setenv("JOBTRACKER_CORS_ALLOWED_HOSTS", "web.example.test")
-
+    import jobtracker.auth.supabase_jwt as auth_module
+    import jobtracker.cloud.gmail_oauth as gmail_module
     import jobtracker.config as config_module
+    import jobtracker.credentials.cloud as cred_cloud_module
     import jobtracker.database.connection as connection_module
 
-    importlib.reload(config_module)
+    # Every settings instance the request path holds, de-duplicated by object
+    # identity -- not ``importlib.reload(jobtracker.config)``, which minted a
+    # new one and left the verifier holding the old (#582).
+    holders = {
+        id(module.settings): module.settings
+        for module in (config_module, auth_module, connection_module, cred_cloud_module)
+    }
+    for instance in holders.values():
+        monkeypatch.setattr(instance, "deployment", "cloud")
+        monkeypatch.setattr(instance, "environment", "test")
+        monkeypatch.setattr(instance, "supabase_jwt_secret", JWT_SECRET)
+        monkeypatch.setattr(instance, "secret_encryption_key", ENC_KEY)
+        monkeypatch.setattr(instance, "google_oauth_client_id", CLIENT_ID)
+        monkeypatch.setattr(instance, "google_oauth_client_secret", CLIENT_SECRET)
+        monkeypatch.setattr(instance, "gmail_oauth_redirect_uri", REDIRECT_URI)
+        monkeypatch.setattr(instance, "web_app_url", WEB_APP_URL)
+        # See the same pair in `test_gmail_oauth_cloud.py`: the return host
+        # must be one this deployment trusts, so the fixture declares it.
+        monkeypatch.setattr(instance, "cors_allowed_hosts", ["web.example.test"])
+
     connection_module._engine = None
-
-    import jobtracker.auth.supabase_jwt as auth_module
-
-    importlib.reload(auth_module)
-
-    import jobtracker.credentials.cloud as cred_cloud_module
-
-    importlib.reload(cred_cloud_module)
-
-    import jobtracker.cloud.applications as cloud_apps_module
-
-    importlib.reload(cloud_apps_module)
-
-    import jobtracker.cloud.gmail_oauth as gmail_module
-
-    importlib.reload(gmail_module)
-
-    import jobtracker.main_cloud as main_cloud_module
-
-    importlib.reload(main_cloud_module)
+    gmail_module._INBOX_CACHE.clear()
 
     from jobtracker.database import init_db
 
     await init_db()
+
+    import jobtracker.main_cloud as main_cloud_module
 
     yield main_cloud_module.app
 
     if connection_module._engine is not None:
         await connection_module._engine.dispose()
     connection_module._engine = None
-
-    monkeypatch.undo()
-    importlib.reload(config_module)
 
 
 @pytest.fixture

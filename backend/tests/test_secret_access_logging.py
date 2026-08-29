@@ -42,7 +42,6 @@ the success line in ``get_gmail_credentials`` reddens
 
 from __future__ import annotations
 
-import importlib
 import logging
 import uuid
 from datetime import datetime
@@ -74,24 +73,26 @@ async def cloud_env(monkeypatch: pytest.MonkeyPatch):
     imported the module against a keyless settings object.
     """
 
-    monkeypatch.setenv("JOBTRACKER_SECRET_ENCRYPTION_KEY", ENC_KEY)
-
+    import jobtracker.auth.supabase_jwt as auth_module
     import jobtracker.config as config_module
-
-    importlib.reload(config_module)
-
     import jobtracker.credentials.cloud as cloud_module
+    import jobtracker.database.connection as connection_module
 
-    importlib.reload(cloud_module)
+    # Every settings instance the request path holds, de-duplicated by object
+    # identity -- not ``importlib.reload(jobtracker.config)``, which minted a
+    # new one and left the verifier holding the old (#582).
+    holders = {
+        id(module.settings): module.settings
+        for module in (config_module, auth_module, connection_module, cloud_module)
+    }
+    for instance in holders.values():
+        monkeypatch.setattr(instance, "secret_encryption_key", ENC_KEY)
 
     from jobtracker.database import init_db
 
     await init_db()
 
     yield cloud_module
-
-    monkeypatch.undo()
-    importlib.reload(config_module)
 
 
 @pytest.fixture

@@ -36,7 +36,6 @@ the 422 actually came from.
 
 from __future__ import annotations
 
-import importlib
 import time
 from collections.abc import AsyncIterator
 from typing import Any
@@ -81,42 +80,60 @@ def _token_for(user_id: str) -> str:
 
 @pytest.fixture
 async def cloud_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
-    """Cloud app on the in-memory DB — the reload sequence from C3's tests."""
+    """The cloud FastAPI app over the in-memory SQLite test DB, auth enabled.
 
-    monkeypatch.setenv("JOBTRACKER_DEPLOYMENT", "cloud")
-    monkeypatch.setenv("JOBTRACKER_ENVIRONMENT", "test")
-    monkeypatch.setenv("JOBTRACKER_SUPABASE_JWT_SECRET", JWT_SECRET)
+    The ``monkeypatch``-on-``settings`` form, NOT the env-var-plus-
+    ``importlib.reload`` sequence this fixture used until #582. That sequence
+    was process-global and irreversible from a later module's point of view:
+    reloading ``jobtracker.config`` mints a NEW ``Settings`` object and rebinds
+    ``config_module.settings`` to it, while every module that did
+    ``from jobtracker.config import settings`` at import time — including
+    ``jobtracker.auth.supabase_jwt``, the verifier — keeps holding the old one.
+    The teardown reload did not undo it; it minted a *third* instance and left
+    the verifier on the first. Any module sorting after this one that patched
+    only ``config_module.settings`` then set its JWT secret on an object the
+    verifier never reads, and every one of its requests came back
+    ``401 Invalid signature`` — green alone, red in a full run. Six tests in
+    ``test_application_delete_children.py`` failed that way, for no reason
+    other than alphabetical collection order.
 
+    PATCHED ON EVERY INSTANCE THE REQUEST PATH READS, de-duplicated by object
+    identity, because this module is not the only one still doing the reload:
+    a module earlier in collection order can already have split the singleton
+    before this fixture runs. In the ordinary case all three names are the same
+    object and the extra writes are no-ops.
+
+    ``database_url`` is a property derived from ``environment``, so the
+    in-memory URL follows from the same patch; clearing ``_engine`` is what
+    makes the next ``get_engine()`` build against it.
+    """
+
+    import jobtracker.auth.supabase_jwt as auth_module
     import jobtracker.config as config_module
     import jobtracker.database.connection as connection_module
 
-    importlib.reload(config_module)
+    holders = {
+        id(module.settings): module.settings
+        for module in (config_module, auth_module, connection_module)
+    }
+    for instance in holders.values():
+        monkeypatch.setattr(instance, "environment", "test")
+        monkeypatch.setattr(instance, "deployment", "cloud")
+        monkeypatch.setattr(instance, "supabase_jwt_secret", JWT_SECRET)
+
     connection_module._engine = None
-
-    import jobtracker.auth.supabase_jwt as auth_module
-
-    importlib.reload(auth_module)
-
-    import jobtracker.cloud.applications as cloud_apps_module
-
-    importlib.reload(cloud_apps_module)
-
-    import jobtracker.main_cloud as main_cloud_module
-
-    importlib.reload(main_cloud_module)
 
     from jobtracker.database import init_db
 
     await init_db()
+
+    import jobtracker.main_cloud as main_cloud_module
 
     yield main_cloud_module.app
 
     if connection_module._engine is not None:
         await connection_module._engine.dispose()
     connection_module._engine = None
-
-    monkeypatch.undo()
-    importlib.reload(config_module)
 
 
 @pytest.fixture

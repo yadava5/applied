@@ -45,7 +45,6 @@ the handler turns every 403 assertion here red — verified by doing it.
 from __future__ import annotations
 
 import asyncio
-import importlib
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -86,62 +85,48 @@ async def _build_cloud_app(monkeypatch: pytest.MonkeyPatch, *, secret: str | Non
     "unconfigured deployment" test pass while configured.
     """
 
-    monkeypatch.setenv("JOBTRACKER_DEPLOYMENT", "cloud")
-    monkeypatch.setenv("JOBTRACKER_ENVIRONMENT", "test")
-    monkeypatch.setenv("JOBTRACKER_SUPABASE_JWT_SECRET", JWT_SECRET)
-    monkeypatch.setenv("JOBTRACKER_SECRET_ENCRYPTION_KEY", ENC_KEY)
+    # A bare ``CRON_SECRET`` is read straight out of ``os.environ``, so it is
+    # still cleared through the environment.
     monkeypatch.delenv("CRON_SECRET", raising=False)
-    if secret is None:
-        monkeypatch.delenv("JOBTRACKER_VERCEL_CRON_SECRET", raising=False)
-    else:
-        monkeypatch.setenv("JOBTRACKER_VERCEL_CRON_SECRET", secret)
-
-    import jobtracker.config as config_module
-    import jobtracker.database.connection as connection_module
-
-    importlib.reload(config_module)
-    connection_module._engine = None
 
     import jobtracker.auth.supabase_jwt as auth_module
-
-    importlib.reload(auth_module)
-
-    import jobtracker.credentials.cloud as cred_cloud_module
-
-    importlib.reload(cred_cloud_module)
-
-    import jobtracker.cloud.applications as cloud_apps_module
-
-    importlib.reload(cloud_apps_module)
-
     import jobtracker.cloud.gmail_oauth as gmail_module
+    import jobtracker.config as config_module
+    import jobtracker.credentials.cloud as cred_cloud_module
+    import jobtracker.database.connection as connection_module
 
-    importlib.reload(gmail_module)
+    # Every settings instance the request path holds, de-duplicated by object
+    # identity -- not ``importlib.reload(jobtracker.config)``, which minted a
+    # new one and left the verifier holding the old (#582).
+    holders = {
+        id(module.settings): module.settings
+        for module in (config_module, auth_module, connection_module, cred_cloud_module)
+    }
+    for instance in holders.values():
+        monkeypatch.setattr(instance, "deployment", "cloud")
+        monkeypatch.setattr(instance, "environment", "test")
+        monkeypatch.setattr(instance, "supabase_jwt_secret", JWT_SECRET)
+        monkeypatch.setattr(instance, "secret_encryption_key", ENC_KEY)
+        monkeypatch.setattr(instance, "vercel_cron_secret", secret)
 
-    import jobtracker.cloud.cron as cron_module
-
-    importlib.reload(cron_module)
-
-    import jobtracker.main_cloud as main_cloud_module
-
-    importlib.reload(main_cloud_module)
+    connection_module._engine = None
+    gmail_module._INBOX_CACHE.clear()
 
     from jobtracker.database import init_db
 
     await init_db()
 
+    import jobtracker.main_cloud as main_cloud_module
+
     return main_cloud_module.app
 
 
 async def _teardown(monkeypatch: pytest.MonkeyPatch) -> None:
-    import jobtracker.config as config_module
     import jobtracker.database.connection as connection_module
 
     if connection_module._engine is not None:
         await connection_module._engine.dispose()
     connection_module._engine = None
-    monkeypatch.undo()
-    importlib.reload(config_module)
 
 
 @pytest.fixture
