@@ -23,6 +23,24 @@
 
 import type { ScanMessagePayload } from "../gmail/scan-correction";
 
+/**
+ * How the dashboard names its review count — a TO-DO, not a category.
+ *
+ * The dashboard counts the WORK QUEUE (`needs_review` AND unlinked AND not yet
+ * reviewed, deduped by `pipeline.review_dedup_key`). The Inbox's chip counts
+ * every STORED message carrying that verdict, one row per message, whatever
+ * its linkage or reviewed state. Both are right, and the inbox is always the
+ * larger of the two — so the same words on both screens read as a bug in one
+ * of them, which is what production showed: 8 on the dashboard, 9 in the inbox
+ * (#445).
+ *
+ * The two labels must stay DIFFERENT words. `CATEGORY_META.needs_review`'s
+ * `chipLabel` in `lib/gmail/types.ts` is the other half, and
+ * `tests/unit/review-counts-are-labelled-apart.test.mjs` reds if a later
+ * cleanup unifies them.
+ */
+export const REVIEW_QUEUE_LABEL = "to review";
+
 /** What the user is told when the employer could not be read from the message. */
 export const NEEDS_EMPLOYER_PROMPT =
   "We couldn't tell which company this email is from. Name it and we'll file it.";

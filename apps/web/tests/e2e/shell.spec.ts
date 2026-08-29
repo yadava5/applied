@@ -904,7 +904,7 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
         // would make the third loop a gate that cannot fail.
         if (route.includes("review=")) {
           await expect(
-            page.getByRole("link", { name: /3 held for review/ }),
+            page.getByRole("link", { name: /3 to review/ }),
           ).toBeVisible();
         }
 
