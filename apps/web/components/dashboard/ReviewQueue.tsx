@@ -9,6 +9,7 @@ import { shortDate } from "@/lib/dashboard/dates";
 import { AUTO_FILE_GATE } from "@/lib/dashboard/model";
 import {
   CLASSIFY_FAILED,
+  REVIEW_QUEUE_LABEL,
   canNameCompany,
   canSubmitReview,
   classifyRequestBody,
@@ -460,6 +461,13 @@ function ReviewRow({
  * now — the amber token is literally named `--color-review`. The section
  * anchor stays `needs-classification` so existing deep links keep resolving.
  *
+ * It says "to review" and NOT "needs review" (#445). The Inbox's chip counts
+ * every stored message with that verdict — already-reviewed and already-linked
+ * ones included — so it is always the larger number, and production showed 8
+ * here against 9 there under one phrase. `REVIEW_QUEUE_LABEL` is that phrase
+ * for every dashboard surface that counts this queue; the inbox's is
+ * `CATEGORY_META.needs_review.chipLabel`.
+ *
  * Density follows the board's rule — no scroller nested inside the scrolling
  * page. A long queue shows its first {@link COLLAPSED_COUNT} rows and a
  * "show all N" expander that grows the page.
@@ -495,17 +503,23 @@ export function ReviewQueue({
   return (
     <section
       id="needs-classification"
-      aria-label="Needs review"
+      // The heading already carries the count; naming the region with it too
+      // makes a screen reader announce "3 to review" twice on entry.
+      aria-label={REVIEW_QUEUE_LABEL}
       className="scroll-mt-6 rounded-2xl border border-review/40 bg-surface p-4 sm:p-5"
     >
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        {/* Count first, so the heading reads as a to-do ("8 to review") rather
+            than as a category with a number after it. */}
         <h2 className="text-sm font-semibold tracking-tight text-strong">
-          Needs review ({items.length})
+          <span className="tabular">{items.length}</span> {REVIEW_QUEUE_LABEL}
         </h2>
         {/* Where the confidence gate's existence is told to the user — in
-            terms of what it does for them, not as a CI metric. */}
+            terms of what it does for them, not as a CI metric. The second
+            clause is what makes this a QUEUE rather than a filter: it empties
+            as you decide, which is why the Inbox's count is the larger one. */}
         <span className="shrink-0 text-xs text-dim">
-          held because Applied wasn&apos;t sure · your decision files them
+          Applied wasn&apos;t sure · your decision files them and clears them from here
         </span>
       </div>
       <ul className="space-y-2">

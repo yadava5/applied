@@ -155,7 +155,22 @@ export const JOB_RELATED_CATEGORIES: readonly string[] = [
   "follow_up",
 ];
 
-export const CATEGORY_META: Record<string, { label: string; dot: string }> = {
+/**
+ * How each category reads on a row, and its dot.
+ *
+ * `chipLabel` overrides `label` on the COUNT chips only, and exactly one
+ * category needs it. On a single message the badge states the classifier's
+ * verdict — "needs review" is what happened to that message. The chip states
+ * how many STORED messages hold that verdict, which is a different question
+ * from the dashboard's work-queue count and must not wear the same words: 8 on
+ * the dashboard against 9 here reads as a bug when both say "needs review"
+ * (#445, and `REVIEW_QUEUE_LABEL` in `lib/dashboard/review.ts` is the other
+ * half of the pair).
+ */
+export const CATEGORY_META: Record<
+  string,
+  { label: string; chipLabel?: string; dot: string }
+> = {
   offer: { label: "offer", dot: "bg-live" },
   interview: { label: "interview", dot: "bg-live" },
   assessment: { label: "assessment", dot: "bg-live" },
@@ -163,7 +178,7 @@ export const CATEGORY_META: Record<string, { label: string; dot: string }> = {
   pending_application: { label: "pending", dot: "bg-viz-embeddings" },
   follow_up: { label: "follow up", dot: "bg-viz-rules" },
   rejection: { label: "rejection", dot: "bg-reject" },
-  needs_review: { label: "needs review", dot: "bg-review" },
+  needs_review: { label: "needs review", chipLabel: "held for review", dot: "bg-review" },
   other: { label: "other", dot: "bg-dim" },
 };
 
@@ -198,8 +213,11 @@ export function categoryChips(counts: Record<string, number>): CategoryChip[] {
     .filter((c) => !(CATEGORY_ORDER as readonly string[]).includes(c) && (counts[c] ?? 0) > 0)
     .sort();
   return [...known, ...extra].map((c) => {
-    const meta = CATEGORY_META[c] ?? { label: c.replaceAll("_", " "), dot: "bg-dim" };
-    return { value: c, label: meta.label, dot: meta.dot, count: counts[c] ?? 0 };
+    const meta: (typeof CATEGORY_META)[string] =
+      CATEGORY_META[c] ?? { label: c.replaceAll("_", " "), dot: "bg-dim" };
+    // A chip counts a SET, a badge names one message — `chipLabel` is where the
+    // two part company (needs_review, #445). Everything else reads the same.
+    return { value: c, label: meta.chipLabel ?? meta.label, dot: meta.dot, count: counts[c] ?? 0 };
   });
 }
 

@@ -22,6 +22,7 @@ import {
   duePhrase,
 } from "@/lib/dashboard/deadline";
 import type { PulseFilter } from "@/lib/dashboard/pulseFilter";
+import { REVIEW_QUEUE_LABEL } from "@/lib/dashboard/review";
 import { isOpenStage, type PulseRow } from "@/lib/dashboard/summary";
 import { cn } from "@/lib/utils";
 import { PulseDetail, type PulseDetailKind } from "./PulseDetail";
@@ -882,19 +883,22 @@ export function PipelinePulse({
             <>
               <span className="tabular text-strong">{autoFiled}</span> of {applications.length}
               {" · "}
-              {/* "held for review", not "held for YOUR review": the queue this
-                  links to is headed "Needs review", so the link keeps the review
-                  family's name — and the short form is what fits beside the
-                  figure at the lg boundary (163px vs the long form's 190px,
-                  against a 171px cell). The remainder-by-hand answer waits in
-                  the panel while something actionable holds this slot.
+              {/* `REVIEW_QUEUE_LABEL`, not a phrase of its own: this link and
+                  the queue it lands on count the same rows, and the Inbox's
+                  chip counts a different set under words that must stay
+                  different (#445). It used to read "held for review", which is
+                  now the INBOX's phrase — the same words on both numbers is the
+                  bug. It is also shorter than what it replaced, so the lg
+                  boundary's 171px cell has more room than the 163px this slot
+                  already fit in. The remainder-by-hand answer waits in the
+                  panel while something actionable holds this slot.
                   `pointer-events-auto`: the cell's stretched trigger owns every
                   other pixel; this link opts back in. */}
               <Link
                 href="/dashboard#needs-classification"
                 className="pointer-events-auto font-medium text-review underline-offset-2 hover:underline"
               >
-                <span className="tabular">{needsReview}</span> held for review →
+                <span className="tabular">{needsReview}</span> {REVIEW_QUEUE_LABEL} →
               </Link>
             </>
           ) : byHand > 0 ? (

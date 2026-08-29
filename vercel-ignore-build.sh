@@ -231,6 +231,50 @@
 # own stderr instead of only its own conclusion.
 #
 # ---------------------------------------------------------------------------
+# apps/web/tests IS EXCLUDED, AND IT IS THE ONLY NARROWING IN THIS FILE.
+# ---------------------------------------------------------------------------
+#
+# Narrowing an allowlist is the dangerous direction — see the doctrine above —
+# so this one carries its evidence rather than its reasoning.
+#
+# `apps/web/tests/` holds the unit suite, the Playwright specs, the fixtures
+# and the helpers. It changes on most frontend PRs and it cannot change a byte
+# of the bundle. #566 was the case that named it: its entire diff is
+# `tests/unit/empty-subtitle.test.mjs` and `tests/unit/helpers/subtitleWiring.mjs`,
+# and it built the Next.js app on the preview and again on the production merge.
+#
+# The objection that had to be answered first is that a build input is not only
+# a bundle input. `apps/web/tsconfig.json` includes `**/*.ts` and excludes only
+# `node_modules`, so the 21 `.ts` files under `tests/` ARE in the type-check set,
+# and `next build` type-checks by default — nothing sets
+# `typescript.ignoreBuildErrors`. A type error in a spec file really does fail
+# the production build today.
+#
+# It also fails `frontend-ci.yml`, which runs `pnpm typecheck` — `tsc --noEmit`
+# against that same `apps/web/tsconfig.json`, so an equal-or-larger set — on
+# every pull request touching `apps/web/**`, which a tests-only diff does. That
+# job builds the app as well. Measured rather than argued: a `const x: number =
+# "a string"` appended to `tests/e2e/helpers.ts` makes `pnpm typecheck` exit 2
+# with `tests/e2e/helpers.ts(101,7): error TS2322`.
+#
+# So the gate is not removed, it is already duplicated, and the failure mode of
+# this exclusion is NOT the silent wrong SKIP the rest of this file guards
+# against: a type error under `tests/` that somehow escaped CI would fail the
+# next real build, loudly, rather than deploy something broken.
+#
+# The second objection is imports running the other way. Nothing in bash can
+# stop app code importing a fixture out of `tests/`, and one such import would
+# make this exclusion a wrong-SKIP generator. That is why it is gated in the
+# unit suite instead of assumed here:
+# `apps/web/tests/unit/tests-dir-is-not-a-build-input.test.mjs` fails if any
+# file under `apps/web` outside `tests/` statically imports anything under it.
+# If that gate ever fires, move the shared code out of `tests/` — do not delete
+# the exclusion and do not loosen the walk.
+#
+# `apps/web/playwright.config.ts` is NOT under `tests/` and is unaffected; it
+# names `./tests` as a testDir in a string, and imports nothing from it.
+#
+# ---------------------------------------------------------------------------
 # MAINTENANCE: THE PATH LISTS ARE AN ALLOWLIST.
 # ---------------------------------------------------------------------------
 #
@@ -302,7 +346,11 @@ case "$project" in
     # reads configuration from the Root Directory, so this project reads
     # apps/web/vercel.json. The root .vercelignore IS an input: it once
     # excluded apps/web and every web build failed with NEXT_NO_VERSION.
-    paths=(apps/web .vercelignore)
+    #
+    # The `:!` is git's exclude pathspec and is the file's ONLY narrowing; the
+    # evidence for it is in its own header section above. It applies to the
+    # whole pathspec set, so `.vercelignore` is unaffected by its position.
+    paths=(apps/web ':!apps/web/tests' .vercelignore)
     ;;
   *)
     log "unknown project '${project}'; building"
