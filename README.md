@@ -215,7 +215,7 @@ not partly graded by the person who set the exam.
 | Board: cards / splits / merges / noise / misrouted review | **9,148 / 0 / 0 / 0 / 0** |
 | Updates that reached the wrong card | **0** |
 | Updates held for a person because the classifier was unsure | 360 |
-| Mail about a real application that reached nothing | **11 lost**, 72 dropped |
+| Mail about a real application that reached nothing | **0 lost**, 0 dropped |
 
 **No message has ever landed on the wrong card.** Zero merges, zero misrouted updates over 16,780
 messages and 9,177 cards — the half that could destroy a record, because a rejection filed onto a
@@ -258,13 +258,13 @@ auto-filed verdicts at exactly 12,256 — and it also drops a real rejection fro
 mailbox below the review floor, from queued to lost. One real message outranks several hundred
 invented ones, so it is filed rather than shipped.
 
-The last row is the one that is still bad. Until 2026-08-22 the replay ran only the rollup and never
+The last row is the one that stayed bad longest. Until 2026-08-22 the replay ran only the rollup and never
 the review path, so "held for a person to settle" and "vanished entirely" produced identical scores —
 precisely the blind spot that let four Microsoft applications disappear on 2026-08-21 with every gate
-green. It went from 610 to 0 on that day, and **11 messages about real applications
+green. It went from 610 to 0 on that day, and **0 messages about real applications
 now reach no card, no queue and no counter**
 ([#447](https://github.com/yadava5/applied/issues/447), then
-[#458](https://github.com/yadava5/applied/issues/458)). They scored
+[#458](https://github.com/yadava5/applied/issues/458)). The 610 scored
 `other` at 0.50 — not a lifecycle category, so neither the ATS floor nor the drop counter could see
 them. `pipeline.references_an_application` floors a message an ATS relayed into the review queue when
 its own text speaks about an application the reader made, and only then: the corpus carries 400
@@ -272,13 +272,21 @@ its own text speaks about an application the reader made, and only then: the cor
 queued. The two assertions are each other's control, because reaching zero lost by queueing
 everything an ATS sends would pass the first one alone.
 
-**The 0 became 8 when the transcribed wordings arrived, and that is the honest reading rather than a
+**The 0 became 66 when the transcribed wordings arrived, and that is the honest reading rather than a
 regression.** 0 was measured on a corpus written by the author of the classifier; against real mail
-the same guarantee leaked 66, and completing the reference category with `your assessment` and `your
-interview` closed 58 of them. The last 8 are one sender's rejection whose snippet stops one character
-before "with your application". Closing those needs that sender's sentence copied into the product,
-which would rebuild the closed loop `observed.py` exists to break — so they are pinned and open, not
-quietly fixed.
+the same guarantee leaked 66. Completing the reference category with `your assessment` and `your
+interview` closed most of them, and #466 — a character class that could not span a real job title —
+closed five more.
+
+The last 11 were closed by #458, and not by the wording that issue expected. Read rather than
+executed they looked like one sender's rejection whose snippet stops one character before "with your
+application"; measured, all 11 scored `follow_up` at 0.70, because the sender's own subject line says
+"Follow-Up" and the decision sentence sits just past Gmail's snippet cut, so the veto that would
+outrank it never fires. `follow_up` is dropped by the filing path, by the review queue and by the
+drop counter alike, all three on one premise — that it is the reader's own chasing mail — which is
+false of a message an applicant tracking system relayed. A relayed `follow_up` now reaches the queue;
+one the reader sent still drops. No wording was copied into the product, which is why the earlier fix
+was declined.
 
 Every defect below is pinned at its measured size rather than excluded, because a corpus that
 asserts only what already passes is a check that cannot fail — and this repository has a ledger of
@@ -714,7 +722,7 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 
 ### Testing
 
-**1783 tests collected, 0 skipped.** These figures were recorded on 2026-08-28 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. `--record` refuses to write at all unless that run was whole — Docker reachable, nothing skipped, suite green — because skipped tests are still *collected*, so a recording taken without the Postgres extras used to publish "0 skipped" while five modules sat out (#351). The artifact names the interpreter that ran the suite rather than the one that ran the script; those differ here, and a Python 3.14 run is exactly what produced the wrong coverage figures corrected below. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 1350 `test_*` functions across 116 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 1783 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
+**1783 tests collected, 0 skipped.** These figures were recorded on 2026-08-28 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. `--record` refuses to write at all unless that run was whole — Docker reachable, nothing skipped, suite green — because skipped tests are still *collected*, so a recording taken without the Postgres extras used to publish "0 skipped" while five modules sat out (#351). The artifact names the interpreter that ran the suite rather than the one that ran the script; those differ here, and a Python 3.14 run is exactly what produced the wrong coverage figures corrected below. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 1358 `test_*` functions across 117 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 1783 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
 
 The Postgres row-level-security module is the only thing in the repo that can demonstrate the isolation the product claims, and **21 tests** now exercise it. It has not always run: its tests waited on a database URL no workflow set, and a skip is green, so the 10 it held on 2026-08-02 had **never executed anywhere**. Two fixes: `test_rls_postgres.py` now starts its own `postgres:16` via testcontainers when `JOBTRACKER_TEST_PG_ADMIN_URL` is absent and Docker is available, and the `rls-postgres` CI job supplies its own service container. That job then parses the JUnit XML and **fails the build if the suite reports zero tests or any skip**, because a skipped security test and a passing one produce the same green tick.
 
@@ -849,7 +857,7 @@ applied/
 │   │   └── scripts/         # evaluator, latency benchmark, ML-ops tooling
 │   ├── alembic/versions/    # 23 revisions incl. the RLS + InitPlan-hoist migrations
 │   ├── data/evaluation/     # eval sets, committed baselines, benchmark + monitoring history
-│   └── tests/               # 116 modules
+│   └── tests/               # 117 modules
 │
 ├── ml/                      # the classifier as a deployable service
 │   ├── browser/             # ONNX export + the in-browser site (Transformers.js)

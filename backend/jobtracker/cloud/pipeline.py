@@ -4077,7 +4077,12 @@ def collect_review_items(
         (0.70) — including one that clears the gate but whose employer could not
         be named (skipping is better than inventing a company), or
       - it is a lifecycle verdict (not follow-up) relayed by a known ATS, at ANY
-        confidence — the ATS floor, see below.
+        confidence — the ATS floor, see below, or
+      - a known ATS relayed it and the verdict is ``follow_up``, at ANY
+        confidence. ``follow_up`` means the READER'S OWN chasing mail, which is
+        why it is dropped everywhere else; a relay does not carry the reader's
+        own mail, so on that sender the verdict is a category error and
+        dropping it silently loses the sender's message (#458).
 
     Anything below the review floor, or plain ``other`` noise, is omitted. That
     drop is terminal — the one path through this module that leaves no row and
@@ -4188,21 +4193,81 @@ def collect_review_items(
         #     here.
         #   · ``follow_up`` — excluded from filing AND from the queue by design,
         #     above the floor as well as below it. It is the user's own chasing
-        #     mail; queueing it asks them to classify themselves.
+        #     mail; queueing it asks them to classify themselves. THAT REASON
+        #     DOES NOT HOLD WHEN AN ATS RELAYED THE MESSAGE — see the clause
+        #     below and #458.
         #   · a category outside the canonical vocabulary — a BUG, whose
         #     contract is that it is LOGGED rather than turned into a queue
         #     entry. Queueing it would hide the bug behind a plausible row.
         #
         # An earlier draft of this wrote ``is_lifecycle or references(...)``,
         # which reversed the second and third as a side effect and was caught by
-        # `test_the_floor_does_not_swallow_the_three_shapes_that_must_stay_dropped`
+        # `test_the_floor_does_not_swallow_the_shapes_that_must_stay_dropped`
         # — the test for #166 doing its job on #447's change.
+        #
+        # #458 ADDS ONE MORE CLAUSE, AND IT IS A DIRECTION ARGUMENT rather than
+        # a wording one. ``follow_up`` is dropped everywhere on one premise,
+        # stated in the bullet above and in that test: it is the READER'S OWN
+        # chasing mail, so asking them to classify it asks them to classify
+        # themselves. A message an applicant tracking system relayed is not
+        # mail the reader sent. The premise is simply false for it, and what
+        # the exclusion then destroys is the sender's message.
+        #
+        # WHAT THIS COSTS TODAY, measured rather than reasoned about
+        # (17,260-message independent corpus, 2026-08-29):
+        #
+        #   ``follow_up`` verdicts in the whole corpus            11
+        #   ...of those, relayed by a domain on ``ATS_DOMAINS``   11
+        #   ...of those, whose ground truth is ``rejection``      11
+        #
+        # Every one is a real transcribed rejection whose subject carries the
+        # sender's own word "Follow-Up" and whose verdict sentence sits past
+        # Gmail's ~186-character snippet cut — one character past, so the
+        # rejection veto that outranks the follow-up pattern never fires and
+        # 0.70 ``follow_up`` is what the classifier returns. Delivered whole,
+        # the same message is ``rejection`` at 0.95. These 11 are the residue
+        # of #447 and they reached NOTHING: not a card, because
+        # ``_qualifies_for_hard_row`` refuses ``follow_up`` at any confidence;
+        # not the queue, because of the bullet above; and not even a
+        # ``DroppedVerdict``, because that is scoped to lifecycle categories
+        # and ``follow_up`` is excluded from those too. Three instruments, one
+        # blind spot, and the message is indistinguishable from mail that never
+        # arrived.
+        #
+        # NOT SCOPED BY CONFIDENCE, deliberately. The previous attempt on this
+        # shape demoted ``follow-?up`` from a strong pattern to a weak one,
+        # which moved the score from 0.90 to 0.70 and changed nothing at all:
+        # the exclusion is CATEGORICAL, so no score can escape it. A clause
+        # that reads the confidence would rebuild that.
+        #
+        # NOT IN ``classify`` EITHER, and that is the same boundary #447
+        # respected. ``rules.py`` is ported byte-for-byte into
+        # ``apps/web/lib/demo/rules.json`` and ``ml/browser/site/rules.json``,
+        # so a verdict-changing rule there is two more artefacts and the demo
+        # gate; and the corpus holds no CORRECT ``follow_up`` case anywhere, so
+        # it cannot grade a change to how ``follow_up`` is detected. This
+        # changes no verdict. It changes who gets asked, which is this
+        # function's job.
+        #
+        # THE CONTROL IS THE ONE #447 ALREADY BUILT, and it is a measured zero
+        # rather than a structural one: of the corpus's 400 ``ats-relay-noise``
+        # messages — job alerts, talent-community blasts, profile nudges,
+        # surveys, referral asks, all from these same relay domains — exactly
+        # ZERO score ``follow_up``. So this clause cannot touch them. Nor can
+        # it touch a legitimate ``follow_up``, which is mail the user sent: it
+        # does not arrive from a relay.
+        #
+        # Still the queue and nothing else. ``_qualifies_for_hard_row`` is
+        # untouched and still refuses ``follow_up`` outright, so a message
+        # arriving here can only get a person asked — it can never file a
+        # rejection as a follow-up, or as anything.
         ats_floor = is_ats_sender(item.sender_email) and (
             is_lifecycle
             or (
                 item.category == "other"
                 and references_an_application(item.subject, item.snippet)
             )
+            or item.category == "follow_up"
         )
         if (
             not is_needs_review
