@@ -1586,6 +1586,38 @@ FACTS: dict[str, dict] = {
             # purpose. The site is kept rather than deleted because deleting it
             # is how a number stops being checked while still being published.
             r"The bold (\d+) is the artifact's",
+            # ── printed in the System Card booklet, §04 THE GUARANTEE (#476) ──
+            #
+            # The card published 1,309 at these four sites, transcribed by hand
+            # from a run taken on 2026-08-22, and nothing recomputed it: `1309`
+            # appeared nowhere in this file, so the checker could report "all
+            # agree" while the page was 469 tests out of date. A number
+            # published in two documents from one measurement has to be bound
+            # to that measurement in both, or it is corrected in one of them.
+            #
+            # WHY THE COLLECTED COUNT MAY CARRY A CLAIM ABOUT PASSING. The
+            # card's prose says the suite "runs N tests, all passing", which
+            # reads like a `passed` figure rather than a `collected` one. They
+            # are the same number for any artifact that exists: `refuse_reason`
+            # rejects a recording that skipped, that failed, or that ran
+            # without Docker, and `write_artifact` applies it before touching
+            # the disk. So no artifact can carry collected != passed, and a
+            # second `testsPassed` fact would be a second name for this one.
+            #
+            # WHY THE CARD'S COMMAND CHANGED. The provenance line used to name
+            # `pytest tests -q --ignore=tests/test_setfit_model.py
+            # --ignore=tests/test_evaluate_classifier.py`, which is NOT the
+            # command behind this artifact: at HEAD it collects 1,778 where
+            # the recorded command collects 1,790 — twelve tests apart, all of
+            # them in the two ignored modules. Publishing the recorded figure
+            # under the narrower command would have swapped a stale number for
+            # a mislabelled one, which is why #473 did not simply edit the
+            # digits. The card now names the recorded command, so the sentence
+            # and the source agree.
+            {"re": r'headline: "([\d,]+) tests, and [\d,]+ messages', "file": BOOKLET_CONTENT},
+            {"re": r"The backend suite runs ([\d,]+) tests, all passing", "file": BOOKLET_CONTENT},
+            {"re": r'value: "([\d,]+)", label: "tests · backend suite"', "file": BOOKLET_CONTENT},
+            {"re": r"Provenance: ([\d,]+) is what `cd backend", "file": BOOKLET_CONTENT},
         ],
     },
     "testsSkipped": {
@@ -2020,6 +2052,32 @@ DATE_SITE = re.compile(
     r"figures were recorded on (\d{4}-\d{2}-\d{2}) by `python3 scripts/readme_facts\.py --record`"
 )
 
+#: Every place a recorded figure's DATE is published, checked against the
+#: artifact's `recordedAt` exactly as the numbers are checked against its
+#: values. The System Card carries it twice — in the stat's `0 failed · <date>`
+#: note and in the provenance sentence — because it publishes the same
+#: recording the README does (#476). A page whose figure is recomputed but
+#: whose date is typed by hand shows a fresh number under an old date on the
+#: next `--record`, which is the "more provenance than actually exists" failure
+#: this check already existed to stop.
+#:
+#: The booklet's provenance sentence also names the machine and the interpreter
+#: ("Darwin-arm64, Python 3.11.14"). Those are NOT checked: they are strings,
+#: and every fact here is a number compared by `same_number`. They move only
+#: when `--record` moves, same as the date, so the exposure is one line of
+#: prose to re-read at recording time — stated here rather than left implied.
+DATE_SITES: list[tuple[str, "re.Pattern[str]"]] = [
+    ("README.md", DATE_SITE),
+    (
+        BOOKLET_CONTENT,
+        re.compile(r'label: "tests · backend suite", note: "0 failed · (\d{4}-\d{2}-\d{2})"'),
+    ),
+    (
+        BOOKLET_CONTENT,
+        re.compile(r"is what `[^`]+` collects and passes, recorded (\d{4}-\d{2}-\d{2})"),
+    ),
+]
+
 
 def substitute_at_group(text: str, match: "re.Match[str]", want: str) -> str:
     """Replace ONLY the captured group, by its span.
@@ -2130,8 +2188,9 @@ def run(mode: str) -> None:
         if not inv["holds"](values):
             problems.append(f"invariant broken — {inv['name']}\n      {inv['explain'](values)}")
 
-    # The README prints the date its recorded figures were taken. That date is
-    # itself a claim, so it is checked against the artifact rather than trusted:
+    # The README and the System Card both print the date their recorded figures
+    # were taken. That date is itself a claim, so it is checked against the
+    # artifact rather than trusted:
     # otherwise numbers can be refreshed while the date stays put, which reads
     # as more provenance than actually exists.
     #
@@ -2141,26 +2200,28 @@ def run(mode: str) -> None:
     # of them describes a measurement this script does not take. Tying the
     # artifact's date to any of those would invent provenance for a figure that
     # is documented as having none.
-    readme = load("README.md")
-    dm = DATE_SITE.search(readme["text"])
-    if not dm:
-        problems.append(
-            f"the recorded-figures date sentence no longer matches its pattern "
-            f"({DATE_SITE.pattern}).\n"
-            f"      A recorded number without its date is a number with no provenance."
-        )
-    elif dm.group(1) != artifact["recordedAt"]:
-        if mode == "write":
-            readme["text"] = (
-                readme["text"][: dm.start()]
-                + dm.group(0).replace(dm.group(1), artifact["recordedAt"])
-                + readme["text"][dm.end():]
+    for rel, pattern in DATE_SITES:
+        entry = load(rel)
+        dm = pattern.search(entry["text"])
+        if not dm:
+            problems.append(
+                f"{rel}: the recorded-figures date no longer matches its pattern "
+                f"({pattern.pattern}).\n"
+                f"      A recorded number without its date is a number with no provenance."
             )
-            readme["dirty"] = True
+            continue
+        if dm.group(1) == artifact["recordedAt"]:
+            continue
+        if mode == "write":
+            # By the group's SPAN, like every other rewrite here. The older
+            # idiom in this block re-`replace`d the date inside the matched
+            # text, which is the pattern #468 removed everywhere else.
+            entry["text"] = substitute_at_group(entry["text"], dm, artifact["recordedAt"])
+            entry["dirty"] = True
             rewrites += 1
         else:
             problems.append(
-                f"the README says the recorded figures were taken on {dm.group(1)}, but "
+                f"{rel} says the recorded figures were taken on {dm.group(1)}, but "
                 f"{_rel(ARTIFACT)} was recorded {artifact['recordedAt']}."
             )
 

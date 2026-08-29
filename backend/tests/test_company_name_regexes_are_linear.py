@@ -287,21 +287,198 @@ def test_the_corpus_is_big_enough_to_mean_something() -> None:
     assert any("\n" in s for s in corpus), "no multi-line strings to diverge on"
 
 
-def test_the_cleaners_are_unchanged_on_every_canonical_string() -> None:
+#: Growth factor a LINEAR routine may show when its input doubles. Timing on a
+#: shared runner is noisy at the millisecond scale, so this is generous: a
+#: quadratic doubles to ~4x and a linear one to ~2x, and 3.0 sits between them
+#: with room for a scheduler hiccup on either side.
+MAX_DOUBLING_GROWTH = 3.0
+
+
+def _growth(fn, make, n: int) -> tuple[float, float, float]:
+    """Time `fn` on `make(n)` and `make(2n)`; return both and the ratio.
+
+    Warmed once at each size first: Python's regex engine caches nothing that
+    matters here, but the first call into a function pays import-time costs that
+    would land entirely on the smaller measurement and manufacture growth.
+    """
+
+    small, large = make(n), make(2 * n)
+    fn(small)
+    fn(large)
+    a = min(_elapsed_ms(fn, small) for _ in range(3))
+    b = min(_elapsed_ms(fn, large) for _ in range(3))
+    return a, b, (b / a if a > 0 else float("inf"))
+
+
+#: Inputs shaped like the things that made the other three patterns quadratic:
+#: a whitespace run, a whitespace run after a word, and a repetition of the
+#: literal the pattern is looking for.
+DISPLAY_TAIL_PROBES = (
+    ("whitespace run", lambda n: " " * n),
+    ("name then whitespace", lambda n: "Acme" + " " * n),
+    ("whitespace then a tail word", lambda n: " " * n + "Team"),
+    ("the tail word, repeated", lambda n: "Team " * (n // 5)),
+)
+
+
+def test_the_display_tail_loop_is_linear() -> None:
+    """#532 put a new substitution in front of an unbounded caller.
+
+    ``_clean_company_display`` reads ``ReviewClassifyRequest.company``, a JSON
+    string field with no length bound — the same reachability that made the
+    other three patterns in this file worth fixing. ``_DISPLAY_TAIL`` runs up to
+    four times per call, so a quadratic here would be paid four times over.
+
+    There is no old-versus-new ratio to use as a control, because this pattern
+    has no slow predecessor. Growth under doubling is the measurement instead,
+    and :func:`test_the_doubling_measurement_can_see_a_quadratic` is what says
+    the measurement can fail.
+    """
+
+    for label, make in DISPLAY_TAIL_PROBES:
+        small, large, ratio = _growth(p._clean_company_display, make, 16_000)
+        assert ratio < MAX_DOUBLING_GROWTH, (
+            f"{label}: doubling the input multiplied the time by {ratio:.1f}x "
+            f"({small:.3f} ms -> {large:.3f} ms). A linear routine doubles; this "
+            "is the shape of a quadratic, and _clean_company_display is reached "
+            "from an unbounded request field."
+        )
+        assert large < BUDGET_MS, f"{label}: {large:.2f} ms exceeds the budget"
+
+
+def test_the_doubling_measurement_can_see_a_quadratic() -> None:
+    """The control. Without it the test above passes on a broken timer.
+
+    ``OLD_VIA_TAIL`` is the pattern CodeQL flagged, kept in this file precisely
+    so there is something known-quadratic to point an instrument at. If this
+    stops showing growth, the assertion above has stopped measuring.
+    """
+
+    def quadratic(s: str) -> str:
+        return OLD_VIA_TAIL.sub("", s)
+
+    _, _, ratio = _growth(quadratic, lambda n: " " * n, 4_000)
+    assert ratio > MAX_DOUBLING_GROWTH, (
+        f"the known-quadratic control grew only {ratio:.1f}x under doubling, so "
+        "this measurement can no longer distinguish a quadratic from a linear "
+        "one and the assertion above proves nothing."
+    )
+
+
+def test_the_sender_cleaner_is_unchanged_on_every_canonical_string() -> None:
     """"Canonical" = one line, single spaces — which is what a name IS.
 
     Every capture class that feeds these functions from mail excludes newlines,
     so this covers the whole extraction path by construction. The user-typed
     path is the exception and gets its own test below.
+
+    ``_clean_sender_display_name`` is untouched by #532 and still has to be
+    byte-identical to the pre-rewrite implementation. ``_clean_company_display``
+    does NOT, and the two tests below say exactly how far it may move.
     """
 
     for raw in _corpus():
         if raw != re.sub(r"\s+", " ", raw):
             continue
-        assert p._clean_company_display(raw) == _old_clean_company_display(raw), raw
         assert p._clean_sender_display_name(raw) == _old_clean_sender_display_name(
             raw
         ), raw
+
+
+def test_the_company_cleaner_only_ever_keeps_MORE_than_it_used_to() -> None:
+    """#532's behaviour change, bounded rather than re-baselined.
+
+    ``_CORP_TAIL`` was an unanchored substitution, so it removed its words from
+    anywhere in a string — "People Data Labs" came out as "Data". The display
+    path now strips an anchored, smaller set, which means every disagreement
+    with the old implementation has to be in ONE direction: the new answer
+    keeps at least as much of the input as the old one did.
+
+    That is the whole safety argument for the change, so it is asserted over
+    the corpus rather than argued in a comment. Re-recording the 240 differing
+    answers would prove nothing — a new bug that deleted a different word would
+    have been recorded along with the fix.
+    """
+
+    diverged = 0
+    for raw in _corpus():
+        if raw != re.sub(r"\s+", " ", raw):
+            continue
+        new = p._clean_company_display(raw)
+        old = _old_clean_company_display(raw)
+        if new == old:
+            continue
+        diverged += 1
+        assert len(new) >= len(old), (
+            "the display cleaner removed MORE than the implementation it "
+            f"replaced, which is the one direction #532 forbids:\n"
+            f"  input {raw!r}\n  old   {old!r}\n  new   {new!r}"
+        )
+
+    # A vacuous pass is the failure mode here: if the two implementations agreed
+    # everywhere, the assertion above would hold and say nothing. The count is a
+    # floor, not a target — it moves whenever the test tree gains strings.
+    assert diverged >= 100, (
+        f"only {diverged} strings distinguish the two cleaners. The old and new "
+        "implementations have converged, so the assertion above is no longer "
+        "measuring anything."
+    )
+
+
+#: The names #532 is about, and the ones that must keep being trimmed. Written
+#: out because the corpus sweep above bounds the DIRECTION of the change and
+#: this pins the ANSWER — a cleaner that returned its input unchanged would
+#: satisfy "never shorter" perfectly.
+COMPANY_DISPLAY_CASES = (
+    # A descriptive second word is part of the name and is kept (#532).
+    ("Arcgrove Systems", "Arcgrove Systems"),
+    ("Northwind Labs", "Northwind Labs"),
+    ("Bright Horizons Technologies", "Bright Horizons Technologies"),
+    ("Health Solutions Group", "Health Solutions Group"),
+    # The words are no longer removed from the MIDDLE or the FRONT either, which
+    # is the half that produced a wrong name rather than a short one.
+    ("People Data Labs", "People Data Labs"),
+    ("Team Liquid", "Team Liquid"),
+    ("Systems Research", "Systems Research"),
+    # Legal entity forms are still not part of the display name.
+    ("Globex Inc.", "Globex"),
+    ("Globex Corp", "Globex"),
+    ("Cloudflare, Inc.", "Cloudflare"),
+    ("Acme Co.", "Acme"),
+    ("Acme GmbH", "Acme"),
+    # Nor is the recruiting desk, and the loop is what makes two of them go.
+    ("Acme Careers", "Acme"),
+    ("Crusoe Hiring Team", "Crusoe"),
+    # A name that is ONLY a tail word cleans to nothing, so it cannot become a
+    # company. `_valid_company_token` refuses it downstream as well, but this is
+    # the first of the two gates and it should not be the one that stops.
+    ("Careers", ""),
+    ("Team", ""),
+)
+
+
+def test_the_company_cleaner_keeps_names_and_trims_suffixes() -> None:
+    for raw, want in COMPANY_DISPLAY_CASES:
+        assert p._clean_company_display(raw) == want, raw
+
+
+def test_a_kept_second_word_does_not_split_the_employer() -> None:
+    """The reason the trimming existed at all, checked rather than assumed.
+
+    ``_CORP_TAIL``'s comment said it was there so "Globex Corp" and "Globex"
+    collapse to one token. For the words #532 restores that was never true:
+    :func:`matches_company_token` groups on the LEADING word, so a longer
+    display and a bare token were always the same employer. If this ever fails,
+    the fix has started filing duplicate cards and must be reverted.
+    """
+
+    for display, token in (
+        ("Arcgrove Systems", "arcgrove"),
+        ("Northwind Labs", "northwind"),
+        ("People Data Labs", "people"),
+        ("Globex", "globex"),
+    ):
+        assert p.matches_company_token(display, token), (display, token)
 
 
 def test_a_newline_bearing_name_is_reachable_from_mail_not_only_from_the_user() -> None:
