@@ -461,3 +461,281 @@ async def test_the_inbox_does_not_call_a_dismissed_row_on_your_board(
     assert on_board["m-dismissed-reviewed"] is False
     assert on_board["m-live"] is True
     assert on_board["m-unlinked"] is False
+
+
+# =============================================================================
+# Answering the surfaced entry has to settle the rest of its thread
+#
+# The queue offers ONE entry per conversation, so the settle path
+# (`_settle_thread_siblings`) has to read the same "is this already answered
+# for?" test the queue does. It did not: it spelled out `application_id IS
+# NULL`, the clause this PR replaced. A thread whose messages all link to one
+# dismissed card therefore surfaced once, was answered once, and its siblings
+# stayed queued — the `needs_review` tile did not move when the user answered
+# it. That is #445/#576's defect (a count that will not respond to the work
+# that should clear it), created by making these rows reachable.
+# =============================================================================
+
+THREAD_COMPANY = "Halberd"
+THREAD_ID = "t-sibling-pair"
+# IDENTICAL on both messages, and that is a requirement rather than tidiness:
+# `pipeline.review_dedup_key` keys on the thread PLUS the application the
+# message names (#454), so two siblings only settle each other when subject,
+# snippet and the stored identity columns agree. Differing text would give them
+# different keys, the sibling would be left alone for the RIGHT reason, and the
+# test would prove nothing about the predicate it exists to pin.
+THREAD_SUBJECT = "Application received"
+THREAD_SNIPPET = "We have received your application."
+
+THREAD_MAIL: tuple[tuple[str, int], ...] = (
+    # (message_id, minutes older than RECEIVED_AT). The newest represents the
+    # conversation in the queue; the other is the sibling that has to settle.
+    ("m-thread-newer", 0),
+    ("m-thread-older", 90),
+)
+
+
+@pytest.fixture
+async def seeded_thread(cloud_app) -> int:
+    """One dismissed card holding a two-message thread, both un-reviewed.
+
+    The shape #481's production row does NOT have — it is a single message with
+    no siblings — which is exactly why this has to be constructed. Without it
+    every assertion about the settle path passes vacuously.
+    """
+
+    from jobtracker.database import get_session
+
+    owner = uuid.UUID(OWNER)
+
+    async with get_session() as session:
+        row = Application(
+            user_id=owner,
+            company=THREAD_COMPANY,
+            position="Software Engineer",
+            status=ApplicationStatus.APPLIED,
+            source="gmail_auto",
+            dismissed_at=datetime(2026, 8, 22, 5, 2, 29),
+            dismissed_reason="resync",
+        )
+        session.add(row)
+        await session.flush()
+        application_id = row.id
+
+        for message_id, minutes in THREAD_MAIL:
+            session.add(
+                Email(
+                    user_id=owner,
+                    application_id=application_id,
+                    source_account=EmailSource.GMAIL,
+                    message_id=message_id,
+                    thread_id=THREAD_ID,
+                    subject=THREAD_SUBJECT,
+                    sender_name="Careers",
+                    # RESOLVES TO ``THREAD_COMPANY``, and the fixture is worth
+                    # nothing otherwise: `classify_review_item` names the
+                    # employer from the MESSAGE, looks the card up by that
+                    # token, and a sender that resolves elsewhere mints a
+                    # second application instead of landing on the dismissed
+                    # one. Measured, not assumed — an earlier draft of this
+                    # fixture used a `.example.test` sender, which resolves to
+                    # "Example", and the answer opened a card of that name.
+                    sender_email="careers@halberd.test",
+                    received_at=RECEIVED_AT - timedelta(minutes=minutes),
+                    body_snippet=THREAD_SNIPPET,
+                    classified_as=EmailCategory.NEEDS_REVIEW,
+                    classification_confidence=0.80,
+                    is_reviewed=False,
+                )
+            )
+
+        await session.commit()
+
+    return application_id
+
+
+async def test_the_thread_fixture_is_two_messages_the_queue_shows_once(
+    client, headers, seeded_thread
+):
+    """The positive control. Two stored messages, one conversation, one entry.
+
+    If this ever reads two entries the settle test below would be answering one
+    of two independent items and proving nothing about siblings, and if it read
+    zero the whole section would be green against an empty queue.
+    """
+
+    stored = await client.get(
+        "/applications/mail", params={"category": "needs_review"}, headers=headers
+    )
+    assert stored.status_code == 200, stored.text
+    assert stored.json()["total"] == len(THREAD_MAIL) == 2
+
+    assert await _queue_message_ids(client, headers) == {"m-thread-newer"}
+
+    summary = await client.get("/applications/summary", headers=headers)
+    assert summary.status_code == 200, summary.text
+    assert summary.json()["needs_review"] == 1
+
+
+async def test_answering_the_thread_settles_the_sibling_and_the_count_moves(
+    client, headers, seeded_thread
+):
+    """THE QUEUE ITEM THAT COULD NOT BE CLEARED.
+
+    Answer the one entry the queue offers and the number that sent the user
+    there has to go to zero. Before this fix it stayed at 1 forever: the
+    sibling still carried the dismissed ``application_id``, the settle path read
+    that as "already filed elsewhere", and no screen could reach it again.
+
+    MUTATION: put ``Email.application_id.is_(None)`` back in
+    ``_settle_thread_siblings`` — a same-typed swap, one SQL boolean for
+    another — and this fails at the tile, ``assert 1 == 0``. That is the state
+    on the PR ref before this repair, and the queue assertion below it is the
+    same fact said the other way: ``m-thread-older`` is still listed.
+    """
+
+    before = await client.get("/applications/summary", headers=headers)
+    assert before.status_code == 200, before.text
+    assert before.json()["needs_review"] == 1
+
+    answered = await client.post(
+        "/applications/review/m-thread-newer/classify",
+        json={"category": "rejection"},
+        headers=headers,
+    )
+    assert answered.status_code == 200, answered.text
+    # A 2xx is not on its own a filing — see `classify_review_item`. If the
+    # employer could not be named the item is left in the queue untouched and
+    # everything below would be measuring a request that did nothing.
+    assert answered.json()["needs_employer"] is False, answered.text
+    # AND IT LANDED ON THE DISMISSED CARD, not on a fresh one.
+    # `_resolve_application_for_email` consults the message's own link first
+    # and returns it as ``LANDED_LINKED``, so the id the settle path then
+    # writes onto the sibling is the id the sibling already carried. That is
+    # what makes this a settle and not a relink — the objection #591 raised
+    # against swapping the predicate here. It is asserted rather than argued
+    # because a fixture whose answer minted a second card would settle the
+    # sibling onto a DIFFERENT row and prove the opposite.
+    assert answered.json()["application_id"] == seeded_thread, answered.text
+
+    after = await client.get("/applications/summary", headers=headers)
+    assert after.status_code == 200, after.text
+    assert after.json()["needs_review"] == 0, (
+        "the user answered the only question the queue asked and the count that "
+        "sent them there did not move — the sibling is still queued"
+    )
+    assert await _queue_message_ids(client, headers) == set()
+
+
+# =============================================================================
+# The subquery is scoped to the READER, not to the row it reaches
+#
+# `_not_filed_on_a_live_application` asks "is there a live application of MINE
+# behind this link?", and the `Application.user_id == user_id` clause is what
+# makes MINE mean anything. Its docstring cites #489 for that scoping and the
+# PR argued it; nothing tested it, and the whole backend suite stayed green
+# through swapping the clause for `Email.user_id == user_id` — trivially true
+# in this correlated position, since the outer query already filters the same
+# column, so the subquery degrades to "is there ANY live application behind
+# this link".
+# =============================================================================
+
+STRANGER = "c2c2c2c2-c2c2-4c2c-8c2c-c2c2c2c2c2c2"
+STRANGER_COMPANY = "Ironvale Robotics"
+
+
+@pytest.fixture
+async def seeded_cross_user(cloud_app) -> int:
+    """A message of the OWNER'S carrying a link to somebody else's LIVE card.
+
+    Reachable in production the way the docstring says: a link is an integer
+    written by a sync, and nothing about it is re-validated when the row it
+    names changes hands, is rebuilt, or turns out never to have been the
+    reader's. It is the third case the ``NOT EXISTS`` form exists to answer
+    (unresolvable link → surface the message), and the only one where the
+    positive form and the negative form differ observably.
+    """
+
+    from jobtracker.database import get_session
+
+    async with get_session() as session:
+        stranger_row = Application(
+            user_id=uuid.UUID(STRANGER),
+            company=STRANGER_COMPANY,
+            position="Software Engineer",
+            status=ApplicationStatus.APPLIED,
+            source="gmail_auto",
+            dismissed_at=None,
+        )
+        session.add(stranger_row)
+        await session.flush()
+        stranger_application_id = stranger_row.id
+
+        session.add(
+            Email(
+                user_id=uuid.UUID(OWNER),
+                application_id=stranger_application_id,
+                source_account=EmailSource.GMAIL,
+                message_id="m-cross-user",
+                thread_id="t-cross-user",
+                subject="Thanks for your interest",
+                sender_name="Careers",
+                sender_email="careers@ironvale.example.test",
+                received_at=RECEIVED_AT,
+                body_snippet="We have received your application.",
+                classified_as=EmailCategory.NEEDS_REVIEW,
+                classification_confidence=0.80,
+                is_reviewed=False,
+            )
+        )
+        await session.commit()
+
+    return stranger_application_id
+
+
+async def test_the_cross_user_card_is_live_and_is_not_the_owners(
+    cloud_app, seeded_cross_user
+):
+    """The positive control, and it is the whole test.
+
+    A DISMISSED stranger row would satisfy the assertion below through the
+    ``dismissed_at`` clause and say nothing about ownership, and an owner-owned
+    row would make the swap invisible. Read straight from the session, because
+    no endpoint of the owner's will show another user's application.
+    """
+
+    from sqlmodel import select
+
+    from jobtracker.database import get_session
+
+    async with get_session() as session:
+        row = (
+            await session.exec(
+                select(Application).where(Application.id == seeded_cross_user)
+            )
+        ).one()
+
+    assert row.dismissed_at is None, "a dismissed row would prove the wrong clause"
+    assert str(row.user_id) == STRANGER
+    assert str(row.user_id) != OWNER
+
+
+async def test_a_link_to_another_users_card_does_not_settle_the_message(
+    client, headers, seeded_cross_user
+):
+    """A stale link is not an answer, and somebody else's card is not yours.
+
+    MUTATION: ``Application.user_id == user_id`` →
+    ``Email.user_id == user_id`` in
+    :func:`_not_filed_on_a_live_application` — a same-typed swap of one
+    ``user_id`` equality for another, which is why it compiles, runs and
+    stayed green across the whole backend suite. Both assertions fail: the
+    ``EXISTS`` finds the stranger's live row, the message is read as filed and
+    it is unreachable from every screen the owner has.
+    """
+
+    assert "m-cross-user" in await _queue_message_ids(client, headers)
+
+    summary = await client.get("/applications/summary", headers=headers)
+    assert summary.status_code == 200, summary.text
+    assert summary.json()["needs_review"] == 1

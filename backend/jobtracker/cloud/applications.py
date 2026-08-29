@@ -3784,12 +3784,34 @@ async def _settle_thread_siblings(
     of the user. Emails 58 and 73 on the owner's account are one thread asked
     about twice.
 
-    Narrow on purpose: only siblings that are still unlinked AND un-reviewed are
-    touched, so a message already filed elsewhere or already decided is left
-    alone. They are marked reviewed, given the chosen category and linked to the
-    same application — but NOT flagged ``user_corrected``, and no training
-    example is written for them: the human read one message, and only that one
-    is honest evidence of what they were labelling.
+    Narrow on purpose: only siblings that NO LIVE CARD ANSWERS FOR and that are
+    un-reviewed are touched, so a message already filed on a card the user can
+    see, or already decided, is left alone. They are marked reviewed, given the
+    chosen category and linked to the same application — but NOT flagged
+    ``user_corrected``, and no training example is written for them: the human
+    read one message, and only that one is honest evidence of what they were
+    labelling.
+
+    THE SETTLED-TEST IS :func:`_not_filed_on_a_live_application`, THE SAME ONE
+    THE QUEUE READS. It used to be ``application_id IS NULL`` spelled out here,
+    which is the predicate the queue replaced — and the two disagreeing is worse
+    than either being wrong alone. A thread whose messages all link to one
+    dismissed card surfaces as ONE queue entry; the user answers it; under the
+    old clause every sibling was read as "already filed elsewhere" and left
+    un-reviewed, so it stayed in the queue and the ``needs_review`` tile did not
+    move. A count that does not change when you answer it is #445/#576's defect
+    arriving for exactly the rows the queue was just taught to show.
+
+    NOT A RELINK DECISION, which is what #591 assumed. ``application_id`` here
+    is the answer's own landing, and for this shape it is the dismissed row the
+    sibling already pointed at: :func:`_resolve_application_for_email` consults
+    the message's OWN link first and returns it as ``LANDED_LINKED``. So the
+    assignment below is a write of the id the sibling already held, and
+    ``is_reviewed`` is the flag that actually settles it. Where the user's
+    answer DOES land somewhere else, the sibling belongs there by construction —
+    it is only in this list because it shares the answered message's
+    :func:`pipeline.review_dedup_key`, which is to say it is about the same
+    application.
     """
 
     if not email.thread_id:
@@ -3801,7 +3823,7 @@ async def _settle_thread_siblings(
                 Email.user_id == user_id,
                 Email.thread_id == email.thread_id,
                 Email.message_id != email.message_id,
-                Email.application_id.is_(None),
+                _not_filed_on_a_live_application(user_id),
                 Email.is_reviewed == False,  # noqa: E712 — SQL boolean
             )
         )
