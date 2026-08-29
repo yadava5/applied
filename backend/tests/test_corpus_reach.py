@@ -12,6 +12,8 @@ anything about at all, and the answer today is:
 
     positive engine patterns                              159
       exercised by at least one of 17,260 messages         48   (30.2%)
+        of those, fired ONLY by invented families          17
+        fired by at least one ``observed-*`` family        31   (19.5%)
       never fired by anything                             111   (69.8%)
 
     never fired, by category:  interview 26 of 31 · rejection 20 of 36
@@ -22,7 +24,14 @@ anything about at all, and the answer today is:
 
 So 111 rules ship to users with nothing in the largest body of evidence this
 product has exercising them, and the two worst categories are the two stages a
-user cares most about. This gate does NOT close that gap — closing it is #531,
+user cares most about.
+
+AND 30.2% IS THE GENEROUS READING OF THE 48. For 17 of them "fired" means an
+invented fixture quotes the pattern's own wording back at it — the author of
+``rules.py`` wrote both — so the coverage that rests on mail nobody here wrote
+is 31 of 159, **19.5%**. For interview it is 1 of 31 and for offer 1 of 20.
+``reach.py`` carries the per-category derivation; quote the two figures
+together, because the difference between them is the whole of #531. This gate does NOT close that gap — closing it is #531,
 it needs human judgement over real mail, and inventing interview and offer
 wordings would rebuild the closed loop ``observed.py`` exists to break. The job
 here is to MEASURE the gap so it cannot widen quietly and cannot be narrowed by
@@ -49,11 +58,27 @@ import pytest
 from tests.corpus_independent import observed, reach
 from tests.corpus_independent.generate import generate
 
-#: The engine's shape when the record below was taken. Not asserted as an
-#: equality — a pattern that is ADDED and exercised is a good change and must
-#: not red — but the two directional checks below bound it from both sides: a
-#: new pattern nothing fires raises ``never_fired`` and reds, and a pattern that
-#: is deleted or edited drops out of ``RECORDED_FIRED`` and reds.
+#: The engine's shape when the record below was taken, asserted as a FLOOR on
+#: what ``rules.py`` still holds — see ``test_the_record_is_arithmetically_whole``.
+#: Not an equality: a pattern ADDED and exercised is a good change and must not
+#: red.
+#:
+#: THAT FLOOR IS THE ASSERTION, AND IT WAS MISSING. This comment used to claim
+#: the two directional checks below "bound it from both sides". They do not. A
+#: pattern that NEVER FIRED can be deleted from ``rules.py`` outright and
+#: neither of them moves: it is absent from ``RECORDED_FIRED``, so nothing goes
+#: missing there, and deleting it LOWERS ``never_fired`` for its category, which
+#: is the direction that passes. Proved by execution — 159 to 158 left all 17
+#: tests green. The ``approx(0.302)`` check could not see it either; it divides
+#: two constants declared in this file and measures nothing at all.
+#:
+#: AND THE FLOOR IS STILL NOT BOTH SIDES — said plainly rather than replacing
+#: one overstated bound with another. A delete AND an add in the same commit
+#: leaves the total at 159 and passes here; if the deleted pattern never fired
+#: and the added one lands in a different category, the ledger below does not
+#: see it either. What remains uncovered is a rule dropped in the same breath as
+#: an unrelated rule arriving. That is narrower than the hole this closes, and
+#: it is named here rather than papered over.
 RECORDED_POSITIVE_PATTERNS = 159
 
 #: The categories whose ``strong``/``weak`` lists ARGUE FOR a verdict.
@@ -173,6 +198,17 @@ RECORDED_NEVER_FIRED: dict[str, int] = {
 #:     on the COUNT rather than on the rate, so that transcribing more wordings
 #:     that agree with the engine dilutes the rate without reading as
 #:     contamination. See ``_discovery_shortfalls``.
+#:
+#: EVERY NUMBER IN THIS TABLE IS A NUMBER AT THE DEFAULT SEED (20260822), and
+#: unlike metric 1 these two do not survive a re-seed. Metric 1's fired SET is
+#: identical at seeds 20260822, 12345 and 20260829 — the same 48 patterns, not
+#: merely the same count. Metrics 2 and 3 are draws from a template pool, so
+#: they move: at seed 12345 ``observed-pending`` measures 24 wordings against
+#: the 25 recorded here and ``no_strong`` 61 against 71; at seed 20260829, 24
+#: and 63. Both would red the directions above, and the source-derived control
+#: below fails at both. That is a property of a seeded draw and not a broken
+#: mask — but it means the per-family half of this gate is pinned at ONE SEED
+#: rather than universally, and a re-seed is a re-recording of this table.
 RECORDED_FAMILIES: dict[str, tuple[int, int, int]] = {
     # ── the invented lifecycle. Written by the author of ``rules.py``, so its
     # discovery rate is 0.0% BY CONSTRUCTION: there is no sentence here the
@@ -271,12 +307,22 @@ def measured(cases):
 # ── the record's own arithmetic ──────────────────────────────────────────────
 
 
-def test_the_record_is_arithmetically_whole() -> None:
-    """48 fired plus 111 never fired is 159, or the ledger is mistyped.
+def test_the_record_is_arithmetically_whole(measured) -> None:
+    """48 fired plus 111 never fired is 159, AND the engine still holds 159.
 
-    Cheap, and it is the check the two directional tests cannot do for
+    Two separate claims, and only the second one touches the engine.
+
+    The arithmetic is the check the two directional tests cannot do for
     themselves: they compare MEASURED against RECORDED, so a transcription error
     in RECORDED moves the bar rather than failing.
+
+    THE FLOOR ON ``total_patterns`` IS THE ONE THAT CATCHES A DELETED RULE, and
+    it is the only line in this file that does. Everything else here compares
+    constants to constants — including the ``approx(0.302)`` below, which reads
+    a percentage off two literals and would go on publishing it over an engine
+    that had lost a pattern. Without this assertion, deleting a never-fired rule
+    from ``rules.py`` outright is green in all 17 tests; ``RECORDED_POSITIVE_
+    PATTERNS`` explains why, and what this still does not bound.
     """
 
     assert len(RECORDED_FIRED) == len(set(RECORDED_FIRED)), "a duplicate entry"
@@ -288,9 +334,21 @@ def test_the_record_is_arithmetically_whole() -> None:
         f"{len(RECORDED_FIRED)} fired + {sum(RECORDED_NEVER_FIRED.values())} never "
         f"fired != {RECORDED_POSITIVE_PATTERNS} positive patterns"
     )
+    assert measured.total_patterns >= RECORDED_POSITIVE_PATTERNS, (
+        f"`rules.py` holds {measured.total_patterns} positive patterns and "
+        f"{RECORDED_POSITIVE_PATTERNS} were recorded, so a rule was deleted or "
+        f"moved under EmailCategory.OTHER. Nothing else in this file notices: a "
+        f"never-fired pattern is absent from RECORDED_FIRED, and removing it "
+        f"LOWERS never_fired for its category, which is the passing direction. "
+        f"If the removal is deliberate, re-record — and say which rule went and "
+        f"why the mail it was there for no longer needs it."
+    )
     assert len(RECORDED_FIRED) / RECORDED_POSITIVE_PATTERNS == pytest.approx(
         0.302, abs=0.0005
-    ), "the 30.2% this gate's docstring publishes"
+    ), (
+        "the 30.2% this gate's docstring publishes. Two constants divided: this "
+        "catches a mistyped ledger, never a moved engine."
+    )
 
 
 def test_the_positive_pattern_set_is_the_one_that_was_measured() -> None:
@@ -396,6 +454,17 @@ def test_an_observed_family_has_exactly_its_templates_wordings(
     Equality in both directions. Too many means the mask leaked a parameter;
     too few means a template was added and the family draws too few messages
     to ever pick it, which is a template that gates nothing.
+
+    IT HOLDS AT THE DEFAULT SEED, NOT UNIVERSALLY. Derived from source rather
+    than recorded is the strong half of the claim and it is true; seed-invariant
+    is NOT part of it. Which templates a family draws is itself a seeded choice,
+    so a family with little headroom between its message count and its template
+    count can simply miss one. Measured: at seeds 12345 and 20260829
+    ``observed-pending`` draws 24 of its 25 templates and this test fails. That
+    is the "too few" arm firing on a re-seed rather than on an unreachable
+    template — a real limit on what the control certifies, and not a flake to be
+    widened away. Re-seeding the corpus means re-recording ``RECORDED_FAMILIES``
+    and re-reading this.
     """
 
     expected = sum(len(source) for source in OBSERVED_TEMPLATES[family])
@@ -666,6 +735,20 @@ def test_copying_an_engine_pattern_into_an_observed_wording_reds_this_gate(
     * ``observed-closure``'s discovery rate COLLAPSES, 50.8% -> 0.8%, and
       ``_discovery_shortfalls`` names it. Real evidence was replaced by an echo
       of the rule list, and the number that says so is the discovery rate.
+
+    WHAT THE 120 DOES AND DOES NOT PROVE. ``observed-closure`` is named above as
+    the family with the most discovery power per message, and 50.8% is the
+    highest of the four that carry an update — but ``OBSERVED_CLOSURES`` holds
+    exactly ONE template. The family's 24 wordings are that one closure plus the
+    23 acknowledgements every observed family opens with. So ``touched == 120``
+    is 100% of this family's non-acknowledgement wording, and what reds below is
+    TOTAL replacement of a single-template family's only closure sentence.
+    That proves the gate can fail, which is the obligation. It does NOT show the
+    gate catching PARTIAL drift across a multi-wording family: one of
+    ``observed-rejection``'s six closures edited would move ``no_strong`` by a
+    fraction of 76, and the floor might well still hold. The smallest edit this
+    gate can notice is not measured anywhere, and #531 — which adds wordings to
+    exactly these families — is when that starts to matter.
     """
 
     assert _MUTATION not in measured.fired, "the mutation must start unexercised"

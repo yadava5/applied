@@ -18,6 +18,39 @@ bound, a wrong alternation or a ReDoS and nothing here would say so. Worst by
 category are ``interview`` (26 of 31 never fired) and ``offer`` (17 of 20) —
 the two stages a user cares most about.
 
+THE 48 IS A MEASUREMENT OF THIS CORPUS, NOT OF THE ENGINE, and it is generous
+about itself in the same way metric 3 says the accuracy figure is. 17 of the 48
+are fired ONLY by the author-invented families — mail written by the author of
+``rules.py``, so "fired" there means a fixture quotes the pattern's own wording
+back at it, which is the closed loop ``observed.py`` exists to break. Attributing
+every fired pattern to the families that fired it, measured 2026-08-29 at the
+default seed:
+
+    fired by at least one message                      48 of 159   30.2%
+      fired ONLY by author-invented families           17
+      fired by at least one ``observed-*`` family      31 of 159   19.5%
+        of which an invented family fires it too       20
+        of which ONLY an ``observed-*`` family does    11
+
+    category              total  fired  invented-only  real-mail-backed
+    applied                  25     14              0                14
+    assessment               23      8              5                 3
+    follow_up                 9      1              0                 1
+    interview                31      5              4                 1
+    offer                    20      3              2                 1
+    pending_application      15      1              0                 1
+    rejection                36     16              6                10
+    TOTAL                   159     48             17                31
+
+So REAL-MAIL-BACKED COVERAGE IS 31 OF 159 (19.5%), not 30.2%, and for the two
+categories #530 is actually about it collapses: **interview 1 of 31** and
+**offer 1 of 20**. One transcribed wording apiece is the entire evidentiary base
+for the two stages a user cares most about, and 128 rules have none at all.
+That is the number that joins #530 to #531 and #448 — the gap does not close by
+firing 111 more patterns, it closes by getting real mail behind the ones that
+have nothing. Quote the 30.2% only with the 19.5% beside it; alone it credits
+the corpus for agreeing with the file it was written from.
+
 **2. DISTINCT WORDINGS.** A family's statistical weight is its wording count,
 not its message count. ``repeat-anonymous`` is 600 messages of ONE wording and
 ``interview`` is 700 of two; multiplying a sentence by 600 buys 600 rows in a
@@ -42,6 +75,16 @@ in 17,260 messages lives in the ``observed-*`` families — 1,600 messages from
 ``observed-confirmation`` is 1.3% because an acknowledgement is the shape the
 engine knows best, and ``observed-not-application`` is 100% because it is not
 job mail at all.
+
+SEED-STABILITY IS NOT THE SAME FOR ALL THREE. Metric 1 is seed-stable: the
+fired SET — not merely its size — is identical at seeds 20260822 (the default),
+12345 and 20260829. Metrics 2 and 3 are NOT. Which templates a family draws is a
+seeded choice, so at seeds 12345 and 20260829 ``observed-pending`` draws 24 of
+its 25 templates rather than all 25, and its ``no_strong`` reads 61 and 63
+against the 71 recorded at the default seed. Every per-family number pinned in
+``test_corpus_reach.py`` is therefore a number AT THE DEFAULT SEED, including the
+source-derived wording control, which fails at both of the other two. Re-seeding
+the corpus means re-recording that table; it does not mean the mask broke.
 
 WHAT THIS IS NOT. A raw case-insensitive regex scan over ``subject`` +
 ``delivered``, which is NOT what the classifier does: the real path strips
