@@ -1,0 +1,639 @@
+"""The SYNC's settled-test — a dismissed link must not swallow arriving mail.
+
+Why this file exists
+--------------------
+
+One idea, "this question is already answered", was spelled twice. #587 moved
+the READ path (``GET /applications/review`` and the ``needs_review`` tile on
+``GET /applications/summary``) to ``_not_filed_on_a_live_application``. The
+WRITE path — :func:`applications._persist_review_items_additive`, the settled
+filter every routine sync runs — kept the predicate that replaced:
+
+    ``Email.application_id IS NOT NULL OR Email.is_reviewed``
+
+A row linked to a DISMISSED card satisfies ``application_id IS NOT NULL``, so
+the sync called it settled. It does not merely skip such a row: it collects
+their ``pipeline.review_dedup_key``s into ``settled_applications`` and filters
+EVERY arriving ref against that set. So a stranded row the queue is currently
+showing suppressed the NEW mail arriving on its thread with the same identity.
+That message was never stored, never queued, never counted — the corpus's
+``LOST`` mode (#596).
+
+DO NOT ASSERT THIS AT THE QUEUE. READ THIS BEFORE ADDING A TEST HERE
+--------------------------------------------------------------------
+
+A queue-level assertion CANNOT see this bug, and adding one here would be a
+check that cannot fail. The stranded row is already in the queue (that is what
+#587 fixed), and the suppressed sibling shares its ``review_dedup_key`` **by
+construction** — the key match is precisely why it was suppressed. Both
+``GET /applications/review`` and the ``needs_review`` tile collapse a thread's
+siblings to ONE entry, so the queue reads identically before and after the fix.
+The issue's own reproduction shows it: ``QUEUE after the sync: ['m-stranded']``
+in both worlds.
+
+The observable difference is at the STORAGE BOUNDARY only, so that is what is
+asserted here, two ways for every case:
+
+* the row exists in ``GET /applications/mail`` — the audit surface, one entry
+  per stored message whatever its linkage (#445/#576), and
+* the persist's own return count, which is how many dated refs survived the
+  filter.
+
+The case matrix, and what the mutation is expected to do to it
+--------------------------------------------------------------
+
+A sibling ARRIVES on the thread of a stored row that is:
+
+===========================  ==============  =====================================
+stored row                   arriving ref    why
+===========================  ==============  =====================================
+unlinked, un-reviewed        STORED          unchanged behaviour
+linked to a DISMISSED card   STORED          **the fix**
+linked to a LIVE card        suppressed      **the regression guard**
+``is_reviewed`` + dismissed  suppressed      the arm a careless rewrite drops
+linked to a STRANGER's card  STORED          the write-path-only scoping case
+===========================  ==============  =====================================
+
+The last one has no read-path twin and cannot get one: a cross-user link is a
+stale link, and no endpoint will ever create the row, so only the write path
+can be asked about it.
+
+MUTATION, and its exact expected red set. Swap the write path's
+``_filed_on_a_live_application(user_id)`` back to
+``Email.application_id.is_not(None)`` — a same-typed swap, SQL boolean for SQL
+boolean, and exactly the pre-fix state. Then and only then:
+
+* ``…dismissed_card…`` REDS,
+* ``…another_users_card…`` REDS,
+* ``…all_five_cases…`` REDS,
+* the LIVE arm, the ``is_reviewed`` arm and the unlinked arm stay GREEN —
+  those three are settled (or unsettled) identically under both spellings.
+
+If one of those three reds under the mutation the FIXTURE is wrong, not the
+product. If either of the first two stays green the test is vacuous.
+
+The fixture positive control
+----------------------------
+
+:func:`test_the_fixture_set_is_what_the_tests_assume` exists because an
+arriving ref can no-op BEFORE the settled-test is ever consulted, in two
+directions, each of which would make a different half of the matrix pass for
+the wrong reason:
+
+* an UNDATED ref is skipped outright by ``_persist_message_refs`` (the Email
+  row requires a receive time and none is ever fabricated), which would make
+  the two "suppressed" arms pass with the predicate never reached;
+* an arriving ``message_id`` colliding with a seeded one is an UPSERT of the
+  existing row, not a new one, which would make the three "stored" arms pass
+  against a row the fixture wrote itself.
+
+So the control pins that the arriving ids are disjoint from the seeded ones and
+that a ref of exactly this shape, on a thread holding no stored row, is
+surfaced and stored.
+
+The fixture form is the #582-safe one
+-------------------------------------
+
+``monkeypatch.setattr(settings, ...)`` on every settings instance the request
+path holds, and NOT the env-var-plus-``importlib.reload(jobtracker.config)``
+shape. Eight modules reload ``jobtracker.config`` during collection, which
+mints a second settings object while ``jobtracker.auth.supabase_jwt`` and
+``jobtracker.database.connection`` keep their bindings on the first; patching
+one instance then sets the JWT secret on an object the verifier never reads and
+every request comes back ``401 Invalid signature`` — green alone, red in a full
+run. See ``test_dismissed_card_does_not_settle_its_mail.py``'s fixture for the
+measurement.
+
+Every employer, sender, requisition and role below is INVENTED and every
+address is under ``example.test``. Nothing in this file, its fixtures or its
+prose comes from a real mailbox (#593).
+"""
+
+from __future__ import annotations
+
+import time
+import uuid
+from collections.abc import AsyncIterator
+from datetime import datetime, timedelta
+from typing import Any, NamedTuple
+
+import jwt as pyjwt
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from jobtracker.database.models import (
+    Application,
+    ApplicationStatus,
+    Email,
+    EmailCategory,
+    EmailSource,
+)
+
+# 32+ bytes so PyJWT does not warn; the value only has to match the token helper.
+JWT_SECRET = "arriving-sibling-write-path-secret-at-least-32-bytes"
+OWNER = "c4c4c4c4-c4c4-4c4c-8c4c-c4c4c4c4c4c4"
+# Holds a LIVE card the owner's mail is stale-linked to. Never authenticates.
+STRANGER = "d5d5d5d5-d5d5-4d5d-8d5d-d5d5d5d5d5d5"
+
+SEEDED_AT = datetime(2026, 8, 20, 11, 30, 0)
+# Strictly later, and dated — an undated ref never reaches the settled-test.
+ARRIVED_AT = datetime(2026, 8, 26, 9, 15, 0)
+
+# Invented employers. No real mailbox material anywhere in this module.
+LIVE_COMPANY = "Halberd Dynamics"
+DISMISSED_COMPANY = "Ironvale Freight"
+STRANGER_COMPANY = "Marrowgate Analytics"
+
+
+class Case(NamedTuple):
+    """One stored row, and the sibling that arrives on its thread later.
+
+    ``link`` names the application the stored row is filed against (``None``
+    for an unlinked row); ``owner`` says whose card that is. ``arriving_stored``
+    is the assertion: does the sibling survive the sync's settled filter?
+    """
+
+    key: str
+    subject: str
+    snippet: str
+    link: str | None
+    link_owner: str | None
+    is_reviewed: bool
+    arriving_stored: bool
+
+
+# The snippet is short on purpose. ``pipeline.review_dedup_key`` truncates the
+# STORED side to ``STORED_SNIPPET_CHARS`` (500) before deriving identity while
+# the arriving ref passes its own snippet whole; a snippet long enough to be cut
+# could give the two sides different identities and stop them colliding, which
+# would make every "suppressed" arm pass for no reason at all.
+CASES: tuple[Case, ...] = (
+    # Always worked: nothing about an unlinked, un-reviewed row is settled.
+    Case(
+        key="unlinked",
+        subject="Following up on your interest",
+        snippet="We would like to learn more about your background.",
+        link=None,
+        link_owner=None,
+        is_reviewed=False,
+        arriving_stored=True,
+    ),
+    # THE FIX. The link outlived the verdict that justified it: a re-sync
+    # dismissed the card and re-parked the message in the same pass.
+    Case(
+        key="dismissed-card",
+        subject="Your application to Ironvale Freight",
+        snippet="Requisition IVF-40188, Backend Engineer.",
+        link=DISMISSED_COMPANY,
+        link_owner=OWNER,
+        is_reviewed=False,
+        arriving_stored=True,
+    ),
+    # THE REGRESSION GUARD. A card the user can see answers for its own thread,
+    # and the fix must not become "is_reviewed alone".
+    Case(
+        key="live-card",
+        subject="Your application to Halberd Dynamics",
+        snippet="Requisition HBD-20514, Platform Engineer.",
+        link=LIVE_COMPANY,
+        link_owner=OWNER,
+        is_reviewed=False,
+        arriving_stored=False,
+    ),
+    # The arm a careless rewrite drops. ``is_reviewed`` records that a human
+    # answered; removing the card does not un-answer it.
+    Case(
+        key="reviewed-on-a-dismissed-card",
+        subject="Update on your Ironvale Freight application",
+        snippet="Requisition IVF-77301, Data Engineer.",
+        link=DISMISSED_COMPANY,
+        link_owner=OWNER,
+        is_reviewed=True,
+        arriving_stored=False,
+    ),
+    # The write path's own scoping case. A stale link at a LIVE card that is
+    # NOT the owner's answers nothing the owner can see.
+    Case(
+        key="another-users-card",
+        subject="Your application to Marrowgate Analytics",
+        snippet="Requisition MGA-51120, Analytics Engineer.",
+        link=STRANGER_COMPANY,
+        link_owner=STRANGER,
+        is_reviewed=False,
+        arriving_stored=True,
+    ),
+)
+
+BY_KEY = {case.key: case for case in CASES}
+
+# Hardcoded, so a mistake in the table above cannot quietly redefine what is
+# proved; the fixture control reconciles the two. A derived-only expectation
+# agrees with any corpus, including an empty one.
+SEEDED_IDS = frozenset(f"s-{case.key}" for case in CASES)
+EXPECTED_STORED_AFTER_FULL_SYNC = SEEDED_IDS | {
+    "a-unlinked",
+    "a-dismissed-card",
+    "a-another-users-card",
+}
+EXPECTED_SURFACED_BY_FULL_SYNC = 3
+
+# A thread this database has never seen — the control's own arriving ref.
+UNSEEN = Case(
+    key="never-seen",
+    subject="Your application to Halberd Dynamics",
+    snippet="Requisition HBD-99002, Reliability Engineer.",
+    link=None,
+    link_owner=None,
+    is_reviewed=False,
+    arriving_stored=True,
+)
+
+
+def _sender_for(case: Case) -> str:
+    return f"careers+{case.key}@ats.example.test"
+
+
+def _token_for(user_id: str) -> str:
+    """A Supabase-shaped HS256 JWT for ``user_id``."""
+
+    now = int(time.time())
+    return pyjwt.encode(
+        {"sub": user_id, "aud": "authenticated", "iat": now, "exp": now + 300},
+        JWT_SECRET,
+        algorithm="HS256",
+    )
+
+
+@pytest.fixture
+async def cloud_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
+    """The cloud FastAPI app over the in-memory SQLite test DB, auth enabled.
+
+    Patched on EVERY settings instance the request path reads — see the module
+    docstring for #582 and why the single-instance form is green alone and red
+    in a full run. De-duplicated by identity, so the extra writes are a no-op in
+    the ordinary case where all three names are the same object.
+    """
+
+    import jobtracker.auth.supabase_jwt as auth_module
+    import jobtracker.config as config_module
+    import jobtracker.database.connection as connection_module
+
+    holders = {
+        id(module.settings): module.settings
+        for module in (config_module, auth_module, connection_module)
+    }
+    for instance in holders.values():
+        monkeypatch.setattr(instance, "environment", "test")
+        monkeypatch.setattr(instance, "deployment", "cloud")
+        monkeypatch.setattr(instance, "supabase_jwt_secret", JWT_SECRET)
+
+    connection_module._engine = None
+
+    from jobtracker.database import init_db
+
+    await init_db()
+
+    import jobtracker.main_cloud as main_cloud_module
+
+    yield main_cloud_module.app
+
+    if connection_module._engine is not None:
+        await connection_module._engine.dispose()
+    connection_module._engine = None
+
+
+@pytest.fixture
+async def client(cloud_app) -> AsyncIterator[AsyncClient]:
+    transport = ASGITransport(app=cloud_app)
+    async with AsyncClient(transport=transport, base_url="http://cloud-test") as c:
+        yield c
+
+
+@pytest.fixture
+def headers() -> dict[str, str]:
+    return {"Authorization": f"Bearer {_token_for(OWNER)}"}
+
+
+@pytest.fixture
+async def seeded(cloud_app) -> dict[str, int]:
+    """Three cards and the five stored rows of :data:`CASES`.
+
+    Written straight at the session rather than through the API: two of these
+    states are ones only a re-sync produces (a NEEDS_REVIEW message still linked
+    to a card the same pass dismissed, and a link left pointing at a row that is
+    not the owner's), and no endpoint offers to create either.
+
+    ``identity_role``/``identity_req_id`` are left NULL deliberately. Both sides
+    of :func:`pipeline.review_dedup_key` then derive identity from subject plus
+    snippet, which is what makes the arriving sibling collide with its stored
+    row — and colliding is the whole mechanism under test.
+    """
+
+    from jobtracker.database import get_session
+
+    application_ids: dict[str, int] = {}
+
+    async with get_session() as session:
+        for company, owner, dismissed_at, dismissed_reason in (
+            (LIVE_COMPANY, OWNER, None, None),
+            # `resync` and not `user`: the state #481 found was produced by a
+            # re-sync, and the reason column is what says who removed the row.
+            (
+                DISMISSED_COMPANY,
+                OWNER,
+                datetime(2026, 8, 22, 5, 2, 29),
+                "resync",
+            ),
+            # LIVE, and not the owner's. Dismissing it would collapse this case
+            # into the one above and it would discriminate nothing.
+            (STRANGER_COMPANY, STRANGER, None, None),
+        ):
+            row = Application(
+                user_id=uuid.UUID(owner),
+                company=company,
+                position="Backend Engineer",
+                status=ApplicationStatus.APPLIED,
+                source="gmail_auto",
+                dismissed_at=dismissed_at,
+                dismissed_reason=dismissed_reason,
+            )
+            session.add(row)
+            await session.flush()
+            application_ids[company] = row.id
+
+        for index, case in enumerate(CASES):
+            session.add(
+                Email(
+                    # The MAIL row is always the owner's, including the
+                    # stale-linked one; the asymmetry of the last case lives
+                    # entirely in who owns the application.
+                    user_id=uuid.UUID(OWNER),
+                    application_id=(
+                        application_ids[case.link] if case.link is not None else None
+                    ),
+                    source_account=EmailSource.GMAIL,
+                    message_id=f"s-{case.key}",
+                    thread_id=f"t-{case.key}",
+                    subject=case.subject,
+                    sender_name="Careers",
+                    sender_email=_sender_for(case),
+                    received_at=SEEDED_AT - timedelta(minutes=index),
+                    body_snippet=case.snippet,
+                    classified_as=EmailCategory.NEEDS_REVIEW,
+                    classification_confidence=0.78,
+                    is_reviewed=case.is_reviewed,
+                )
+            )
+
+        await session.commit()
+
+    return application_ids
+
+
+def _arriving(case: Case):
+    """The sibling a LATER sync hands the additive persist.
+
+    Same thread, same subject, same snippet as the stored row — which is what
+    makes the two share a ``review_dedup_key``, and so what makes the settled
+    filter able to suppress it. A NEW ``message_id``, so nothing here is an
+    upsert of the seeded row.
+    """
+
+    from jobtracker.cloud import pipeline
+
+    return pipeline.ReviewItem(
+        message_id=f"a-{case.key}",
+        thread_id=f"t-{case.key}",
+        subject=case.subject,
+        sender_email=_sender_for(case),
+        sender_name="Careers",
+        received_at=ARRIVED_AT,
+        category="applied",
+        confidence=0.61,
+        company_display=None,
+        snippet=case.snippet,
+    )
+
+
+async def _sync(*cases: Case) -> int:
+    """Run the write path for real and return how many refs it surfaced.
+
+    Called directly rather than over HTTP: the thing under test is the settled
+    filter inside :func:`_persist_review_items_additive`, and reaching it
+    through ``POST /gmail/sync`` would mean standing up the whole scan.
+    """
+
+    from jobtracker.cloud.applications import _persist_review_items_additive
+    from jobtracker.database import get_session
+
+    async with get_session() as session:
+        surfaced = await _persist_review_items_additive(
+            session, uuid.UUID(OWNER), [_arriving(case) for case in cases]
+        )
+        await session.commit()
+    return surfaced
+
+
+async def _stored_message_ids(client: AsyncClient, headers: dict[str, str]) -> set[str]:
+    """Every message id in ``GET /applications/mail`` — the audit surface.
+
+    NOT the review queue. The queue collapses a thread's siblings into one
+    entry and reads identically either side of this fix; see the module
+    docstring.
+    """
+
+    resp = await client.get("/applications/mail", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["total"] == len(body["messages"]), (
+        "the mail listing paged, so the set below is not the whole corpus"
+    )
+    return {message["message_id"] for message in body["messages"]}
+
+
+# =============================================================================
+# The positive control — an arriving ref that no-ops never reaches the predicate
+# =============================================================================
+
+
+async def test_the_fixture_set_is_what_the_tests_assume(client, headers, seeded):
+    """Runs first. Pins the seed, and proves an arriving ref REACHES the test.
+
+    Three claims, and each closes a way this module could be green while
+    proving nothing:
+
+    1. the five rows exist, stored at ``needs_review``, linked as the table
+       says — including the cross-user link, which is the case no endpoint can
+       create;
+    2. the arriving ids are DISJOINT from the seeded ones, so a "stored" arm is
+       never an upsert of a row the fixture itself wrote;
+    3. a ref of exactly the arriving shape, on a thread holding no stored row,
+       is surfaced and stored. That is what says the refs are dated — an
+       undated one is dropped by ``_persist_message_refs`` before any settled
+       filter is consulted, and both "suppressed" arms would pass vacuously.
+    """
+
+    resp = await client.get("/applications/mail", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["total"] == len(CASES)
+    assert body["category_counts"] == {"needs_review": len(CASES)}
+
+    linked = {m["message_id"]: m["application_id"] for m in body["messages"]}
+    assert set(linked) == set(SEEDED_IDS)
+    assert linked["s-unlinked"] is None
+    assert linked["s-dismissed-card"] == seeded[DISMISSED_COMPANY]
+    assert linked["s-reviewed-on-a-dismissed-card"] == seeded[DISMISSED_COMPANY]
+    assert linked["s-live-card"] == seeded[LIVE_COMPANY]
+    assert linked["s-another-users-card"] == seeded[STRANGER_COMPANY], (
+        "the stale cross-user link is the premise of one whole case; without it "
+        "that test is asking about an ordinary owned link"
+    )
+
+    board = await client.get("/applications", headers=headers)
+    assert board.status_code == 200, board.text
+    assert [row["company"] for row in board.json()["applications"]] == [LIVE_COMPANY], (
+        "the dismissed card must be off the board and the stranger's card must "
+        "never have been on it"
+    )
+
+    # The hardcoded expectations, reconciled against the table they describe.
+    # Hardcoding is what stops a mistake in ``CASES`` quietly redefining what is
+    # proved; this is what stops the two drifting apart instead.
+    stored_by_the_table = {f"a-{c.key}" for c in CASES if c.arriving_stored}
+    assert len(stored_by_the_table) == EXPECTED_SURFACED_BY_FULL_SYNC
+    assert SEEDED_IDS | stored_by_the_table == EXPECTED_STORED_AFTER_FULL_SYNC
+
+    arriving_ids = {f"a-{case.key}" for case in CASES}
+    assert not (arriving_ids & SEEDED_IDS), (
+        "an arriving message_id that collides with a seeded one is an UPSERT, "
+        "not a new row, and every 'stored' assertion below would be vacuous"
+    )
+
+    assert await _sync(UNSEEN) == 1, (
+        "a ref of this exact shape, on a thread with nothing stored, was not "
+        "surfaced — so the refs never reach the settled-test at all and the "
+        "suppression assertions prove nothing"
+    )
+    assert f"a-{UNSEEN.key}" in await _stored_message_ids(client, headers)
+
+
+# =============================================================================
+# The five cases, one arriving sibling at a time
+# =============================================================================
+
+
+async def test_a_sibling_of_an_unlinked_row_is_stored(client, headers, seeded):
+    """Unchanged behaviour, asserted so the fix cannot lose it.
+
+    Nothing about an unlinked, un-reviewed row is settled under either
+    spelling, so this stays green under the mutation.
+    """
+
+    case = BY_KEY["unlinked"]
+    assert await _sync(case) == 1
+    assert f"a-{case.key}" in await _stored_message_ids(client, headers)
+
+
+async def test_a_sibling_of_a_row_on_a_dismissed_card_is_stored(
+    client, headers, seeded
+):
+    """THE FIX, and the LOST mode it closes.
+
+    The stored row is linked to a card a re-sync dismissed. The queue shows it
+    as an open question; the sync used to treat it as the answer and drop the
+    mail arriving behind it.
+
+    MUTATION: swap ``_filed_on_a_live_application(user_id)`` in
+    ``_persist_review_items_additive`` back to
+    ``Email.application_id.is_not(None)`` and this fails — the arriving sibling
+    is not stored at all, which is production's state.
+    """
+
+    case = BY_KEY["dismissed-card"]
+    assert await _sync(case) == 1, (
+        "the arriving sibling was filtered out as settled by a card the user "
+        "cannot see"
+    )
+    assert f"a-{case.key}" in await _stored_message_ids(client, headers)
+
+
+async def test_a_sibling_of_a_row_on_a_live_card_is_still_suppressed(
+    client, headers, seeded
+):
+    """THE REGRESSION GUARD, and the reason the fix is not ``is_reviewed`` alone.
+
+    A card the user can see already answers for its thread. Without this arm a
+    "fix" that deleted the link clause outright would pass every other case
+    here and re-ask a question the board has already answered.
+
+    This is also the dedup-key control: the arriving ``message_id`` is new, so
+    ``settled_messages`` cannot fire and the suppression can only have come
+    from ``settled_applications`` — i.e. the two really do share a key.
+
+    MUTATION: green under the swap. Both spellings call this row settled.
+    """
+
+    case = BY_KEY["live-card"]
+    assert await _sync(case) == 0
+    assert f"a-{case.key}" not in await _stored_message_ids(client, headers)
+
+
+async def test_a_sibling_of_a_reviewed_row_on_a_dismissed_card_is_suppressed(
+    client, headers, seeded
+):
+    """``is_reviewed`` is a human answer and a dismissal does not un-answer it.
+
+    The arm a careless rewrite drops. The read path's helper is explicit that
+    this is NOT a widening of ``is_reviewed``: every caller keeps that clause,
+    the readers as ``is_reviewed == False`` and the sync as the other arm of
+    its ``or_``.
+
+    MUTATION: green under the swap. Settled either way, on both clauses.
+    """
+
+    case = BY_KEY["reviewed-on-a-dismissed-card"]
+    assert await _sync(case) == 0
+    assert f"a-{case.key}" not in await _stored_message_ids(client, headers)
+
+
+async def test_a_sibling_of_a_row_on_another_users_card_is_stored(
+    client, headers, seeded
+):
+    """The write path's own scoping case — no read-path test can cover it.
+
+    A stale link pointing at a LIVE application that belongs to somebody else.
+    The read path's helper scopes its subquery to ``user_id`` for exactly this
+    reason (#489), but no endpoint will ever create the row, so the claim can
+    only be made where a sync can meet one.
+
+    MUTATION: REDS under the swap — ``application_id IS NOT NULL`` is true of a
+    link the owner cannot resolve, so the arriving sibling was dropped.
+    """
+
+    case = BY_KEY["another-users-card"]
+    assert await _sync(case) == 1
+    assert f"a-{case.key}" in await _stored_message_ids(client, headers)
+
+
+# =============================================================================
+# All five in ONE sync, which is the shape a real delta has
+# =============================================================================
+
+
+async def test_one_sync_carrying_all_five_cases_stores_exactly_three(
+    client, headers, seeded
+):
+    """The matrix as one set, so a fix cannot pass four arms and add a fifth row.
+
+    A sync does not arrive one message at a time, and the settled filter is
+    built ONCE per call over every thread the batch names — a per-case run
+    cannot show that one case's stored row does not settle another's arriving
+    sibling.
+
+    MUTATION: REDS under the swap, at two of the three stored ids.
+    """
+
+    assert await _sync(*CASES) == EXPECTED_SURFACED_BY_FULL_SYNC
+    assert await _stored_message_ids(client, headers) == EXPECTED_STORED_AFTER_FULL_SYNC
