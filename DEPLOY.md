@@ -243,7 +243,21 @@ Step for both, wired up through `ignoreCommand`:
 | Project          | Root Directory | Config                | Builds when these change                                             |
 | ---------------- | -------------- | --------------------- | -------------------------------------------------------------------- |
 | `jobtracker-api` | repo root      | `vercel.json`         | `api/`, `requirements.txt`, `backend/jobtracker/`, `vercel.json`, `.vercelignore` |
-| `jobtracker-web` | `apps/web`     | `apps/web/vercel.json`| `apps/web/`, `.vercelignore`                                          |
+| `jobtracker-web` | `apps/web`     | `apps/web/vercel.json`| `apps/web/` **except `apps/web/tests/`**, `.vercelignore`              |
+
+`apps/web/tests/` is the **only** narrowing in either list, and it is the one
+row above whose failure mode is a wrong SKIP rather than a wasted build, so it
+carries its evidence: the 21 `.ts` files under `tests/` really are in
+`apps/web/tsconfig.json`'s include set and really are type-checked by
+`next build`, but `frontend-ci.yml` runs `pnpm typecheck` (`tsc --noEmit`
+against that same tsconfig) and `pnpm build` on every PR touching
+`apps/web/**` — which a tests-only diff does. The gate is duplicated, not
+removed, and a type error under `tests/` that escaped CI would fail the next
+real build loudly rather than deploy something broken. The other half of the
+argument, that no app code imports out of `tests/`, is enforced by
+`apps/web/tests/unit/tests-dir-is-not-a-build-input.test.mjs` rather than
+assumed. #566 is the commit that named the class: its whole diff is two unit
+files, and it built the Next.js app on the preview and again on the merge.
 
 `ignoreCommand` in `vercel.json` overrides whatever the dashboard's Ignored
 Build Step says, so the guard is version-controlled rather than a dashboard
@@ -265,7 +279,7 @@ whose entire diff is Python.
 
 `scripts/test_vercel_ignore_build.mjs` pins every one of these answers against
 real commits from this repository's history, and
-`scripts/negative_control_ignore_build.mjs` breaks the guard 22 ways to prove
+`scripts/negative_control_ignore_build.mjs` breaks the guard 23 ways to prove
 that suite can go red. Both run in CI (`.github/workflows/vercel-ignore-build.yml`)
 on any change to the guard, to either `vercel.json`, or to `.vercelignore`. If
 you change the allowlist, change the suite in the same commit.
