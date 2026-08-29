@@ -58,7 +58,6 @@ passes.
 
 from __future__ import annotations
 
-import importlib
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -152,49 +151,40 @@ def _no_batch_pause(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 async def cloud_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
-    monkeypatch.setenv("JOBTRACKER_DEPLOYMENT", "cloud")
-    monkeypatch.setenv("JOBTRACKER_ENVIRONMENT", "test")
-    monkeypatch.setenv("JOBTRACKER_SUPABASE_JWT_SECRET", JWT_SECRET)
-    monkeypatch.setenv("JOBTRACKER_SECRET_ENCRYPTION_KEY", ENC_KEY)
-    # ``GET /gmail/inbox`` calls ``_require_configured()`` before anything else
-    # and 503s without these two. Without them the inbox test below would get a
-    # 503 whose body trivially lacks the sentinel — an absence assertion that
-    # passes because the endpoint never ran.
-    monkeypatch.setenv("JOBTRACKER_GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
-    monkeypatch.setenv("JOBTRACKER_GOOGLE_OAUTH_CLIENT_SECRET", "test-client-secret")
-    monkeypatch.setenv(
-        "JOBTRACKER_GMAIL_OAUTH_REDIRECT_URI", "http://test/gmail/callback"
-    )
-    monkeypatch.setenv("JOBTRACKER_WEB_APP_URL", "http://test")
-
+    import jobtracker.auth.supabase_jwt as auth_module
+    import jobtracker.cloud.gmail_oauth as gmail_module
     import jobtracker.config as config_module
+    import jobtracker.credentials.cloud as cred_cloud_module
     import jobtracker.database.connection as connection_module
 
-    importlib.reload(config_module)
+    # Every settings instance the request path holds, de-duplicated by object
+    # identity -- not ``importlib.reload(jobtracker.config)``, which minted a
+    # new one and left the verifier holding the old (#582).
+    # ``credentials.cloud`` is in the tuple because ``secret_encryption_key``
+    # has to be visible to the credential store, not only to the config module.
+    holders = {
+        id(module.settings): module.settings
+        for module in (config_module, auth_module, connection_module, cred_cloud_module)
+    }
+    for instance in holders.values():
+        monkeypatch.setattr(instance, "deployment", "cloud")
+        monkeypatch.setattr(instance, "environment", "test")
+        monkeypatch.setattr(instance, "supabase_jwt_secret", JWT_SECRET)
+        monkeypatch.setattr(instance, "secret_encryption_key", ENC_KEY)
+        # ``GET /gmail/inbox`` calls ``_require_configured()`` before anything
+        # else and 503s without these. Without them the inbox test below would
+        # get a 503 whose body trivially lacks the sentinel — an absence
+        # assertion that passes because the endpoint never ran.
+        monkeypatch.setattr(instance, "google_oauth_client_id", "test-client-id")
+        monkeypatch.setattr(instance, "google_oauth_client_secret", "test-client-secret")
+        monkeypatch.setattr(
+            instance, "gmail_oauth_redirect_uri", "http://test/gmail/callback"
+        )
+        monkeypatch.setattr(instance, "web_app_url", "http://test")
+
     connection_module._engine = None
 
-    import jobtracker.auth.supabase_jwt as auth_module
-
-    importlib.reload(auth_module)
-
-    # Rebind the credential store's ``settings`` global to the reloaded config,
-    # or ``secret_encryption_key`` is invisible here because an earlier test
-    # file imported this module against a keyless settings object.
-    import jobtracker.credentials.cloud as cred_cloud_module
-
-    importlib.reload(cred_cloud_module)
-
-    import jobtracker.cloud.applications as cloud_apps_module
-
-    importlib.reload(cloud_apps_module)
-
-    import jobtracker.cloud.gmail_oauth as gmail_module
-
-    importlib.reload(gmail_module)
-
     import jobtracker.main_cloud as main_cloud_module
-
-    importlib.reload(main_cloud_module)
 
     # Make the classifier the CLOUD one. Two separate things are needed and
     # neither alone is enough:
@@ -213,7 +203,7 @@ async def cloud_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
     # executes on the deployment they are describing.
     import jobtracker.classifier.hybrid as hybrid_module
 
-    hybrid_module.settings = config_module.settings
+    monkeypatch.setattr(hybrid_module, "settings", config_module.settings)
     hybrid_module._classifier = None
 
     # ``GET /gmail/inbox`` consults a MODULE-LEVEL cache before it does any
@@ -232,8 +222,6 @@ async def cloud_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
         await connection_module._engine.dispose()
     connection_module._engine = None
     hybrid_module._classifier = None
-    monkeypatch.undo()
-    importlib.reload(config_module)
 
 
 def _collect(service: Any = None) -> Any:
