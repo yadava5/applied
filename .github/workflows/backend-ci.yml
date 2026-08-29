@@ -17,6 +17,19 @@ on:
       # indistinguishable from a job that did not exist. Edit BOTH blocks.
       - "scripts/check_expand_only.py"
       - "scripts/schema_fingerprint.sql"
+      # The test-data gate, its baseline, and the tree half of what it scans.
+      # `apps/web/tests/**` is here on purpose and it is the expensive line: it
+      # fires this whole workflow on a web-test-only edit. It has to. The gate
+      # scans `apps/web/tests/` because that is where issue #593's spread
+      # reached that the issue's own backend-only framing missed
+      # (`e2e/import.spec.ts`), and without this line a PR touching only that
+      # file runs no backend job at all — the same "check that cannot fire"
+      # shape the three comments above document. Same trade already made for
+      # `requirements.txt`. The BASELINE must be listed too, or a PR whose only
+      # change is lowering it is the one PR the gate never sees.
+      - "scripts/check_test_data.py"
+      - "scripts/test_data_baseline.json"
+      - "apps/web/tests/**"
       # The ROOT requirements.txt — the manifest Vercel installs for the
       # deployed function, and the one `expand-only` pip-installs below. It is
       # not under backend/, so until 2026-08-15 a PR that changed only this
@@ -42,6 +55,19 @@ on:
       - "backend/**"
       - "scripts/check_expand_only.py"
       - "scripts/schema_fingerprint.sql"
+      # The test-data gate, its baseline, and the tree half of what it scans.
+      # `apps/web/tests/**` is here on purpose and it is the expensive line: it
+      # fires this whole workflow on a web-test-only edit. It has to. The gate
+      # scans `apps/web/tests/` because that is where issue #593's spread
+      # reached that the issue's own backend-only framing missed
+      # (`e2e/import.spec.ts`), and without this line a PR touching only that
+      # file runs no backend job at all — the same "check that cannot fire"
+      # shape the three comments above document. Same trade already made for
+      # `requirements.txt`. The BASELINE must be listed too, or a PR whose only
+      # change is lowering it is the one PR the gate never sees.
+      - "scripts/check_test_data.py"
+      - "scripts/test_data_baseline.json"
+      - "apps/web/tests/**"
       # The other half of the pair — see the note in the pull_request block.
       - "requirements.txt"
       - ".github/workflows/backend-ci.yml"
@@ -118,6 +144,27 @@ jobs:
       - name: Run pip-audit on deployment surface (advisory)
         continue-on-error: true
         run: pip-audit -r requirements.txt
+
+      # Refuses a NEW sender address on a domain that is not RFC-reserved, in
+      # any tracked file under backend/tests/, backend/jobtracker/ or
+      # apps/web/tests/ — fixture, docstring or comment alike. This repository
+      # is public and its fixtures grew by precedent (#593); the rule and the
+      # reason nothing already published is being deleted are in
+      # docs/TEST_DATA_POLICY.md.
+      #
+      # BLOCKING, unlike the three advisory steps above. Those are advisory
+      # because they were red from birth — 379 ruff errors, 879 mypy errors —
+      # and a gate that is red from birth gets ignored or deleted. This one is
+      # green from birth: it ratchets a checked-in baseline, so it only ever
+      # reds on something the PR in front of it added. There is no honest
+      # reason for it to be continue-on-error.
+      #
+      # Placed before "Run tests": stdlib Python, one `git ls-files`, no
+      # database, no torch, under a second. It should answer before the suite
+      # spends ten minutes.
+      - name: Run test-data gate
+        working-directory: ${{ github.workspace }}
+        run: python3 scripts/check_test_data.py
 
       - name: Run tests
         env:
