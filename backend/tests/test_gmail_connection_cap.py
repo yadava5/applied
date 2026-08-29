@@ -53,7 +53,6 @@ Postgres-backed proofs for that table live in ``tests/test_rls_postgres.py``.
 
 from __future__ import annotations
 
-import importlib
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -105,64 +104,63 @@ async def _build_cloud_app(monkeypatch: pytest.MonkeyPatch, *, cap: int | None) 
     ``main_cloud``, then a fresh in-memory database.
     """
 
-    monkeypatch.setenv("JOBTRACKER_DEPLOYMENT", "cloud")
-    monkeypatch.setenv("JOBTRACKER_ENVIRONMENT", "test")
-    monkeypatch.setenv("JOBTRACKER_SUPABASE_JWT_SECRET", JWT_SECRET)
-    monkeypatch.setenv("JOBTRACKER_SECRET_ENCRYPTION_KEY", ENC_KEY)
-    monkeypatch.setenv("JOBTRACKER_GOOGLE_OAUTH_CLIENT_ID", CLIENT_ID)
-    monkeypatch.setenv("JOBTRACKER_GOOGLE_OAUTH_CLIENT_SECRET", CLIENT_SECRET)
-    monkeypatch.setenv("JOBTRACKER_GMAIL_OAUTH_REDIRECT_URI", REDIRECT_URI)
-    monkeypatch.setenv("JOBTRACKER_WEB_APP_URL", WEB_APP_URL)
-    monkeypatch.setenv("JOBTRACKER_CORS_ALLOWED_HOSTS", "web.example.test,api.example.test")
+    # NOT ``Settings`` fields: ``config.trusted_web_hosts`` reads these two out
+    # of ``os.environ`` on every call.
     monkeypatch.setenv("VERCEL_URL", "")
     monkeypatch.setenv("VERCEL_PROJECT_PRODUCTION_URL", "")
-    if cap is None:
-        monkeypatch.delenv("JOBTRACKER_GMAIL_CONNECTION_CAP", raising=False)
-    else:
-        monkeypatch.setenv("JOBTRACKER_GMAIL_CONNECTION_CAP", str(cap))
-
-    import jobtracker.config as config_module
-    import jobtracker.database.connection as connection_module
-
-    importlib.reload(config_module)
-    connection_module._engine = None
 
     import jobtracker.auth.supabase_jwt as auth_module
-
-    importlib.reload(auth_module)
-
-    import jobtracker.credentials.cloud as cred_cloud_module
-
-    importlib.reload(cred_cloud_module)
-
-    import jobtracker.cloud.applications as cloud_apps_module
-
-    importlib.reload(cloud_apps_module)
-
     import jobtracker.cloud.gmail_oauth as gmail_module
+    import jobtracker.config as config_module
+    import jobtracker.credentials.cloud as cred_cloud_module
+    import jobtracker.database.connection as connection_module
 
-    importlib.reload(gmail_module)
+    # Every settings instance the request path holds, de-duplicated by object
+    # identity -- not ``importlib.reload(jobtracker.config)``, which minted a
+    # new one and left the verifier holding the old (#582).
+    holders = {
+        id(module.settings): module.settings
+        for module in (config_module, auth_module, connection_module, cred_cloud_module)
+    }
+    # ``cap=None`` means "the deployment sets no cap", so the DECLARED default
+    # is asserted rather than inherited: an ambient
+    # ``JOBTRACKER_GMAIL_CONNECTION_CAP`` used to be cleared by ``delenv`` plus
+    # a rebuild, and leaving the attribute alone would let it through.
+    declared_cap = type(config_module.settings).model_fields["gmail_connection_cap"].default
+    for instance in holders.values():
+        monkeypatch.setattr(instance, "deployment", "cloud")
+        monkeypatch.setattr(instance, "environment", "test")
+        monkeypatch.setattr(instance, "supabase_jwt_secret", JWT_SECRET)
+        monkeypatch.setattr(instance, "secret_encryption_key", ENC_KEY)
+        monkeypatch.setattr(instance, "google_oauth_client_id", CLIENT_ID)
+        monkeypatch.setattr(instance, "google_oauth_client_secret", CLIENT_SECRET)
+        monkeypatch.setattr(instance, "gmail_oauth_redirect_uri", REDIRECT_URI)
+        monkeypatch.setattr(instance, "web_app_url", WEB_APP_URL)
+        monkeypatch.setattr(
+            instance, "cors_allowed_hosts", ["web.example.test", "api.example.test"]
+        )
+        monkeypatch.setattr(
+            instance, "gmail_connection_cap", declared_cap if cap is None else cap
+        )
 
-    import jobtracker.main_cloud as main_cloud_module
-
-    importlib.reload(main_cloud_module)
+    connection_module._engine = None
+    gmail_module._INBOX_CACHE.clear()
 
     from jobtracker.database import init_db
 
     await init_db()
 
+    import jobtracker.main_cloud as main_cloud_module
+
     return main_cloud_module.app
 
 
 async def _teardown(monkeypatch: pytest.MonkeyPatch) -> None:
-    import jobtracker.config as config_module
     import jobtracker.database.connection as connection_module
 
     if connection_module._engine is not None:
         await connection_module._engine.dispose()
     connection_module._engine = None
-    monkeypatch.undo()
-    importlib.reload(config_module)
 
 
 @pytest.fixture

@@ -24,7 +24,6 @@ fail if the wildcard comes back.
 
 from __future__ import annotations
 
-import importlib
 import re
 
 import pytest
@@ -39,34 +38,32 @@ def _regex_for(
 ) -> re.Pattern[str]:
     """Build the live allow-origin regex under a given environment."""
 
-    monkeypatch.setenv("JOBTRACKER_DEPLOYMENT", "cloud")
-    monkeypatch.setenv("JOBTRACKER_CORS_ALLOWED_HOSTS", allowed_hosts)
+    # ``VERCEL_URL`` and ``VERCEL_PROJECT_PRODUCTION_URL`` are NOT ``Settings``
+    # fields -- ``config.trusted_web_hosts`` reads them out of ``os.environ``
+    # on every call -- so ``setenv`` reaches them with no reload at all.
     monkeypatch.setenv("VERCEL_URL", vercel_url)
     monkeypatch.setenv("VERCEL_PROJECT_PRODUCTION_URL", production_url)
 
-    import jobtracker.config as config_module
+    # ``cors_allowed_hosts`` IS a field, so it is set on the object rather than
+    # rebuilt from the environment. The env var is comma-separated because a
+    # validator splits it; the attribute takes the list that validator produces.
+    hosts = [h.strip() for h in allowed_hosts.split(",") if h.strip()]
 
-    importlib.reload(config_module)
+    import jobtracker.auth.supabase_jwt as auth_module
+    import jobtracker.config as config_module
+    import jobtracker.database.connection as connection_module
+
+    holders = {
+        id(module.settings): module.settings
+        for module in (config_module, auth_module, connection_module)
+    }
+    for instance in holders.values():
+        monkeypatch.setattr(instance, "deployment", "cloud")
+        monkeypatch.setattr(instance, "cors_allowed_hosts", hosts)
+
     import jobtracker.main_cloud as main_cloud
 
-    importlib.reload(main_cloud)
-
     return re.compile(main_cloud._build_cors_origin_regex())
-
-
-@pytest.fixture(autouse=True)
-def _restore_settings(monkeypatch: pytest.MonkeyPatch):
-    """Leave the settings singleton as we found it.
-
-    ``settings`` is ``lru_cache``d, so every test here reloads the module.
-    Without this the next test file in the session inherits a cloud config.
-    """
-
-    yield
-    monkeypatch.undo()
-    import jobtracker.config as config_module
-
-    importlib.reload(config_module)
 
 
 # ── the finding itself ────────────────────────────────────────────────
