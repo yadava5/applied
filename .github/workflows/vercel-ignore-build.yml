@@ -126,8 +126,8 @@ jobs:
         # is the argument. `apps/web/scripts/assert-unit-suite-ran.mjs` uses a
         # FLOOR on purpose, and says so at length: "a tripwire far enough below
         # the real number that ordinary churn never touches it". That is right
-        # for a 608-test suite that changes on most PRs. It is wrong here. This
-        # file holds 43 deliberate cases, changes a few times a year, and exists
+        # for a 612-test suite that changes on most PRs. It is wrong here. This
+        # file holds 46 deliberate cases, changes a few times a year, and exists
         # precisely to end checks that cannot fail — so a threshold five below
         # the count, which is what a floor becomes the moment anyone adds
         # anything, IS one, for exactly the newest and least-defended cases.
@@ -136,7 +136,7 @@ jobs:
           python3 - <<'PY'
           import os, re, sys
 
-          EXPECTED = 43
+          EXPECTED = 46
 
           tap = open(os.path.join(os.environ["RUNNER_TEMP"], "guard.tap")).read()
           def n(field):
