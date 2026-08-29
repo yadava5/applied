@@ -427,8 +427,6 @@ def test_ml_is_scanned(tree: Path) -> None:
     """
 
     gate = _load()
-    assert "ml/" in gate.SCAN_ROOTS
-
     _write_baseline(gate, tree)
     space = tree / "ml" / "demo" / "space" / "jobtracker" / "classifier"
     space.mkdir(parents=True)
@@ -437,6 +435,34 @@ def test_ml_is_scanned(tree: Path) -> None:
         ["git", "add", "-A"], cwd=tree, check=True, capture_output=True
     )
     assert _check(gate, tree) == 1
+
+
+def test_a_root_that_is_not_scanned_stays_green(tree: Path) -> None:
+    """The discriminating half of the test above.
+
+    ``assert "ml/" in SCAN_ROOTS`` would be a tautology against the source it
+    checks, and the red above on its own is also consistent with "any new
+    tracked file anywhere reds". The same file under a root the gate does NOT
+    scan has to stay green, or neither result says anything about ``ml/``.
+
+    ``docs/`` is out of scope on purpose — see "What is not scanned" in
+    ``docs/TEST_DATA_POLICY.md``. If a future change puts it in scope, this test
+    is where that decision surfaces.
+    """
+
+    gate = _load()
+    assert not any(root.startswith("docs/") for root in gate.SCAN_ROOTS)
+
+    _write_baseline(gate, tree)
+    unscanned = tree / "docs" / "space" / "jobtracker" / "classifier"
+    unscanned.mkdir(parents=True)
+    (unscanned / "rules.py").write_text(
+        f'RELAY = "{_routable()}"\n', encoding="utf-8"
+    )
+    subprocess.run(
+        ["git", "add", "-A"], cwd=tree, check=True, capture_output=True
+    )
+    assert _check(gate, tree) == 0
 
 
 @pytest.mark.parametrize(
