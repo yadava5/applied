@@ -60,7 +60,17 @@ function probe(base) {
   return null;
 }
 
-function resolveSpecifier(spec, fromFile, webRoot) {
+/** Every static import/export specifier in `source`, in source order. Exported
+ *  so a second gate can ask the same question about a different set of files
+ *  without re-deriving what counts as a static import — the regex above is the
+ *  single definition of that, and two copies of it would drift. */
+export function staticSpecifiers(source) {
+  const out = [];
+  for (const match of source.matchAll(STATIC_IMPORT)) out.push(match[1] ?? match[2]);
+  return out;
+}
+
+export function resolveSpecifier(spec, fromFile, webRoot) {
   if (spec.startsWith("@/")) return probe(join(webRoot, spec.slice(2)));
   if (spec.startsWith(".")) return probe(resolve(dirname(fromFile), spec));
   return null;

@@ -98,10 +98,17 @@ const C = {
   // produced no production deployment. It is here as a fixture *and* as
   // evidence: the guard's answer for it is BUILD, so the guard did not cause
   // that miss.
+  //
+  // It is also the MIXED fixture that makes the two tests-only fixtures below a
+  // pair rather than a single case: it touches app code AND apps/web/tests, so
+  // it is what fails if the `:!apps/web/tests` exclusion ever reaches past its
+  // own directory. Both halves are pinned in `touches` for that reason — with
+  // only `apps/web/` there, the fixture could drift into being tests-only and
+  // its BUILD expectation would start passing for the wrong reason.
   webOnly: {
     sha: '60fcec28bcc54eae2248ba885d8e9f06f36bd31d',
     base: '939448512bd7785f555ad34431343fccae2e33db',
-    touches: ['apps/web/'],
+    touches: ['apps/web/components/', 'apps/web/tests/e2e/'],
     absent: ['backend/'],
     subject: 'fix(dashboard): dock the row detail from lg (#171)',
   },
@@ -185,6 +192,33 @@ const C = {
     touches: ['.vercelignore'],
     absent: ['apps/web/', 'backend/'],
     subject: 'fix(deploy): stop excluding the web app from its own build',
+  },
+  // Touches ONLY apps/web/tests/ — the unit suite and one of its helpers. This
+  // is #566, the commit that named the class: two files that cannot change a
+  // byte of the bundle, and it built the Next.js app on the preview and again
+  // on the production merge. `onlyUnder` is asserted below and is stricter than
+  // `absent` can be: it demands that EVERY file in the diff sit under
+  // apps/web/tests/, so the fixture cannot quietly become a mixed commit and go
+  // on satisfying a SKIP expectation.
+  webTestsUnitOnly: {
+    sha: '9aec5c2fbbfcb66212eddfb0570a331de69cf149',
+    base: '2df9fe333e39de4260e9b4fb02a3ee701e1e01aa',
+    touches: ['apps/web/tests/unit/'],
+    absent: ['backend/'],
+    onlyUnder: 'apps/web/tests/',
+    subject: "The empty board's wiring is gated on structure, not on a grep (#566)",
+  },
+  // The same case in the OTHER subtree of tests/. Without it, an exclusion
+  // written as `:!apps/web/tests/unit` — narrower than the one the header
+  // argues for, and an easy thing to type — would satisfy the fixture above and
+  // leave every Playwright-only commit still building the app twice.
+  webTestsE2eOnly: {
+    sha: 'd3ff6e875a8ec6c7ee9c9c6d8e3040947397eeda',
+    base: '888c30a10fdeac9adc05cfc6f158112561533cb5',
+    touches: ['apps/web/tests/e2e/'],
+    absent: ['backend/'],
+    onlyUnder: 'apps/web/tests/',
+    subject: 'test(landing): park the rail on its pin before measuring the fold (#457)',
   },
   // vercel-ignore-build.sh + vercel.json. vercel.json is in the api allowlist
   // and deliberately not in web's.
@@ -318,6 +352,17 @@ test('fixtures still touch what they claim to touch', () => {
         `fixture ${name} (${f.subject}) unexpectedly touches ${prefix}: ${files.join(', ')}`,
       );
     }
+    // `absent` is a blocklist and cannot say "nothing OUTSIDE this prefix".
+    // That is the invariant a tests-only fixture actually needs: one stray file
+    // under apps/web/app/ would make its SKIP expectation wrong while every
+    // assertion above still held.
+    if (f.onlyUnder) {
+      assert.deepEqual(
+        files.filter((p) => !p.startsWith(f.onlyUnder)),
+        [],
+        `fixture ${name} (${f.subject}) now touches files outside ${f.onlyUnder}: ${files.join(', ')}`,
+      );
+    }
   }
   assert.deepEqual(changedFiles(C.empty.base, C.empty.sha), [], 'the empty fixture is not empty');
 });
@@ -331,7 +376,7 @@ test('backend-only commit: api builds', () => {
 });
 
 test('backend-only commit: web skips', () => {
-  expect('web', prod(C.backendOnly), SKIP, 'web: no changes in apps/web .vercelignore');
+  expect('web', prod(C.backendOnly), SKIP, "web: no changes in apps/web :!apps/web/tests .vercelignore");
 });
 
 test('web-only commit: web builds', () => {
@@ -406,6 +451,49 @@ test('api/index.py alone builds the api and not the web app', () => {
 test('the root requirements.txt alone builds the api and not the web app', () => {
   expect('api', prod(C.rootRequirementsOnly), BUILD, 'api: changes found');
   expect('web', prod(C.rootRequirementsOnly), SKIP, 'web: no changes in');
+});
+
+// apps/web/tests is the ONLY narrowing in the guard, so it is the only entry
+// whose failure mode is a wrong SKIP rather than a wasted build. The argument
+// for it — tests/ is in the tsconfig include set, but `frontend-ci.yml` runs
+// `pnpm typecheck` and `pnpm build` on the same commits — is in the script's
+// own header, and the gate against the other half of it (app code importing
+// out of tests/) is apps/web/tests/unit/tests-dir-is-not-a-build-input.test.mjs.
+//
+// These two are a PAIR with 'web-only commit: web builds' above, which is a
+// mixed commit: app code plus tests/e2e. Together they pin the boundary from
+// both sides — an exclusion that is too broad reds that one, an exclusion that
+// is missing or too narrow reds these.
+test('a commit touching only apps/web/tests/unit skips both projects', () => {
+  expect('web', prod(C.webTestsUnitOnly), SKIP, 'web: no changes in');
+  expect('api', prod(C.webTestsUnitOnly), SKIP, 'api: no changes in');
+});
+
+test('a commit touching only apps/web/tests/e2e skips both projects', () => {
+  expect('web', prod(C.webTestsE2eOnly), SKIP, 'web: no changes in');
+  expect('api', prod(C.webTestsE2eOnly), SKIP, 'api: no changes in');
+});
+
+// The exclusion's other half. The two fixtures above prove the guard SKIPS a
+// tests-only commit; they cannot prove that skipping is safe, and what makes it
+// safe is that no app code imports out of that directory. That is checked in
+// the web unit suite, and this is the tie in the other direction: delete the
+// gate and the guard's suite goes red, so the exclusion cannot outlive the
+// thing that justifies it. The gate asserts the pathspec's spelling in return.
+test('the gate that keeps the tests exclusion safe still exists', () => {
+  const gate = join(REPO, 'apps', 'web', 'tests', 'unit', 'tests-dir-is-not-a-build-input.test.mjs');
+  assert.ok(
+    existsSync(gate),
+    'apps/web/tests is excluded from the web allowlist because nothing the app ' +
+      'ships imports out of it, and ' +
+      gate.replace(REPO + '/', '') +
+      ' is what holds that true. If it is gone, remove the exclusion from ' +
+      "vercel-ignore-build.sh in the same commit — the two ship together.",
+  );
+  assert.ok(
+    readFileSync(gate, 'utf8').includes('vercel-ignore-build.sh'),
+    'the gate no longer names the guard it defends, so nothing connects them',
+  );
 });
 
 // The only entry in both allowlists, and the only fixture here that must build
