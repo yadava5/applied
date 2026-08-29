@@ -36,7 +36,6 @@ because a test that seeds nothing and asserts over nothing is green.
 
 from __future__ import annotations
 
-import importlib
 import re
 import time
 import uuid
@@ -158,39 +157,32 @@ def _token_for(user_id: str) -> str:
 async def cloud_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
     """The cloud app over the in-memory SQLite test DB (see test_user_id_scoping)."""
 
-    monkeypatch.setenv("JOBTRACKER_DEPLOYMENT", "cloud")
-    monkeypatch.setenv("JOBTRACKER_ENVIRONMENT", "test")
-    monkeypatch.setenv("JOBTRACKER_SUPABASE_JWT_SECRET", JWT_SECRET)
-
+    import jobtracker.auth.supabase_jwt as auth_module
     import jobtracker.config as config_module
     import jobtracker.database.connection as connection_module
 
-    importlib.reload(config_module)
+    holders = {
+        id(module.settings): module.settings
+        for module in (config_module, auth_module, connection_module)
+    }
+    for instance in holders.values():
+        monkeypatch.setattr(instance, "environment", "test")
+        monkeypatch.setattr(instance, "deployment", "cloud")
+        monkeypatch.setattr(instance, "supabase_jwt_secret", JWT_SECRET)
+
     connection_module._engine = None
-
-    import jobtracker.auth.supabase_jwt as auth_module
-
-    importlib.reload(auth_module)
-
-    import jobtracker.cloud.applications as cloud_apps_module
-
-    importlib.reload(cloud_apps_module)
-
-    import jobtracker.main_cloud as main_cloud_module
-
-    importlib.reload(main_cloud_module)
 
     from jobtracker.database import init_db
 
     await init_db()
+
+    import jobtracker.main_cloud as main_cloud_module
 
     yield main_cloud_module.app
 
     if connection_module._engine is not None:
         await connection_module._engine.dispose()
     connection_module._engine = None
-    monkeypatch.undo()
-    importlib.reload(config_module)
 
 
 async def _seed() -> dict[str, int]:

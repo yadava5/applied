@@ -32,7 +32,6 @@ cannot pass because the cap is simply always on.
 
 from __future__ import annotations
 
-import importlib
 import logging
 import uuid
 from collections.abc import AsyncIterator
@@ -78,56 +77,36 @@ def _token_for(user_id: str) -> str:
 async def cloud_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
     """The cloud app over the in-memory SQLite test DB."""
 
-    monkeypatch.setenv("JOBTRACKER_DEPLOYMENT", "cloud")
-    monkeypatch.setenv("JOBTRACKER_ENVIRONMENT", "test")
-    monkeypatch.setenv("JOBTRACKER_SUPABASE_JWT_SECRET", JWT_SECRET)
-
+    import jobtracker.auth.supabase_jwt as auth_module
     import jobtracker.config as config_module
     import jobtracker.database.connection as connection_module
 
-    importlib.reload(config_module)
+    # Every settings instance the request path holds, de-duplicated by object
+    # identity -- not ``importlib.reload(jobtracker.config)``, which minted a
+    # new one and left the verifier holding the old (#582).
+    holders = {
+        id(module.settings): module.settings
+        for module in (config_module, auth_module, connection_module)
+    }
+
+    for instance in holders.values():
+        monkeypatch.setattr(instance, "deployment", "cloud")
+        monkeypatch.setattr(instance, "environment", "test")
+        monkeypatch.setattr(instance, "supabase_jwt_secret", JWT_SECRET)
+
     connection_module._engine = None
-
-    import jobtracker.auth.supabase_jwt as auth_module
-
-    # A REBIND, not ``importlib.reload``. ``supabase_jwt`` reads
-    # ``settings.supabase_jwt_secret`` at call time, so pointing its module
-    # global at the reloaded singleton is all this needs — and reloading it
-    # instead would build a fresh ``AuthError`` class while
-    # ``test_auth_supabase_jwt`` already holds the old one from collection,
-    # breaking eleven of its ``pytest.raises`` in a module this one never
-    # touches. The sibling fixtures in ``test_mail_listing.py`` and
-    # ``test_cron_sync.py`` do reload it, and are safe only because they sort
-    # after the auth suite. That is luck, not isolation.
-    auth_module.settings = config_module.settings
-
-    import jobtracker.cloud.applications as cloud_apps_module
-
-    importlib.reload(cloud_apps_module)
-
-    import jobtracker.main_cloud as main_cloud_module
-
-    importlib.reload(main_cloud_module)
 
     from jobtracker.database import init_db
 
     await init_db()
+
+    import jobtracker.main_cloud as main_cloud_module
 
     yield main_cloud_module.app
 
     if connection_module._engine is not None:
         await connection_module._engine.dispose()
     connection_module._engine = None
-    monkeypatch.undo()
-    importlib.reload(config_module)
-    # …and hand the reloaded singleton back, for the same reason as at setup.
-    # Without this, ``supabase_jwt.settings`` is left pointing at an orphan
-    # still holding THIS module's test JWT secret, and the next module to run
-    # gets "401: Invalid signature" on a token it signed correctly — a failure
-    # that reads as a product bug in somebody else's file. Measured: with the
-    # two rebinds removed, ``pytest tests/test_application_mail_is_capped.py
-    # tests/test_auth_supabase_jwt.py`` fails 12 of the auth suite.
-    auth_module.settings = config_module.settings
 
 
 async def _seed() -> int:
