@@ -63,6 +63,27 @@ const ATS_DOMAINS: string[] = rulesRaw.ats_domains;
 
 const ATS_BOOSTED = new Set(["applied", "rejection", "interview", "offer"]);
 
+/** The categories whose mail REPORTS on an application that already exists, as
+ *  opposed to `applied`, whose mail ASSERTS one into being.
+ *
+ *  The port of `rules.REPORTS_ON_AN_APPLICATION` (#451), and it is a partition
+ *  rather than a ranking: a report ENTAILS the assertion (an offer for a job
+ *  presupposes you applied for it) and the entailment does not run the other
+ *  way, so at equal evidence the report is the reading that accounts for all
+ *  of it. Members within the set are unordered — this says nothing about a
+ *  rejection against an interview, because nothing true would.
+ *
+ *  `pending_application` is in it on the same reasoning the pipeline already
+ *  uses: "please verify your email before we can review your application" is
+ *  an outstanding STEP in an application that exists, so it reports. */
+const REPORTS_ON_AN_APPLICATION = new Set([
+  "rejection",
+  "interview",
+  "assessment",
+  "offer",
+  "pending_application",
+]);
+
 /** Which tier of a category's rule set a pattern belongs to. */
 export type RuleTier = "strong" | "weak" | "negative" | "veto";
 
@@ -283,6 +304,34 @@ export function assertedText(body: string): string {
  * honest by construction: there is no second reading of the rules that could
  * drift from the one that scores.
  */
+
+/**
+ * Order the categories best-first, breaking ties on what they CLAIM.
+ *
+ * The port of `rules.winner_first` (#451), and exported for the same reason it
+ * is a named function in Python: so a test can exercise the real comparator
+ * rather than a message that happens to reach it. Constructing text that ties
+ * `applied` against each of five categories is a test of the PATTERNS.
+ *
+ * Without the second term this is a stable sort over an object whose key order
+ * is `rules.json`'s — `rejection`, `interview`, `offer`, `applied`, … — which
+ * is not even the order the Python side tied on (`EmailCategory` declaration
+ * order, `applied` first). Two engines calling themselves the same classifier
+ * resolved the same tie differently, and neither order was about the message.
+ *
+ * The margin is untouched: tied scores are equal, so reordering them cannot
+ * move `runnerUp` and cannot move `confidence`. This decides WHICH verdict,
+ * never HOW SURE.
+ */
+export function winnerFirst(scores: Record<string, number>): [string, number][] {
+  return Object.entries(scores).sort(
+    (a, b) =>
+      b[1] - a[1] ||
+      Number(REPORTS_ON_AN_APPLICATION.has(b[0])) -
+        Number(REPORTS_ON_AN_APPLICATION.has(a[0])),
+  );
+}
+
 function score(
   subject: string,
   body: string,
@@ -376,7 +425,7 @@ function score(
     scores[cat] = s;
   }
 
-  const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+  const sorted = winnerFirst(scores);
   const [winner, winnerScore] = sorted[0];
   const runnerUp = sorted[1] ? sorted[1][1] : 0;
 
