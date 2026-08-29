@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from jobtracker.classifier.rules import PATTERNS
@@ -226,7 +227,7 @@ class Reach:
         return len(self.fired) / self.total_patterns if self.total_patterns else 0.0
 
 
-def measure_texts(items) -> Reach:
+def measure_texts(items: Iterable[tuple[str, str, str]]) -> Reach:
     """The three metrics over ``(family, scan text, wording)`` triples.
 
     Takes triples rather than cases so a mutation can be applied to the TEXT
