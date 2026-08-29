@@ -17,13 +17,27 @@
  * returns the reader's day is `local-today.test.mjs`'s job, under four zones,
  * and is not re-asserted here.
  *
- * WHAT THE LAST TWO TESTS ARE FOR. The decision this fix turns on lives in a
- * pure function, and a pure function cannot see which day its caller handed
- * it. Feeding `summaryWeekCorrection` the UTC day instead of the reader's day
- * would restore the bug exactly, in one word, at a call site no unit test
- * reaches — the same-typed operand swap this repo has a name for. So the call
- * sites are asserted as source, the way `backend/tests/test_this_week_basis.py`
- * holds the two `this week` derivations in lockstep across two languages.
+ * WHAT IS HERE AND WHAT IS NEXT DOOR. This file covers the DECISION —
+ * `summaryWeekCorrection`, a pure function — plus the control that proves the
+ * window it decides about is real. The DELIVERY (which day the decision is fed,
+ * whether the request is issued, whether its answer reaches the rendered line,
+ * whether the parameter survives the proxy) lives in
+ * `reader-week-delivery.test.mjs`, which EXECUTES the component and the route
+ * handler.
+ *
+ * IT USED TO LIVE HERE, AS A SOURCE SCAN, AND THAT WAS NOT COVERAGE. A pure
+ * function cannot see which day its caller handed it, so the call site was
+ * asserted with `source.includes("useLocalToday()")`. The mutation that proof
+ * was written against deletes that token — but the mutation that actually
+ * matters swaps the ARGUMENT,
+ * `summaryWeekCorrection(readerToday, servedWeekStart)` ->
+ * `(servedWeekStart, servedWeekStart)`, which restores #518 in full, leaves
+ * every scanned substring in place, and was green across all 625 tests. A grep
+ * standing in for behaviour is not coverage; the scan is gone and the
+ * behaviour is asserted by running it.
+ *
+ * The one source check that remains is over `dashboard/page.tsx`, an async
+ * Server Component that reads cookies and cannot be imported here at all.
  *
  * Run:  pnpm test:unit
  */
@@ -122,33 +136,8 @@ test("the requested Monday reaches the endpoint as week_start", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The call sites — where the operand swap would live
+// The one call site left here — the Server Component that cannot be executed
 // ---------------------------------------------------------------------------
-
-test("the header's correction is fed the READER's day, never the UTC one", () => {
-  const source = readFileSync(join(WEB_ROOT, "components/dashboard/BoardSubtitle.tsx"), "utf8");
-
-  // Zero-match is failure: a renamed component or a moved import would make
-  // every assertion below vacuous, so the thing being scanned is named first.
-  assert.ok(
-    source.includes("summaryWeekCorrection("),
-    "BoardSubtitle no longer calls summaryWeekCorrection — this scan is measuring nothing",
-  );
-  assert.ok(
-    source.includes("useLocalToday()"),
-    "BoardSubtitle no longer reads the reader's day; the header is back on the server's week",
-  );
-  assert.match(
-    source,
-    /const readerToday = useLocalToday\(\);/,
-    "the day fed to summaryWeekCorrection is not useLocalToday's",
-  );
-  assert.ok(
-    !source.includes("todayISO"),
-    "BoardSubtitle is reading the UTC day again — that is exactly the bug #518 is about, " +
-      "and it type-checks, lints and renders identically",
-  );
-});
 
 test("the page hands the header the Monday the endpoint actually counted", () => {
   const source = readFileSync(
