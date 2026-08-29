@@ -17,8 +17,11 @@ number moves and this file has to say so.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
+from jobtracker.cloud import pipeline
 from tests.corpus_independent.generate import digest, generate
 from tests.corpus_independent.harness import (
     _ANSWERS,
@@ -137,8 +140,47 @@ RECORDED_ANSWERS = {
     # HOW MUCH CHOICE THERE WAS. A landing at an employer holding one live card
     # is right by cardinality, not by understanding; folding the two together
     # would hide rule 4's coin toss inside a healthy headline.
-    "landed_where_one_card_existed": 1920,
-    "landed_where_several_did": 421,
+    #
+    # 1920/421 -> 1918/423 with #532, and the total is unchanged at 2341, as are
+    # `filed_on_an_existing_card` and `minted_a_card`. Two answers moved from
+    # "one card existed" to "several did" and nothing was gained or lost.
+    #
+    # THE CAUSE IS NOT A CHANGE OF GROUPING. Measured over all 17,260 cases:
+    # `resolve_employer` returns the same TOKEN for every one of them before and
+    # after — 0 token changes, 2,484 display-only changes. What moved is the
+    # harness's sibling query, which compares `Application.company` as an exact
+    # STRING (see `harness.py`, "CARDINALITY READ OFF THE BOARD"). The subject
+    # path used to truncate "Alderpoint Labs" to "Alderpoint" while the sender
+    # display-name path, which never ran `_clean_company_display`, kept it whole
+    # — so one employer sat on the board under two spellings and its own cards
+    # did not recognise each other as siblings. Now they do:
+    #
+    #     tokens with more than one display spelling   526 -> 150
+    #     distinct display spellings in total         9260 -> 8916
+    #     distinct employer tokens                    8676 -> 8676
+    #
+    # 376 tokens collapsed to a single spelling and NONE gained one. So these
+    # two answers always had a choice; the board just could not see it.
+    "landed_where_one_card_existed": 1918,
+    "landed_where_several_did": 423,
+}
+
+#: How many spellings the resolver gives one employer, over the whole corpus.
+#:
+#: THE DIRECTION IS THE POINT and it is one-way: neither number may RISE. They
+#: measure the defect #532 was filed for — a card reading a shorter employer
+#: name than the mail it came from — at its source rather than at the board, so
+#: they move the moment a resolution path starts disagreeing with the others,
+#: without waiting for the ten-minute replay to notice.
+#:
+#: 150 is not zero and is not a target. The remaining disagreements are other
+#: paths (an `at <Company>` anchor against a sender display name, mostly) and
+#: closing them is not this issue. Pinned so nobody has to guess whether a
+#: change made it better or worse.
+RECORDED_EMPLOYER_SPELLINGS = {
+    "tokens": 8676,
+    "distinct_displays": 8916,
+    "tokens_with_several_spellings": 150,
 }
 
 RECORDED = {
@@ -280,10 +322,22 @@ RECORDED = {
     # The card names a job nobody applied for.
     "role_wrong": 0,
     # Same employer, differently spelled: "Arcgrove" against "Arcgrove
-    # Systems". The resolver keeps the leading word, which is what makes two
-    # spellings one employer; the cost is a card that reads short. Reported,
-    # and OUT of ``total`` — it is a cosmetic variance, not a wrong record.
-    "company_drift": 1420,
+    # Systems". Reported, and OUT of ``total`` — it is a cosmetic variance,
+    # not a wrong record.
+    #
+    # 1420 -> 0 with #532. The cause was never the leading-word grouping this
+    # comment used to blame: ``_clean_company_display`` ran ``_CORP_TAIL`` as an
+    # UNANCHORED substitution, so "Labs" and "Systems" were deleted from the
+    # display of every employer that had one. Grouping never needed that —
+    # ``matches_company_token`` collapses on the leading word — so removing it
+    # cost nothing and returned the second half of 1,420 card titles.
+    #
+    # A RECORDED ZERO IS THE SHAPE THIS REPOSITORY KEEPS SHIPPING BADLY, so the
+    # thing that makes this one honest is stated here rather than assumed: the
+    # probe below (`a deliberately drifted board reports drift`) feeds the same
+    # grader a board whose companies are spelled short and requires it to report
+    # 250. This zero is a measurement that could have been non-zero.
+    "company_drift": 0,
     # Ground truth names a role and the card is blank. An absence, not a lie,
     # so also out of ``total``.
     #
@@ -1330,6 +1384,97 @@ async def test_the_card_is_named_after_the_right_job(
     )
 
 
+def _employer_spellings(cases) -> dict[str, set[str]]:
+    """Every display name the resolver gives each employer TOKEN, over the corpus.
+
+    No database and no replay: this is `resolve_employer` alone, which is what
+    makes it a seconds-long gate rather than a ten-minute one.
+    """
+
+    by: dict[str, set[str]] = {}
+    for case in cases:
+        resolved = pipeline.resolve_employer(case.sender, case.subject, case.sender_name)
+        if resolved is None:
+            continue
+        by.setdefault(resolved[0], set()).add(resolved[1])
+    return by
+
+
+def test_one_employer_gets_one_spelling(cases) -> None:
+    """#532: the resolution paths must not disagree about an employer's NAME.
+
+    A token is how the product decides two messages are the same employer; a
+    display is what the card reads and what an exact-string sibling query
+    compares. Until #532 the subject path truncated "Alderpoint Labs" to
+    "Alderpoint" while the sender display-name path kept it whole, so 526
+    employers sat under two spellings at once — a card that reads short, and a
+    board that cannot see its own siblings.
+
+    NEITHER NUMBER MAY RISE. That is the whole assertion: `tokens` pins that the
+    grouping did not move, and the other two pin that the naming did not
+    fracture again. A drop is an improvement and wants re-recording with the
+    change that caused it.
+    """
+
+    by = _employer_spellings(cases)
+    several = {t: v for t, v in by.items() if len(v) > 1}
+    got = {
+        "tokens": len(by),
+        "distinct_displays": sum(len(v) for v in by.values()),
+        "tokens_with_several_spellings": len(several),
+    }
+    assert got["tokens"] == RECORDED_EMPLOYER_SPELLINGS["tokens"], (
+        f"the employer TOKEN count moved to {got['tokens']}. This is grouping, "
+        "not naming: something re-keyed the board."
+    )
+    for name in ("distinct_displays", "tokens_with_several_spellings"):
+        assert got[name] == RECORDED_EMPLOYER_SPELLINGS[name], (
+            f"{name} is {got[name]}, recorded "
+            f"{RECORDED_EMPLOYER_SPELLINGS[name]}. A RISE means a resolution "
+            "path started spelling an employer differently from the others, "
+            "which is #532 returning. A FALL is a fix — re-record it here.\n"
+            + "\n".join(
+                f"  {t}: {sorted(v)}" for t, v in sorted(several.items())[:5]
+            )
+        )
+
+
+def test_the_spelling_gate_goes_red_for_the_defect_it_was_written_for(cases) -> None:
+    """THE CONTROL. Put the old cleaner back and the numbers must move.
+
+    Without this, three recorded values that happen to match today would look
+    exactly like a gate. `_CORP_TAIL` is still in the module — it has another
+    caller — so the pre-#532 `_clean_company_display` can be rebuilt here from
+    the real constants rather than from a copy that could drift.
+    """
+
+    old_via_tail = re.compile(r"\s*(?:\bvia\b|\bthrough\b|\bon\b|[(\[]).*$", re.IGNORECASE)
+
+    def pre_532(raw: str) -> str:
+        text = old_via_tail.sub("", raw or "").strip()
+        text = pipeline._CORP_TAIL.sub("", text).strip(" ,.-&")
+        return re.sub(r"\s+", " ", text)
+
+    real = pipeline._clean_company_display
+    pipeline._clean_company_display = pre_532
+    try:
+        by = _employer_spellings(cases)
+    finally:
+        pipeline._clean_company_display = real
+
+    several = sum(1 for v in by.values() if len(v) > 1)
+    assert len(by) == RECORDED_EMPLOYER_SPELLINGS["tokens"], (
+        "the old cleaner changed the TOKEN count, which it never did — this "
+        "control is no longer reproducing the pre-#532 behaviour"
+    )
+    assert several > RECORDED_EMPLOYER_SPELLINGS["tokens_with_several_spellings"], (
+        f"the pre-#532 cleaner produced {several} multiply-spelled employers, "
+        f"not more than the recorded "
+        f"{RECORDED_EMPLOYER_SPELLINGS['tokens_with_several_spellings']}. The "
+        "gate above cannot tell the defect from the fix."
+    )
+
+
 def test_a_wrong_title_is_actually_caught() -> None:
     """The mutation proof for the three counters above.
 
@@ -1414,8 +1559,10 @@ def test_a_wrong_title_is_actually_caught() -> None:
     drift = scored({k: ("Northwind Labs International", v[1]) for k, v in right.items()})
     assert drift.company_drift == 250 and drift.company_wrong == 0
     assert drift.total == control.total, (
-        "THE CONTROL: a scorer that simply compared strings would call all "
-        "1,420 real drift cases a wrong company"
+        "THE CONTROL: a scorer that simply compared strings would call every "
+        "drift case a wrong company. It is also what keeps the recorded "
+        "company_drift of 0 meaningful — #532 took the real count from 1,420 "
+        "to 0, and a counter that can only ever read 0 proves nothing."
     )
 
     # And the sentinel half: ground truth that names no role must score a blank
