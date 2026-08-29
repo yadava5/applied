@@ -7,6 +7,7 @@ import { GATE } from "@/lib/classification/gate";
 import { classifyWithRules } from "@/lib/demo/rulesLayer";
 import {
   DEFAULT_MESSAGE_CAP,
+  MailTooLargeError,
   parseMailFile,
   type MailFormat,
   type ParsedMessage,
@@ -249,9 +250,20 @@ export function ImportMail() {
         unreadable: result.unreadable,
         items: classify(result.messages),
       });
-    } catch {
+    } catch (err) {
       setState(null);
-      setError("Couldn't parse that file. Make sure it's a valid .mbox, .eml, or JSON export.");
+      /**
+       * A REFUSAL AND A FAILURE NEED DIFFERENT WORDS. "Couldn't parse that
+       * file" is a guess about the format, and telling somebody their valid
+       * message is malformed sends them off to re-export it. `MailTooLargeError`
+       * is a fact about the size, and it carries its own sentence — see
+       * MAX_SINGLE_MESSAGE_CHARS in lib/import/parseMail.
+       */
+      setError(
+        err instanceof MailTooLargeError
+          ? err.message
+          : "Couldn't parse that file. Make sure it's a valid .mbox, .eml, or JSON export.",
+      );
     }
   }, []);
 
@@ -260,6 +272,20 @@ export function ImportMail() {
       if (!file) return;
       setBusy(true);
       try {
+        /**
+         * DELIBERATELY NO `file.size` GATE BEFORE THIS READ, and the reason is
+         * the comment below it: a 520MB Takeout mbox holding 786,800 messages
+         * IS a supported input on this page, and any byte threshold big enough
+         * to keep working would be too big to bound anything.
+         *
+         * The bound that issue #406 asks for is on the single-message `.eml`
+         * path, and it can only be applied once the format is known —
+         * `detectFormat` reclassifies an mbox saved as `.eml` by its CONTENT,
+         * so a pre-read check keyed on the extension would refuse exactly the
+         * renamed export that sniff exists to rescue. It therefore lives in
+         * `parseMailFile` (MAX_SINGLE_MESSAGE_CHARS) and surfaces through the
+         * `MailTooLargeError` branch of `ingest`.
+         */
         const text = await file.text();
 
         /**

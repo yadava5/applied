@@ -106,6 +106,69 @@ test.describe("sample inbox (/demo/inbox)", () => {
     await expect(verdict).toHaveText(/offer/i);
   });
 
+  /**
+   * THE PLAYGROUND'S TWO INPUTS ARE BOUNDED, and the bound is only real in a
+   * browser: `maxLength` is enforced by the input element, so nothing outside
+   * a rendered page can see whether it is there.
+   *
+   * `classifyWithRules` runs synchronously inside a `useMemo` keyed on both
+   * fields, so it runs on every keystroke on the main thread. Measured, one
+   * pass: 11 ms at 20 KB, 107 ms at 1,000 KB, 542 ms at 5,000 KB. It is linear
+   * rather than a ReDoS, which is exactly what makes an unbounded input a
+   * problem — paste a 5 MB body once and every character typed afterwards
+   * costs half a second.
+   *
+   * The numbers are the ones the product already uses: the body bound is
+   * MAX_BODY_CHARS from `lib/import/parseMail` (the most decoded text the
+   * shipped pipeline ever scores for one message) and the subject bound is
+   * `PipelineItemIn.subject`'s `max_length` (what the API already refuses
+   * above).
+   */
+  const PLAYGROUND_SUBJECT_MAX = 2000;
+  const PLAYGROUND_BODY_MAX = 8000;
+
+  test("the playground refuses more text than the classifier is ever given", async ({ page }) => {
+    await page.goto("/demo/inbox");
+    const subject = page.getByTestId("playground-subject");
+    const body = page.getByTestId("playground-body");
+
+    await expect(subject).toHaveAttribute("maxlength", String(PLAYGROUND_SUBJECT_MAX));
+    await expect(body).toHaveAttribute("maxlength", String(PLAYGROUND_BODY_MAX));
+
+    // The attribute is a claim; this is the behaviour. `fill` sets the value
+    // through the element, so the element's own limit applies exactly as it
+    // does to a paste.
+    await body.fill("x".repeat(PLAYGROUND_BODY_MAX * 2));
+    expect((await body.inputValue()).length).toBe(PLAYGROUND_BODY_MAX);
+
+    await subject.fill("y".repeat(PLAYGROUND_SUBJECT_MAX * 2));
+    expect((await subject.inputValue()).length).toBe(PLAYGROUND_SUBJECT_MAX);
+  });
+
+  test("a bound this loose is invisible to anyone typing a real email", async ({ page }) => {
+    /**
+     * THE OTHER SIDE OF THE BOUND. A limit that refuses ordinary input is not
+     * a fix, and this playground is the one place a visitor is invited to type
+     * their own mail into. A long-but-real message goes in whole and still
+     * scores.
+     */
+    await page.goto("/demo/inbox");
+    const subject = page.getByTestId("playground-subject");
+    const body = page.getByTestId("playground-body");
+    const verdict = page.getByTestId("playground-verdict");
+
+    const realistic =
+      "Hi Nadia, thank you for applying to the Backend Engineer role. " +
+      "We would like to schedule a 30 minute interview with the team next week. ".repeat(20);
+    expect(realistic.length).toBeLessThan(PLAYGROUND_BODY_MAX);
+
+    await subject.fill("Interview scheduling for the Backend Engineer role");
+    await body.fill(realistic);
+
+    expect((await body.inputValue()).length).toBe(realistic.length);
+    await expect(verdict).toHaveText(/interview/i);
+  });
+
   test("no console errors and no horizontal overflow at 375px", async ({ page }) => {
     const watch = startConsoleWatch(page);
     await page.setViewportSize(MOBILE_375);

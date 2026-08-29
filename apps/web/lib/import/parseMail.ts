@@ -65,37 +65,91 @@ export interface ParseResult {
 export const DEFAULT_MESSAGE_CAP = 400;
 
 /** Upper bound on decoded body length handed to the classifier. */
-const MAX_BODY_CHARS = 8000;
+export const MAX_BODY_CHARS = 8000;
 const SNIPPET_CHARS = 180;
 
 /**
- * Upper bound on the `From:` header, and the ONLY thing standing between a
- * visitor and a frozen tab.
+ * Upper bound on the RAW text handed to a decoder, applied BEFORE the decode.
  *
- * `parseFrom`'s address pattern is `/^(.*?)<([^>]+)>\s*$/`. A lazy `.*?`
- * followed by a literal that never satisfies the anchor makes the engine
- * restart the scan at every position, so a header of N unmatched `<`
- * characters costs O(N²). The body was already capped at MAX_BODY_CHARS; the
- * header never was, so the cheapest input was the header alone.
+ * MAX_BODY_CHARS above is applied to the decode's OUTPUT, which is far too late
+ * to be a bound on anything: the whole body is decoded, the whole result is
+ * materialised, and then 8,000 characters of it are kept. Measured on this
+ * machine with a 33 MB quoted-printable body (`=41` repeated, three raw
+ * characters per output character):
  *
- * MEASURED on this machine, before the cap, by handing `parseFrom` a header
- * of `"<"×N + "a"×N` and timing the call:
+ *   before: 888 ms and +334 MB of heap, to produce 8,000 characters
  *
- *   N =  8000  (16 KB header)      373 ms
- *   N = 16000  (32 KB)           1,498 ms
- *   N = 32000  (64 KB)           5,935 ms
- *   N = 64000  (128 KB)         23,842 ms
+ * `/import` parses on the main thread of an unauthenticated page, so that is
+ * blocked tab time bought for nothing.
  *
- * Four times the cost per doubling, which is the quadratic in the open. A
- * 128 KB file froze the whole tab for 24 seconds: `/import` parses on the
- * main thread, there is no progress and no cancel, and `/import` needs no
- * account, so the file could arrive from anywhere. It does not crash, which
- * is worse, because a hang looks like the product being slow.
+ * WHERE THE NUMBER COMES FROM. The bound has to be able to produce
+ * MAX_BODY_CHARS of text through the most expansive decode we perform. That is
+ * base64: 8,000 characters is at most 32,000 UTF-8 bytes, which is ~42,700
+ * base64 characters plus line breaks. Quoted-printable is at most 3:1, so
+ * 24,000. 256 KB is roughly six times the worst of those, and the surplus is
+ * headroom for `text/html`, where most of the input is markup that `stripHtml`
+ * discards rather than text it keeps.
+ *
+ * IT IS APPLIED AT `decodeBody`, WHICH IS THE ONLY PLACE IT CAN GO. That is the
+ * single choke point every LEAF part goes through — the top-level body and each
+ * part of a multipart alike — so the multipart boundary split still sees the
+ * whole body and cannot lose a part. Bounding `extractText`'s input instead
+ * would truncate a multipart container mid-part.
+ *
+ * The cut is not free of consequence and is not pretended to be: a
+ * quoted-printable stream cut mid-`=XX` emits one or two literal characters at
+ * the tail, and a base64 stream cut mid-quantum has its partial quantum dropped
+ * (see `base64ToUtf8`). Both land 256 KB into a body whose first 8,000
+ * characters are the only ones the classifier will ever read.
+ */
+const MAX_RAW_BODY_CHARS = 256_000;
+
+/**
+ * Upper bound on a SINGLE RFC-822 message.
+ *
+ * The `.eml` branch of `parseMailFile` was `raws = [text.trim()]` — the mbox
+ * branch has DEFAULT_MESSAGE_CAP and the JSON branch inherits it, and the one
+ * format that is defined as "exactly one message" had no bound at all.
+ *
+ * WHERE THE NUMBER COMES FROM. `.eml` is what "Download message" produces, so
+ * the largest honest one is the largest message a mail provider will carry:
+ * Gmail's limit is 25 MB of attachments, which is about 34 MB on the wire once
+ * base64 has expanded it. 40 MB therefore refuses nothing that could be a real
+ * single message.
+ *
+ * IT IS A REFUSAL, NOT A TRUNCATION. Silently classifying the first N bytes of
+ * somebody's mail and reporting it as the message would be worse than saying
+ * no — see ParseResult.unreadable for the last time this parser made a count
+ * that was not true.
+ */
+export const MAX_SINGLE_MESSAGE_CHARS = 40_000_000;
+
+/**
+ * Thrown by `parseMailFile` for input it refuses rather than fails to read.
+ *
+ * A distinct type because the two need different words in the UI: "couldn't
+ * parse that file" is a guess about the format, and this is a fact about the
+ * size. `message` is the sentence shown to the visitor.
+ */
+export class MailTooLargeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MailTooLargeError";
+  }
+}
+
+/**
+ * Upper bound on the `From:` header.
+ *
+ * This used to be "the ONLY thing standing between a visitor and a frozen
+ * tab", because the address matcher underneath it was quadratic. It is not any
+ * more — `parseAngleAddress` replaced the regex with a scan — so this is now a
+ * bound on the header for its own sake: it limits what `decodeEncodedWords`
+ * expands, and it limits the length of the name and address a row can carry.
  *
  * 1024 is generous rather than tight. RFC 5322 caps a header line at 998
- * octets, and a real `From:` is a display name plus an address. At 1024 the
- * same pathological input costs under a millisecond, and the cap is applied
- * BEFORE any decoding so an encoded-word bomb cannot expand past it either.
+ * octets, and a real `From:` is a display name plus an address. The cap is
+ * applied BEFORE any decoding so an encoded-word bomb cannot expand past it.
  */
 const MAX_FROM_CHARS = 1024;
 
@@ -201,9 +255,23 @@ function parseHeaders(headerBlock: string): Map<string, string> {
   return headers;
 }
 
-function base64ToUtf8(b64: string): string {
+/**
+ * @param cut - true when the caller truncated this stream (MAX_RAW_BODY_CHARS),
+ *   in which case the trailing partial quantum is dropped.
+ *
+ *   base64 is read four characters at a time, so a cut stream can end
+ *   mid-quantum; `atob` throws on that, and the `catch` below would then hand
+ *   the classifier the raw base64 to score. Dropping at most three characters
+ *   (two bytes) is the difference between a body and gibberish.
+ *
+ *   It is conditional because an UNCUT stream that is not a multiple of four is
+ *   a different thing — unpadded base64, which `atob` accepts — and trimming
+ *   that would silently lose two real bytes off the end of every such body.
+ */
+function base64ToUtf8(b64: string, cut = false): string {
   try {
-    const clean = b64.replace(/\s+/g, "");
+    let clean = b64.replace(/\s+/g, "");
+    if (cut) clean = clean.slice(0, clean.length - (clean.length % 4));
     const binary = atob(clean);
     const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
     return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
@@ -243,16 +311,89 @@ export function decodeEncodedWords(value: string): string {
   );
 }
 
+/** JavaScript's `\s`, and the four characters its `.` refuses to match. */
+const WHITESPACE = /\s/;
+const LINE_TERMINATOR = /[\n\r\u2028\u2029]/;
+
+/**
+ * Split a header value into `name` + `<address>`, in one linear scan.
+ *
+ * THIS REPLACES `/^(.*?)<([^>]+)>\s*$/`, WHICH BACKTRACKED QUADRATICALLY. A
+ * lazy `.*?` in front of a literal that never satisfies the anchor makes the
+ * engine restart at every position, so a value of N unmatched `<` characters
+ * costs O(N²). Measured on this machine, the regex alone, on `"<"×N + "a"×N`:
+ *
+ *   N =  2000     18 ms        N = 16000   1,144 ms
+ *   N =  4000     71 ms        N = 32000   4,569 ms
+ *   N =  8000    285 ms        N = 64000  18,176 ms
+ *
+ * Four times the cost per doubling, which is the quadratic in the open.
+ *
+ * A 1024-character cap on the caller (MAX_FROM_CHARS) already held `parseFrom`
+ * itself to about 2 ms, and that cap is staying. It is not a fix, though: it
+ * hides the quadratic behind one call site instead of removing it, so the next
+ * caller — a `Reply-To`, a `Sender`, a future header — pays for it again with
+ * nothing in the code to say why it must not.
+ *
+ * THE SCAN IS THE REGEX'S SEMANTICS, NOT A SIMPLIFICATION OF THEM, and the
+ * difference matters on real mail:
+ *
+ * - `\s*$` after the closing `>`: the `>` must be the last NON-SPACE character.
+ *   `"<a@b.test> trailing"` is not an angle address and falls through to the
+ *   bare-address branch exactly as before.
+ * - `[^>]+` cannot span a `>`, so the opening `<` must sit after the last `>`
+ *   that precedes the closing one. That is what makes
+ *   `"Name <a@b.test> <c@d.test>"` yield the name `Name <a@b.test>`.
+ * - The lazy `.*?` then takes the FIRST `<` after that point, which is why
+ *   `"a<b<c@d.test>"` yields the address `b<c@d.test` and not `c@d.test`.
+ * - `[^>]+` is one-or-more, so `"Name <>"` does not match.
+ * - `.` excludes line terminators and the pattern is anchored at `^`, so a
+ *   newline anywhere BEFORE the `<` means no match — while the address itself,
+ *   matched by `[^>]+`, may contain one. This one is unreachable through
+ *   `parseFrom` (`parseHeaders` unfolds continuations onto one line before it
+ *   ever gets here) and is reproduced anyway, because "unreachable today" is
+ *   not a property a shared helper should quietly depend on.
+ *
+ * `parse-mail-from-scan.test.mjs` pins all of it against a table taken from the
+ * old regex, and fuzzes the two implementations against each other over 20,000
+ * random strings. The last two bullets are there BECAUSE of that fuzz: the
+ * first draft of this scan got both wrong.
+ *
+ * EXPORTED SO ITS COST CAN BE MEASURED WITHOUT THE CAP IN FRONT OF IT. A timing
+ * test that went through `parseFrom` would pass identically with the regex
+ * restored, because MAX_FROM_CHARS holds that path to ~2 ms either way — a
+ * check that cannot fail. This is the entry point that can.
+ *
+ * Returns null for "not an angle address", which is the regex's no-match.
+ */
+export function parseAngleAddress(value: string): { name: string; email: string } | null {
+  // `\s*$`: walk back over trailing whitespace to the character that has to be
+  // the `>`. A backward scan rather than `trimEnd()` so nothing is allocated.
+  let gt = value.length - 1;
+  while (gt >= 0 && WHITESPACE.test(value[gt])) gt--;
+  if (gt < 1 || value[gt] !== ">") return null;
+
+  const prevGt = value.lastIndexOf(">", gt - 1);
+  const lt = value.indexOf("<", prevGt + 1);
+  // `lt >= gt - 1` covers both "no `<` before the `>`" and an empty address.
+  if (lt === -1 || lt >= gt - 1) return null;
+
+  const name = value.slice(0, lt);
+  // `^(.*?)` cannot cross a line terminator.
+  if (LINE_TERMINATOR.test(name)) return null;
+
+  return { name, email: value.slice(lt + 1, gt) };
+}
+
 /** Parse a `From:` value into a display name + bare email address. */
 export function parseFrom(value: string): { name: string | null; email: string } {
-  // Bound FIRST. See MAX_FROM_CHARS: everything below this line is quadratic
-  // in the length of `value`, and nothing upstream limits a header.
+  // Bound FIRST — see MAX_FROM_CHARS. Nothing upstream limits a header, and
+  // `decodeEncodedWords` can expand what it is given.
   const decoded = decodeEncodedWords(value.slice(0, MAX_FROM_CHARS)).trim();
-  const angle = decoded.match(/^(.*?)<([^>]+)>\s*$/);
+  const angle = parseAngleAddress(decoded);
   if (angle) {
-    let name = angle[1].trim().replace(/^"(.*)"$/, "$1").trim();
-    if (!name) name = "";
-    return { name: name || null, email: angle[2].trim().toLowerCase() };
+    const name = angle.name.trim().replace(/^"(.*)"$/, "$1").trim();
+    return { name: name || null, email: angle.email.trim().toLowerCase() };
   }
   const bare = decoded.match(/[^\s<>@]+@[^\s<>@]+/);
   return { name: null, email: bare ? bare[0].toLowerCase() : decoded.toLowerCase() };
@@ -444,9 +585,17 @@ export function stripHtml(html: string): string {
 
 function decodeBody(body: string, encoding: string | undefined, isHtml: boolean): string {
   const enc = (encoding ?? "").toLowerCase();
-  let text = body;
-  if (enc === "base64") text = base64ToUtf8(body);
-  else if (enc === "quoted-printable") text = decodeQuotedPrintable(body);
+
+  // BOUND BEFORE THE WORK, NOT AFTER IT. See MAX_RAW_BODY_CHARS: the caller's
+  // `.slice(0, MAX_BODY_CHARS)` runs on the decode's output, so without this
+  // line the whole body is decoded and the whole result allocated in order to
+  // keep 8,000 characters of it.
+  const cut = body.length > MAX_RAW_BODY_CHARS;
+  const raw = cut ? body.slice(0, MAX_RAW_BODY_CHARS) : body;
+
+  let text = raw;
+  if (enc === "base64") text = base64ToUtf8(raw, cut);
+  else if (enc === "quoted-printable") text = decodeQuotedPrintable(raw);
   return isHtml ? stripHtml(text) : text;
 }
 
@@ -606,7 +755,31 @@ function str(v: unknown): string {
   return typeof v === "string" ? v : v == null ? "" : String(v);
 }
 
-function parseJsonMessage(item: LooseJsonMessage, id: string): ParsedMessage | null {
+/**
+ * ONE ENTRY MUST NOT DISCARD THE FILE — the same shape as the prototype bug
+ * fixed in #404, arriving through the other public input.
+ *
+ * The parameter is `unknown` because a JSON array holds whatever the file said,
+ * and the declared element type is a claim about the happy path rather than
+ * something the wire is obliged to honour. `[null, …]` threw:
+ *
+ *   TypeError: Cannot read properties of null (reading 'subject')
+ *
+ * and `ImportMail.ingest` wraps the whole parse in one try/catch, so a single
+ * `null` in a 400-record batch produced "Couldn't parse that file" about all
+ * 400 of them.
+ *
+ * The root cause is fixed rather than the symptom caught: a non-object entry
+ * returns null, which the caller already counts as `unreadable` and the UI
+ * already reports. That is deliberately NOT a wider class than it was —
+ * numbers, booleans and strings never threw (property access on them yields
+ * `undefined`) and already landed in `unreadable`. `null` and `undefined` are
+ * the two shapes that threw, and they now behave like the rest.
+ */
+function parseJsonMessage(entry: unknown, id: string): ParsedMessage | null {
+  if (typeof entry !== "object" || entry === null) return null;
+  const item = entry as LooseJsonMessage;
+
   const subject = str(item.subject).trim();
   const body = str(item.body ?? item.text ?? item.snippet);
   const fromField = str(item.from ?? item.sender ?? item.sender_email ?? item.senderEmail);
@@ -639,7 +812,7 @@ export function parseMailFile(
 ): ParseResult {
   const format = detectFormat(filename, text);
 
-  let raws: LooseJsonMessage[] | string[] = [];
+  let raws: unknown[] | string[] = [];
   if (format === "json") {
     const data = JSON.parse(text) as unknown;
     const arr = Array.isArray(data)
@@ -647,11 +820,23 @@ export function parseMailFile(
       : Array.isArray((data as { messages?: unknown }).messages)
         ? (data as { messages: unknown[] }).messages
         : [];
-    raws = arr as LooseJsonMessage[];
+    raws = arr;
   } else if (format === "mbox") {
     raws = splitMbox(text);
   } else {
-    raws = [text.trim()];
+    // The one format that is defined as a single message, and the one that had
+    // no bound. See MAX_SINGLE_MESSAGE_CHARS — this refuses rather than
+    // truncating, because a truncated message classified as though it were the
+    // whole one is a verdict about mail we did not read.
+    const single = text.trim();
+    if (single.length > MAX_SINGLE_MESSAGE_CHARS) {
+      throw new MailTooLargeError(
+        `That file is a single ${Math.round(single.length / 1_000_000)}MB message, which is larger ` +
+          "than any message a mail provider will carry, so it cannot be classified as one. " +
+          "If it is really a mailbox export, save it with a .mbox extension and drop it again.",
+      );
+    }
+    raws = [single];
   }
 
   const totalFound = raws.length;
@@ -661,9 +846,7 @@ export function parseMailFile(
   capped.forEach((item, i) => {
     const id = `m${i}`;
     const msg =
-      format === "json"
-        ? parseJsonMessage(item as LooseJsonMessage, id)
-        : parseRfc822(item as string, id);
+      format === "json" ? parseJsonMessage(item, id) : parseRfc822(item as string, id);
     if (msg) messages.push(msg);
   });
 

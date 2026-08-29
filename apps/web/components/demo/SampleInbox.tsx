@@ -11,6 +11,7 @@ import {
   type TraceStep,
 } from "@/lib/demo/sampleInbox";
 import { classifyWithRules } from "@/lib/demo/rulesLayer";
+import { MAX_BODY_CHARS } from "@/lib/import/parseMail";
 
 /**
  * The sample-inbox experience: eleven synthetic job-search emails, each shown
@@ -268,6 +269,30 @@ function InboxRow({
   );
 }
 
+/**
+ * Bounds on the playground's two inputs.
+ *
+ * `classifyWithRules` runs SYNCHRONOUSLY inside a `useMemo` keyed on `subject`
+ * and `body`, so it runs on every keystroke, on the main thread. It is linear
+ * rather than a ReDoS, which is exactly what makes an unbounded input a
+ * problem: paste once and every subsequent keystroke pays. Measured on this
+ * machine, one pass:
+ *
+ *   20 KB body    11 ms      1,000 KB    107 ms
+ *   100 KB body   11 ms      5,000 KB    542 ms
+ *
+ * Half a second per character is not a slow page, it is a stuck one.
+ *
+ * NEITHER NUMBER IS INVENTED. The body bound is `MAX_BODY_CHARS` from
+ * `lib/import/parseMail` — the most decoded text the shipped pipeline ever
+ * hands the classifier for one message, so the playground cannot be asked to
+ * score more than the real thing does. The subject bound is the `subject`
+ * `max_length` on `PipelineItemIn` in `backend/jobtracker/cloud/gmail_oauth.py`,
+ * which is what the API already refuses above.
+ */
+const PLAYGROUND_BODY_MAX = MAX_BODY_CHARS;
+const PLAYGROUND_SUBJECT_MAX = 2000;
+
 function LivePlayground() {
   const [subject, setSubject] = useState("We'd like to schedule a call to discuss the role");
   const [body, setBody] = useState(
@@ -298,6 +323,7 @@ function LivePlayground() {
           <input
             value={subject}
             onChange={(e) => setSubject(e.target.value)}
+            maxLength={PLAYGROUND_SUBJECT_MAX}
             data-testid="playground-subject"
             className="mt-1 block w-full rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-strong outline-none placeholder:text-dim focus:border-line-strong"
           />
@@ -308,6 +334,7 @@ function LivePlayground() {
             value={body}
             onChange={(e) => setBody(e.target.value)}
             rows={3}
+            maxLength={PLAYGROUND_BODY_MAX}
             data-testid="playground-body"
             className="mt-1 block w-full resize-y rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-strong outline-none placeholder:text-dim focus:border-line-strong"
           />

@@ -94,6 +94,39 @@ ROLE_FROM_USER = "user"
 # write.
 _MAX_ROLE_LEN = 200
 
+# THE ONE BOUND POSTGRES ENFORCES FOR US, AND ONLY POSTGRES. ``company`` is
+# indexed — ``ix_applications_company`` on the raw column, and
+# ``ix_applications_user_id_lower_company`` on ``lower(company)`` — and a btree
+# version 4 index row may not exceed 2704 bytes. Measured against the schema the
+# real migrations build (issue #406):
+#
+#     company len=2000  -> INSERT OK
+#     company len=2700  -> ProgramLimitExceeded: index row size 2712 exceeds
+#                          btree version 4 maximum 2704
+#     smallest rejected incompressible company: 2677 characters
+#     position len=5,000,000 -> INSERT OK      # unindexed, so this is `company`
+#
+# SQLite has no such limit, which is why the whole backend suite passes with the
+# field unbounded and this is invisible on a laptop. The API accepted a
+# 5,000,000-character company and answered 201, so the failure landed on the
+# INSERT rather than at the door.
+#
+# WHERE 300 COMES FROM. It is a character count and the ceiling is a byte count,
+# so the conversion has to assume the worst: a UTF-8 code point is up to 4
+# bytes, making 300 characters at most 1,200 bytes — well under half the 2,704
+# available, with the remainder covering the index tuple's own overhead, the
+# ``user_id`` in the composite index, and the rare code point whose ``lower()``
+# is longer than itself. A registered company name does not approach it; the
+# longest in the owner's own board is 34 characters.
+_MAX_COMPANY_LEN = 300
+
+# Notes are prose a person types, and unindexed, so no engine limit applies.
+# This is here for the same reason every string on ``PipelineItemIn`` is bounded:
+# Pydantic materialises the whole body before a field is read, so an unbounded
+# string is memory the process allocates on the caller's say-so inside a
+# function with a fixed memory ceiling.
+_MAX_NOTES_LEN = 10_000
+
 # ``Application.source`` doubles as an origin+ownership tag so a re-sync can
 # safely REPLACE the Gmail-derived pipeline while preserving anything the user
 # touched:
@@ -416,12 +449,26 @@ class CloudApplicationCreate(BaseModel):
     ``Date.toISOString()`` produces) is accepted and truncated to its date;
     anything else is REJECTED with a 422 rather than silently dropped, which is
     the failure being fixed.
+
+    THE THREE FREE-TEXT FIELDS ARE BOUNDED HERE, ON THE REQUEST, and not on
+    :class:`~jobtracker.database.models.Application`. The table model is written
+    by the sync as well as by this endpoint, and the failure being fixed is that
+    an oversized ``company`` reached the INSERT and broke it on production
+    Postgres while answering 201 on SQLite (issue #406). A bound on the wire
+    refuses it with a 422 before anything is allocated or written, and says so
+    in the OpenAPI document the web app's bindings are generated from — the same
+    argument :class:`ApplicationRoleUpdate` makes for ``role``.
+
+    ``position`` takes ``_MAX_ROLE_LEN`` rather than a number of its own,
+    because ``ApplicationRoleUpdate.role`` writes THE SAME COLUMN: two different
+    ceilings on one field would mean a title this endpoint accepts that the
+    PUT then refuses.
     """
 
-    company: str
-    position: str
+    company: str = Field(max_length=_MAX_COMPANY_LEN)
+    position: str = Field(max_length=_MAX_ROLE_LEN)
     status: ApplicationStatus = ApplicationStatus.APPLIED
-    notes: str | None = None
+    notes: str | None = Field(default=None, max_length=_MAX_NOTES_LEN)
     applied_date: str | None = None
     url: str | None = None
 
