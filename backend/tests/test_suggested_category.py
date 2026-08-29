@@ -46,7 +46,6 @@ What each test holds down
 
 from __future__ import annotations
 
-import importlib
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -96,48 +95,43 @@ def _token_for(user_id: str) -> str:
 async def cloud_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
     """The cloud app over the in-memory SQLite test DB (see test_user_id_scoping)."""
 
-    monkeypatch.setenv("JOBTRACKER_DEPLOYMENT", "cloud")
-    monkeypatch.setenv("JOBTRACKER_ENVIRONMENT", "test")
-    monkeypatch.setenv("JOBTRACKER_SUPABASE_JWT_SECRET", JWT_SECRET)
-    monkeypatch.setenv("JOBTRACKER_SECRET_ENCRYPTION_KEY", ENC_KEY)
-
+    import jobtracker.auth.supabase_jwt as auth_module
     import jobtracker.config as config_module
     import jobtracker.database.connection as connection_module
 
-    importlib.reload(config_module)
+    # Every settings instance the request path holds, de-duplicated by object
+    # identity -- not ``importlib.reload(jobtracker.config)``, which minted a
+    # new one and left the verifier holding the old (#582).
+    holders = {
+        id(module.settings): module.settings
+        for module in (config_module, auth_module, connection_module)
+    }
+
+    for instance in holders.values():
+        monkeypatch.setattr(instance, "deployment", "cloud")
+        monkeypatch.setattr(instance, "environment", "test")
+        monkeypatch.setattr(instance, "supabase_jwt_secret", JWT_SECRET)
+        monkeypatch.setattr(instance, "secret_encryption_key", ENC_KEY)
+
     connection_module._engine = None
 
-    import jobtracker.auth.supabase_jwt as auth_module
-
-    importlib.reload(auth_module)
-
-    import jobtracker.credentials.cloud as cred_cloud_module
-
-    importlib.reload(cred_cloud_module)
-
-    import jobtracker.cloud.applications as cloud_apps_module
-
-    importlib.reload(cloud_apps_module)
-
+    # The module-level inbox cache used to be cleared as a side effect of
+    # reloading ``jobtracker.cloud.gmail_oauth``. Cleared explicitly now.
     import jobtracker.cloud.gmail_oauth as gmail_module
 
-    importlib.reload(gmail_module)
-
-    import jobtracker.main_cloud as main_cloud_module
-
-    importlib.reload(main_cloud_module)
+    gmail_module._INBOX_CACHE.clear()
 
     from jobtracker.database import init_db
 
     await init_db()
+
+    import jobtracker.main_cloud as main_cloud_module
 
     yield main_cloud_module.app
 
     if connection_module._engine is not None:
         await connection_module._engine.dispose()
     connection_module._engine = None
-    monkeypatch.undo()
-    importlib.reload(config_module)
 
 
 @pytest.fixture

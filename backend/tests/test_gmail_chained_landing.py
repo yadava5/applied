@@ -86,19 +86,25 @@ def test_the_flag_survives_the_round_trip_inside_the_signed_state(
     cannot read back.
     """
 
-    import importlib
-
     from cryptography.fernet import Fernet
 
-    monkeypatch.setenv("JOBTRACKER_SECRET_ENCRYPTION_KEY", Fernet.generate_key().decode())
-
+    import jobtracker.auth.supabase_jwt as auth_module
     import jobtracker.config as config_module
-
-    importlib.reload(config_module)
     import jobtracker.credentials.cloud as cred_cloud_module
+    import jobtracker.database.connection as connection_module
 
-    importlib.reload(cred_cloud_module)
-    module = importlib.reload(gmail_oauth)
+    # ONE key, set on every settings instance the signer and the Fernet read.
+    # Generated once: a per-instance call would hand them different keys and
+    # the state this deployment signs could not be read back (#582).
+    key = Fernet.generate_key().decode()
+    holders = {
+        id(module.settings): module.settings
+        for module in (config_module, auth_module, connection_module, cred_cloud_module)
+    }
+    for instance in holders.values():
+        monkeypatch.setattr(instance, "secret_encryption_key", key)
+
+    module = gmail_oauth
 
     user_id = uuid.uuid4()
 
