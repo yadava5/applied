@@ -65,7 +65,7 @@ flowchart TB
     CF -->|"matched"| Out1["category · method=content_filter"]
     CF -->|"pass"| R
 
-    R{{"1 · rules<br/>220 regex patterns over 7 categories<br/>129 strong · 30 weak · 61 negative<br/>hand-written · classifier/rules.py"}}
+    R{{"1 · rules<br/>220 regex patterns over 7 categories<br/>128 strong · 31 weak · 61 negative<br/>hand-written · classifier/rules.py"}}
     R -->|"scores a category"| Out2["category · method=rules"]
     R -->|"nothing scored"| CLOUD
 
@@ -196,23 +196,23 @@ that greeting opens **67% of rejections and 22% of confirmations**. Wrong verdic
 went 139 to 119 with no confirmation family losing a single message
 ([#455](https://github.com/yadava5/applied/issues/455)).
 
-**And read it knowing the number went DOWN on purpose.** It was 93.05% on 2026-08-22 and is 92.04%
+**And read it knowing the number went DOWN on purpose.** It was 93.05% on 2026-08-22 and is 92.87%
 on the same engine, because the corpus stopped being written entirely by the author of the
 classifier. Measured before that change: **100.0% of the 13,730 lifecycle messages contained an
 engine pattern verbatim**, and **123 of 160 engine patterns were never exercised at all**. A corpus
 in that state cannot find a gap — it can only confirm the pattern list against itself, and its
 headline describes the author's vocabulary rather than the product's reach. `observed.py` holds 36
 wordings transcribed from mail that actually arrived, from ten applicant tracking platforms, written
-by recruiting teams with no knowledge of this repository. 92.04% is the first number here that was
+by recruiting teams with no knowledge of this repository. 92.87% is the first number here that was
 not partly graded by the person who set the exam.
 
 | | measured 2026-08-22 |
 | --- | --- |
-| Correct | **15,886 of 17,260 — 92.04%** |
-| Wrong | **361** |
-| **Wrong AND stated to the user as fact** | **72** |
-| Abstained (below the 0.70 review floor, the product says nothing) | **1,013** |
-| Board: cards / splits / merges / noise / misrouted review | **9,252 / 0 / 0 / 0 / 0** |
+| Correct | **16,030 of 17,260 — 92.87%** |
+| Wrong | **304** |
+| **Wrong AND stated to the user as fact** | **0** |
+| Abstained (below the 0.70 review floor, the product says nothing) | **926** |
+| Board: cards / splits / merges / noise / misrouted review | **9,148 / 0 / 0 / 0 / 0** |
 | Updates that reached the wrong card | **0** |
 | Updates held for a person because the classifier was unsure | 360 |
 | Mail about a real application that reached nothing | **11 lost**, 72 dropped |
@@ -244,7 +244,7 @@ product changed. They come from `ats-relay-noise`, a family added on 2026-08-22 
 review floor — the product's behaviour on ATS mail that is not about you was not good before and
 simply was not measured. It stays pinned at 0, so anything minting a card here is loud.
 
-**Wrong verdicts stated as fact went 464 to 72.** There was no such thing as a wrong-but-hedged
+**Wrong verdicts stated as fact went 464 to 0.** There was no such thing as a wrong-but-hedged
 verdict on the morning of 2026-08-22: the review queue caught the classifier being *unsure* and had
 never once caught it being *wrong*, so every mistake it made it made confidently, and a user read it
 as a fact about their own job search. Two thirds of them now land in the queue instead, because the
@@ -436,7 +436,7 @@ Being precise about this is the point.
 
 ### Implemented — hand-written in this repo
 
-- **The rules engine.** 220 regex patterns across 7 categories (129 strong, 30 weak, 61 negative), the scoring weights (strong +3, +6 in subject; weak +1, +2; negative −5), the margin-to-confidence tiers, and the ATS-domain boost. Ported byte-for-byte to JavaScript in `apps/web/lib/demo/rulesLayer.ts` and to `ml/browser/site/app.js`. A further 40 **veto** patterns sit outside that count, because they score nothing: a veto caps its category at zero, which is the only way to overrule a strong subject match — +6 survives a negative's −5, so "Complete your self-assessment" read as an `assessment` invitation for as long as the negative was the strongest tool available. Two categories declare vetoes. `assessment` has 10, for the senses of the noun that are not a candidate test (risk, self, needs, impact, performance, damages). `follow_up` has 30 — the decision sentences, repeated verbatim from `rejection`'s strong list, because a message that states the hiring decision is not a nudge whatever its subject line reads. They name no marketing vocabulary on purpose: that belongs to the content guard which runs *ahead* of the rules layer, and a veto would apply it to message bodies at a threshold of one, suppressing every real invitation with an unsubscribe footer.
+- **The rules engine.** 220 regex patterns across 7 categories (128 strong, 31 weak, 61 negative), the scoring weights (strong +3, +6 in subject; weak +1, +2; negative −5), the margin-to-confidence tiers, and the ATS-domain boost. Ported byte-for-byte to JavaScript in `apps/web/lib/demo/rulesLayer.ts` and to `ml/browser/site/app.js`. A further 40 **veto** patterns sit outside that count, because they score nothing: a veto caps its category at zero, which is the only way to overrule a strong subject match — +6 survives a negative's −5, so "Complete your self-assessment" read as an `assessment` invitation for as long as the negative was the strongest tool available. Two categories declare vetoes. `assessment` has 10, for the senses of the noun that are not a candidate test (risk, self, needs, impact, performance, damages). `follow_up` has 30 — the decision sentences, repeated verbatim from `rejection`'s strong list, because a message that states the hiring decision is not a nudge whatever its subject line reads. They name no marketing vocabulary on purpose: that belongs to the content guard which runs *ahead* of the rules layer, and a veto would apply it to message bodies at a threshold of one, suppressing every real invitation with an unsubscribe footer.
 - **The cascade and its gate** — layer ordering, escalation conditions, the 0.85 auto-classify threshold and the 0.70 minimum for trusting a semantic layer, the `needs_review` routing, and the path that writes a correction into `training_data`. That path stops at the write: the row is recorded against its own user's account, and **nothing in the hosted app reads it back to train**. The retrain code exists in the repository and is reachable only as an operator command against a local backend — never on a request path, and default-deny since #357 (refused unless the corpus is entirely synthetic or its single owner is explicitly allowlisted).
 - **The SetFit head is the one model trained here.** Fine-tuned on `sentence-transformers/paraphrase-MiniLM-L6-v2` over 8 labels, with a provenance contract (`training_metadata.json`) that is schema-versioned and validated *before* it is written, covering label counts, source counts, split sizes and exact `label_to_id` / `id_to_label` inversion.
 - **The evaluation harness** — `evaluate_classifier.py` with its `deterministic` and `full` hybrid profiles, baseline comparison with tolerance, the macro-F1 floor, and `benchmark_classifier_latency.py`.
@@ -714,7 +714,7 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 
 ### Testing
 
-**1783 tests collected, 0 skipped.** These figures were recorded on 2026-08-28 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. `--record` refuses to write at all unless that run was whole — Docker reachable, nothing skipped, suite green — because skipped tests are still *collected*, so a recording taken without the Postgres extras used to publish "0 skipped" while five modules sat out (#351). The artifact names the interpreter that ran the suite rather than the one that ran the script; those differ here, and a Python 3.14 run is exactly what produced the wrong coverage figures corrected below. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 1264 `test_*` functions across 110 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 1783 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
+**1783 tests collected, 0 skipped.** These figures were recorded on 2026-08-28 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. `--record` refuses to write at all unless that run was whole — Docker reachable, nothing skipped, suite green — because skipped tests are still *collected*, so a recording taken without the Postgres extras used to publish "0 skipped" while five modules sat out (#351). The artifact names the interpreter that ran the suite rather than the one that ran the script; those differ here, and a Python 3.14 run is exactly what produced the wrong coverage figures corrected below. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 1350 `test_*` functions across 116 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 1783 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
 
 The Postgres row-level-security module is the only thing in the repo that can demonstrate the isolation the product claims, and **21 tests** now exercise it. It has not always run: its tests waited on a database URL no workflow set, and a skip is green, so the 10 it held on 2026-08-02 had **never executed anywhere**. Two fixes: `test_rls_postgres.py` now starts its own `postgres:16` via testcontainers when `JOBTRACKER_TEST_PG_ADMIN_URL` is absent and Docker is available, and the `rls-postgres` CI job supplies its own service container. That job then parses the JUnit XML and **fails the build if the suite reports zero tests or any skip**, because a skipped security test and a passing one produce the same green tick.
 
@@ -847,9 +847,9 @@ applied/
 │   │   ├── credentials/     # types · desktop (Keychain, unused) · cloud (Fernet)
 │   │   ├── database/        # models, connection (the RLS GUC listener lives here)
 │   │   └── scripts/         # evaluator, latency benchmark, ML-ops tooling
-│   ├── alembic/versions/    # 22 revisions incl. the RLS + InitPlan-hoist migrations
+│   ├── alembic/versions/    # 23 revisions incl. the RLS + InitPlan-hoist migrations
 │   ├── data/evaluation/     # eval sets, committed baselines, benchmark + monitoring history
-│   └── tests/               # 110 modules
+│   └── tests/               # 116 modules
 │
 ├── ml/                      # the classifier as a deployable service
 │   ├── browser/             # ONNX export + the in-browser site (Transformers.js)
