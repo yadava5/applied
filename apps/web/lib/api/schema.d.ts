@@ -261,9 +261,10 @@ export interface paths {
          * @description The needs-classification queue: uncertain verdicts awaiting a decision.
          *
          *     These are the metadata-only Email rows the sync flagged ``needs_review``
-         *     that no card the user can see already answers for
-         *     (:func:`_not_filed_on_a_live_application`) and that the user has not already
-         *     reviewed — the real target of the dashboard's "N need classification"
+         *     that no application of theirs already answers for
+         *     (:func:`_not_filed_on_an_application_that_answers` — a card on the board, or
+         *     one they removed by hand, which is a standing "no" and not a question) and
+         *     that the user has not already reviewed — the real target of the dashboard's "N need classification"
          *     number, which is otherwise a dead count. Newest-first.
          *
          *     ONE ENTRY PER GMAIL THREAD. A conversation is one application, so being

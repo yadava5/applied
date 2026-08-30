@@ -156,6 +156,25 @@ def _is_auto_row(source: str | None) -> bool:
     return source == SOURCE_GMAIL_AUTO
 
 
+def _user_dismissed(app: Application) -> bool:
+    """Did a HUMAN take this card off the board — as opposed to a re-sync?
+
+    The in-Python twin of the ``dismissed_reason == DISMISSED_BY_USER`` arm of
+    :func:`_filed_on_an_application_that_answers`. Two spellings of one idea is
+    what #596 was about, so they are stated once each and cross-referenced: the
+    predicate is SQL because it runs inside an ``EXISTS``, this is Python
+    because its callers hold ORM rows they have already loaded. Both read the
+    same column against the same constant.
+
+    ``dismissed_at`` is tested as well as the reason, so a LIVE row carrying a
+    stale reason string can never read as dismissed. NULL reason on a dismissed
+    row answers False — machine-dismissed, the safe direction, for the reason
+    the predicate's docstring gives.
+    """
+
+    return app.dismissed_at is not None and app.dismissed_reason == DISMISSED_BY_USER
+
+
 class RemovedApplication(NamedTuple):
     """One row a rebuild took off the board — named so the UI can say which."""
 
@@ -1195,6 +1214,13 @@ async def employers_with_several_applications(
     duplicate is not on the board, and letting one push an employer over the
     threshold would send mail to the queue on the strength of a card that no
     longer exists.
+
+    DELIBERATELY NOT :func:`_filed_on_an_application_that_answers`, and this is
+    not an oversight to be tidied away. That predicate answers "does an
+    application settle this mail?" and counts a user-dismissed card because a
+    human's "no" stands. This one is a VISIBILITY question — "how many cards
+    would the user have to choose between?" — and a card they cannot see is not
+    one of them. The two sets differ by exactly the hand-dismissed rows (#597).
     """
 
     companies = [
@@ -1276,6 +1302,10 @@ async def threads_naming_one_application(session, user_id: uuid.UUID) -> frozens
     )
 
 
+# VISIBILITY, NOT SETTLEMENT — do not move this to
+# :func:`_filed_on_an_application_that_answers` (#597). Offering "did you mean
+# a card you deliberately removed?" is a worse prompt than opening the new one,
+# and its own docstring reasons the live-only choice below.
 async def _misspelled_employer(session, user_id: uuid.UUID, token: str) -> str | None:
     """The employer on the board that a NEW ``token`` is probably a typo of.
 
@@ -1685,12 +1715,25 @@ async def _chosen_application(
     employer than the one the mail names. Silent rather than an error: a stale id
     from a board that has since re-synced is an ordinary race, not a caller bug,
     and filing the message correctly beats rejecting the request.
+
+    AND WHEN THE ROW IS ONE THE USER DISMISSED BY HAND (#597).
+    :func:`_company_rows` returns dismissed rows deliberately — it sorts them
+    last rather than dropping them — so before this every id present in that
+    list was a legitimate pick, dismissed or not. A hand-dismissal is final, so
+    landing an answer on such a row is the one thing this endpoint may not do;
+    the caller falls back to resolution and mints a fresh card beside it, which
+    is visible and reversible where a silent un-dismissal is neither. A
+    ``resync``-dismissed row IS still a legitimate pick: answering its mail
+    restores it, which is the other half of the same decision.
     """
 
     if application_id is None:
         return None
     rows = await _company_rows(session, user_id, token)
-    return next((row for row in rows if row.id == application_id), None)
+    return next(
+        (row for row in rows if row.id == application_id and not _user_dismissed(row)),
+        None,
+    )
 
 
 #: HOW a stored message reached the row it is being filed against. Only a
@@ -1701,6 +1744,14 @@ async def _chosen_application(
 LANDED_LINKED = "linked"
 LANDED_KEYED = "keyed"
 LANDED_BLIND = "blind"
+#: The resolver read the strongest signal there is — the message's own link —
+#: and DECLINED it, because it names a card the user dismissed by hand. Its own
+#: value, not ``LANDED_KEYED`` and not ``LANDED_BLIND``: keyed would be a
+#: refusal wearing the authority of a fact, which is the defect the comment
+#: above names, and blind means "read nothing" when in fact the strongest thing
+#: was read. Nothing consumes it today — both callers branch on ``app is None``
+#: first — and that is why it is cheap to state now, before a caller does.
+LANDED_REFUSED = "refused"
 
 
 async def _resolve_application_for_email(
@@ -1734,13 +1785,72 @@ async def _resolve_application_for_email(
     unanswered is a sync, a single-candidate employer, or a correction to a
     message that already carries a link — and for the last of those the branch
     above has already answered.
+
+    NO LANDING EVER TOUCHES A ROW THE USER DISMISSED BY HAND (#597). Three of
+    the four surfaces are covered here — the review queue's answer, the inbox's
+    reclassify and the orphan catch-up — because all three arrive through this
+    function. The board picker does NOT: it comes through
+    :func:`_chosen_application`, which carries its own ``_user_dismissed``
+    filter. TWO SITES, BOTH LOAD-BEARING. This used to claim one choke point
+    "instead of four times", which reads as an invitation to delete that filter
+    as redundant; deleting it reopens the picker path.
+
+    All three of this function's own exits are covered, and the third is the one
+    that is easy to miss: the message's OWN link is REFUSED rather than skipped
+    (see the branch below — skipping hands the message to a live sibling), such
+    rows are kept out of the cascade's candidate set, and the caller then mints
+    a fresh card. Minting is the cheap direction to be wrong in — a spurious
+    card is one dismiss click, whereas un-dismissing a card a person
+    deliberately removed is the product arguing with them.
+
+    A ``resync``-dismissed row is NOT excluded and must not be: it is still the
+    right row to land on, and :func:`classify_review_item` un-dismisses it when
+    an answer lands there. Machine removal yields to newer evidence; a human's
+    does not.
     """
 
     rows = await _company_rows(session, user_id, token)
     if email.application_id is not None:
         linked = next((row for row in rows if row.id == email.application_id), None)
         if linked is not None:
-            return linked, LANDED_LINKED
+            if not _user_dismissed(linked):
+                return linked, LANDED_LINKED
+            # REFUSED, NOT FALLEN THROUGH, and the difference is a merged pair
+            # of applications.
+            #
+            # Skipping the hand-dismissed link and letting the cascade run below
+            # looks like the same thing and is not. At an employer holding this
+            # dismissed row AND a live one, the candidate list is then exactly
+            # the live row, so `_pick_application` hands the message to it —
+            # rule 3 when the message names an id (the live row is
+            # identity-less, so it is the single `unidentified` adoption
+            # target), rule 4 when it names nothing (`_company_rows` sorts
+            # live-first, so `rows[0]` IS that row). Both routes were run:
+            # `email.application_id` moves off the dismissed card onto the live
+            # one, the stage advance walks the live card to the answered
+            # category with no auto-row gate, and — because `live` is 1, so
+            # `blind` is False — `_adopt_mail_identity` stamps THIS
+            # application's `req_id` and `role_token` onto the OTHER one.
+            # Rule 1 then routes all of this application's future mail there.
+            # Two applications wearing one identity, undone only by
+            # `POST /{id}/split`.
+            #
+            # A narrower patch to the `live` count fixes only the second route;
+            # the first never consults it. So the refusal goes here, above the
+            # cascade, where it closes both.
+            #
+            # The caller mints beside it, which is what the docstring below
+            # promises and what the one-row case already did. That is the cheap
+            # direction to be wrong in: a spurious card is one dismiss click,
+            # where a silent merge is not reversible from any screen.
+            #
+            # `/inbox`'s reclassify control is why this is reachable rather than
+            # theoretical — it sends no `application_id` for an already-filed
+            # message, on the documented grounds that "the message's own link
+            # beats every tie-break in `_resolve_application_for_email`". That
+            # contract is a cross-component one; this branch is the half of it
+            # that lives here.
+            return None, LANDED_REFUSED
     subject = email.subject or ""
     snippet = email.body_snippet or ""
     # SNIPPET-GRADE, deliberately, and that is the whole reason the landing is
@@ -1755,7 +1865,10 @@ async def _resolve_application_for_email(
     role_token = pipeline.normalize_role_token(
         pipeline.role_from_message(subject, snippet)
     )
-    picked = _pick_application(rows, req_id, role_token)
+    # The candidate set the cascade may pick from — see the note above. Every
+    # row removed here is one the user dismissed by hand.
+    candidates = [row for row in rows if not _user_dismissed(row)]
+    picked = _pick_application(candidates, req_id, role_token)
     # LIVE ROWS ONLY, for the reason :func:`employers_with_several_applications`
     # already gives: a dismissed duplicate is not on the board, so letting one
     # push the count over the threshold refuses on the strength of a card that
@@ -1764,7 +1877,11 @@ async def _resolve_application_for_email(
     # resync, so one live row beside one dismissed one is an ordinary state —
     # and there is nothing ambiguous about it. Counting both left the single
     # live card blank with the job sitting in its own `identity_role` column.
-    live = sum(1 for row in rows if row.dismissed_at is None)
+    # Counted over ``candidates`` and not ``rows``, which is numerically the
+    # same set: every row the exclusion drops already had ``dismissed_at`` set,
+    # so it was never counted here anyway. Written this way so the two lines
+    # cannot disagree if the exclusion is ever widened.
+    live = sum(1 for row in candidates if row.dismissed_at is None)
     blind = req_id is None and role_token is None and live > 1
     return picked, LANDED_BLIND if blind else LANDED_KEYED
 
@@ -2711,8 +2828,23 @@ async def reconcile_orphaned_classifications(session, user_id: uuid.UUID) -> int
             created += 1
         else:
             # A human classified this message INTO a filing category, which is
-            # the newest decision on record — so it restores a dismissed row
-            # (either kind) rather than filing a duplicate beside it.
+            # the newest decision on record — so it restores a MACHINE-dismissed
+            # row rather than filing a duplicate beside it.
+            #
+            # NOT "either kind", which is what this said until #597. A ``user``
+            # dismissal is final: the human already answered this question about
+            # this card, and a later filing decision about one of its messages
+            # does not overturn it. This branch cannot see such a row —
+            # :func:`_resolve_application_for_email` excludes them from both the
+            # link and the cascade, so a message at a user-dismissed employer
+            # arrives here with ``app is None`` and MINTS instead. That is the
+            # only thing keeping the old comment from being a live violation:
+            # ``_company_rows`` returns dismissed rows, so an unlinked reviewed
+            # orphan could cascade onto a user-dismissed card and this branch
+            # would have restored it. No guard is left here for it, because a
+            # guard that cannot fire is not evidence — the exclusion is asserted
+            # directly instead, in
+            # ``tests/test_a_hand_dismissal_is_final.py``.
             if app.dismissed_at is not None:
                 app.dismissed_at = None
                 app.dismissed_reason = None
@@ -2810,6 +2942,14 @@ async def _reset_review_queue(
             select(Email.id).where(
                 Email.user_id == user_id,
                 Email.source_account == EmailSource.GMAIL,
+                # ``application_id IS NULL`` STAYS, and must not be "unified"
+                # onto :func:`_not_filed_on_an_application_that_answers` (#597).
+                # This is a DELETE. The NULL test is exactly what makes a row
+                # carrying ANY link — to a live card, to a resync-dismissed one,
+                # to a hand-dismissed one — undeletable here. Widening it to the
+                # settlement predicate would hand this statement the rows whose
+                # whole problem is that their link outlived the card, and destroy
+                # the mail #481 is about instead of surfacing it.
                 Email.application_id.is_(None),
                 Email.is_reviewed == False,  # noqa: E712 — SQL boolean, not identity
                 Email.message_id.in_(coverage.message_ids),
@@ -2932,7 +3072,7 @@ async def _persist_review_items_additive(session, user_id: uuid.UUID, review) ->
                     or_(*scoped),
                     # SETTLED IS THE QUEUE'S OWN PREDICATE, INVERTED (#596), and
                     # not ``application_id IS NOT NULL``. That spelling called a
-                    # row linked to a DISMISSED card settled — and a settled row
+                    # row linked to a RESYNC-dismissed card settled — and a settled row
                     # here does not merely skip itself, it suppresses every
                     # ARRIVING message sharing its thread and identity. So the
                     # queue showed the question while the sync used it to answer
@@ -2940,7 +3080,7 @@ async def _persist_review_items_additive(session, user_id: uuid.UUID, review) ->
                     # queued, never counted.
                     or_(
                         Email.is_reviewed == True,  # noqa: E712 — SQL boolean
-                        _filed_on_a_live_application(user_id),
+                        _filed_on_an_application_that_answers(user_id),
                     ),
                 )
             )
@@ -3288,6 +3428,13 @@ async def record_status_correction(
     would land on a row nobody can see — user-owned, sticky and invisible —
     which is a worse state than either of the two it came from. Someone
     deciding what stage an application is at is telling you they want it.
+
+    EITHER KIND, INCLUDING ``user`` — and that is consistent with #597 rather
+    than an exception to it. The rule there is that a hand dismissal yields to
+    nothing EXCEPT the human acting on that same card again, and this is
+    precisely that act: they are looking at this application and setting its
+    stage. What #597 forbids is a decision about a MESSAGE reviving a card,
+    which is a different surface answering a different question.
     """
 
     app = (
@@ -3432,11 +3579,26 @@ async def restore_application(
 ) -> Application | None:
     """Undo a dismissal — put the row (and its mail) back on the board.
 
+    EITHER KIND, INCLUDING ``user``, for the reason
+    :func:`record_status_correction` gives: this IS the human acting on that
+    same card again, which is the one thing #597 lets overturn a hand
+    dismissal. It is also the button labelled Restore.
+
     The other half of making removal recoverable: whether the row was dismissed
     by the user or taken off by a re-sync, this returns it verbatim — same id,
-    same status, same filed date, same linked emails — because nothing was ever
-    deleted. Idempotent on an already-live row. Scoped to the owner; ``None``
-    when the row is not theirs.
+    same status, same filed date — and its mail AS CURRENTLY LINKED, because
+    dismissal never deleted anything. Idempotent on an already-live row. Scoped
+    to the owner; ``None`` when the row is not theirs.
+
+    NOT "same linked emails", which is what this promised until #597 and was
+    already fragile before it. A dismissal deletes and moves nothing, but later
+    decisions do re-file individual messages onto other rows: a re-sync that
+    re-attributes mail, :func:`_settle_thread_siblings` when an answer lands
+    elsewhere, and now the mint that :func:`_resolve_application_for_email`
+    forces when a hand-dismissed card's own message is reclassified. Restore
+    does not claw those back, and should not — each of them was a decision made
+    after the dismissal. The true half of the old sentence is kept: nothing is
+    deleted, so restoring is always possible.
     """
 
     app = (
@@ -3712,6 +3874,13 @@ async def classify_review_item(
             "classified_as": category.value,
             "application_id": None,
             "needs_employer": True,
+            # Carried, not omitted. This branch builds its own dict, so without
+            # these a client reads ``undefined`` where every other response
+            # gives it ``false`` — and ``undefined`` is falsy only until
+            # somebody writes ``=== false``. Nothing was filed here, so nothing
+            # was restored.
+            "restored": False,
+            "restored_company": None,
             "message_id": message_id,
             "detail": (
                 "Could not identify the employer for this email. Re-send the "
@@ -3750,6 +3919,11 @@ async def classify_review_item(
                 "classified_as": category.value,
                 "application_id": None,
                 "needs_employer": True,
+                # Same reason as the branch above: nothing filed, nothing
+                # restored, and the keys are present so a client never has to
+                # tell "false" from "absent".
+                "restored": False,
+                "restored_company": None,
                 "needs_company_confirmation": True,
                 "suggested_company": suggestion,
                 "message_id": message_id,
@@ -3831,7 +4005,24 @@ async def classify_review_item(
         "classified_as": category.value,
         "application_id": None,
         "needs_employer": False,
+        # DID THIS ANSWER PUT A CARD BACK ON THE BOARD (#595)? A sync that
+        # changes the board without saying so is a defect this repo has already
+        # produced twice, and a card appearing out of a review answer is the
+        # same defect from the other side: the user answered a question about a
+        # MESSAGE and their board gained a row. ``restored_company`` names it so
+        # a client can say which. Both stay at their defaults on every path that
+        # files nothing — ``needs_employer``, the typo confirmation, ``other``,
+        # ``none_of_these`` — because no landing occurs on any of them. The
+        # first two return dicts of their own and therefore repeat the keys
+        # rather than inheriting these.
+        "restored": False,
+        "restored_company": None,
     }
+
+    # The row an answer landed on that has to come off the dismissed pile —
+    # applied AFTER ``_settle_thread_siblings`` below, not here. See the
+    # else-branch for why the order is load-bearing.
+    restore_target: Application | None = None
 
     if status_value is not None and employer is not None:
         token, display = employer
@@ -3889,6 +4080,56 @@ async def classify_review_item(
             session.add(app)
             await session.flush()
         else:
+            # THE ANSWER PUTS THE CARD BACK (#595). Filing a message onto a row
+            # nobody can see is a 200 that changes nothing the user can find:
+            # the message leaves the queue, ``is_reviewed`` goes true so it is
+            # never asked again, and the board gains nothing. That is strictly
+            # worse than the unreachable state #481 reported, and it is the
+            # exact behaviour :func:`reconcile_orphaned_classifications` has
+            # always avoided on the same evidence — a human putting a message
+            # into a filing category. The two paths are answering one question
+            # and they disagreed; this is the review path catching up.
+            #
+            # ONLY EVER A ``resync`` ROW, and there is no guard here saying so.
+            # :func:`_resolve_application_for_email` and
+            # :func:`_chosen_application` both exclude user-dismissed rows from
+            # every landing (#597), so ``app`` here is live or machine-dismissed
+            # by construction. A defensive ``if not _user_dismissed(app)`` would
+            # be a branch nothing can reach and no test could red — the
+            # exclusion is proved at its own choke point instead, and the
+            # never-restore case is asserted on the state of the row.
+            #
+            # Non-filing answers restore nothing. The categories with no
+            # ``status_value`` are the three :data:`CATEGORY_TO_STATUS` does not
+            # map — ``other``, ``follow_up`` and ``needs_review`` — and none of
+            # them reaches this block at all. ``none_of_these`` is not a
+            # category but the picker's answer, and it mints rather than
+            # landing. (This said "``other`` and ``none``" until the two-card
+            # fix; ``none`` is not a member of :class:`EmailCategory`, and
+            # naming a category that does not exist is how a reader concludes
+            # the set is smaller than it is.)
+            #
+            # RECORDED HERE, APPLIED AFTER ``_settle_thread_siblings``, and the
+            # order is not tidiness. That query filters on
+            # :func:`_not_filed_on_an_application_that_answers`, so the moment
+            # this row stops being dismissed it starts ANSWERING for its own
+            # mail — and SQLAlchemy autoflushes the pending update before the
+            # SELECT runs. Clearing the column inline therefore excluded the
+            # thread's other messages from the settle that was about to happen:
+            # they kept ``is_reviewed = False`` and ``NEEDS_REVIEW``, invisible
+            # today only because their card is live again, and back in the
+            # queue as unanswered the next time a re-sync dismisses it. Measured
+            # on the ``m-thread-older`` fixture, which is why
+            # ``test_answering_the_thread_settles_the_sibling_and_the_count_
+            # moves`` now asserts the sibling's stored state and not just a
+            # count — a count of zero is produced by both worlds.
+            #
+            # The settle must see the board the QUESTION was asked against: the
+            # siblings were queued because no card answered for them, and one
+            # human decision settles the whole conversation.
+            if app.dismissed_at is not None:
+                restore_target = app
+
             # The user is answering "what is this MESSAGE?", not "what stage is
             # this application at now?". So the stage goes through the same
             # choke point the sync uses — forward-only, terminal is settled —
@@ -3951,6 +4192,16 @@ async def classify_review_item(
     await _settle_thread_siblings(
         session, user_id, email, category, result["application_id"]
     )
+    # NOW the card comes back — after the settle has read the board as it stood
+    # when the question was asked. Same transaction, so the user sees one
+    # atomic outcome: the thread answered and the card on the board.
+    if restore_target is not None:
+        restore_target.dismissed_at = None
+        restore_target.dismissed_reason = None
+        restore_target.updated_at = datetime.utcnow()
+        session.add(restore_target)
+        result["restored"] = True
+        result["restored_company"] = restore_target.company
     await session.commit()
     return result
 
@@ -3971,15 +4222,16 @@ async def _settle_thread_siblings(
     of the user. Emails 58 and 73 on the owner's account are one thread asked
     about twice.
 
-    Narrow on purpose: only siblings that NO LIVE CARD ANSWERS FOR and that are
-    un-reviewed are touched, so a message already filed on a card the user can
-    see, or already decided, is left alone. They are marked reviewed, given the
+    Narrow on purpose: only siblings that NO APPLICATION OF THIS USER'S ANSWERS
+    FOR and that are un-reviewed are touched, so a message already filed on a
+    card the user can see — or on one they dismissed by hand (#597) — or one
+    already decided, is left alone. They are marked reviewed, given the
     chosen category and linked to the same application — but NOT flagged
     ``user_corrected``, and no training example is written for them: the human
     read one message, and only that one is honest evidence of what they were
     labelling.
 
-    THE SETTLED-TEST IS :func:`_not_filed_on_a_live_application`, THE SAME ONE
+    THE SETTLED-TEST IS :func:`_not_filed_on_an_application_that_answers`, THE SAME ONE
     THE QUEUE READS. It used to be ``application_id IS NULL`` spelled out here,
     which is the predicate the queue replaced — and the two disagreeing is worse
     than either being wrong alone. A thread whose messages all link to one
@@ -4010,7 +4262,7 @@ async def _settle_thread_siblings(
                 Email.user_id == user_id,
                 Email.thread_id == email.thread_id,
                 Email.message_id != email.message_id,
-                _not_filed_on_a_live_application(user_id),
+                _not_filed_on_an_application_that_answers(user_id),
                 Email.is_reviewed == False,  # noqa: E712 — SQL boolean
             )
         )
@@ -4360,11 +4612,55 @@ async def list_applications_cloud(
     )
 
 
-def _filed_on_a_live_application(user_id: uuid.UUID):
-    """THE PRIMITIVE: "a card the user can SEE already answers this message".
+def _filed_on_an_application_that_answers(user_id: uuid.UUID):
+    """THE PRIMITIVE: "an application of this user's already answers this mail".
+
+    A SETTLEMENT PREDICATE, NOT A VISIBILITY ONE, and the two are no longer the
+    same set. It was named ``_filed_on_a_live_application`` while every caller
+    asked it a settlement question, which is how #597 could be read off the
+    source: the queue asked "is this on the board?" and used the answer to
+    decide whether to ASK ABOUT THE MAIL. Those come apart on exactly one row
+    shape — a card the user dismissed BY HAND. It is off the board and it still
+    answers for its mail.
+
+    An application answers for its mail when EITHER:
+
+      * it is on the board (``dismissed_at IS NULL``), or
+      * the user removed it themselves (``dismissed_reason = 'user'``).
+
+    THE ORGANISING RULE, the same one the ``dismissed_reason`` constants state:
+    a MACHINE's removal yields to any newer evidence, a HUMAN's removal yields
+    to nothing except the human acting on that same card again. A ``resync``
+    dismissal is the rebuild's opinion, and arriving mail is better evidence
+    than the opinion was — so its mail comes back and asks. A ``user``
+    dismissal is a standing instruction, and re-asking every week is a
+    predicate overruling a person.
+
+    DO NOT "UNIFY" THE VISIBILITY QUERIES ONTO THIS. Board listings, the
+    inbox's ``on_board`` badge (#489/#491) and
+    :func:`employers_with_several_applications` all ask ``dismissed_at IS
+    NULL`` and must keep asking it. A user-dismissed card answers for its mail
+    AND is invisible; a sweep that made those one predicate would put dismissed
+    cards back on the board, which is the opposite defect and a louder one.
+
+    A DISMISSED ROW WITH ``dismissed_reason IS NULL`` IS TREATED AS
+    MACHINE-DISMISSED — the ``==`` is false for NULL under SQL three-valued
+    logic, and the ``or_`` therefore does not fire. That is deliberate and it
+    errs in the documented safe direction: such a row does NOT answer, so its
+    mail is surfaced and the user is asked one question, rather than being
+    silently swallowed. A stranded message is unreachable forever; a surfaced
+    one costs a click.
+
+    NO SUCH ROW EXISTS TODAY, and the reason is worth writing down so nobody
+    builds a test on the shape. ``dismissed_at`` and ``dismissed_reason``
+    arrived in the SAME revision (``e4cbb4aadccd``, both nullable, no backfill)
+    and all three writers set both, so a dismissed row without a reason cannot
+    predate anything. The clause defends against a FUTURE writer that forgets
+    the reason, not against history. A fixture that constructs the shape is
+    exercising an unreachable state and proves nothing about production.
 
     ONE function names these columns, and both spellings of the settled idea are
-    built from it — :func:`_not_filed_on_a_live_application` for the readers,
+    built from it — :func:`_not_filed_on_an_application_that_answers` for the readers,
     this one for the sync's write path. They are the same question and they
     drifted apart once already (#596): #587 moved the read path to this shape
     while :func:`_persist_review_items_additive` kept ``application_id IS NOT
@@ -4383,10 +4679,11 @@ def _filed_on_a_live_application(user_id: uuid.UUID):
 
     The readers used to ask ``Email.application_id IS NULL``, which encodes "a
     linked message is already filed, so there is nothing to ask". True of a
-    message linked to a card on the board, FALSE of one linked to a card that
-    was dismissed: dismissal takes the row off the board, out of the funnel and
-    out of every tile, so nothing about its mail is settled from the user's
-    side. Hence the join to ``Application`` rather than a NULL test.
+    message linked to a card on the board, FALSE of one linked to a card a
+    RE-SYNC dismissed: that removal takes the row off the board, out of the
+    funnel and out of every tile on the strength of a rebuild's guess, so
+    nothing about its mail is settled from the user's side. Hence the join to
+    ``Application`` rather than a NULL test.
 
     Issue #481 found the state on the owner's account. The 2026-08-22 05:02Z
     re-sync dismissed application 115 (``dismissed_reason = 'resync'``) and, in
@@ -4450,23 +4747,39 @@ def _filed_on_a_live_application(user_id: uuid.UUID):
     so it still measures the old query and stays green. (It has drifted once
     already — its ``SUMMARY_TILE`` literal is a ``count(DISTINCT coalesce(…))``
     the tile stopped issuing in #454.)
+
+    THOSE NUMBERS ARE #587'S, MEASURED ON THE ONE-CLAUSE FORM, AND #597 DID NOT
+    RE-RUN THEM. Saying so rather than re-presenting them as a measurement of
+    this predicate: no Postgres was stood up for the widening. The added
+    ``dismissed_reason`` test is expected to be free — it is a second filter on
+    a tuple the anti-join has already fetched through ``applications_pkey``, so
+    it changes no access path and touches no extra buffer — but "expected" is
+    the honest word and a measurement is what it is not.
     """
 
     return exists(
         select(Application.id).where(
             Application.id == Email.application_id,
             Application.user_id == user_id,
-            Application.dismissed_at.is_(None),
+            or_(
+                # On the board.
+                Application.dismissed_at.is_(None),
+                # Off the board, but the user's own "no" stands (#597).
+                Application.dismissed_reason == DISMISSED_BY_USER,
+            ),
         )
     )
 
 
-def _not_filed_on_a_live_application(user_id: uuid.UUID):
-    """The review queue's settled-test: "no card the user can SEE answers this".
+def _not_filed_on_an_application_that_answers(user_id: uuid.UUID):
+    """The review queue's settled-test: "no application of mine answers this".
 
-    The negation of :func:`_filed_on_a_live_application`, which carries the
-    reasoning, the three-case rationale for the ``EXISTS`` and the measured
-    index cost. Not a second spelling of it — #596 was two spellings drifting.
+    The MECHANICAL negation of
+    :func:`_filed_on_an_application_that_answers`, which carries the reasoning,
+    the settlement-vs-visibility warning, the three-case rationale for the
+    ``EXISTS``, the NULL-reason direction and the index cost. Not a second
+    spelling of it — #596 was two spellings drifting, and ``~`` is what makes a
+    second spelling impossible rather than merely discouraged.
 
     THREE callers, not the two this used to name: ``GET /applications/review``,
     the ``needs_review`` tile on ``GET /applications/summary``, and
@@ -4479,7 +4792,7 @@ def _not_filed_on_a_live_application(user_id: uuid.UUID):
     keep ``Email.is_reviewed == False`` alongside this one.
     """
 
-    return ~_filed_on_a_live_application(user_id)
+    return ~_filed_on_an_application_that_answers(user_id)
 
 
 @router.get("/summary", response_model=ApplicationSummaryResponse)
@@ -4616,8 +4929,9 @@ async def application_summary_cloud(
         # the same function the endpoint uses, so the two cannot drift.
         #
         # Bounded by the queue itself: un-reviewed ``needs_review`` rows that no
-        # LIVE card answers for — see
-        # :func:`_not_filed_on_a_live_application`, which ``GET
+        # application of this user's answers for — on the board, or removed by
+        # their own hand (#597) — see
+        # :func:`_not_filed_on_an_application_that_answers`, which ``GET
         # /applications/review`` reads too so the tile and the queue it links to
         # cannot count different sets. Four columns of each.
         pending = (
@@ -4637,7 +4951,7 @@ async def application_summary_cloud(
                 ).where(
                     Email.user_id == user_id,
                     Email.classified_as == EmailCategory.NEEDS_REVIEW,
-                    _not_filed_on_a_live_application(user_id),
+                    _not_filed_on_an_application_that_answers(user_id),
                     Email.is_reviewed == False,  # noqa: E712
                 )
             )
@@ -4905,9 +5219,10 @@ async def review_queue_cloud(
     """The needs-classification queue: uncertain verdicts awaiting a decision.
 
     These are the metadata-only Email rows the sync flagged ``needs_review``
-    that no card the user can see already answers for
-    (:func:`_not_filed_on_a_live_application`) and that the user has not already
-    reviewed — the real target of the dashboard's "N need classification"
+    that no application of theirs already answers for
+    (:func:`_not_filed_on_an_application_that_answers` — a card on the board, or
+    one they removed by hand, which is a standing "no" and not a question) and
+    that the user has not already reviewed — the real target of the dashboard's "N need classification"
     number, which is otherwise a dead count. Newest-first.
 
     ONE ENTRY PER GMAIL THREAD. A conversation is one application, so being
@@ -4927,7 +5242,7 @@ async def review_queue_cloud(
                 .where(
                     Email.user_id == user_id,
                     Email.classified_as == EmailCategory.NEEDS_REVIEW,
-                    _not_filed_on_a_live_application(user_id),
+                    _not_filed_on_an_application_that_answers(user_id),
                     Email.is_reviewed == False,  # noqa: E712
                 )
                 .order_by(Email.received_at.desc())
@@ -5232,6 +5547,14 @@ async def mail_listing_cloud(
             company_by_application = {
                 application_id: company for application_id, company, _ in pairs
             }
+            # ``dismissed_at IS NULL`` AND NOTHING ELSE. The badge answers
+            # "is there a card for this on your board?", which is a visibility
+            # question, and #481's second defect was it answering yes when the
+            # board held nothing. A hand-dismissed card ANSWERS for its mail
+            # (:func:`_filed_on_an_application_that_answers`) and is still not
+            # on the board, so unifying the two would re-create the false badge
+            # this fixed (#489/#491) — from the other direction and on rows the
+            # user removed themselves.
             on_board_applications = {
                 application_id
                 for application_id, _, dismissed_at in pairs

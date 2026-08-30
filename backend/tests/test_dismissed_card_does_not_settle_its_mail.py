@@ -27,9 +27,20 @@ and all three are needed — a fix that merely DROPS the link clause satisfies t
 dismissed case and breaks the product, because every message already filed on a
 live card would come back and ask its question again:
 
-* unlinked ``needs_review``      → in the queue (unchanged),
-* linked to a DISMISSED card     → in the queue (the fix),
-* linked to a LIVE card          → NOT in the queue (the regression guard).
+* unlinked ``needs_review``          → in the queue (unchanged),
+* linked to a RESYNC-dismissed card → in the queue (the fix),
+* linked to a USER-dismissed card   → NOT in the queue (#597),
+* linked to a LIVE card             → NOT in the queue (the regression guard).
+
+WHY THE TWO DISMISSALS PART COMPANY (#597). The predicate reads
+``dismissed_reason``, not just ``dismissed_at``. A re-sync's removal is the
+rebuild's opinion and arriving mail is better evidence than the opinion was, so
+that card's mail comes back and asks. A HUMAN's removal is a standing
+instruction: they said "this is not an application", and a queue that asks
+about its mail every week has overruled them. The sync upsert has refused to
+un-dismiss a ``user`` row for months; this is the read half agreeing with it.
+The case below is directional — one row per reason, not one row for
+"dismissed" — because a single dismissed case cannot tell the two apart.
 
 Plus the clause the fix must not widen: a message the user already REVIEWED
 stays out even when its card was later dismissed. ``is_reviewed`` records that
@@ -106,6 +117,10 @@ RECEIVED_AT = datetime(2026, 8, 13, 14, 5, 0)
 
 LIVE_COMPANY = "Northwind Systems"
 DISMISSED_COMPANY = "Microsoft"
+# Invented, and dismissed BY HAND. Separate from the resync card on purpose:
+# one employer holding both reasons would make every assertion below depend on
+# which row `_company_rows` happened to return first.
+USER_DISMISSED_COMPANY = "Cindervale Robotics"
 
 # The queue's four cases, seeded one row each. `link` names the application the
 # message is filed against, or None for an unlinked message.
@@ -135,14 +150,25 @@ OWNER_MAIL: tuple[tuple[str, str, str, str | None, bool], ...] = (
         DISMISSED_COMPANY,
         True,
     ),
+    # #597. The user took this card off the board themselves. Un-reviewed, so
+    # `is_reviewed` cannot be what keeps it out — the ONLY thing that can is
+    # `dismissed_reason`, which is what makes this case directional against the
+    # resync one two rows up.
+    (
+        "m-user-dismissed",
+        "t-user-dismissed",
+        "Thanks for applying",
+        USER_DISMISSED_COMPANY,
+        False,
+    ),
 )
 
 # Hardcoded so a mistake in the table above cannot quietly redefine what the
 # assertions prove; the fixture guard below reconciles the two. A derived-only
 # expectation agrees with any corpus, including an empty one.
-EXPECTED_STORED_NEEDS_REVIEW = 4
+EXPECTED_STORED_NEEDS_REVIEW = 5
 EXPECTED_IN_QUEUE = {"m-unlinked", "m-dismissed"}
-EXPECTED_OUT_OF_QUEUE = {"m-live", "m-dismissed-reviewed"}
+EXPECTED_OUT_OF_QUEUE = {"m-live", "m-dismissed-reviewed", "m-user-dismissed"}
 
 
 def _token_for(user_id: str) -> str:
@@ -243,6 +269,9 @@ async def seeded(cloud_app) -> dict[str, int]:
             # `resync` and not `user`: the production row was removed by the
             # 2026-08-22 re-sync, and the reason column is what says who.
             (DISMISSED_COMPANY, datetime(2026, 8, 22, 5, 2, 29), "resync"),
+            # `user`: a human clicked dismiss. Same `dismissed_at` shape, the
+            # opposite answer, and the reason column is the whole difference.
+            (USER_DISMISSED_COMPANY, datetime(2026, 8, 22, 5, 2, 29), "user"),
         ):
             row = Application(
                 user_id=owner,
@@ -316,13 +345,43 @@ async def test_the_fixture_set_is_what_the_tests_assume(client, headers, seeded)
     assert linked["m-dismissed"] == seeded[DISMISSED_COMPANY]
     assert linked["m-dismissed-reviewed"] == seeded[DISMISSED_COMPANY]
     assert linked["m-live"] == seeded[LIVE_COMPANY]
+    assert linked["m-user-dismissed"] == seeded[USER_DISMISSED_COMPANY]
 
     board = await client.get("/applications", headers=headers)
     assert board.status_code == 200, board.text
     companies = [row["company"] for row in board.json()["applications"]]
     assert companies == [LIVE_COMPANY], (
-        "the dismissed card is supposed to be off the board — if it is on it, "
-        "the whole premise of this module is not being exercised"
+        "both dismissed cards are supposed to be off the board — if either is "
+        "on it, the whole premise of this module is not being exercised"
+    )
+
+    # DIRECTIONAL: the two dismissed rows differ in the reason column and
+    # NOTHING else. Read from the session because the board will not show
+    # either of them, and asserted because a fixture that wrote the same reason
+    # twice would make the #597 case a duplicate of the #481 one and prove
+    # nothing.
+    from sqlmodel import select
+
+    from jobtracker.database import get_session
+
+    async with get_session() as session:
+        reasons = {
+            row.company: (row.dismissed_at, row.dismissed_reason)
+            for row in (
+                await session.exec(
+                    select(Application).where(Application.user_id == uuid.UUID(OWNER))
+                )
+            ).all()
+        }
+
+    assert reasons[LIVE_COMPANY] == (None, None)
+    assert reasons[DISMISSED_COMPANY][1] == "resync"
+    assert reasons[USER_DISMISSED_COMPANY][1] == "user"
+    assert (
+        reasons[DISMISSED_COMPANY][0] == reasons[USER_DISMISSED_COMPANY][0] is not None
+    ), (
+        "the two dismissed rows must differ in the REASON alone; a different "
+        "`dismissed_at` would leave a second variable in play"
     )
 
 
@@ -365,6 +424,26 @@ async def test_an_unlinked_message_is_still_in_the_queue(client, headers, seeded
     assert "m-unlinked" in await _queue_message_ids(client, headers)
 
 
+async def test_a_message_on_a_hand_dismissed_card_stays_out_of_the_queue(
+    client, headers, seeded
+):
+    """#597. A HUMAN removed this card; its mail is not a question any more.
+
+    The directional twin of ``m-dismissed`` two tests up. Both rows are
+    dismissed, both messages are un-reviewed and un-linked to anything live —
+    they differ in ``dismissed_reason`` and in nothing else, so a predicate that
+    reads only ``dismissed_at`` cannot pass both this and the resync case, and
+    one that reads neither cannot pass this and the live case.
+
+    MUTATION: swap ``DISMISSED_BY_USER`` for ``DISMISSED_BY_RESYNC`` in
+    :func:`_filed_on_an_application_that_answers` — a same-typed swap, one
+    reason constant for the other — and this fails: ``m-user-dismissed``
+    appears, which is the behaviour #597 was filed about.
+    """
+
+    assert "m-user-dismissed" not in await _queue_message_ids(client, headers)
+
+
 async def test_a_message_the_user_already_reviewed_stays_out(client, headers, seeded):
     """``is_reviewed`` is a human answer, and a dismissal does not un-answer it.
 
@@ -378,8 +457,13 @@ async def test_a_message_the_user_already_reviewed_stays_out(client, headers, se
 async def test_the_queue_holds_exactly_the_two_reachable_messages(
     client, headers, seeded
 ):
-    """The four cases stated as one set, so a fix cannot pass three and add a
-    fifth row from somewhere else."""
+    """The five cases stated as one set, so a fix cannot pass four and add a
+    sixth row from somewhere else.
+
+    Extended rather than sat beside: a lone new test for #597 would leave this
+    equality asserting a set that no longer describes the fixture, and the two
+    would drift the way #596's two predicates did.
+    """
 
     in_queue = await _queue_message_ids(client, headers)
     assert in_queue == EXPECTED_IN_QUEUE
@@ -396,7 +480,7 @@ async def test_the_dashboard_tile_counts_what_the_queue_lists(client, headers, s
 
     The tile is a link to the queue, so a tile that counts a different set sends
     the user to a screen that disagrees with the number they clicked. Both read
-    :func:`_not_filed_on_a_live_application`, which is why they cannot drift.
+    :func:`_not_filed_on_an_application_that_answers`, which is why they cannot drift.
 
     MUTATION: revert the summary handler's predicate alone and this fails at 1
     while the queue lists 2.
@@ -461,6 +545,13 @@ async def test_the_inbox_does_not_call_a_dismissed_row_on_your_board(
     assert on_board["m-dismissed-reviewed"] is False
     assert on_board["m-live"] is True
     assert on_board["m-unlinked"] is False
+    # #597 FROM THE OTHER SIDE, and this is the assertion that stops the two
+    # ideas being merged. A hand-dismissed card ANSWERS for its mail and is
+    # still NOT on the board: settlement and visibility are different
+    # questions about the same column. A sweep that unified the queue's
+    # predicate and this badge would make this line read True and put a card
+    # the user removed back in front of them.
+    assert on_board["m-user-dismissed"] is False
 
 
 # =============================================================================
@@ -589,7 +680,10 @@ async def test_answering_the_thread_settles_the_sibling_and_the_count_moves(
 
     MUTATION: put ``Email.application_id.is_(None)`` back in
     ``_settle_thread_siblings`` — a same-typed swap, one SQL boolean for
-    another — and this fails at the tile, ``assert 1 == 0``. That is the state
+    another — and this fails at the tile, ``assert 1 == 0``.
+    SECOND MUTATION: move #595's restore back INSIDE the landing branch, ahead
+    of the settle call, and the two counts stay green while the stored-state
+    assertions at the end fail — which is the whole reason they are there. That is the state
     on the PR ref before this repair, and the queue assertion below it is the
     same fact said the other way: ``m-thread-older`` is still listed.
     """
@@ -626,11 +720,45 @@ async def test_answering_the_thread_settles_the_sibling_and_the_count_moves(
     )
     assert await _queue_message_ids(client, headers) == set()
 
+    # AND THE SIBLING IS ACTUALLY SETTLED, not merely hidden. The two counts
+    # above CANNOT tell those apart, which is what makes this assertion
+    # necessary rather than belt-and-braces: #595's restore puts the card back
+    # on the board, and a live card answers for its own mail — so a sibling
+    # that was never settled reads zero here too, for the wrong reason.
+    #
+    # It is a real difference. An unsettled sibling keeps `is_reviewed = False`
+    # and `NEEDS_REVIEW`, so the next re-sync dismissal of this card puts the
+    # whole conversation back in the queue as an unanswered question. Measured:
+    # clearing `dismissed_at` INLINE in `classify_review_item` (rather than
+    # after `_settle_thread_siblings`) produced exactly that state —
+    # SQLAlchemy autoflushes the pending un-dismissal before the settle query
+    # runs, and the settle then reads the card as one that already answers.
+    from sqlmodel import select
+
+    from jobtracker.database import get_session
+
+    async with get_session() as session:
+        sibling = (
+            await session.exec(
+                select(Email).where(
+                    Email.user_id == uuid.UUID(OWNER),
+                    Email.message_id == "m-thread-older",
+                )
+            )
+        ).one()
+
+    assert sibling.is_reviewed is True, (
+        "the sibling is out of the queue only because its card came back — the "
+        "decision never reached it, and a later dismissal re-asks the question"
+    )
+    assert sibling.classified_as == EmailCategory.REJECTION
+    assert sibling.application_id == seeded_thread
+
 
 # =============================================================================
 # The subquery is scoped to the READER, not to the row it reaches
 #
-# `_not_filed_on_a_live_application` asks "is there a live application of MINE
+# `_not_filed_on_an_application_that_answers` asks "is there a live application of MINE
 # behind this link?", and the `Application.user_id == user_id` clause is what
 # makes MINE mean anything. Its docstring cites #489 for that scoping and the
 # PR argued it; nothing tested it, and the whole backend suite stayed green
@@ -727,7 +855,7 @@ async def test_a_link_to_another_users_card_does_not_settle_the_message(
 
     MUTATION: ``Application.user_id == user_id`` →
     ``Email.user_id == user_id`` in
-    :func:`_not_filed_on_a_live_application` — a same-typed swap of one
+    :func:`_not_filed_on_an_application_that_answers` — a same-typed swap of one
     ``user_id`` equality for another, which is why it compiles, runs and
     stayed green across the whole backend suite. Both assertions fail: the
     ``EXISTS`` finds the stranger's live row, the message is read as filed and
