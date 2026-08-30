@@ -749,3 +749,61 @@ async def test_a_catch_up_orphan_at_a_machine_dismissed_employer_still_restores(
         "the SAME card, not a duplicate minted beside the dismissed one"
     )
     assert board[card.company]["status"] == "rejected"
+
+
+# ---------------------------------------------------------------------------
+# The conjunct nothing else defends.
+#
+# A full-suite mutation matrix over this change found exactly one green
+# mutation: dropping ``app.dismissed_at is not None`` from
+# :func:`_user_dismissed` left all 2002 tests passing. Every other arm of the
+# change has a defender; this one had none.
+#
+# The state it guards — a LIVE row still carrying a stale ``'user'`` reason —
+# is UNREACHABLE today, and that is verified rather than assumed: all five
+# sites that clear ``dismissed_at`` clear ``dismissed_reason`` on the adjacent
+# line with no early return between them, and there is no SQL-level clear
+# anywhere in ``jobtracker/`` or ``alembic/``.
+#
+# So this is a unit test on the helper with a hand-built row, deliberately NOT
+# an end-to-end fixture. An integration test would have to construct a state
+# the product cannot produce, and a test that greens against an unreachable
+# state proves nothing — the failure mode this repo has now hit twice in one
+# day. What is being pinned is the helper's stated guarantee, so that the
+# conjunct cannot be "simplified" away by a future reader who notices that both
+# columns always move together. The moment anyone adds an un-dismiss path or a
+# migration that clears one column without the other, this becomes the thing
+# standing between them and a live card reading as dismissed.
+# ---------------------------------------------------------------------------
+
+
+def test_a_live_row_with_a_stale_reason_is_not_hand_dismissed() -> None:
+    """``dismissed_at`` is load-bearing, not decoration beside the reason."""
+
+    from jobtracker.cloud.applications import DISMISSED_BY_USER, _user_dismissed
+
+    live_but_stale = Application(
+        user_id=uuid.uuid4(),
+        company="Brackenhill",
+        position="Engineer",
+        status=ApplicationStatus.APPLIED,
+        dismissed_at=None,
+        dismissed_reason=DISMISSED_BY_USER,
+    )
+    assert _user_dismissed(live_but_stale) is False, (
+        "a row that is ON THE BOARD must never read as hand-dismissed, whatever "
+        "reason string it is still carrying"
+    )
+
+    genuinely_dismissed = Application(
+        user_id=uuid.uuid4(),
+        company="Brackenhill",
+        position="Engineer",
+        status=ApplicationStatus.APPLIED,
+        dismissed_at=datetime(2026, 8, 22, 5, 2, 29),
+        dismissed_reason=DISMISSED_BY_USER,
+    )
+    assert _user_dismissed(genuinely_dismissed) is True, (
+        "the directional control: without this the assertion above passes for a "
+        "helper that always returns False"
+    )
