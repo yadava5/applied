@@ -2701,6 +2701,413 @@ def _role_from_lead_segment(subject: str) -> str | None:
     return role
 
 
+#: A TRAILING PARENTHETICAL ON THE LAST SEGMENT IS THE POSTING'S LOCATION.
+#:
+#: "<Role> - <Employer> (Remote)" — the parenthetical belongs to the employer
+#: half of the segment, not to the title, so it is removed BEFORE the segment is
+#: cut. Only one, only at the very end, and it may not nest, so a title that
+#: carries its own parenthetical cohort ("Software Engineer I (New Grad) -
+#: <Employer>") keeps it: that paren is not at the end of the segment.
+_TRAILING_SEGMENT_PAREN = re.compile(r"\s*\([^()]{0,80}\)\s*$")
+
+#: The spaced dash that separates the title from the employer echo. Every
+#: occurrence is found and the LAST one is used — see
+#: :func:`_role_from_trailing_segment` for why the last, and #553 for the two
+#: real titles the first one truncated.
+_SPACED_DASH = re.compile(r"\s[-–—]\s")
+
+#: How a posting says WHERE the job is worked, not WHAT the job is.
+#:
+#: Scanned over the POST-HEAD REGION (see :func:`_post_head_region`), not over
+#: the last word, and that placement is the whole of its precision. A work
+#: arrangement standing to the LEFT of the title's head noun is a modifier of
+#: the job — "Remote Infrastructure Engineer", "Hybrid Cloud Architect" are real
+#: titles and both survive, because the region this set is scanned in is empty
+#: for them. Standing to the RIGHT of the head noun it is the ATS's own
+#: annotation of the posting.
+#:
+#: IT IS NOT SUBSUMED BY THE STRUCTURAL RULE, which is the only reason it still
+#: exists. :func:`_post_head_is_introduced` licenses a comma- or dash-introduced
+#: continuation, because that is what the reported title is made of — and an
+#: arrangement hides there perfectly: "Software Engineer, Distributed Systems
+#: Platform, New Grad Remote" is comma-introduced, structurally indistinguishable
+#: from the real title, and mints a second ``role_token`` for the job the
+#: bracketed placement already filed. So structure closes the space-joined
+#: position and this set closes the introduced one.
+#:
+#: WHAT IT DOES NOT CLOSE, stated rather than implied: place names are an open
+#: set, so "Software Engineer, San Francisco" still resolves where "Software
+#: Engineer - <Employer> (San Francisco)" resolves to the shorter title. Nothing
+#: this module would accept tells ", San Francisco" from ", Distributed Systems
+#: Platform" without world knowledge; the residual is pinned as a strict xfail
+#: in the acceptance suite rather than hidden.
+#:
+#: The cost is recall, in the direction this module always fails: "Software
+#: Engineer, Remote Sensing Systems" and "Analyst, Virtual Reality" go to the
+#: review queue. A person types the title once; nothing is minted wrongly.
+#:
+#: Normalised through :func:`_normalize_token` over the whole region, so every
+#: member is reachable in both of its spellings — "On-Site" (the hyphen folds to
+#: a space) and "On Site" (two words) are one entry, and so are "In-Office" and
+#: "In Office". Under the last-word probe this replaces, the two-word members
+#: could only ever be reached through the hyphen fold.
+_WORK_ARRANGEMENT_WORDS: frozenset[str] = frozenset(
+    {"remote", "hybrid", "onsite", "on site", "in office", "virtual", "telecommute"}
+)
+
+#: The nine lifecycle stems, matched ANYWHERE in a region rather than as a whole
+#: word on its own. :data:`_LIFECYCLE_WORD` anchors the same stems with ``^…$``
+#: and is what the three older callers want; this one is what the post-head scan
+#: wants, because a lifecycle phrase is not one word — "Interview Invitation",
+#: "Offer Letter" and "Final Interview" all carry their stem in a position an
+#: anchored test cannot see. Appending a noun to a lifecycle word is what
+#: revived the refusal this replaces.
+#:
+#: The set is NOT widened to reach them. "Invitation", "Letter", "Reminder",
+#: "Alert", "Event" and "Newsletter" are refused STRUCTURALLY by
+#: :func:`_post_head_is_introduced` — they are bare space-joined words standing
+#: right of the head noun. These nine earn their keep only on the INTRODUCED
+#: shapes structure licenses: "Software Engineer, Final Interview".
+_LIFECYCLE_IN_REGION = re.compile(
+    r"\b" + _SUBJECT_LIFECYCLE_TAIL + r"\b", re.IGNORECASE
+)
+
+#: A whitespace-delimited token, kept with its offsets. The head-noun membership
+#: test is written on ``role.split()`` in :func:`_role_from_lead_segment`, and
+#: :func:`_last_head_noun_end` has to give the same answers as that line while
+#: also saying WHERE the noun ended — so it walks the same tokens rather than a
+#: different tokenisation that would drift from it.
+_WHITESPACE_TOKEN = re.compile(r"\S+")
+
+#: Trailing punctuation on such a token. "Engineer," is the head noun plus the
+#: comma that introduces the title's next segment, and the region begins at the
+#: comma, not after it: losing it would turn an introduced continuation into a
+#: bare one and refuse the reported title itself.
+_TOKEN_TAIL_PUNCT = re.compile(r"[^A-Za-z0-9]+$")
+
+#: What may join a title's own continuation to it — the same characters
+#: :data:`_ROLE_JOIN` accepts, which is the point: a continuation this module
+#: already agreed was part of the title is INTRODUCED, and a space is not an
+#: introduction.
+_ROLE_CONTINUATION_MARKS = ",/&\u2010\u2011\u2012\u2013\u2014\u2015-"
+
+#: A seniority level, which continues a title without being introduced:
+#: "Software Engineer II", "Analyst 3", "Engineer L4". Roman numerals are
+#: enumerated rather than written as a character class, because ``[IVXLC]+``
+#: also matches "CIVIL".
+_ROLE_LEVEL = re.compile(r"^(?:I{1,3}|IV|VI{0,3}|IX|X|[0-9]{1,2}|[A-Z][0-9]{1,2})$")
+
+#: The lowercase connectives :data:`_ROLE_SPAN` already allows INSIDE a title.
+#: Case-sensitive, exactly as ``_TITLE_SHAPED`` uses them: "Engineer in Test",
+#: "Director of Engineering". They introduce the word that follows them, so that
+#: word is title material and not an ATS annotation.
+_ROLE_INNER_ONLY = re.compile(r"^" + _ROLE_INNER + r"$")
+
+
+def _last_head_noun_end(role: str) -> int | None:
+    """Where the LAST :data:`_ROLE_HEAD_NOUNS` word ends, or None if there is none.
+
+    ``None`` is exactly the condition
+    ``not any(_normalize_token(w) in _ROLE_HEAD_NOUNS for w in role.split())``
+    tests — the same tokens, the same membership, so this function REPLACES that
+    line rather than sitting behind it. Two tests of one thing is two answers
+    waiting to disagree, and :func:`_post_head_region` needs the offset anyway.
+
+    The offset stops at the token's last alphanumeric character, so the comma in
+    "Software Engineer, Distributed Systems Platform" belongs to the region that
+    FOLLOWS the noun. That comma is what tells the reported title from
+    "Engineering Manager Interview", so dropping it would refuse the bug this
+    reader was written for.
+    """
+
+    end: int | None = None
+    for match in _WHITESPACE_TOKEN.finditer(role):
+        token = match.group(0)
+        if _normalize_token(token) in _ROLE_HEAD_NOUNS:
+            end = match.start() + len(_TOKEN_TAIL_PUNCT.sub("", token))
+    return end
+
+
+def _post_head_region(role: str, head_end: int) -> str:
+    """Everything a candidate says AFTER its last title head noun.
+
+    English compounds are right-headed, so this region is where a phrase stops
+    being a job title and starts being something else: what the mail is about
+    ("Engineering Manager INTERVIEW"), where the job is worked ("Software
+    Engineer REMOTE"), or what the ATS is sending ("Engineer NEWSLETTER"). To
+    the LEFT of the head noun the same words are ordinary modifiers —
+    "Applications Engineer" and "Remote Infrastructure Engineer" are real titles
+    — which is why nothing in this reader scans the whole string.
+    """
+
+    return role[head_end:]
+
+
+def _word_end(region: str, start: int) -> int:
+    """Where the word beginning at ``start`` ends.
+
+    A word ends at whitespace OR at a continuation mark, and the second half is
+    load-bearing: "Software Engineer I, Entry-Level" is a real posted title, and
+    a run that stopped only at whitespace read its level token as ``"I,"`` —
+    which is not a level, so the title was refused for having a comma in it.
+    Caught by the test written for the guard above it, which is the only reason
+    it is not still here.
+    """
+
+    pos = start
+    while (
+        pos < len(region)
+        and not region[pos].isspace()
+        and region[pos] not in _ROLE_CONTINUATION_MARKS
+    ):
+        pos += 1
+    return pos
+
+
+def _post_head_is_introduced(region: str) -> bool:
+    """Is everything in the post-head region INTRODUCED, rather than space-joined?
+
+    THE POSITIVE RULE THAT REPLACES A STOP-WORD LIST. A title's own continuation
+    announces itself — by a comma, a slash, an ampersand, a dash, a level token
+    or one of :data:`_ROLE_INNER`'s connectives:
+
+    * ``Software Engineer, Distributed Systems Platform, New Grad`` — comma;
+    * ``Software Engineer - Storage`` — dash;
+    * ``Software Engineer II`` — a level;
+    * ``Engineer in Test``, ``Director of Engineering`` — a connective.
+
+    A lifecycle tail, a location or a mailing type does not: it is simply
+    space-joined onto the right of the head noun, because it is a new word about
+    a different subject. ``Engineering Manager Interview``,
+    ``Senior Engineer Hiring Event``, ``Engineer Newsletter``,
+    ``Software Engineer Job Alert``, ``Software Engineer New York`` and
+    ``Software Engineer WFH`` are all refused by this one rule, with no
+    vocabulary of any kind — which is what makes appending a word powerless
+    against it. The last-word probe this replaces was revived by exactly that:
+    "Engineering Manager Interview" refused and "Engineering Manager Interview
+    Invitation" did not.
+
+    ITS GAPS FAIL CLOSED, and that is why a rule of this shape is defensible
+    here where a stop-word list is not. A suffix nobody has thought of yet is
+    space-joined, so it refuses; a stop-word list's gaps ship a wrong title.
+
+    A PARENTHETICAL IS NOT LISTED as an introduction, deliberately.
+    :data:`_ROLE_SPAN` only ever admits one at the very END of the span, and
+    :func:`_role_from_trailing_segment` refuses any candidate carrying one
+    before it reaches here — so a paren branch in this function could never
+    execute, and a branch that cannot fire is indistinguishable from one that
+    does not exist.
+    """
+
+    pos = 0
+    size = len(region)
+    while True:
+        separator_start = pos
+        while pos < size and (
+            region[pos].isspace() or region[pos] in _ROLE_CONTINUATION_MARKS
+        ):
+            pos += 1
+        separator = region[separator_start:pos]
+        if pos >= size:
+            # Nothing (more) follows the head noun: the title ended on its head,
+            # which is what "Applications Engineer" and "Platform Engineer" do.
+            return True
+        if any(mark in separator for mark in _ROLE_CONTINUATION_MARKS):
+            # Introduced. Everything from here is the title's own continuation —
+            # "Distributed Systems Platform, New Grad" is space-joined INSIDE a
+            # comma-introduced segment and must stay legal, which is why this
+            # accepts the remainder rather than continuing the walk.
+            return True
+        word_start = pos
+        pos = _word_end(region, pos)
+        word = region[word_start:pos]
+        if _ROLE_LEVEL.match(word):
+            continue
+        if _ROLE_INNER_ONLY.match(word):
+            # A connective introduces exactly the word after it. "Engineer in
+            # Test Remote" therefore still refuses on "Remote".
+            while pos < size and region[pos].isspace():
+                pos += 1
+            object_start = pos
+            pos = _word_end(region, pos)
+            if pos == object_start:
+                # A dangling connective is prose, not a title.
+                return False
+            continue
+        # A bare space-joined word standing right of the head noun.
+        return False
+
+
+def _role_from_trailing_segment(subject: str) -> str | None:
+    """The job title named in an ATS subject's TRAILING segment, or None.
+
+    ``"<Employer> | <Boilerplate> | <Role> - <Employer> (<Location>)"`` — the
+    shape where the employer BRACKETS the subject, opening the first segment and
+    closing the last, and the title sits between the two. Reported as #626, where
+    a seven-word two-comma title filed as a blank role because every other reader
+    in this module declines it:
+
+    * ``_ROLE_PATTERNS[2]`` and ``[3]`` are ``^``-anchored and two segments sit
+      in front of the title;
+    * their capture class excludes the comma this title has two of, and their
+      ``{0,4}`` caps a title at five words;
+    * the body of this ATS template says "this role" throughout and never names
+      the title, so :data:`_ROLE_BODY_PATTERNS` cannot rescue it either.
+
+    The subject is the only place the title exists, and it went to the review
+    queue with ``identity_role = ''``.
+
+    THE EMPLOYER ECHO IS WHAT LICENSES THE DASH, and that is the whole safety of
+    this reader. #553 measured what happens when a spaced dash is assumed to
+    separate a role from an employer: it truncated "Software Engineer, Agentic AI
+    Harness & Quality" and "Software Development Engineer I - AI/ML Network
+    Infrastructure" — clean enough to look right on a card and wrong enough to
+    split the identity, which mints a rival card for a job the board already
+    tracks. So the dash terminates the title here ONLY when what follows it is
+    the company the subject's LEADING segment already named. The segment is cut
+    at the LAST spaced dash for the same reason: an interior dash stays inside
+    the title, so "<Role> - <Subteam> - <Employer>" yields "<Role> - <Subteam>".
+
+    The lead employer is re-derived through :func:`_lead_segment_candidates`,
+    which is the reading the employer half of this subject is filed under, so
+    the two halves cannot disagree about who sent the mail. An echo that names a
+    DIFFERENT company, or no echo at all, refuses — the message goes to the
+    review queue, where a person decides. Fails closed, the direction this
+    module takes everywhere.
+
+    The candidate then passes the three guards :func:`_role_from_lead_segment`
+    uses (:func:`_clean_role`, :data:`_TITLE_SHAPED`, a title head noun) plus
+    the ones the trailing position needs and the others do not.
+
+    RIGHT-EDGE HYGIENE, in three rules, none of them a probe of the last word.
+    The first version of this reader tested ``role.split()[-1]`` twice, and an
+    independent cross-check measured what that costs: 26 of 48 adversarial
+    subjects in this shape came back with a title nobody would want on a card,
+    every one of them by putting a second word on the right of the one being
+    probed.
+
+    1. ANY PARENTHETICAL ON THE ROLE SIDE REFUSES, through the same
+       :data:`_TRAILING_SEGMENT_PAREN` the tail side strips with, so the two
+       sides cannot drift. Structural, not lexical, and that is the whole
+       argument: a work-arrangement VOCABULARY on the role side would still fail
+       open on every place name nobody listed, because the tail-side strip is
+       unconditional — "<Role> (Bengaluru) - <Employer>" and "<Role> -
+       <Employer> (Bengaluru)" would mint two tokens for one job. STRIPPING
+       instead of refusing is worse than the split: "Software Engineer
+       (Platform)" and "Software Engineer (Security)" at one employer would
+       collapse onto one token and begin capturing each other's mail. Refusing
+       can only ever cost recall, and the queue is where recall goes.
+
+       It is tested AFTER :func:`_clean_role`, which is load-bearing: that
+       function deletes a requisition-id parenthetical, and the tail-side strip
+       deletes it too, so "Software Engineer II (Req ID: …)" converges on one
+       token from both placements and keeps resolving.
+
+    2. THE POST-HEAD REGION MUST BE INTRODUCED
+       (:func:`_post_head_is_introduced`). A lifecycle tail, a location or a
+       mailing type stands space-joined to the right of the title's head noun;
+       a title's own continuation is introduced by a comma, a dash, a level or a
+       connective. This is a positive rule about shape and no list can be
+       appended past it.
+
+    3. THE WHOLE POST-HEAD REGION IS SCANNED for the nine
+       :data:`_SUBJECT_LIFECYCLE_TAIL` stems and for
+       :data:`_WORK_ARRANGEMENT_WORDS` — not the last word, and not the whole
+       candidate. Rule 2 licenses "Software Engineer, <anything>", so these two
+       scans are what refuse "Software Engineer, Final Interview" and "Software
+       Engineer, New Grad Remote", which structure alone cannot see.
+
+    ...and an explicit refusal when the candidate normalises to the employer
+    itself. The head-noun test catches most of those by accident; it does not
+    catch a company whose own name contains a title head noun, and relying on an
+    accident is how a rule stops refusing when an unrelated set is widened.
+
+    RUNS LAST. It recognises one narrow shape, so it must not pre-empt the
+    general patterns or the leading-segment reader — this is purely additive,
+    and nothing that resolved before resolves differently now.
+    """
+
+    text = subject or ""
+    # (1) The shape is pipe-segmented. Without this the "last segment" is the
+    # whole subject, and "<Employer> - <Role> - <Employer>" reads the employer
+    # into its own title.
+    if "|" not in text:
+        return None
+
+    # (2) and (3) The last segment, less the location parenthetical.
+    segment = _TRAILING_SEGMENT_PAREN.sub("", text.rsplit("|", 1)[-1].strip()).strip()
+
+    # (4) and (5) Cut at the LAST spaced dash: title on the left, echo right.
+    dashes = list(_SPACED_DASH.finditer(segment))
+    if not dashes:
+        return None
+    cut = dashes[-1]
+    candidate = segment[: cut.start()].strip()
+    echo = segment[cut.end() :].strip()
+
+    # (6) The licence.
+    lead_tokens = {
+        token
+        for token in (_normalize_token(c) for c in _lead_segment_candidates(text))
+        if token
+    }
+    echo_token = _normalize_token(echo)
+    if not echo_token or echo_token not in lead_tokens:
+        return None
+
+    # (7) The guards the leading-segment reader uses. The head-noun test is the
+    # same membership over the same tokens, asked for the noun's OFFSET as well
+    # as its existence — one computation, so the guard and the region below it
+    # cannot disagree about where the title's head is.
+    role = _clean_role(candidate)
+    if role is None:
+        return None
+    if not _TITLE_SHAPED.match(role):
+        return None
+    head_end = _last_head_noun_end(role)
+    if head_end is None:
+        return None
+
+    # (8) ...and the refusals this position needs on its own account.
+    if _normalize_token(role) in lead_tokens:
+        return None
+    # BOTH PLACEMENTS OR NEITHER, made structural. "<Role> (Remote) - <Employer>"
+    # and "<Role> - <Employer> (Remote)" are one posting written two ways and the
+    # strip above only reaches the second, so keeping the first hands back
+    # "Software Engineer (Remote)" where the second gives "Software Engineer" —
+    # and :func:`normalize_role_token` deletes the brackets but KEEPS THE WORD,
+    # so those are two role_tokens for one job.
+    #
+    # ANY parenthetical, not a listed one. A vocabulary here cannot close the
+    # split, because the tail-side strip is unconditional and place names are an
+    # open set: "(Bengaluru)" would sail through a work-arrangement list and mint
+    # the second token anyway. The regex is literally the one the tail side uses,
+    # so the two edges cannot drift apart in a later edit.
+    #
+    # Its cost is the cohort parenthetical — "Software Engineer I (Graduation
+    # Date: Fall 2026)" now queues in this shape. Since every subject of this
+    # shape resolved to nothing at all before this reader existed, that is recall
+    # not gained rather than recall lost, and a person types the title once.
+    if _TRAILING_SEGMENT_PAREN.search(role):
+        return None
+    region = _post_head_region(role, head_end)
+    # The nine stems and the arrangement words, over the WHOLE region. Rule 2
+    # below licenses any comma-introduced continuation — which is what the
+    # reported title is made of — so "Software Engineer, Final Interview" and
+    # "Software Engineer, Distributed Systems Platform, New Grad Remote" are
+    # invisible to structure and visible only here.
+    if _LIFECYCLE_IN_REGION.search(region):
+        return None
+    normalized_region = _normalize_token(region)
+    if normalized_region and any(
+        f" {word} " in f" {normalized_region} " for word in _WORK_ARRANGEMENT_WORDS
+    ):
+        return None
+    if not _post_head_is_introduced(region):
+        return None
+    return role
+
+
 def _employer_from_subject_segment(
     subject: str, relay_brand: str
 ) -> tuple[str, str] | None:
@@ -3088,11 +3495,15 @@ def _role_from_subject(subject: str) -> str | None:
         if len(role) < 3:
             continue
         return role
-    # Last, and only when every pattern above declined: the leading-segment
-    # reader is a narrower rule about one known shape, so it must not pre-empt
-    # the general ones. Purely additive — nothing that resolved before resolves
-    # differently now.
-    return _role_from_lead_segment(text)
+    # Last, and only when every pattern above declined: the two segment readers
+    # are narrower rules about known shapes, so they must not pre-empt the
+    # general ones. Purely additive — nothing that resolved before resolves
+    # differently now, and the leading-segment reader keeps its place ahead of
+    # the trailing one so today's answers are reproduced exactly.
+    from_lead = _role_from_lead_segment(text)
+    if from_lead is not None:
+        return from_lead
+    return _role_from_trailing_segment(text)
 
 
 def is_terminal_status(value: str) -> bool:
