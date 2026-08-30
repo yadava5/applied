@@ -2735,24 +2735,71 @@ async def reconcile_orphaned_classifications(session, user_id: uuid.UUID) -> int
     """File applications for SETTLED emails that were left without one.
 
     A message the user classified into a filing status is supposed to produce an
-    application. When it didn't — the endpoint's employer lookup failed and the
-    decision was swallowed — the row is stranded: reviewed, unlinked, invisible
-    on the board and gone from the queue. This is the catch-up that un-strands
-    it on the next sync, now that :func:`pipeline.resolve_employer` can name the
-    employer from an ATS display-name / subject lead.
+    application. TWO WAYS IT DOESN'T. The endpoint's employer lookup failed and
+    the decision was swallowed, leaving the row unlinked; or a later re-sync
+    dismissed the card the row does name, leaving a link that outlived the only
+    thing making it mean anything (#598). Both end in the same place — reviewed,
+    in a filing category, on no card the user can see, off the board and out of
+    the queue. This is the catch-up that un-strands them on the next sync, now
+    that :func:`pipeline.resolve_employer` can name the employer from an ATS
+    display-name / subject lead.
 
     Scoped to ``user_id`` like every other query here. Deliberately narrow: only
     rows the user actually settled (``user_corrected`` or ``is_reviewed``) with
-    a filing category and no ``application_id``. An un-reviewed auto-classified
-    row is excluded on purpose — by design it is either already linked or in the
-    review queue, and sweeping those up would re-open the "fabricate a row from
-    a low-confidence guess" bug the precision gate exists to prevent.
+    a filing category and NO APPLICATION OF THEIRS THAT ANSWERS FOR THEM —
+    :func:`_not_filed_on_an_application_that_answers`, the same predicate the
+    review queue and the ``needs_review`` tile read. An un-reviewed
+    auto-classified row is excluded on purpose — by design it is either already
+    linked or in the review queue, and sweeping those up would re-open the
+    "fabricate a row from a low-confidence guess" bug the precision gate exists
+    to prevent.
 
-    Idempotent: a reconciled email gains an ``application_id``, so the very
-    predicate that selected it no longer matches on the next run. Two orphans
+    THAT CLAUSE USED TO BE ``application_id IS NULL`` (#598), which encodes "no
+    application was produced". Dismissal stopped that from being what it means:
+    a message linked to a card a RE-SYNC removed produced no application the
+    user can see, and is stranded in exactly the way this function exists to
+    undo — reviewed, in a filing category, on no board, out of the queue. The
+    catch-up stepped over the rows it was written for. The shared predicate is a
+    strict WIDENING of the old clause — a NULL link makes its ``EXISTS`` false,
+    so every row that used to be selected still is — and it reaches two shapes
+    the NULL test could not:
+
+      * a link to a ``resync``-dismissed card. This is #481's state. It lands
+        back on that card through :func:`_resolve_application_for_email`'s link
+        branch, and the else-branch below puts the card on the board again.
+      * a link that resolves to no application of this user's — a dangling id,
+        or a stale one naming another user's row. The resolver cannot see such a
+        row either (``_company_rows`` is scoped to this user), so it falls
+        through to the cascade and the message is re-filed onto a live row of
+        theirs, minting one if the employer has none. The stale link is repaired
+        rather than followed. NEITHER SHAPE IS REACHABLE IN PRODUCTION TODAY and
+        :func:`_filed_on_an_application_that_answers` says why; this is what the
+        ``EXISTS`` answers by construction, not a state anyone has observed.
+
+    A LINK TO A HAND-DISMISSED CARD IS NOT ONE OF THEM, and that is the whole
+    reason this reads the shared predicate rather than ``dismissed_at IS NULL``
+    (#597). The user's own "no" answers for that card's mail: the row is
+    settled, never an orphan here, and no catch-up pass may revive the card. A
+    ``dismissed_at``-only test would revive it automatically on every sync,
+    which is exactly what #597 decided must not happen.
+
+    IDEMPOTENT, AND THE MECHANISM CHANGED WITH THE PREDICATE. It is no longer
+    "the row gains an ``application_id`` and therefore stops matching" — the
+    rows this pass newly reaches already had one, and keep having one. What is
+    true after a pass is that the email points at an application that ANSWERS
+    for it: one this pass minted (live), or the ``resync``-dismissed card the
+    else-branch below just un-dismissed (live again), or the live row a stale
+    link was re-pointed at. In every exit the ``EXISTS`` is true on the next
+    run, so the predicate no longer matches and the pass terminates. Two orphans
     for one employer collapse into a single application within one pass, and an
     existing row is only ever ADVANCED (never downgraded, never un-settled).
     Returns the number of applications CREATED.
+
+    Two residuals do NOT terminate, and neither is new: an orphan whose employer
+    :func:`pipeline.resolve_employer` cannot name, and one whose category falls
+    outside the filing set, are ``continue``d and stay selected on every later
+    pass. The NULL test left them selected too. The pass does nothing with them
+    either way, so this is a re-examined row rather than a loop.
 
     Stickiness, the same rule :func:`upsert_applications_for_user` enforces: a
     row the user created or corrected keeps its stage, and the orphan is filed
@@ -2767,7 +2814,7 @@ async def reconcile_orphaned_classifications(session, user_id: uuid.UUID) -> int
             select(Email)
             .where(
                 Email.user_id == user_id,
-                Email.application_id.is_(None),
+                _not_filed_on_an_application_that_answers(user_id),
                 Email.classified_as.in_(_FILING_CATEGORIES),
                 or_(
                     Email.user_corrected == True,  # noqa: E712 — SQL boolean
@@ -2845,6 +2892,15 @@ async def reconcile_orphaned_classifications(session, user_id: uuid.UUID) -> int
             # guard that cannot fire is not evidence — the exclusion is asserted
             # directly instead, in
             # ``tests/test_a_hand_dismissal_is_final.py``.
+            #
+            # SINCE #598 THERE ARE TWO MECHANISMS AND THEY COVER DIFFERENT ROWS.
+            # The selection above no longer reaches a message LINKED to a
+            # user-dismissed card at all — that card answers for its mail, so the
+            # row is settled rather than orphaned. The resolver's exclusion still
+            # covers the UNLINKED one, which IS selected and would otherwise
+            # cascade onto the dismissed card. Neither is redundant: revert the
+            # selection and the linked shape arrives here, drop the resolver's
+            # filter and the unlinked one does.
             if app.dismissed_at is not None:
                 app.dismissed_at = None
                 app.dismissed_reason = None
