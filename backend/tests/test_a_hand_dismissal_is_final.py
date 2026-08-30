@@ -54,13 +54,23 @@ THE STRUCTURE IS DIRECTIONAL THROUGHOUT. Every claim about ``user`` has a
 ever sees one reason cannot tell "reads ``dismissed_reason``" from "reads
 ``dismissed_at``" from "reads neither". The pairs:
 
-===========================  =============================  ==================
-surface                      ``resync``                     ``user``
-===========================  =============================  ==================
-review answer on its link    restores the card              mints beside it
-the board picker             (its own card is choosable)    refuses the id
-the orphan catch-up          restores the card              mints beside it
-===========================  =============================  ==================
+=============================  =============================  ====================
+surface                        ``resync``                     ``user``
+=============================  =============================  ====================
+review answer on its link      restores the card              mints beside it
+the board picker               (its own card is choosable)    refuses the id
+the catch-up, unlinked mail    restores the card              mints beside it
+the catch-up, a settled link   restores the card              not selected at all
+=============================  =============================  ====================
+
+THE LAST ROW IS #598 AND IT IS THE ONE ASYMMETRIC PAIR. Everywhere else a
+``user`` dismissal is overruled by MINTING beside the card. There it is not
+overruled at all: the catch-up's orphan test is now
+``_not_filed_on_an_application_that_answers``, and a hand-dismissed card ANSWERS
+for its mail, so the message is never selected. Nothing happens — the correct
+outcome for a row that is settled rather than stranded, and the reason that
+selection may not be written as ``dismissed_at IS NULL``, which would revive the
+card on every sync.
 
 MUTATION, and its expected red set. Swap ``DISMISSED_BY_USER`` for
 ``DISMISSED_BY_RESYNC`` inside
@@ -74,16 +84,31 @@ constant for the other, same type, same column, and it compiles. Then:
   no dismissal reason reaches it.)
 * :func:`test_answering_the_surfaced_question_puts_the_card_back` REDS at its
   first assertion — the row it answers is no longer in the queue.
+* BOTH #598 TESTS RED, and they did not exist when this ledger was first
+  written: #598 put that same SQL clause into the catch-up's own SELECTION, so
+  the mutation now reaches a third surface.
+  :func:`test_a_settled_message_on_a_machine_dismissed_card_is_caught_up` reds
+  on the board — its ``resync`` row starts reading as answered-for and is no
+  longer selected — and
+  :func:`test_a_settled_message_on_a_hand_dismissed_card_is_not_caught_up` reds
+  on the board too, from the other direction: its ``user`` row stops reading as
+  answered-for, is selected, the resolver refuses its hand-dismissed link, and
+  the pass MINTS a fresh card beside one the user removed on purpose. That second one is why the twin
+  asserts an empty board and an unmoved link rather than only the two dismissal
+  columns — those columns survive the mutation untouched.
+* :func:`test_the_old_selection_leaves_the_machine_dismissed_card_off_the_board`
+  stays green under it, correctly: it replaces the predicate outright, so a
+  mutation inside the predicate cannot reach it.
 * EVERY OTHER TEST HERE STAYS GREEN, and that is the point rather than a gap.
   The never-restore behaviour lives in ``_resolve_application_for_email`` and
-  ``_chosen_application``, which read the reason in PYTHON. The mutation is
-  scoped to the SQL clause, so a green here says the exclusion is genuinely a
-  second mechanism and not the same one seen twice. Its own mutations —
-  deleting the ``not _user_dismissed(linked)`` guard, or the ``candidates``
-  filter, or ``_chosen_application``'s, or turning the link branch's REFUSAL
-  back into a fall-through — red exactly the tests named in each docstring
-  below. The last of those is the one no single-row fixture could catch; see
-  "#618 — the deliberate exception" below.
+  ``_chosen_application``, which read the reason in PYTHON. Those tests are
+  unmoved by a mutation scoped to the SQL clause, so a green there says the
+  exclusion is genuinely a second mechanism and not the same one seen twice.
+  Its own mutations — deleting the ``not _user_dismissed(linked)`` guard, or
+  the ``candidates`` filter, or ``_chosen_application``'s, or turning the link
+  branch's REFUSAL back into a fall-through — red exactly the tests named in
+  each docstring below. The last of those is the one no single-row fixture
+  could catch; see "#618 — the deliberate exception" below.
 
 Every employer, sender, requisition and role here is INVENTED and every domain
 is RFC-reserved. Nothing in this file comes from a real mailbox (#593).
@@ -127,9 +152,16 @@ class Card(NamedTuple):
     """One dismissed application and the single message that names it.
 
     ``linked`` says whether the message carries this card's ``application_id``.
-    The catch-up cases are UNLINKED and ``reviewed`` — that is the exact shape
-    :func:`reconcile_orphaned_classifications` selects, and a linked row would
-    not be an orphan at all.
+    The catch-up cases in this table are UNLINKED and ``reviewed``, which is
+    what sends them through the CASCADE — the route the resolver's exclusion
+    defends.
+
+    A LINKED settled row is an orphan too since #598: the selection reads
+    :func:`_not_filed_on_an_application_that_answers` rather than
+    ``application_id IS NULL``. But it reaches the catch-up's else-branch
+    through the message's OWN LINK, which is a different mechanism proving a
+    different claim, so it has its own fixture at the foot of this file instead
+    of a row here.
     """
 
     company: str
@@ -437,8 +469,11 @@ async def test_the_fixture_is_reachable_the_way_these_tests_assume(
     assert len(stored_mail) == len(CARDS)
     for key in ("m-ellersby", "m-foxglade"):
         assert stored_mail[key]["application_id"] is None, (
-            "a catch-up orphan carries no link — a linked row is not selected "
-            "by the catch-up at all and the test would be vacuous"
+            "these two catch-up cases must carry NO link — unlinked is what "
+            "routes them through the CASCADE, which is the path the resolver's "
+            "exclusion defends. Since #598 a LINKED settled row is selected "
+            "too, but it takes the link branch and proves something else; that "
+            "shape has its own fixture at the foot of this file"
         )
         # ``category`` is what the mail listing calls the stored verdict.
         assert stored_mail[key]["category"] == "rejection"
@@ -1225,3 +1260,369 @@ def test_a_live_row_with_a_stale_reason_is_not_hand_dismissed() -> None:
         "the directional control: without this the assertion above passes for a "
         "helper that always returns False"
     )
+
+
+# =============================================================================
+# #598 — the catch-up's SELECTION, on a settled message that carries a link
+# =============================================================================
+#
+# EVERY CATCH-UP CASE ABOVE ARRIVES THROUGH THE CASCADE, because both orphans in
+# :data:`CARDS` are unlinked. That was the only shape the old selection could
+# see: it asked ``Email.application_id IS NULL``, i.e. "no application was
+# produced". Dismissal made that reading false. A message linked to a card a
+# RE-SYNC removed produced no application the user can SEE, and is stranded in
+# precisely the way this pass exists to undo — reviewed, in a filing category,
+# on no board, out of the queue — and the pass stepped straight over it (#598,
+# found while auditing #587).
+#
+# The selection now reads ``_not_filed_on_an_application_that_answers``, the
+# same predicate the review queue and the ``needs_review`` tile read. It is a
+# strict WIDENING: a NULL link makes that ``EXISTS`` false, so every row the old
+# clause selected is still selected, and the cases above are unaffected.
+#
+# TWO EMPLOYERS, ONE CARD EACH, AND THE PAIR IS THE POINT. ``dismissed_reason``
+# is the only difference between them, so a selection reading ``dismissed_at``
+# alone cannot separate them — and ``dismissed_at IS NULL`` is the tempting
+# wrong answer here, because it would revive a hand-dismissed card on every
+# catch-up pass, which is what #597 forbids.
+#
+# A SEPARATE FIXTURE rather than two more :data:`CARDS` rows, for the reason the
+# #618 section gives for its own: ``created`` is a WHOLE-PASS number and
+# :func:`test_a_catch_up_orphan_at_a_hand_dismissed_employer_mints` asserts it
+# equals 1. Rows in that table would make an unrelated test's arithmetic depend
+# on this one's fixture. The shape does not belong there either — see
+# :class:`Card`.
+
+
+class LinkedOrphanCase(NamedTuple):
+    """A SETTLED message already carrying the ``application_id`` of a dismissed card.
+
+    Only a re-sync produces this state: the pass dismisses the card and leaves
+    the link on the mail, because the additive persist rewrites
+    ``classified_as`` and never clears ``application_id``. No endpoint offers to
+    create it, so it is written straight at the session.
+    """
+
+    company: str
+    reason: str
+    message_id: str
+
+
+#: The rebuild's removal. Its mail is still an open question, so a human having
+#: filed it is newer evidence and the card comes back.
+MACHINE_LINK = LinkedOrphanCase("Marrowgate", "resync", "m-marrowgate-linked")
+#: The human's removal. Its mail is SETTLED, so there is no orphan to reconcile.
+HAND_LINK = LinkedOrphanCase("Nettlebourne", "user", "m-nettlebourne-linked")
+LINKED_ORPHAN_CASES = (MACHINE_LINK, HAND_LINK)
+
+
+@pytest.fixture
+async def linked_orphan_seeds(cloud_app) -> dict[str, int]:
+    """One dismissed card per case, and the settled message pointing straight at it.
+
+    ``classified_as`` is a FILING category and ``is_reviewed`` is true, so each
+    message is settled from the user's side — the half of the orphan shape the
+    catch-up has always required. The half #598 changed is that these rows carry
+    a LINK, which the old selection read as "already filed".
+
+    Both cards share one ``dismissed_at``, for the reason :func:`seeded` gives:
+    the reason column has to be the only variable between the pair, or a
+    predicate reading the timestamp could separate them and the pair would prove
+    nothing about which column is read.
+
+    ``source="gmail"`` is ``SOURCE_GMAIL_AUTO`` — the same trap :func:`seeded`
+    documents. With any other tag ``_is_auto_row`` reads the row as user-owned,
+    the catch-up's stage advance is skipped, and the restored card silently
+    comes back at the stage it was dismissed at.
+    """
+
+    from jobtracker.database import get_session
+
+    owner = uuid.UUID(OWNER)
+    application_ids: dict[str, int] = {}
+
+    async with get_session() as session:
+        for index, case in enumerate(LINKED_ORPHAN_CASES):
+            row = Application(
+                user_id=owner,
+                company=case.company,
+                position="Backend Engineer",
+                status=ApplicationStatus.APPLIED,
+                source="gmail",
+                dismissed_at=DISMISSED_AT,
+                dismissed_reason=case.reason,
+            )
+            session.add(row)
+            await session.flush()
+            application_ids[case.company] = row.id
+
+            session.add(
+                Email(
+                    user_id=owner,
+                    application_id=row.id,
+                    source_account=EmailSource.GMAIL,
+                    message_id=case.message_id,
+                    thread_id=f"t-{case.company.lower()}",
+                    subject=f"Update on your {case.company} application",
+                    sender_name="Careers",
+                    sender_email=_sender_for(case.company),
+                    received_at=RECEIVED_AT - timedelta(minutes=index),
+                    body_snippet="We have completed our review of your application.",
+                    classified_as=EmailCategory.REJECTION,
+                    classification_confidence=0.78,
+                    is_reviewed=True,
+                    user_corrected=True,
+                )
+            )
+
+        await session.commit()
+
+    return application_ids
+
+
+async def test_the_linked_orphan_fixture_is_the_shape_598_is_about(
+    client, headers, linked_orphan_seeds
+):
+    """Runs first. Without it the two tests below could both be about nothing.
+
+    Four claims, and each closes a way this section could be green while the
+    fixture was never the state #598 reported:
+
+    1. both cards are dismissed at the SAME timestamp and differ only in the
+       reason — the control that makes the pair directional;
+    2. the board is empty, so a card appearing below appeared because the
+       catch-up put it there;
+    3. each message CARRIES ITS CARD'S LINK. That is the clause #598 changed,
+       and an unlinked row here would make both tests duplicates of the
+       :data:`CARDS` cases;
+    4. each message is reviewed and stored in a FILING category — settled from
+       the user's side, which the catch-up has always required and which #598
+       did not touch.
+
+    AND THE ROUTE CONTROL, the same kind the #618 tests carry. The catch-up
+    ``continue``s on an orphan whose employer :func:`pipeline.resolve_employer`
+    cannot name, and "selected but unnameable" is OBSERVATIONALLY IDENTICAL to
+    "never selected" — no card, no mint, the link unmoved, every dismissal
+    column intact. That is precisely the twin's expected post-state, so without
+    this assertion the twin would green on a fixture the pass never got past,
+    which is this repo's standing defect. Called with the same three arguments
+    in the same order the catch-up passes.
+    """
+
+    rows = await _rows_by_id()
+    assert len(rows) == len(LINKED_ORPHAN_CASES)
+    by_company = {row.company: row for row in rows.values()}
+    for case in LINKED_ORPHAN_CASES:
+        stored = by_company[case.company]
+        assert stored.dismissed_reason == case.reason, case.company
+        assert stored.dismissed_at == DISMISSED_AT, (
+            "both cards must share one dismissed_at; a differing timestamp "
+            "leaves a second variable between the `resync` case and its twin"
+        )
+
+    assert await _board(client, headers) == {}, (
+        "the board must start empty — otherwise a card 'appearing' proves "
+        "nothing about the catch-up that was supposed to put it there"
+    )
+
+    from jobtracker.cloud import pipeline
+
+    for case in LINKED_ORPHAN_CASES:
+        named = pipeline.resolve_employer(
+            _sender_for(case.company),
+            f"Update on your {case.company} application",
+            "Careers",
+        )
+        assert named is not None, (
+            f"{case.company} must be NAMEABLE from its message — the catch-up "
+            "`continue`s on an employer it cannot name, and that outcome is "
+            "indistinguishable from 'never selected', which is exactly what "
+            "the hand-dismissed twin below asserts"
+        )
+
+        email = await _message_row(case.message_id)
+        assert email.application_id == linked_orphan_seeds[case.company], (
+            "the message must already point at the dismissed card — an unlinked "
+            "row is the shape the OLD selection already reached and these tests "
+            "would say nothing about #598"
+        )
+        assert email.is_reviewed is True
+        assert email.classified_as == EmailCategory.REJECTION
+
+
+async def test_a_settled_message_on_a_machine_dismissed_card_is_caught_up(
+    client, headers, linked_orphan_seeds
+):
+    """#598's acceptance case: the catch-up reaches a row it used to step over.
+
+    Reproduced in the issue by execution on the old selection: ``created: 0``,
+    ``BOARD: []``, ``QUEUE: []``, and the message sitting on an
+    ``application_id`` whose card does not exist on any screen. The row was
+    reviewed, in a filing category, on no board and out of the queue — the exact
+    definition of the strandedness this function exists to undo — and the
+    catch-up reported nothing to do.
+
+    ORDERED SHARPEST FIRST: the board is this test's own claim, so it is
+    asserted before anything derived from it. ``created`` comes LAST because it
+    is a WHOLE-PASS number over both cases of :func:`linked_orphan_seeds` — zero
+    is correct for the pair (this case restores a card that already exists, and
+    the twin's message must not be selected at all), but a non-zero reading
+    there can be the twin's defect rather than this one's, and a claim that can
+    fire for another case's reason must not be the first thing a reader sees.
+
+    MUTATION: revert the selection to ``Email.application_id.is_(None)`` and
+    this fails at the board — the linked row is not an orphan again. That
+    mutation is also shipped as
+    :func:`test_the_old_selection_leaves_the_machine_dismissed_card_off_the_board`,
+    so the direction is proved by an executable test and not only by a comment.
+    """
+
+    case = MACHINE_LINK
+    card_id = linked_orphan_seeds[case.company]
+
+    created = await _reconcile()
+
+    board = await _board(client, headers)
+    assert case.company in board, (
+        "the settled message is still stranded — on no board, out of the queue, "
+        "and pointing at a card the user cannot see, which is #598's whole "
+        "reproduction"
+    )
+    assert board[case.company]["id"] == card_id, (
+        "the SAME card came back, not a duplicate minted beside the dismissed one"
+    )
+    assert board[case.company]["status"] == "rejected", (
+        "the card came back at the stage the human's own filing named"
+    )
+
+    rows = await _rows_by_id()
+    restored = rows[card_id]
+    assert restored.dismissed_at is None
+    assert restored.dismissed_reason is None
+    assert len([row for row in rows.values() if row.company == case.company]) == 1, (
+        "exactly one row at this employer — a second would mean the pass filed "
+        "a duplicate beside the card it restored"
+    )
+
+    email = await _message_row(case.message_id)
+    assert email.application_id == card_id, (
+        "the message must still name the card it was reconciled onto"
+    )
+
+    assert created == 0, (
+        "the pass over this fixture must CREATE nothing: this case restores the "
+        "card its message already names, and the hand-dismissed twin's message "
+        f"is settled and must never be selected. Got created={created}, which "
+        "means one of the two minted"
+    )
+
+
+async def test_a_settled_message_on_a_hand_dismissed_card_is_not_caught_up(
+    client, headers, linked_orphan_seeds
+):
+    """THE DIRECTIONAL TWIN, and the reason the selection is not ``dismissed_at``.
+
+    Identical row, identical timestamp, ``user`` instead of ``resync``. Under
+    #597 the human's removal answers for that card's mail: the message is
+    SETTLED, not stranded, so it is not an orphan and the pass must do nothing
+    at all with it. Selecting on ``dismissed_at IS NULL`` — the one-character
+    shortcut that passes the test above — would revive a card the user
+    deliberately removed, silently, on every sync.
+
+    WHY THIS DIFFERS FROM ``Ellersby``, which is the same reason column and the
+    opposite expectation. That case is UNLINKED, so nothing answers for it, it
+    IS an orphan, and minting beside the dismissed card is right. This one
+    carries the card's own link, so the card answers and the correct outcome is
+    that nothing happens.
+
+    THE BOARD AND THE LINK ARE ASSERTED, not only the two dismissal columns, and
+    that is what makes this test directional rather than decorative. Under the
+    ledger's mutation this row IS selected, the resolver refuses its
+    hand-dismissed link, and the pass MINTS a fresh card — leaving
+    ``dismissed_at`` and ``dismissed_reason`` on the old row untouched. A twin
+    that read only those two columns would stay green through exactly the
+    failure it exists to catch.
+    """
+
+    case = HAND_LINK
+    card_id = linked_orphan_seeds[case.company]
+
+    created = await _reconcile()
+
+    board = await _board(client, headers)
+    assert case.company not in board, (
+        "the catch-up put a card on the board for an employer whose only card "
+        f"the user removed by hand: {board.get(case.company)}"
+    )
+
+    rows = await _rows_by_id()
+    assert len([row for row in rows.values() if row.company == case.company]) == 1, (
+        "a row was minted beside the hand-dismissed card; this message is "
+        "settled, so the pass should not have selected it at all"
+    )
+    untouched = rows[card_id]
+    assert untouched.dismissed_at == DISMISSED_AT, (
+        "the catch-up revived a card the user removed by hand"
+    )
+    assert untouched.dismissed_reason == "user"
+
+    email = await _message_row(case.message_id)
+    assert email.application_id == card_id, (
+        "the message's link moved, so the pass touched a row it was never "
+        f"supposed to select (now {email.application_id})"
+    )
+
+    assert created == 0, (
+        "the pass over this fixture must CREATE nothing — a mint is a card "
+        "appearing for mail the user already answered by removing its "
+        f"application. Got created={created}"
+    )
+
+
+async def test_the_old_selection_leaves_the_machine_dismissed_card_off_the_board(
+    client, headers, linked_orphan_seeds, monkeypatch: pytest.MonkeyPatch
+):
+    """THE CONTROL. Put the old clause back and the card does NOT come back.
+
+    A test that greens both ways proves nothing, and every assertion in
+    :func:`test_a_settled_message_on_a_machine_dismissed_card_is_caught_up`
+    would pass on any code that happened to leave a card on the board. So the
+    selection is reverted here — ``Email.application_id.is_(None)``, the literal
+    clause #598 replaced — and the acceptance claim is asserted to FAIL.
+
+    Patched at the module global rather than by editing the query, because
+    ``reconcile_orphaned_classifications`` looks the helper up by name at call
+    time. That is also why this test reads only the BOARD: the patch reverts the
+    predicate for every caller in the process, including the review queue and
+    the ``needs_review`` tile, and a queue read inside it would be measuring
+    three surfaces at once.
+
+    ``created`` is 0 both ways and is therefore not the control — with the old
+    clause because no row is selected, with the new one because the row that is
+    selected lands on a card that already exists. Asserted anyway, so a revert
+    that started MINTING instead would not slip past as a green.
+    """
+
+    from jobtracker.cloud import applications
+
+    case = MACHINE_LINK
+    card_id = linked_orphan_seeds[case.company]
+
+    monkeypatch.setattr(
+        applications,
+        "_not_filed_on_an_application_that_answers",
+        lambda _user_id: Email.application_id.is_(None),
+    )
+
+    created = await _reconcile()
+    assert created == 0, created
+
+    board = await _board(client, headers)
+    assert case.company not in board, (
+        "the old selection reached the linked row after all — then the test "
+        "above is not measuring the predicate swap and #598 was not a defect"
+    )
+
+    rows = await _rows_by_id()
+    assert rows[card_id].dismissed_at == DISMISSED_AT
+    assert rows[card_id].dismissed_reason == "resync"
