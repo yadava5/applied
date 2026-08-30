@@ -1,0 +1,76 @@
+name: Test data
+
+# ITS OWN WORKFLOW, AND UNFILTERED, because it is a REQUIRED check (#617).
+#
+# The gate started as a step inside `test`, then became its own job inside
+# `backend-ci.yml` (#615). Both of those homes were wrong for the same reason,
+# and the second one only became wrong when the check was added to branch
+# protection: `backend-ci.yml` is path-filtered, so a pull request that touches
+# none of its paths never produces this context at all. A required context that
+# is never produced does not pass and does not fail — it sits at "Expected —
+# waiting for status" and the pull request cannot be merged by anyone but an
+# admin. A docs-only change, or one touching `apps/web/components/**`, wedges.
+#
+# So this workflow has NO `paths:` filter, in either block, deliberately. That
+# is not laziness about cost: the gate reads `git ls-files` over four scan roots
+# and compares a checked-in baseline, with no database, no torch, no network and
+# no pip install. It is stdlib Python and finishes in about six seconds. Running
+# it on every pull request costs less than deciding whether to run it.
+#
+# The other two required contexts — "README numbers agree with the code" and
+# "Scan for secrets" — are already unfiltered for exactly this reason, and
+# `readme-facts.yml`'s header says so. This file makes the third one match.
+#
+# THE JOB NAME BELOW IS THE CHECK-RUN CONTEXT, and it is byte-identical to the
+# name the job carried inside `backend-ci.yml`. Branch protection matches on
+# that string, so moving the job between files is invisible to it. Renaming the
+# job would silently un-require the gate: protection would keep waiting for a
+# context nothing produces, which is the same wedge this file exists to remove,
+# and the check that replaced it would be advisory without anyone deciding that.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - develop
+      - integration/web-migration
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-data-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    # Refuses any change to the set of real sender addresses published in
+    # tracked files under backend/tests/, backend/jobtracker/, apps/web/tests/
+    # and ml/ — fixture, docstring or comment alike. This repository is public
+    # and its fixtures grew by precedent (#593); the rule, and the reason
+    # nothing already published is being deleted, are in
+    # docs/TEST_DATA_POLICY.md.
+    #
+    # BLOCKING, and green from birth: it compares a checked-in baseline, so it
+    # only ever reds on something the pull request in front of it changed. There
+    # is no honest reason for it to be continue-on-error.
+    name: Test data baseline agrees with the tree
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Python
+        # No `cache: pip` and no install step: the checker imports nothing off
+        # PyPI. Pinning 3.11 anyway keeps it on the same interpreter as every
+        # other job in this repository rather than whatever ubuntu-latest ships
+        # this month.
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Refuse a change to the published sender addresses
+        run: python3 scripts/check_test_data.py
