@@ -380,8 +380,28 @@ class HybridClassifier:
             if emb_result is not None:
                 emb_category, emb_confidence = emb_result
 
-                # Only trust embeddings if rules doesn't strongly disagree
-                if emb_confidence >= 0.85 and not has_negative_signals:
+                # Only trust embeddings if rules doesn't strongly disagree.
+                #
+                # The floor is the EMBEDDING classifier's own similarity
+                # threshold, not the auto-file gate — the same number, a
+                # different quantity. ``EmbeddingsClassifier.classify`` already
+                # returns ``None`` below it (``find_most_similar`` does), so a
+                # hand-written ``0.85`` here was tautologically true and, worse,
+                # silently overrode the threshold the day someone lowered it.
+                # Read it off the instance so lowering ``SIMILARITY_THRESHOLD``
+                # actually takes effect. Do NOT bind this to ``CONFIDENCE_AUTO``:
+                # that would make the ``needs_review=emb_confidence <
+                # CONFIDENCE_AUTO`` three lines below dead by construction and
+                # would drop every verdict in the review band instead of
+                # queueing it.
+                #
+                # Import-safe despite the lazy-import rule in ``_load_embeddings``:
+                # ``is_available()`` above already read the property on this
+                # path, so the heavy submodule is loaded by the time we get here.
+                if (
+                    emb_confidence >= self._embeddings.SIMILARITY_THRESHOLD
+                    and not has_negative_signals
+                ):
                     if (
                         emb_category == EmailCategory.OTHER
                         and rules_result.category != EmailCategory.OTHER
