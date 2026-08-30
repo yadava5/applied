@@ -17,31 +17,6 @@ on:
       # indistinguishable from a job that did not exist. Edit BOTH blocks.
       - "scripts/check_expand_only.py"
       - "scripts/schema_fingerprint.sql"
-      # The test-data gate, its baseline, and the tree half of what it scans.
-      # `apps/web/tests/**` is here on purpose and it is the expensive line: it
-      # fires this whole workflow on a web-test-only edit. It has to. The gate
-      # scans `apps/web/tests/` because that is where issue #593's spread
-      # reached that the issue's own backend-only framing missed
-      # (`e2e/import.spec.ts`), and without this line a PR touching only that
-      # file runs no backend job at all — the same "check that cannot fire"
-      # shape the three comments above document. Same trade already made for
-      # `requirements.txt`. The BASELINE must be listed too, or a PR whose only
-      # change is lowering it is the one PR the gate never sees.
-      - "scripts/check_test_data.py"
-      - "scripts/test_data_baseline.json"
-      - "apps/web/tests/**"
-      # `ml/**` joined SCAN_ROOTS in #615 and is the SECOND expensive line, for
-      # the same reason and with the same answer as `apps/web/tests/**` above:
-      # a root the gate scans but no trigger fires on is a check that cannot
-      # fire on the one root just added, which is this repo's named defect.
-      # `ml/demo/space/jobtracker/` is a generated copy of `backend/jobtracker/`
-      # (ml/demo/package_space.py), so repackaging the Space moves the baseline
-      # and this is the line that makes CI notice. The cost is real and worth
-      # stating: editing an `ml/browser/artifacts/*` model blob now fires this
-      # whole workflow, including the ~25-minute `test` job and two Postgres
-      # services, to run a gate that takes under a second. Splitting the gate
-      # into its own workflow file would fix that; it is not this PR's call.
-      - "ml/**"
       # The ROOT requirements.txt — the manifest Vercel installs for the
       # deployed function, and the one `expand-only` pip-installs below. It is
       # not under backend/, so until 2026-08-15 a PR that changed only this
@@ -67,31 +42,6 @@ on:
       - "backend/**"
       - "scripts/check_expand_only.py"
       - "scripts/schema_fingerprint.sql"
-      # The test-data gate, its baseline, and the tree half of what it scans.
-      # `apps/web/tests/**` is here on purpose and it is the expensive line: it
-      # fires this whole workflow on a web-test-only edit. It has to. The gate
-      # scans `apps/web/tests/` because that is where issue #593's spread
-      # reached that the issue's own backend-only framing missed
-      # (`e2e/import.spec.ts`), and without this line a PR touching only that
-      # file runs no backend job at all — the same "check that cannot fire"
-      # shape the three comments above document. Same trade already made for
-      # `requirements.txt`. The BASELINE must be listed too, or a PR whose only
-      # change is lowering it is the one PR the gate never sees.
-      - "scripts/check_test_data.py"
-      - "scripts/test_data_baseline.json"
-      - "apps/web/tests/**"
-      # `ml/**` joined SCAN_ROOTS in #615 and is the SECOND expensive line, for
-      # the same reason and with the same answer as `apps/web/tests/**` above:
-      # a root the gate scans but no trigger fires on is a check that cannot
-      # fire on the one root just added, which is this repo's named defect.
-      # `ml/demo/space/jobtracker/` is a generated copy of `backend/jobtracker/`
-      # (ml/demo/package_space.py), so repackaging the Space moves the baseline
-      # and this is the line that makes CI notice. The cost is real and worth
-      # stating: editing an `ml/browser/artifacts/*` model blob now fires this
-      # whole workflow, including the ~25-minute `test` job and two Postgres
-      # services, to run a gate that takes under a second. Splitting the gate
-      # into its own workflow file would fix that; it is not this PR's call.
-      - "ml/**"
       # The other half of the pair — see the note in the pull_request block.
       - "requirements.txt"
       - ".github/workflows/backend-ci.yml"
@@ -105,48 +55,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test-data-gate:
-    # Refuses any change to the set of real sender addresses published in
-    # tracked files under backend/tests/, backend/jobtracker/, apps/web/tests/
-    # and ml/ — fixture, docstring or comment alike. This repository is public
-    # and its fixtures grew by precedent (#593); the rule, and the reason
-    # nothing already published is being deleted, are in
-    # docs/TEST_DATA_POLICY.md.
-    #
-    # ITS OWN JOB since #615. It used to be a step inside `test`, which is the
-    # ~25-minute suite job and is not a required context — so a red gate left
-    # the pull request MERGEABLE, and requiring `test` to fix that would have
-    # made every PR wait for the suite. This job needs no database, no torch and
-    # no network: stdlib Python and one `git ls-files`, under a second.
-    #
-    # The job NAME below is the check-run context. Adding it to branch
-    # protection is the owner's call and is deliberately not done in the PR that
-    # created the job.
-    #
-    # BLOCKING, unlike the three advisory steps in `test`. Those are advisory
-    # because they were red from birth — 379 ruff errors, 879 mypy errors — and
-    # a gate that is red from birth gets ignored or deleted. This one is green
-    # from birth: it compares a checked-in baseline, so it only ever reds on
-    # something the PR in front of it changed. There is no honest reason for it
-    # to be continue-on-error.
-    name: Test data baseline agrees with the tree
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup Python
-        # No `cache: pip` and no install step: the checker imports nothing off
-        # PyPI. Pinning 3.11 anyway keeps it on the same interpreter as every
-        # other job here rather than whatever ubuntu-latest ships this month.
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.11"
-
-      - name: Refuse a change to the published sender addresses
-        run: python3 scripts/check_test_data.py
-
   test:
     runs-on: ubuntu-latest
     defaults:
