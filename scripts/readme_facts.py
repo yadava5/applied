@@ -72,9 +72,12 @@ number by invariants instead, which is what catches them diverging.
 
 The same discipline applies to two 0.85s that are not the same 0.85: the
 auto-classify gate is the named constant `CONFIDENCE_AUTO`, while the
-embeddings layer accepts on a bare `emb_confidence >= 0.85` literal a few
-hundred lines away. They are equal today and are separate facts, because
-nothing in the code makes them move together.
+embeddings layer accepts on `EmbeddingsClassifier.SIMILARITY_THRESHOLD` in
+another module. They are equal today and are separate facts, because nothing in
+the code makes them move together. Until 2026-08-30 the second of those was
+read out of `hybrid.py`'s `emb_confidence >= 0.85` — a use site, and a bare
+literal that shadowed the real threshold; `hybrid.py` reads the attribute now
+and so does this script.
 
 WHAT IS DELIBERATELY NOT CHECKED
 
@@ -295,6 +298,7 @@ RLS_MIGRATION = "backend/alembic/versions/a8d4ec5fba26_enable_rls_policies_postg
 USER_CREDS_RLS = "backend/alembic/versions/c4_user_credentials_rls.py"
 ENROLLMENT_RLS = "backend/alembic/versions/e2b6f0a4d517_gmail_sync_enrollment.py"
 HYBRID = "backend/jobtracker/classifier/hybrid.py"
+EMBEDDINGS = "backend/jobtracker/classifier/embeddings.py"
 
 
 def _rules(rel: str = BACKEND_RULES) -> dict[str, int]:
@@ -394,19 +398,57 @@ def float_const(rel: str, name: str) -> float:
     return float(ast.literal_eval(_assigned(rel, name)))
 
 
+def _class_assigned(rel: str, cls: str, name: str) -> ast.expr:
+    """The value node of a `name = ...` in ONE class body.
+
+    `_assigned` above walks the module body only, and several facts depend on
+    it staying that narrow. This is its class-scoped sibling rather than a
+    loosening of it. Raises like the rest of this file: a renamed class or
+    attribute must fail loudly, because a reader that quietly returns a default
+    when its subject moved is the check-that-cannot-fail shape.
+    """
+    for node in _module(rel).body:
+        if not (isinstance(node, ast.ClassDef) and node.name == cls):
+            continue
+        for stmt in node.body:
+            if isinstance(stmt, ast.Assign):
+                for t in stmt.targets:
+                    if isinstance(t, ast.Name) and t.id == name:
+                        return stmt.value
+            elif isinstance(stmt, ast.AnnAssign):
+                if (
+                    isinstance(stmt.target, ast.Name)
+                    and stmt.target.id == name
+                    and stmt.value
+                ):
+                    return stmt.value
+        raise SystemExit(f"  ✗ {rel}: class `{cls}` has no `{name} = ...`")
+    raise SystemExit(f"  ✗ {rel}: no class `{cls}`")
+
+
 def embeddings_accept_threshold() -> float:
     """
-    The bare literal the embeddings layer accepts on.
+    The threshold the embeddings layer accepts on.
 
-    Deliberately not read from CONFIDENCE_AUTO. The line is
-    `if emb_confidence >= 0.85 and not has_negative_signals:` — a magic number
-    that happens to equal the gate constant. Two facts, because nothing makes
-    them move together.
+    Deliberately not read from CONFIDENCE_AUTO. Two facts, because nothing
+    makes them move together: this is a cosine SIMILARITY, the gate is a
+    classifier CONFIDENCE, and they merely happen to hold the same number.
+
+    Read at the DEFINITION SITE, per the rule at the top of this file. That
+    site is `EmbeddingsClassifier.SIMILARITY_THRESHOLD` — `classify()` passes
+    it straight into `find_most_similar`, which returns None below it, so it is
+    the value that decides whether layer 2 answers at all.
+
+    It used to be regex-read out of `hybrid.py`'s `emb_confidence >= 0.85`,
+    which was a USE site and, worse, a stale duplicate: the comparison was
+    tautologically true (layer 2 has already returned None below its own
+    threshold) and would have silently overridden a lowered
+    SIMILARITY_THRESHOLD. `hybrid.py` now reads the attribute, so there is one
+    place left for this number to be written and this is it.
     """
-    m = re.search(r"emb_confidence\s*>=\s*([\d.]+)", read(HYBRID))
-    if not m:
-        raise SystemExit(f"  ✗ {HYBRID}: no `emb_confidence >= <float>` comparison found")
-    return float(m.group(1))
+    return float(ast.literal_eval(_class_assigned(
+        EMBEDDINGS, "EmbeddingsClassifier", "SIMILARITY_THRESHOLD"
+    )))
 
 
 # ── the auto-file gate, across the language boundary ─────────────────────
@@ -442,11 +484,18 @@ def embeddings_accept_threshold() -> float:
 # the only workflow with no path filter, so it is the one gate that fires
 # whichever side moves. See the invariants at the bottom.
 #
-# NOT covered, and deliberately so: `0.85` also appears as a bare literal in
-# comparisons (`hybrid.py`'s `emb_confidence >= 0.85`, `ml/browser/site/app.js`)
-# and as rendered prose in a dozen components and the booklet's content map.
-# The literals are a separate fact by the rule stated at the top of this file;
-# the prose is not a definition and is left to the README's own claim sites.
+# NOT covered, and deliberately so: `0.85` also appears as a bare literal in a
+# comparison in `ml/browser/site/app.js`, and as rendered prose in a dozen
+# components and the booklet's content map. The literals are a separate fact by
+# the rule stated at the top of this file; the prose is not a definition and is
+# left to the README's own claim sites.
+#
+# `hybrid.py`'s `emb_confidence >= 0.85` stood in that list until 2026-08-30 and
+# has left it by being FIXED rather than by being excused: the comparison now
+# reads `self._embeddings.SIMILARITY_THRESHOLD`, so it is no longer a
+# hand-written copy of anything and `embeddingsAccept` below reads the attribute
+# it names. Pinned in Python too — `backend/tests/test_confidence_gate_lockstep.py`
+# censuses `backend/jobtracker/` with `ast` and reds if a bare 0.85 comes back.
 
 # TypeScript trees that draw the gate. Roots, because a census that names files
 # can only find the copies someone remembered to name.
@@ -1467,16 +1516,18 @@ FACTS: dict[str, dict] = {
         ],
     },
     # The OTHER 0.85, and the reason the sites below are split off rather than
-    # folded into `confidenceAuto`. Layer 2 accepts on a bare `emb_confidence >=
-    # 0.85` literal; the auto-file gate is the named constant `CONFIDENCE_AUTO`.
-    # They are equal today and nothing in the code makes them move together, so
+    # folded into `confidenceAuto`. Layer 2 accepts on
+    # `EmbeddingsClassifier.SIMILARITY_THRESHOLD`; the auto-file gate is the
+    # named constant `CONFIDENCE_AUTO`. They are two modules apart, they measure
+    # different things — a cosine similarity and a classifier confidence — and
+    # nothing in the code makes them move together, so
     # a chip reading "accept ≥ 0.85" beside `2 · e5 similarity` is a claim about
     # the literal, not about the gate. Binding it to the gate would make the
     # check assert something false the moment either one is retuned — the same
     # count-the-definition-not-the-name discipline as the top of this file.
     "embeddingsAccept": {
         "kind": "static",
-        "describe": f"the bare `emb_confidence >= ...` literal in {HYBRID}",
+        "describe": f"EmbeddingsClassifier.SIMILARITY_THRESHOLD in {EMBEDDINGS}",
         "compute": embeddings_accept_threshold,
         "sites": [
             r"cosine similarity vs stored examples<br/>accepts at ≥ ([\d.]+)",
