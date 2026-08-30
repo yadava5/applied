@@ -99,12 +99,11 @@ from jobtracker.cloud.applications import (
     Application,
     Email,
     _not_filed_on_an_application_that_answers,
-    _persist_review_items_additive,
     classify_review_item,
     employers_with_several_applications,
     reconcile_orphaned_classifications,
+    sync_gmail_pipeline_additive,
     threads_naming_one_application,
-    upsert_applications_for_user,
 )
 
 from .generate import Case, snippet_of
@@ -297,6 +296,38 @@ def _item(v: Verdict) -> pipeline.PipelineItem:
 
 
 @dataclass
+class SyncTotals:
+    """``MergeResult`` summed over the day-batches, which nothing here could see.
+
+    ``sync_gmail_pipeline_additive`` returns what each sync DID — rows created,
+    rows advanced, rows taken off the board, items surfaced to the queue — and
+    the hand-assembled loop this replaced never called it, so those five numbers
+    existed only in production. They are not a second reading of the board: the
+    board says what is there NOW, and these say how it got there. A rebuild and
+    a steady accumulation can leave the same board.
+
+    ``purged`` is ``len(MergeResult.removed)`` by construction, so only one of
+    the two is kept; carrying both would be a pair that cannot disagree.
+    """
+
+    #: Day-batches handed to the sync. Every day, including one whose mail rolls
+    #: up to nothing — that is a sync a user really makes, and it is where the
+    #: per-batch catch-up and the emptied-row dismissal get their chance.
+    syncs: int = 0
+    created: int = 0
+    updated: int = 0
+    purged: int = 0
+    needs_review: int = 0
+
+    def add(self, result) -> None:
+        self.syncs += 1
+        self.created += result.created
+        self.updated += result.updated
+        self.purged += result.purged
+        self.needs_review += result.needs_review
+
+
+@dataclass
 class Replay:
     """Where every message ended up, which is the whole question.
 
@@ -318,6 +349,8 @@ class Replay:
     #: database holds a row for afterwards. Spelling the settled predicate out
     #: here a second time would make this a copy of the thing it is measuring.
     suppressed: set[str]
+    #: What the syncs REPORTED, summed. See :class:`SyncTotals`.
+    synced: SyncTotals
     #: card label -> the stage the board shows for it.
     status: dict[str, str]
     #: card label -> the two fields a user actually READS on the card:
@@ -342,24 +375,43 @@ async def _stored(session, message_ids: list[str]) -> set[str]:
 
 
 async def replay(session, verdicts: list[Verdict]) -> Replay:
-    """Sync the corpus in day-sized batches; return where everything landed.
+    """Sync the corpus in day-sized batches, through the real additive sync.
 
-    The WHOLE sync, not just the rollup: ``collect_review_items`` and
-    ``_persist_review_items_additive`` run too, and the dropped verdicts are
+    ONE ENTRYPOINT OF TWO, NAMED, because "the WHOLE sync" is what this
+    docstring used to claim and it was not true (#624). Each day-batch is handed
+    to ``sync_gmail_pipeline_additive`` whole — the function the ROUTINE and AUTO
+    syncs call, which is the dashboard's connect-time backfill and the inbox
+    relay. So ``upsert_applications_for_user``, the per-batch
+    ``reconcile_orphaned_classifications``, ``_dismiss_rows_left_without_mail``
+    (reached through the upsert), ``_persist_review_items_additive`` with its
+    cross-sync settled test and ``settled_applications`` suppression, and the
+    ``MergeResult`` accounting all run here exactly as they run for a user.
+
+    NOT CROSSED, and this is the half a passing gate does not cover:
+    ``purge_and_rebuild_gmail_pipeline``, the explicit "Re-sync" button. It
+    removes AUTO rows a scan contradicts, calls ``_reset_review_queue``, and
+    persists review items through ``_persist_review_items`` unfiltered. None of
+    that is exercised by this harness at any seed. Crossing one entrypoint is
+    progress, not coverage of both.
+
+    THE DAY BATCH IS THE HARNESS'S CHOICE, not the product's. A real sync rolls
+    up whatever arrived since the last cursor; a day is the honest middle
+    between one-message-at-a-time (10,040 syncs, which is not what happens) and
+    the whole mailbox at once (a rebuild, which hides every delta-only defect).
+    See the module docstring.
+
+    The rollup, ``collect_review_items`` and the dropped verdicts run and are
     collected. Skipping them was not a shortcut, it was a blind spot — the queue
     is where a message goes when the product is honest about not knowing, and a
     harness that cannot see the queue scores that as the same outcome as losing
     the message.
 
-    WHICH PERSIST, WHICH IS THE WHOLE OF #624. This used to call
-    ``_persist_review_items`` — the REBUILD persist, whose only production caller
-    is ``purge_and_rebuild_gmail_pipeline`` (the explicit "Re-sync" button) — from
-    a loop that is additive in shape: day batches, nothing purged, no
-    ``_reset_review_queue``. That combination exists nowhere in the product, so
-    the cross-sync settled test and the ``settled_applications`` suppression —
-    the machinery of #596, #454 and #587 — were graded by nothing, on any seed.
-    The routine and auto syncs reach ``_persist_review_items_additive``, so this
-    does too.
+    HOW IT USED TO BE WRONG, kept because the shape recurs. The loop called
+    ``_persist_review_items`` — the REBUILD persist — while being additive in
+    every other respect: day batches, nothing purged, no ``_reset_review_queue``.
+    That combination exists nowhere in the product, and the two functions share
+    a name stem and most of a shape, so nothing in the file said the choice had
+    been made rather than inherited.
 
     IT CHANGED NO NUMBER, and that is worth stating rather than discovering
     again. Measured over the whole corpus at seed 20260822: 2,873 review refs
@@ -379,6 +431,7 @@ async def replay(session, verdicts: list[Verdict]) -> Replay:
 
     dropped: set[str] = set()
     suppressed: set[str] = set()
+    synced = SyncTotals()
     for day in sorted(by_day):
         batch = [_item(v) for v in by_day[day]]
         known_multi = await employers_with_several_applications(session, _USER)
@@ -389,20 +442,23 @@ async def replay(session, verdicts: list[Verdict]) -> Replay:
             batch, fell_out, known_multi, known_threads
         )
         dropped.update(d.message_id for d in fell_out)
-        if rolled:
-            await upsert_applications_for_user(session, _USER, rolled)
-        if review:
-            offered = [r.message_id for r in review]
-            await _persist_review_items_additive(session, _USER, review)
+        # UNCONDITIONALLY, including on a day whose mail rolls up to nothing and
+        # asks nothing. That is a sync a user really makes — the auto sync runs
+        # on a schedule, not on there being something to find — and it is the
+        # only way the per-batch catch-up and the emptied-row dismissal get the
+        # chance production gives them. The old loop skipped both.
+        offered = [r.message_id for r in review]
+        synced.add(
+            await sync_gmail_pipeline_additive(session, _USER, rolled, review)
+        )
+        if offered:
             suppressed |= set(offered) - await _stored(session, offered)
-        if rolled or review:
-            await session.commit()
 
-    return await _read_the_board(session, dropped, suppressed)
+    return await _read_the_board(session, dropped, suppressed, synced)
 
 
 async def _read_the_board(
-    session, dropped: set[str], suppressed: set[str]
+    session, dropped: set[str], suppressed: set[str], synced: SyncTotals
 ) -> Replay:
     """The board, exactly as :func:`replay` left it.
 
@@ -464,6 +520,7 @@ async def _read_the_board(
         reviewed=set(queued),
         dropped=dropped,
         suppressed=suppressed,
+        synced=synced,
         status={
             f"row{r.id}:{r.company}": getattr(r.status, "value", str(r.status))
             for r in live
@@ -657,8 +714,11 @@ async def answer_the_queue(
     await reconcile_orphaned_classifications(session, _USER)
     await session.commit()
 
+    # The same totals, unchanged: they describe what the SYNCS did, and
+    # answering the queue is not a sync. Re-reading the board is not a second
+    # measurement of them.
     return score, await _read_the_board(
-        session, replayed.dropped, replayed.suppressed
+        session, replayed.dropped, replayed.suppressed, replayed.synced
     )
 
 

@@ -81,7 +81,7 @@ async def _board(verdicts, cases):
             replayed = await replay(session, verdicts)
     finally:
         await engine.dispose()
-    return score_board(replayed, cases)
+    return score_board(replayed, cases), replayed.synced
 
 
 def main() -> int:
@@ -167,9 +167,17 @@ def main() -> int:
         return 0
 
     t0 = time.time()
-    bs = asyncio.run(_board(verdicts, cases))
+    bs, synced = asyncio.run(_board(verdicts, cases))
     print(f"\n{'-' * 74}\nBOARD  ({time.time() - t0:.1f}s, replayed in day-sized batches)\n{'-' * 74}")
     print(f"  cards produced    {bs.cards:6d}")
+    # WHAT THE SYNCS REPORTED, which is a different question from what the board
+    # holds: `MergeResult` says how the board got here, and a rebuild and a
+    # steady accumulation can leave the same one.
+    print(
+        f"  the syncs said    {synced.syncs} syncs: created {synced.created}, "
+        f"updated {synced.updated}, purged {synced.purged}, "
+        f"queued {synced.needs_review}"
+    )
     print(f"  SPLIT             {bs.splits:6d}  one application over several cards")
     print(f"  MERGE             {bs.merges:6d}  several applications on one card")
     print(f"  NOISE ON A CARD   {bs.noise_on_card:6d}  mail that must mint nothing, on a card")

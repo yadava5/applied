@@ -204,6 +204,43 @@ RECORDED_ANSWERS = {
     "landed_where_several_did": 423,
 }
 
+#: WHAT THE SYNCS REPORTED, summed over the 240 day-batches (#624).
+#:
+#: These five did not exist until `replay` began routing each batch through
+#: `sync_gmail_pipeline_additive` whole. Every number above describes the BOARD —
+#: what is there when the syncing stops. These describe the SYNCS: what each one
+#: said it did. A rebuild and a steady accumulation can leave an identical board,
+#: so the two are not restatements of each other.
+#:
+#: Two of them agree with a number recorded elsewhere, and the agreement is the
+#: assertion rather than a duplicate:
+#:
+#:   created == RECORDED["cards"]           every row on the board was minted by
+#:                                          a sync. It would DISAGREE if the
+#:                                          per-batch catch-up minted one (it
+#:                                          cannot here: `reconcile_orphaned_
+#:                                          classifications` selects on
+#:                                          `user_corrected` or `is_reviewed`,
+#:                                          and the sync path writes neither), or
+#:                                          if any row were dismissed.
+#:   needs_review == RECORDED_ANSWERS["queued"]
+#:                                          every item a sync surfaced was still
+#:                                          in the queue when a person got to it.
+#:                                          It would disagree if a later batch's
+#:                                          rollup filed one.
+#:
+#: `purged` is `len(MergeResult.removed)`: rows `_dismiss_rows_left_without_mail`
+#: took off the board. It is 0, and it is now REACHED on every batch rather than
+#: never — the counter says the pass runs and removes nothing, which is not what
+#: an absent pass says.
+RECORDED_SYNC = {
+    "syncs": 240,
+    "created": 9148,
+    "updated": 3999,
+    "purged": 0,
+    "needs_review": 2873,
+}
+
 #: How many spellings the resolver gives one employer, over the whole corpus.
 #:
 #: THE DIRECTION IS THE POINT and it is one-way: neither number may RISE. They
@@ -1112,6 +1149,29 @@ async def test_the_board_is_clean(cases, verdicts, test_session) -> None:
     ][:3]
     assert score.cards == RECORDED["cards"], f"the board came out at {score.cards} cards"
 
+    # ── AND WHAT THE SYNCS SAID THEY DID (#624) ─────────────────────────────
+    #
+    # `MergeResult` is returned by every production sync and was returned to
+    # nothing here until each day-batch went through
+    # `sync_gmail_pipeline_additive` whole. Asserted as a whole dict so a single
+    # change cannot look like a single number.
+    synced = {
+        name: getattr(replayed.synced, name) for name in RECORDED_SYNC
+    }
+    assert synced == RECORDED_SYNC, f"the syncs reported {synced}"
+    # THE TWO CROSS-CHECKS, which are the reason these are worth pinning: they
+    # are not restatements, they are two instruments that can disagree. See
+    # `RECORDED_SYNC`.
+    assert replayed.synced.created == RECORDED["cards"], (
+        f"{replayed.synced.created} applications were created by the syncs but "
+        f"{RECORDED['cards']} are on the board — a row was dismissed, or the "
+        "per-batch catch-up minted one"
+    )
+    assert replayed.synced.needs_review == RECORDED_ANSWERS["queued"], (
+        f"{replayed.synced.needs_review} items were surfaced to the queue and "
+        f"{RECORDED_ANSWERS['queued']} were in it when the answering began"
+    )
+
     # ── and now a person answers the queue ───────────────────────────────────
     #
     # EMBEDDED HERE RATHER THAN GIVEN ITS OWN TEST, and the reason is arithmetic
@@ -1386,7 +1446,7 @@ def test_only_a_card_that_is_AHEAD_of_reality_is_counted() -> None:
     from datetime import datetime
 
     from tests.corpus_independent.generate import Case
-    from tests.corpus_independent.harness import Replay
+    from tests.corpus_independent.harness import Replay, SyncTotals
 
     def scenario(card_reads: str, truth: str):
         anchor = Case(
@@ -1425,6 +1485,7 @@ def test_only_a_card_that_is_AHEAD_of_reality_is_counted() -> None:
                 reviewed={"m2"},  # HELD — the whole point
                 dropped=set(),
                 suppressed=set(),
+                synced=SyncTotals(),
                 status={"rowA": card_reads},
                 title={"rowA": ("Northwind", "Software Engineer")},
             ),
@@ -1681,7 +1742,7 @@ def test_a_wrong_title_is_actually_caught() -> None:
     from datetime import datetime
 
     from tests.corpus_independent.generate import Case
-    from tests.corpus_independent.harness import Replay
+    from tests.corpus_independent.harness import Replay, SyncTotals
 
     def case(mid: str, ident: str, family: str = "f") -> Case:
         return Case(
@@ -1705,7 +1766,7 @@ def test_a_wrong_title_is_actually_caught() -> None:
 
     def scored(title: dict[str, tuple[str, str]]):
         return score_board(
-            Replay(groups=cards, reviewed=set(), dropped=set(), suppressed=set(), status={}, title=title),
+            Replay(groups=cards, reviewed=set(), dropped=set(), suppressed=set(), synced=SyncTotals(), status={}, title=title),
             cases_,
         )
 
@@ -1750,6 +1811,7 @@ def test_a_wrong_title_is_actually_caught() -> None:
             reviewed=set(),
             dropped=set(),
             suppressed=set(),
+            synced=SyncTotals(),
             status={},
             title={"rowA": ("Northwind Labs", "")},
         ),
@@ -1780,7 +1842,7 @@ def test_the_new_failure_modes_can_actually_fire() -> None:
     from datetime import datetime
 
     from tests.corpus_independent.generate import Case
-    from tests.corpus_independent.harness import Replay
+    from tests.corpus_independent.harness import Replay, SyncTotals
 
     def case(mid: str, **kw) -> Case:
         base = dict(
@@ -1809,6 +1871,7 @@ def test_the_new_failure_modes_can_actually_fire() -> None:
             reviewed=set(),
             dropped=set(),
             suppressed=set(),
+            synced=SyncTotals(),
             status={"rowA": "applied", "rowB": "applied"},
             title={},
         ),
@@ -1826,6 +1889,7 @@ def test_the_new_failure_modes_can_actually_fire() -> None:
             reviewed=set(),
             dropped=set(),
             suppressed=set(),
+            synced=SyncTotals(),
             status={"rowA": "applied"},
             title={},
         ),
@@ -1837,12 +1901,12 @@ def test_the_new_failure_modes_can_actually_fire() -> None:
     # pattern was demoted and now fires at 0. A branch with no live example is
     # a branch nobody is watching.
     fell = score_board(
-        Replay(groups=[], reviewed=set(), dropped={"m1"}, suppressed=set(), status={}, title={}),
+        Replay(groups=[], reviewed=set(), dropped={"m1"}, suppressed=set(), synced=SyncTotals(), status={}, title={}),
         [anchor],
     )
     assert fell.dropped == 1 and fell.lost == 0
     gone = score_board(
-        Replay(groups=[], reviewed=set(), dropped=set(), suppressed=set(), status={}, title={}),
+        Replay(groups=[], reviewed=set(), dropped=set(), suppressed=set(), synced=SyncTotals(), status={}, title={}),
         [anchor],
     )
     assert gone.lost == 1 and gone.dropped == 0, (
@@ -1868,6 +1932,7 @@ def test_the_new_failure_modes_can_actually_fire() -> None:
             reviewed=set(),
             dropped=set(),
             suppressed={"m1"},
+            synced=SyncTotals(),
             status={},
             title={},
         ),
@@ -1886,6 +1951,7 @@ def test_the_new_failure_modes_can_actually_fire() -> None:
             reviewed=set(),
             dropped=set(),
             suppressed=set(),
+            synced=SyncTotals(),
             status={"rowA": "rejected"},
             title={},
         ),
@@ -2179,7 +2245,7 @@ def test_mail_that_names_no_role_must_leave_the_card_blank() -> None:
     from datetime import datetime
 
     from tests.corpus_independent.generate import Case
-    from tests.corpus_independent.harness import Replay
+    from tests.corpus_independent.harness import Replay, SyncTotals
 
     def case(mid: str, family: str, identity: str) -> Case:
         return Case(
@@ -2208,6 +2274,7 @@ def test_mail_that_names_no_role_must_leave_the_card_blank() -> None:
                 reviewed=set(),
                 dropped=set(),
                 suppressed=set(),
+                synced=SyncTotals(),
                 status={"rowA": "applied"},
                 title={"rowA": ("Northwind", position)},
             ),
@@ -2240,6 +2307,7 @@ def test_mail_that_names_no_role_must_leave_the_card_blank() -> None:
             reviewed=set(),
             dropped=set(),
             suppressed=set(),
+            synced=SyncTotals(),
             status={"rowA": "applied"},
             title={"rowA": ("Northwind", "Chief Vibes Officer")},
         ),
