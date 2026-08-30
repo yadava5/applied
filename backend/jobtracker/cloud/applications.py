@@ -1283,6 +1283,59 @@ async def threads_naming_one_application(session, user_id: uuid.UUID) -> frozens
     applications — so it is left out and the update it carries is asked about,
     which is the same answer :func:`pipeline.partition_applications` gives for
     the same shape in one scan.
+
+    LIVE ROWS ONLY, exactly like its line-mate
+    :func:`employers_with_several_applications`, which is read on the very next
+    line of ``gmail_oauth`` and handed to the same two functions (#611). Without
+    it the two disagreed about one row in one request: a ``resync``-dismissed
+    card does not answer for its mail (#596), so the mail must come back and
+    ask — while this set said the thread already names one card, and
+    ``pipeline`` used that to escape the ambiguous-goes-to-the-queue rule and
+    file the message instead.
+
+    DELIBERATELY NOT :func:`_filed_on_an_application_that_answers`, and this is
+    the same distinction its line-mate draws. That predicate would KEEP a
+    hand-dismissed card's thread, which suppresses the arriving message BY
+    THREAD ALONE — and this product's definition of "its mail" is thread PLUS
+    identity (``review_dedup_key``), the definition that exists because one
+    employer's five messages spanned four roles. At an employer with other live
+    cards an identity-less update on a dismissed card's old thread may belong to
+    one of THOSE, and settling it on delivery structure alone would drop it
+    silently. This is a visibility question — "does a card the user can see own
+    this conversation?" — so it gets the visibility test.
+
+    GROUPED UNFILTERED, THEN NARROWED, and the order is load-bearing. Adding
+    ``Application.dismissed_at.is_(None)`` to the query above looks equivalent
+    and is not: a thread whose mail spans live card B and dismissed card A
+    yields two applications today, so it is excluded and the update is asked
+    about — the four-Microsoft rule working. Filtered, the same query sees only
+    ``{B}``, the thread reads as unambiguous and the message files straight to
+    B. That is a LOOSENING shipped inside a narrowing. Counting first and
+    keeping only the singletons whose one row is live can only ever shrink the
+    set, and leaves mixed threads behaving exactly as they did.
+
+    THE LIVE LOOKUP IS NOT SCOPED BY USER, on purpose. The ids come from mail
+    already scoped to ``user_id``; adding the conjunct would additionally drop a
+    thread whose mail is linked to ANOTHER user's card, which is a second,
+    unrelated behaviour change and not what #611 is about. Live-ness is the only
+    new question asked here.
+
+    ASYMMETRIC WITH :func:`_application_in_conversation` ON PURPOSE — do not
+    "unify" them. That function is this one's resolve-time twin, asks the same
+    "does this conversation name a card?" question, and stays UNFILTERED by
+    dismissal because its routing is doctrine-correct in the cases it sees: a
+    ``resync``-dismissed card landing mail is the intended resurrect (#595), and
+    a hand-dismissed one is stopped one level up by
+    :func:`upsert_applications_for_user`'s ``continue`` (#597). Filtering it
+    would break the resurrect path. The asymmetry is real because the CALLERS
+    differ: this set feeds an escape from the review queue, that one feeds a
+    resolver whose caller already reads the reason column.
+
+    SCOPE, which bounds both the defect and the fix: ``known_threads`` is
+    consulted only inside ``if token in known_multi and len(keyed) != 1:``, and
+    ``known_multi`` is already live-only — so this only ever bites at an
+    employer holding two or more LIVE cards, for identity-less non-confirmation
+    arrivals.
     """
 
     rows = (
@@ -1297,8 +1350,30 @@ async def threads_naming_one_application(session, user_id: uuid.UUID) -> frozens
     by_thread: dict[str, set[int]] = defaultdict(set)
     for thread_id, application_id in rows:
         by_thread[thread_id].add(application_id)
+    names_one = {
+        thread_id: next(iter(apps))
+        for thread_id, apps in by_thread.items()
+        if thread_id and len(apps) == 1
+    }
+    if not names_one:
+        return frozenset()
+    # One extra read rather than a join. An outer join would report a DANGLING
+    # ``application_id`` as ``dismissed_at IS NULL`` and therefore as live; an
+    # inner one would drop the row and change the COUNT above, which is the very
+    # thing the paragraph on grouping says must not move. Membership of a set of
+    # live ids answers it without touching either.
+    live = set(
+        (
+            await session.exec(
+                select(Application.id).where(
+                    Application.id.in_(sorted(set(names_one.values()))),
+                    Application.dismissed_at.is_(None),
+                )
+            )
+        ).all()
+    )
     return frozenset(
-        thread_id for thread_id, apps in by_thread.items() if thread_id and len(apps) == 1
+        thread_id for thread_id, application_id in names_one.items() if application_id in live
     )
 
 
