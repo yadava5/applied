@@ -680,7 +680,10 @@ async def test_answering_the_thread_settles_the_sibling_and_the_count_moves(
 
     MUTATION: put ``Email.application_id.is_(None)`` back in
     ``_settle_thread_siblings`` — a same-typed swap, one SQL boolean for
-    another — and this fails at the tile, ``assert 1 == 0``. That is the state
+    another — and this fails at the tile, ``assert 1 == 0``.
+    SECOND MUTATION: move #595's restore back INSIDE the landing branch, ahead
+    of the settle call, and the two counts stay green while the stored-state
+    assertions at the end fail — which is the whole reason they are there. That is the state
     on the PR ref before this repair, and the queue assertion below it is the
     same fact said the other way: ``m-thread-older`` is still listed.
     """
@@ -716,6 +719,40 @@ async def test_answering_the_thread_settles_the_sibling_and_the_count_moves(
         "sent them there did not move — the sibling is still queued"
     )
     assert await _queue_message_ids(client, headers) == set()
+
+    # AND THE SIBLING IS ACTUALLY SETTLED, not merely hidden. The two counts
+    # above CANNOT tell those apart, which is what makes this assertion
+    # necessary rather than belt-and-braces: #595's restore puts the card back
+    # on the board, and a live card answers for its own mail — so a sibling
+    # that was never settled reads zero here too, for the wrong reason.
+    #
+    # It is a real difference. An unsettled sibling keeps `is_reviewed = False`
+    # and `NEEDS_REVIEW`, so the next re-sync dismissal of this card puts the
+    # whole conversation back in the queue as an unanswered question. Measured:
+    # clearing `dismissed_at` INLINE in `classify_review_item` (rather than
+    # after `_settle_thread_siblings`) produced exactly that state —
+    # SQLAlchemy autoflushes the pending un-dismissal before the settle query
+    # runs, and the settle then reads the card as one that already answers.
+    from sqlmodel import select
+
+    from jobtracker.database import get_session
+
+    async with get_session() as session:
+        sibling = (
+            await session.exec(
+                select(Email).where(
+                    Email.user_id == uuid.UUID(OWNER),
+                    Email.message_id == "m-thread-older",
+                )
+            )
+        ).one()
+
+    assert sibling.is_reviewed is True, (
+        "the sibling is out of the queue only because its card came back — the "
+        "decision never reached it, and a later dismissal re-asks the question"
+    )
+    assert sibling.classified_as == EmailCategory.REJECTION
+    assert sibling.application_id == seeded_thread
 
 
 # =============================================================================

@@ -3812,6 +3812,13 @@ async def classify_review_item(
             "classified_as": category.value,
             "application_id": None,
             "needs_employer": True,
+            # Carried, not omitted. This branch builds its own dict, so without
+            # these a client reads ``undefined`` where every other response
+            # gives it ``false`` — and ``undefined`` is falsy only until
+            # somebody writes ``=== false``. Nothing was filed here, so nothing
+            # was restored.
+            "restored": False,
+            "restored_company": None,
             "message_id": message_id,
             "detail": (
                 "Could not identify the employer for this email. Re-send the "
@@ -3850,6 +3857,11 @@ async def classify_review_item(
                 "classified_as": category.value,
                 "application_id": None,
                 "needs_employer": True,
+                # Same reason as the branch above: nothing filed, nothing
+                # restored, and the keys are present so a client never has to
+                # tell "false" from "absent".
+                "restored": False,
+                "restored_company": None,
                 "needs_company_confirmation": True,
                 "suggested_company": suggestion,
                 "message_id": message_id,
@@ -3938,10 +3950,17 @@ async def classify_review_item(
         # MESSAGE and their board gained a row. ``restored_company`` names it so
         # a client can say which. Both stay at their defaults on every path that
         # files nothing — ``needs_employer``, the typo confirmation, ``other``,
-        # ``none_of_these`` — because no landing occurs on any of them.
+        # ``none_of_these`` — because no landing occurs on any of them. The
+        # first two return dicts of their own and therefore repeat the keys
+        # rather than inheriting these.
         "restored": False,
         "restored_company": None,
     }
+
+    # The row an answer landed on that has to come off the dismissed pile —
+    # applied AFTER ``_settle_thread_siblings`` below, not here. See the
+    # else-branch for why the order is load-bearing.
+    restore_target: Application | None = None
 
     if status_value is not None and employer is not None:
         token, display = employer
@@ -4021,12 +4040,27 @@ async def classify_review_item(
             # Non-filing answers restore nothing: ``other`` and ``none`` have no
             # ``status_value`` and never enter this block at all, and
             # ``none_of_these`` mints rather than landing.
+            #
+            # RECORDED HERE, APPLIED AFTER ``_settle_thread_siblings``, and the
+            # order is not tidiness. That query filters on
+            # :func:`_not_filed_on_an_application_that_answers`, so the moment
+            # this row stops being dismissed it starts ANSWERING for its own
+            # mail — and SQLAlchemy autoflushes the pending update before the
+            # SELECT runs. Clearing the column inline therefore excluded the
+            # thread's other messages from the settle that was about to happen:
+            # they kept ``is_reviewed = False`` and ``NEEDS_REVIEW``, invisible
+            # today only because their card is live again, and back in the
+            # queue as unanswered the next time a re-sync dismisses it. Measured
+            # on the ``m-thread-older`` fixture, which is why
+            # ``test_answering_the_thread_settles_the_sibling_and_the_count_
+            # moves`` now asserts the sibling's stored state and not just a
+            # count — a count of zero is produced by both worlds.
+            #
+            # The settle must see the board the QUESTION was asked against: the
+            # siblings were queued because no card answered for them, and one
+            # human decision settles the whole conversation.
             if app.dismissed_at is not None:
-                app.dismissed_at = None
-                app.dismissed_reason = None
-                app.updated_at = datetime.utcnow()
-                result["restored"] = True
-                result["restored_company"] = app.company
+                restore_target = app
 
             # The user is answering "what is this MESSAGE?", not "what stage is
             # this application at now?". So the stage goes through the same
@@ -4090,6 +4124,16 @@ async def classify_review_item(
     await _settle_thread_siblings(
         session, user_id, email, category, result["application_id"]
     )
+    # NOW the card comes back — after the settle has read the board as it stood
+    # when the question was asked. Same transaction, so the user sees one
+    # atomic outcome: the thread answered and the card on the board.
+    if restore_target is not None:
+        restore_target.dismissed_at = None
+        restore_target.dismissed_reason = None
+        restore_target.updated_at = datetime.utcnow()
+        session.add(restore_target)
+        result["restored"] = True
+        result["restored_company"] = restore_target.company
     await session.commit()
     return result
 
