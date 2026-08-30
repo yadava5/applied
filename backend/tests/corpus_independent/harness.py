@@ -851,6 +851,26 @@ class BoardScore:
     #: the sense #536 names, and it is pinned anyway: it is what will catch the
     #: suppression the moment a family produces a queued message sharing a
     #: thread AND an identity with mail already on a card.
+    #:
+    #: WHEN THE ZERO EXPIRES, so that a later reader does not cite it as a
+    #: product fact. Two #614 families are expected to make it legitimately
+    #: non-zero, and until one of them lands this number says "the corpus has no
+    #: case of this shape", NOT "the sync suppresses nothing":
+    #:
+    #:   * the same-thread-same-identity uncertain follow-up (#630) — a reply
+    #:     quoting the confirmation's subject, so Gmail threads it and the role
+    #:     derives to the same token, arriving below the auto-file gate;
+    #:   * the interleaved family — answer the queue, THEN deliver more mail.
+    #:     Today the harness answers once, after the last day, so the
+    #:     ``is_reviewed`` arm of the settled filter cannot fire at all. That is
+    #:     a property of the harness's phase ordering, not of the product, and
+    #:     it is the same "an arm no fixture can reach" shape #624 removed one
+    #:     arm over.
+    #:
+    #: The only evidence today that the FILTER itself bites — as opposed to this
+    #: counter counting — is an uncommitted control that reverts #454's identity
+    #: component inside the additive persist and takes this to 602. That control
+    #: belongs in the tree; it is named as the first item of #614's control set.
     suppressed_as_settled: int = 0
     failures: list[Failure] = field(default_factory=list)
 
