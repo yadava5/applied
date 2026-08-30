@@ -1744,6 +1744,14 @@ async def _chosen_application(
 LANDED_LINKED = "linked"
 LANDED_KEYED = "keyed"
 LANDED_BLIND = "blind"
+#: The resolver read the strongest signal there is — the message's own link —
+#: and DECLINED it, because it names a card the user dismissed by hand. Its own
+#: value, not ``LANDED_KEYED`` and not ``LANDED_BLIND``: keyed would be a
+#: refusal wearing the authority of a fact, which is the defect the comment
+#: above names, and blind means "read nothing" when in fact the strongest thing
+#: was read. Nothing consumes it today — both callers branch on ``app is None``
+#: first — and that is why it is cheap to state now, before a caller does.
+LANDED_REFUSED = "refused"
 
 
 async def _resolve_application_for_email(
@@ -1778,15 +1786,22 @@ async def _resolve_application_for_email(
     message that already carries a link — and for the last of those the branch
     above has already answered.
 
-    NO LANDING EVER TOUCHES A ROW THE USER DISMISSED BY HAND (#597). This is the
-    single choke point four surfaces share — the review queue's answer, the
-    inbox's reclassify, the board picker (via :func:`_chosen_application`) and
-    the orphan catch-up — so the rule is enforced here once instead of four
-    times. Both halves are excluded: the message's OWN link is skipped when it
-    names such a row, and those rows are kept out of the cascade's candidate
-    set. The caller then mints a fresh card, which is the cheap direction to be
-    wrong in — a spurious card is one dismiss click, whereas un-dismissing a
-    card a person deliberately removed is the product arguing with them.
+    NO LANDING EVER TOUCHES A ROW THE USER DISMISSED BY HAND (#597). Three of
+    the four surfaces are covered here — the review queue's answer, the inbox's
+    reclassify and the orphan catch-up — because all three arrive through this
+    function. The board picker does NOT: it comes through
+    :func:`_chosen_application`, which carries its own ``_user_dismissed``
+    filter. TWO SITES, BOTH LOAD-BEARING. This used to claim one choke point
+    "instead of four times", which reads as an invitation to delete that filter
+    as redundant; deleting it reopens the picker path.
+
+    All three of this function's own exits are covered, and the third is the one
+    that is easy to miss: the message's OWN link is REFUSED rather than skipped
+    (see the branch below — skipping hands the message to a live sibling), such
+    rows are kept out of the cascade's candidate set, and the caller then mints
+    a fresh card. Minting is the cheap direction to be wrong in — a spurious
+    card is one dismiss click, whereas un-dismissing a card a person
+    deliberately removed is the product arguing with them.
 
     A ``resync``-dismissed row is NOT excluded and must not be: it is still the
     right row to land on, and :func:`classify_review_item` un-dismisses it when
@@ -1797,8 +1812,45 @@ async def _resolve_application_for_email(
     rows = await _company_rows(session, user_id, token)
     if email.application_id is not None:
         linked = next((row for row in rows if row.id == email.application_id), None)
-        if linked is not None and not _user_dismissed(linked):
-            return linked, LANDED_LINKED
+        if linked is not None:
+            if not _user_dismissed(linked):
+                return linked, LANDED_LINKED
+            # REFUSED, NOT FALLEN THROUGH, and the difference is a merged pair
+            # of applications.
+            #
+            # Skipping the hand-dismissed link and letting the cascade run below
+            # looks like the same thing and is not. At an employer holding this
+            # dismissed row AND a live one, the candidate list is then exactly
+            # the live row, so `_pick_application` hands the message to it —
+            # rule 3 when the message names an id (the live row is
+            # identity-less, so it is the single `unidentified` adoption
+            # target), rule 4 when it names nothing (`_company_rows` sorts
+            # live-first, so `rows[0]` IS that row). Both routes were run:
+            # `email.application_id` moves off the dismissed card onto the live
+            # one, the stage advance walks the live card to the answered
+            # category with no auto-row gate, and — because `live` is 1, so
+            # `blind` is False — `_adopt_mail_identity` stamps THIS
+            # application's `req_id` and `role_token` onto the OTHER one.
+            # Rule 1 then routes all of this application's future mail there.
+            # Two applications wearing one identity, undone only by
+            # `POST /{id}/split`.
+            #
+            # A narrower patch to the `live` count fixes only the second route;
+            # the first never consults it. So the refusal goes here, above the
+            # cascade, where it closes both.
+            #
+            # The caller mints beside it, which is what the docstring below
+            # promises and what the one-row case already did. That is the cheap
+            # direction to be wrong in: a spurious card is one dismiss click,
+            # where a silent merge is not reversible from any screen.
+            #
+            # `/inbox`'s reclassify control is why this is reachable rather than
+            # theoretical — it sends no `application_id` for an already-filed
+            # message, on the documented grounds that "the message's own link
+            # beats every tie-break in `_resolve_application_for_email`". That
+            # contract is a cross-component one; this branch is the half of it
+            # that lives here.
+            return None, LANDED_REFUSED
     subject = email.subject or ""
     snippet = email.body_snippet or ""
     # SNIPPET-GRADE, deliberately, and that is the whole reason the landing is
@@ -3534,9 +3586,19 @@ async def restore_application(
 
     The other half of making removal recoverable: whether the row was dismissed
     by the user or taken off by a re-sync, this returns it verbatim — same id,
-    same status, same filed date, same linked emails — because nothing was ever
-    deleted. Idempotent on an already-live row. Scoped to the owner; ``None``
-    when the row is not theirs.
+    same status, same filed date — and its mail AS CURRENTLY LINKED, because
+    dismissal never deleted anything. Idempotent on an already-live row. Scoped
+    to the owner; ``None`` when the row is not theirs.
+
+    NOT "same linked emails", which is what this promised until #597 and was
+    already fragile before it. A dismissal deletes and moves nothing, but later
+    decisions do re-file individual messages onto other rows: a re-sync that
+    re-attributes mail, :func:`_settle_thread_siblings` when an answer lands
+    elsewhere, and now the mint that :func:`_resolve_application_for_email`
+    forces when a hand-dismissed card's own message is reclassified. Restore
+    does not claw those back, and should not — each of them was a decision made
+    after the dismissal. The true half of the old sentence is kept: nothing is
+    deleted, so restoring is always possible.
     """
 
     app = (
@@ -4037,9 +4099,15 @@ async def classify_review_item(
             # exclusion is proved at its own choke point instead, and the
             # never-restore case is asserted on the state of the row.
             #
-            # Non-filing answers restore nothing: ``other`` and ``none`` have no
-            # ``status_value`` and never enter this block at all, and
-            # ``none_of_these`` mints rather than landing.
+            # Non-filing answers restore nothing. The categories with no
+            # ``status_value`` are the three :data:`CATEGORY_TO_STATUS` does not
+            # map — ``other``, ``follow_up`` and ``needs_review`` — and none of
+            # them reaches this block at all. ``none_of_these`` is not a
+            # category but the picker's answer, and it mints rather than
+            # landing. (This said "``other`` and ``none``" until the two-card
+            # fix; ``none`` is not a member of :class:`EmailCategory`, and
+            # naming a category that does not exist is how a reader concludes
+            # the set is smaller than it is.)
             #
             # RECORDED HERE, APPLIED AFTER ``_settle_thread_siblings``, and the
             # order is not tidiness. That query filters on

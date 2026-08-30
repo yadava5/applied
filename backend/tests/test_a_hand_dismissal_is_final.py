@@ -80,8 +80,10 @@ constant for the other, same type, same column, and it compiles. Then:
   scoped to the SQL clause, so a green here says the exclusion is genuinely a
   second mechanism and not the same one seen twice. Its own mutations —
   deleting the ``not _user_dismissed(linked)`` guard, or the ``candidates``
-  filter, or ``_chosen_application``'s — red exactly the tests named in each
-  docstring below.
+  filter, or ``_chosen_application``'s, or turning the link branch's REFUSAL
+  back into a fall-through — red exactly the tests named in each docstring
+  below. The last of those is the one no single-row fixture could catch; see
+  "#618 — the deliberate exception" below.
 
 Every employer, sender, requisition and role here is INVENTED and every domain
 is RFC-reserved. Nothing in this file comes from a real mailbox (#593).
@@ -141,6 +143,18 @@ class Card(NamedTuple):
 # One employer per case. Sharing an employer between two cases would make each
 # assertion depend on which row ``_company_rows`` happened to return first,
 # which is luck rather than a property.
+#
+# AND EVERY CASE HERE GIVES ITS EMPLOYER EXACTLY ONE ROW, which is a second
+# property of this table and — unlike the first — a blind spot rather than a
+# design. It is what let the two-card hijack (#618) survive: with only ever one
+# row per employer, taking the hand-dismissed one out of the resolver's
+# candidate set always emptied that set, so "the caller then mints" held by
+# accident. Give the employer a LIVE sibling and the same skip hands the
+# message to it instead. The two tests under "#618 — the deliberate exception"
+# below are the exception, and they are deliberately standalone functions with
+# their own fixture rather than rows here: adding a second row per employer to
+# this table would reintroduce exactly the luck the rule above forbids for
+# every case that reads it.
 CARDS: tuple[Card, ...] = (
     # #595's acceptance card. A re-sync removed it; its mail is an open
     # question, and answering that question has to put it back.
@@ -651,6 +665,410 @@ async def test_the_picker_may_not_choose_a_hand_dismissed_card(
     assert rows[seeded[card.company]].dismissed_at == DISMISSED_AT
     assert rows[seeded[card.company]].dismissed_reason == "user"
     assert rows[body["application_id"]].dismissed_at is None
+
+
+# =============================================================================
+# #618 — the deliberate exception to "one employer per case"
+# =============================================================================
+#
+# THE TWO TESTS BELOW BREAK THE RULE STATED ABOVE :data:`CARDS`, and breaking it
+# is the entire point. Every case in that table gives its employer exactly ONE
+# row, so neither this file nor the 2002 tests around it could observe what a
+# hand-dismissed card does when the SAME EMPLOYER also holds a live one. The
+# exclusion was measured against a candidate set that was always empty after the
+# dismissed row came out of it, so "the caller then mints" was true by accident
+# rather than by construction.
+#
+# It is not: with a live sibling in the set, skipping the hand-dismissed link
+# and falling through to the cascade hands the message to that sibling, and the
+# landing reads as a keyed one — so ``_adopt_mail_identity`` stamps the
+# DISMISSED application's ``req_id`` and ``role_token`` onto the LIVE one.
+# Measured on both routes before the fix, by execution: the message moved off
+# the dismissed card, the live card walked to ``rejected`` and to ``gmail_user``
+# and ended up wearing an identity belonging to a different application. Rule 1 routes that application's future
+# mail there afterwards, and only ``POST /{id}/split`` undoes it.
+#
+# TWO TESTS BECAUSE THERE ARE TWO ROUTES THROUGH ``_pick_application``, and they
+# are different rules reached on different evidence:
+#
+#   * PRIMARY — the message NAMES a requisition and a role. Rules 1 and 2 miss
+#     (the live row is identity-less), and RULE 3 adopts it as the employer's
+#     single ``unidentified`` row. ``blind`` is False on its FIRST conjunct
+#     (``req_id is None``), so the live-row count is never consulted.
+#   * BLIND — subject and snippet name nothing, so RULE 4 returns
+#     ``rows[0]``, which is the live row because ``_company_rows`` sorts
+#     live-first. Here ``live > 1`` IS what decides ``blind``, and with one
+#     live row it is False — so the BODY-GRADE identity on the stored
+#     ``identity_*`` columns is stamped even though the cascade read nothing.
+#
+# Both are needed. A patch that only narrowed the ``live`` count would leave the
+# primary route open, and a single test on the primary route would green for it.
+#
+# The fixture lives beside them rather than up with :func:`seeded` on purpose:
+# it is the one seed in this file that is not a :data:`CARDS` row, and putting
+# it next to the rule it breaks is what stops it being read as a second general
+# fixture that the table-driven tests may quietly start using.
+
+
+class TwoCardCase(NamedTuple):
+    """One employer holding a hand-dismissed card AND a live, anonymous one.
+
+    ``identity_role``/``identity_req_id`` are the BODY-GRADE columns — what a
+    fetched body yielded, as opposed to what the ~200-character snippet can be
+    re-read for. The blind case sets them and leaves the subject and snippet
+    saying nothing, which is the real production shape (24 of the 26 corpus
+    cards are rejections, whose snippet ends mid-preamble) and the only way to
+    reach rule 4 while still having an identity available to stamp.
+    """
+
+    company: str
+    message_id: str
+    role: str
+    req_id: str
+    subject: str
+    snippet: str
+    identity_role: str | None
+    identity_req_id: str | None
+
+
+#: The message names the job outright — rule 3.
+PRIMARY_CASE = TwoCardCase(
+    company="Ivenmoor",
+    message_id="m-ivenmoor-two-cards",
+    role="Platform Engineer",
+    req_id="R-77104",
+    subject="Your application for Platform Engineer (Job ID: R-77104) at Ivenmoor",
+    snippet="We have completed our review of your application.",
+    identity_role=None,
+    identity_req_id=None,
+)
+#: The message names nothing readable; the identity is on the stored columns —
+#: rule 4, and the route where the live-row count is load-bearing.
+BLIND_CASE = TwoCardCase(
+    company="Jarrowfen",
+    message_id="m-jarrowfen-two-cards",
+    role="Data Platform Engineer",
+    req_id="R-31882",
+    subject="Update on your Jarrowfen application",
+    snippet="Thank you for taking the time to speak with us.",
+    identity_role="Data Platform Engineer",
+    identity_req_id="R-31882",
+)
+TWO_CARD_CASES = (PRIMARY_CASE, BLIND_CASE)
+
+#: What the LIVE row is seeded as, in one place, so the "untouched" assertions
+#: and the seed cannot drift apart. ``""`` is ``applications._NO_ROLE`` — an
+#: anonymous auto row, which is what an employer's unattributed confirmation
+#: leaves behind and the only shape rule 3 will adopt.
+LIVE_SIBLING_POSITION = ""
+#: ``SOURCE_GMAIL_AUTO``. Spelled literally for the reason :func:`seeded` gives:
+#: the plausible-looking "gmail_auto" reads as user-owned to ``_is_auto_row``,
+#: which would take the row out of rule 3's ``unidentified`` set and make the
+#: primary test pass for the wrong reason.
+LIVE_SIBLING_SOURCE = "gmail"
+
+
+@pytest.fixture
+async def two_card_seeds(cloud_app) -> dict[str, dict[str, int]]:
+    """Both cases at once: per employer, one hand-dismissed row and one live one.
+
+    Two employers in one database rather than two fixtures, because the tests
+    below are about what happens WITHIN one employer's row set and a second,
+    differently-named employer proves the scoping is real. ``_company_rows``
+    matches on the exact lowered name plus a prefix scan of the first word, and
+    the two names share no leading character.
+    """
+
+    from jobtracker.database import get_session
+
+    owner = uuid.UUID(OWNER)
+    seeds: dict[str, dict[str, int]] = {}
+
+    async with get_session() as session:
+        for index, case in enumerate(TWO_CARD_CASES):
+            dismissed = Application(
+                user_id=owner,
+                company=case.company,
+                position=case.role,
+                status=ApplicationStatus.APPLIED,
+                source="gmail",
+                req_id=case.req_id,
+                # THE SEED AND THE ASSERTION READ ONE ACCESSOR. Through the
+                # product's own normalizer rather than a hand ``.lower()``: the
+                # two agree for these titles, and that is the point — the seed
+                # has to be a row the sync could actually have written, or the
+                # assertions below are about a shape production never makes.
+                role_token=_role_token(case.role),
+                dismissed_at=DISMISSED_AT,
+                dismissed_reason="user",
+            )
+            session.add(dismissed)
+            await session.flush()
+
+            live = Application(
+                user_id=owner,
+                company=case.company,
+                position=LIVE_SIBLING_POSITION,
+                status=ApplicationStatus.APPLIED,
+                source=LIVE_SIBLING_SOURCE,
+                req_id=None,
+                role_token=None,
+                dismissed_at=None,
+                dismissed_reason=None,
+            )
+            session.add(live)
+            await session.flush()
+
+            seeds[case.company] = {"dismissed": dismissed.id, "live": live.id}
+
+            session.add(
+                Email(
+                    user_id=owner,
+                    # LINKED to the dismissed card, which is what makes this the
+                    # resolver's link branch rather than the cascade's.
+                    application_id=dismissed.id,
+                    source_account=EmailSource.GMAIL,
+                    message_id=case.message_id,
+                    thread_id=f"t-{case.company.lower()}",
+                    subject=case.subject,
+                    sender_name="Careers",
+                    sender_email=_sender_for(case.company),
+                    received_at=RECEIVED_AT - timedelta(minutes=index),
+                    body_snippet=case.snippet,
+                    identity_role=case.identity_role,
+                    identity_req_id=case.identity_req_id,
+                    classified_as=EmailCategory.NEEDS_REVIEW,
+                    classification_confidence=0.78,
+                    is_reviewed=False,
+                    user_corrected=False,
+                )
+            )
+
+        await session.commit()
+
+    return seeds
+
+
+def _role_token(role: str) -> str:
+    """The comparison key the product derives from a title. One spelling."""
+
+    from jobtracker.cloud import pipeline
+
+    return pipeline.normalize_role_token(role)
+
+
+async def _message_row(message_id: str) -> Email:
+    """One stored message, read at the session — the board never shows its link."""
+
+    from jobtracker.database import get_session
+
+    async with get_session() as session:
+        return (
+            await session.exec(
+                select(Email).where(
+                    Email.user_id == uuid.UUID(OWNER), Email.message_id == message_id
+                )
+            )
+        ).first()
+
+
+async def _assert_two_card_post_state(
+    case: TwoCardCase, ids: dict[str, int], body: dict
+) -> None:
+    """The full post-state both routes must produce. Shared so they cannot drift.
+
+    Every claim is stated as an ABSOLUTE value rather than as a difference from
+    the other row: the live sibling's identity columns are asserted ``is None``,
+    not "not the dismissed row's", because an assertion that passes for any
+    value is not a control — it would green on a row that had adopted a THIRD
+    application's key.
+    """
+
+    rows = await _rows_by_id()
+
+    # ORDERED SHARPEST FIRST, and the order is not cosmetic. pytest stops at the
+    # first failing assert, so whichever claim is stated first is the one a
+    # reader of the red actually sees — and this repo has already shipped a case
+    # where an early guard fired and hid every later one. The landing itself is
+    # the defect's own signature, so it goes first; the row COUNT, which is a
+    # consequence of it, goes after the state assertions rather than before.
+    minted_id = body["application_id"]
+    assert minted_id not in (ids["dismissed"], ids["live"]), (
+        "the answer landed on a row that ALREADY EXISTED — on the hand-dismissed "
+        f"card if it is {ids['dismissed']}, on its LIVE SIBLING if it is "
+        f"{ids['live']}; a fresh row was supposed to be minted beside them"
+    )
+    minted = rows[minted_id]
+    assert minted.company == case.company
+    assert minted.dismissed_at is None
+    assert minted.status.value == "rejected"
+
+    # THE LIVE SIBLING IS UNTOUCHED — every column the hijack moved.
+    live = rows[ids["live"]]
+    assert live.req_id is None, (
+        "the live sibling adopted a requisition id it was never seeded with — "
+        "two applications at one employer now answer to one key"
+    )
+    assert live.role_token is None, (
+        "the live sibling adopted a role token it was never seeded with"
+    )
+    assert live.position == LIVE_SIBLING_POSITION, (
+        "the live sibling was given another application's job title"
+    )
+    assert live.status.value == "applied", (
+        "the live sibling's stage was advanced by an answer about a message "
+        "that was never about it"
+    )
+    assert live.source == LIVE_SIBLING_SOURCE, (
+        "the live sibling was flipped to user-owned, which freezes it against "
+        "the sync's own advance gate"
+    )
+    assert live.dismissed_at is None
+
+    # THE HAND DISMISSAL SURVIVED, and so did the card's own identity.
+    dismissed = rows[ids["dismissed"]]
+    assert dismissed.dismissed_at == DISMISSED_AT
+    assert dismissed.dismissed_reason == "user"
+    assert dismissed.req_id == case.req_id
+    assert dismissed.role_token == _role_token(case.role)
+    assert dismissed.position == case.role
+    assert dismissed.status.value == "applied", (
+        "the answer walked the dismissed card's stage even though it did not "
+        "land there"
+    )
+
+    # AND THE MESSAGE ITSELF POINTS AT THE MINT, not merely what the response
+    # claimed about it — the two are written in the same transaction and a
+    # response that names a row the stored message does not is its own defect.
+    email = await _message_row(case.message_id)
+    assert email.application_id == minted_id, (
+        "the response named the minted row but the stored message points "
+        f"somewhere else ({email.application_id})"
+    )
+
+    # EXACTLY ONE ROW WAS ADDED. Stated last because it is the consequence of
+    # everything above; stated at all because "minted beside it" is a claim
+    # about the SIZE of the board too, and a mint that also duplicated the live
+    # row would satisfy every assertion above this one.
+    at_employer = [row for row in rows.values() if row.company == case.company]
+    assert len(at_employer) == 3, (
+        "expected the two seeded rows plus exactly one mint, got "
+        f"{[(r.id, r.dismissed_reason) for r in at_employer]}"
+    )
+
+    # NOTHING WAS RESTORED. The row that was landed on is live, so
+    # ``restore_target`` is never set — this is the correct value, not a
+    # symptom, and it is asserted so a future restore-on-mint cannot slip in.
+    assert body["restored"] is False
+    assert body["restored_company"] is None
+
+
+async def test_a_hand_dismissed_cards_mail_does_not_hijack_its_live_sibling(
+    client, headers, two_card_seeds
+):
+    """RULE 3. The message names the job, and the live sibling must not get it.
+
+    Before the refusal, ``_resolve_application_for_email`` skipped the
+    hand-dismissed own-link and fell through to the cascade with the live row as
+    the only candidate. ``_pick_application`` rules 1 and 2 miss it (it carries
+    neither key), so rule 3 adopts it as the employer's single identity-less
+    auto row — and ``blind`` is False because the message NAMES a requisition,
+    so ``_adopt_mail_identity`` stamps ``R-77104`` and ``platform engineer``
+    onto it. Measured post-state on this exact seed: ``application_id`` 1 → 2,
+    the live row at ``rejected`` / ``gmail_user`` / ``R-77104``.
+
+    Reached the way ``/inbox``'s reclassify control reaches it — no
+    ``application_id`` in the body, which is what that control sends for a
+    message already filed against a row, on the stated grounds that the link
+    outranks every tie-break.
+
+    MUTATION: restore ``if linked is not None and not _user_dismissed(linked):
+    return linked, LANDED_LINKED`` in place of the refusal — i.e. skip instead
+    of refuse — and this fails on ``minted_id not in (dismissed, live)``.
+    """
+
+    from jobtracker.cloud import pipeline
+
+    case = PRIMARY_CASE
+    ids = two_card_seeds[case.company]
+
+    # THE ROUTE CONTROL. If extraction stopped naming the requisition this test
+    # would silently become the blind one and prove the other route twice.
+    assert pipeline.extract_req_id(case.subject, case.snippet) == case.req_id
+    assert pipeline.role_from_message(case.subject, case.snippet) == case.role
+
+    # THE FIXTURE CONTROL. Two rows at this employer before the answer, and the
+    # message pointing at the dismissed one — without both, "it did not land on
+    # the live sibling" is a claim about a shape that was never built.
+    before = await _rows_by_id()
+    assert len([r for r in before.values() if r.company == case.company]) == 2
+    assert (await _message_row(case.message_id)).application_id == ids["dismissed"]
+
+    answered = await client.post(
+        f"/applications/review/{case.message_id}/classify",
+        json={"category": "rejection"},
+        headers=headers,
+    )
+    assert answered.status_code == 200, answered.text
+    body = answered.json()
+    assert body["needs_employer"] is False, answered.text
+
+    await _assert_two_card_post_state(case, ids, body)
+
+
+async def test_a_blind_answer_at_a_hand_dismissed_card_does_not_hijack_either(
+    client, headers, two_card_seeds
+):
+    """RULE 4, and the route a narrower fix would have missed.
+
+    Same two-card shape, but the subject and snippet name nothing — so the
+    cascade's own ``req_id`` and ``role_token`` are both None and
+    ``_pick_application`` falls to rule 4, ``rows[0]``, which is the live row
+    because ``_company_rows`` sorts live-first. ``blind`` is then decided by
+    ``live > 1``, and with exactly one live row it is False: the landing reads
+    KEYED and the BODY-GRADE identity sitting on ``identity_role`` /
+    ``identity_req_id`` is stamped onto a row the resolver read nothing about.
+
+    THIS IS WHY THE REFUSAL SITS ABOVE THE CASCADE rather than in the ``live``
+    count. Tightening ``blind`` to treat one live row as ambiguous would close
+    this route and leave the rule-3 one open, because that one never consults
+    the count — its ``blind`` is already False on ``req_id is None``.
+
+    MUTATION: the same one as the test above — skip the hand-dismissed link
+    instead of refusing it — and this fails on
+    ``minted_id not in (dismissed, live)``.
+    """
+
+    from jobtracker.cloud import pipeline
+
+    case = BLIND_CASE
+    ids = two_card_seeds[case.company]
+
+    # THE ROUTE CONTROL, and it is directional against the test above: this
+    # message must read as anonymous to the SNIPPET-grade cascade while still
+    # carrying an identity on its stored columns. If extraction ever starts
+    # reading this subject, rule 3 fires instead and this stops being the
+    # rule-4 test without saying so.
+    assert pipeline.extract_req_id(case.subject, case.snippet) is None
+    assert pipeline.role_from_message(case.subject, case.snippet) is None
+    seeded_message = await _message_row(case.message_id)
+    assert seeded_message.identity_req_id == case.req_id
+    assert seeded_message.identity_role == case.role
+
+    before = await _rows_by_id()
+    assert len([r for r in before.values() if r.company == case.company]) == 2
+    assert seeded_message.application_id == ids["dismissed"]
+
+    answered = await client.post(
+        f"/applications/review/{case.message_id}/classify",
+        json={"category": "rejection"},
+        headers=headers,
+    )
+    assert answered.status_code == 200, answered.text
+    body = answered.json()
+    assert body["needs_employer"] is False, answered.text
+
+    await _assert_two_card_post_state(case, ids, body)
 
 
 # =============================================================================
