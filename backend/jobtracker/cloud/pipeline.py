@@ -2701,6 +2701,164 @@ def _role_from_lead_segment(subject: str) -> str | None:
     return role
 
 
+#: A TRAILING PARENTHETICAL ON THE LAST SEGMENT IS THE POSTING'S LOCATION.
+#:
+#: "<Role> - <Employer> (Remote)" — the parenthetical belongs to the employer
+#: half of the segment, not to the title, so it is removed BEFORE the segment is
+#: cut. Only one, only at the very end, and it may not nest, so a title that
+#: carries its own parenthetical cohort ("Software Engineer I (New Grad) -
+#: <Employer>") keeps it: that paren is not at the end of the segment.
+_TRAILING_SEGMENT_PAREN = re.compile(r"\s*\([^()]{0,80}\)\s*$")
+
+#: The spaced dash that separates the title from the employer echo. Every
+#: occurrence is found and the LAST one is used — see
+#: :func:`_role_from_trailing_segment` for why the last, and #553 for the two
+#: real titles the first one truncated.
+_SPACED_DASH = re.compile(r"\s[-–—]\s")
+
+#: A word made of letters and internal hyphens only. Used to decide whether the
+#: candidate's final token is a BARE word or a parenthesised one: "(Remote)" is
+#: part of the posted title and :data:`_ROLE_PAREN` already accepts it, while a
+#: bare "Remote" sitting outside any bracket is the posting's work arrangement
+#: that the ATS appended after the title.
+_BARE_WORD = re.compile(r"[A-Za-z]+(?:-[A-Za-z]+)*")
+
+#: How a posting says WHERE the job is worked, not WHAT the job is. An ATS that
+#: appends this to the title leaves it as the last word of the segment, where it
+#: is indistinguishable by shape from a title's head modifier — "New Grad
+#: Remote" is as Title-Case as "New Grad" is.
+#:
+#: Tested on the LAST word only and only when that word is bare, by the same
+#: argument :data:`_ROLE_HEAD_NOUNS` is tested on the last word of an employer:
+#: these words occur legitimately INSIDE a title ("Remote Infrastructure
+#: Engineer", "Hybrid Cloud Architect") and testing every word would refuse
+#: both. Normalised, so "On-Site" and "on site" are one entry.
+_WORK_ARRANGEMENT_WORDS: frozenset[str] = frozenset(
+    {"remote", "hybrid", "onsite", "on site", "in office", "virtual", "telecommute"}
+)
+
+
+def _role_from_trailing_segment(subject: str) -> str | None:
+    """The job title named in an ATS subject's TRAILING segment, or None.
+
+    ``"<Employer> | <Boilerplate> | <Role> - <Employer> (<Location>)"`` — the
+    shape where the employer BRACKETS the subject, opening the first segment and
+    closing the last, and the title sits between the two. Reported as #626, where
+    a seven-word two-comma title filed as a blank role because every other reader
+    in this module declines it:
+
+    * ``_ROLE_PATTERNS[2]`` and ``[3]`` are ``^``-anchored and two segments sit
+      in front of the title;
+    * their capture class excludes the comma this title has two of, and their
+      ``{0,4}`` caps a title at five words;
+    * the body of this ATS template says "this role" throughout and never names
+      the title, so :data:`_ROLE_BODY_PATTERNS` cannot rescue it either.
+
+    The subject is the only place the title exists, and it went to the review
+    queue with ``identity_role = ''``.
+
+    THE EMPLOYER ECHO IS WHAT LICENSES THE DASH, and that is the whole safety of
+    this reader. #553 measured what happens when a spaced dash is assumed to
+    separate a role from an employer: it truncated "Software Engineer, Agentic AI
+    Harness & Quality" and "Software Development Engineer I - AI/ML Network
+    Infrastructure" — clean enough to look right on a card and wrong enough to
+    split the identity, which mints a rival card for a job the board already
+    tracks. So the dash terminates the title here ONLY when what follows it is
+    the company the subject's LEADING segment already named. The segment is cut
+    at the LAST spaced dash for the same reason: an interior dash stays inside
+    the title, so "<Role> - <Subteam> - <Employer>" yields "<Role> - <Subteam>".
+
+    The lead employer is re-derived through :func:`_lead_segment_candidates`,
+    which is the reading the employer half of this subject is filed under, so
+    the two halves cannot disagree about who sent the mail. An echo that names a
+    DIFFERENT company, or no echo at all, refuses — the message goes to the
+    review queue, where a person decides. Fails closed, the direction this
+    module takes everywhere.
+
+    The candidate then passes the three guards :func:`_role_from_lead_segment`
+    uses (:func:`_clean_role`, :data:`_TITLE_SHAPED`, a title head noun) plus
+    two the trailing position needs and the others do not:
+
+    1. a LIFECYCLE WORD as the candidate's last word. "Engineering Manager
+       Interview" is title-shaped and its head noun is real, so nothing else
+       here refuses it; what the mail is about is not what the job is, which is
+       the same cut :func:`_employer_from_subject_segment` makes on its own half;
+    2. a bare WORK ARRANGEMENT as the last word (:data:`_WORK_ARRANGEMENT_WORDS`).
+       The parenthetical strip above does not reach one written outside the
+       brackets.
+
+    ...and an explicit refusal when the candidate normalises to the employer
+    itself. The head-noun test catches most of those by accident; it does not
+    catch a company whose own name contains a title head noun, and relying on an
+    accident is how a rule stops refusing when an unrelated set is widened.
+
+    RUNS LAST. It recognises one narrow shape, so it must not pre-empt the
+    general patterns or the leading-segment reader — this is purely additive,
+    and nothing that resolved before resolves differently now.
+    """
+
+    text = subject or ""
+    # (1) The shape is pipe-segmented. Without this the "last segment" is the
+    # whole subject, and "<Employer> - <Role> - <Employer>" reads the employer
+    # into its own title.
+    if "|" not in text:
+        return None
+
+    # (2) and (3) The last segment, less the location parenthetical.
+    segment = _TRAILING_SEGMENT_PAREN.sub("", text.rsplit("|", 1)[-1].strip()).strip()
+
+    # (4) and (5) Cut at the LAST spaced dash: title on the left, echo right.
+    dashes = list(_SPACED_DASH.finditer(segment))
+    if not dashes:
+        return None
+    cut = dashes[-1]
+    candidate = segment[: cut.start()].strip()
+    echo = segment[cut.end() :].strip()
+
+    # (6) The licence.
+    lead_tokens = {
+        token
+        for token in (_normalize_token(c) for c in _lead_segment_candidates(text))
+        if token
+    }
+    echo_token = _normalize_token(echo)
+    if not echo_token or echo_token not in lead_tokens:
+        return None
+
+    # (7) The guards the leading-segment reader uses.
+    role = _clean_role(candidate)
+    if role is None:
+        return None
+    if not _TITLE_SHAPED.match(role):
+        return None
+    if not any(_normalize_token(w) in _ROLE_HEAD_NOUNS for w in role.split()):
+        return None
+
+    # (8) ...and the three this position needs on its own account.
+    if _normalize_token(role) in lead_tokens:
+        return None
+    last = role.split()[-1]
+    if _LIFECYCLE_WORD.match(last):
+        return None
+    # BOTH PLACEMENTS OR NEITHER. "<Role> (Remote) - <Employer>" and "<Role> -
+    # <Employer> (Remote)" are one posting written two ways, and the strip above
+    # only reaches the second. Keeping the first hands back "Software Engineer
+    # (Remote)" where the second gives "Software Engineer" — and
+    # :func:`normalize_role_token` deletes the brackets but keeps the WORD, so
+    # those are two role_tokens for one job. That is the split this module
+    # exists to prevent, arrived at from the other direction. Refusing sends the
+    # odd spelling to the review queue instead.
+    #
+    # Only a work-arrangement word, and only as the last token: :data:`_ROLE_PAREN`
+    # exists because "Software Engineer I, Entry-Level (Graduation Date: Fall
+    # 2026)" is a real posted title, and refusing every parenthetical to catch a
+    # location would take that with it.
+    bare = last.strip("()")
+    if _BARE_WORD.fullmatch(bare) and _normalize_token(bare) in _WORK_ARRANGEMENT_WORDS:
+        return None
+    return role
+
+
 def _employer_from_subject_segment(
     subject: str, relay_brand: str
 ) -> tuple[str, str] | None:
@@ -3088,11 +3246,15 @@ def _role_from_subject(subject: str) -> str | None:
         if len(role) < 3:
             continue
         return role
-    # Last, and only when every pattern above declined: the leading-segment
-    # reader is a narrower rule about one known shape, so it must not pre-empt
-    # the general ones. Purely additive — nothing that resolved before resolves
-    # differently now.
-    return _role_from_lead_segment(text)
+    # Last, and only when every pattern above declined: the two segment readers
+    # are narrower rules about known shapes, so they must not pre-empt the
+    # general ones. Purely additive — nothing that resolved before resolves
+    # differently now, and the leading-segment reader keeps its place ahead of
+    # the trailing one so today's answers are reproduced exactly.
+    from_lead = _role_from_lead_segment(text)
+    if from_lead is not None:
+        return from_lead
+    return _role_from_trailing_segment(text)
 
 
 def is_terminal_status(value: str) -> bool:
