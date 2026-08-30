@@ -17,17 +17,36 @@ on:
       # indistinguishable from a job that did not exist. Edit BOTH blocks.
       - "scripts/check_expand_only.py"
       - "scripts/schema_fingerprint.sql"
-      # The README-facts checker, by the same argument as the two lines above
-      # and with them as the precedent. The asymmetry it fixes: the checker's
-      # own test, `backend/tests/test_readme_facts_writer.py`, is under
-      # `backend/**`, so editing the TEST runs this workflow while editing the
-      # CHECKER did not — which is the wrong way round. `readme-facts.yml`
-      # gates `--check` and is unfiltered, so the numbers themselves were never
-      # unguarded; what went unrun are the 24 tests holding `--write` to not
-      # rewriting a digit that belongs to a NEIGHBOURING fact on the same
-      # README line (#468), and holding `--check` to refusing a half-merged
-      # file. Found on #621, which changed only this file and ran no backend
-      # job at all. Edit BOTH blocks.
+      # The other two gate scripts, by the same argument as the two lines
+      # above and with them as the precedent. Since #620 both of these gates
+      # have their own UNFILTERED workflow, so a PR changing one of these
+      # scripts runs the gate itself — but never ran the tests that prove the
+      # gate CAN FAIL. Those tests live under `backend/**`, so editing the TEST
+      # ran this workflow while editing the GATE did not, which is the wrong
+      # way round: the whole #615 hardening could be deleted and every check
+      # would stay green.
+      #
+      # What goes unrun without these two lines is 59 tests —
+      # `test_test_data_gate.py` (35) and `test_readme_facts_writer.py` (24).
+      # They hold `--write` to not rewriting a digit belonging to a
+      # NEIGHBOURING fact on the same README line (#468), hold `--check` to
+      # refusing a half-merged file rather than calling it agreement, and hold
+      # the address scanner to RAISING on a file it cannot read instead of
+      # counting it clean.
+      #
+      # `scripts/check_test_data.py` was in this list until #620, and removing
+      # it there was correct: it was listed to make the GATE fire on its own
+      # source, and the gate now has an unfiltered workflow that does that
+      # better. Making the gate's TESTS run is a different job. The removal did
+      # not create this gap — it exposed one that had never been filled.
+      #
+      # The cost is real and is the reason to state it rather than smooth it
+      # over: a PR touching only one of these two scripts now runs the
+      # ~25-minute `test` job and its two Postgres services. The alternative is
+      # a REQUIRED gate whose falsifiability tests never execute, which is this
+      # repo's named recurring defect. Found on #621/#625, which changed only
+      # `readme_facts.py` and ran no backend job at all. Edit BOTH blocks.
+      - "scripts/check_test_data.py"
       - "scripts/readme_facts.py"
       # The ROOT requirements.txt — the manifest Vercel installs for the
       # deployed function, and the one `expand-only` pip-installs below. It is
@@ -54,6 +73,7 @@ on:
       - "backend/**"
       - "scripts/check_expand_only.py"
       - "scripts/schema_fingerprint.sql"
+      - "scripts/check_test_data.py"
       - "scripts/readme_facts.py"
       # The other half of the pair — see the note in the pull_request block.
       - "requirements.txt"
