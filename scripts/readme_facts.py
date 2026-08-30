@@ -134,6 +134,76 @@ README = REPO / "README.md"
 ARTIFACT = REPO / "docs" / "readme-facts.json"
 
 
+# ── what counts as a file in this repository (#621) ──────────────────────
+#
+# ONE definition, shared with `scripts/check_test_data.py`. Both checkers
+# enumerate the same tree and they used to answer to two different rules:
+# that file reads `git ls-files` and reasons about the choice in
+# `tracked_files`' docstring, while this one walked the filesystem. A walk
+# cannot tell repository material from residue, and the residue is what a
+# working machine is full of — `__pycache__/`, `.next/`, `coverage/`,
+# `node_modules/`, a scratch file nobody staged.
+#
+# The concrete failure that closed #621: `backend/jobtracker/api/` and
+# `services/` survived the deletion of the desktop surface (#298) as
+# directories holding nothing but bytecode for the modules that were
+# removed. Untracked and gitignored, so `git status` was clean and nothing
+# pointed at them — but `iterdir()` saw two directories and the Space-parity
+# invariant reported the vendored Space as stale on a clean checkout of
+# `main`. The direction of that defect is the bad one: CI never sees it,
+# because a fresh checkout has no stale bytecode, so it reds only on the
+# machine where somebody is trying to work. A gate that reds on bytecode
+# teaches its reader to disbelieve it.
+#
+# The index is also the right source for a second reason: it is what a
+# reviewer sees. A number published in the README describes what is IN the
+# repository, and a file that is not in the index is not in the repository,
+# however present it is on this disk.
+
+
+def tracked(*pathspecs: str) -> list[str]:
+    """Repo-relative paths git holds in its INDEX under `pathspecs`, sorted.
+
+    The INDEX, not HEAD: a staged-but-uncommitted file is repository
+    material and must be counted, so a contributor who adds a module and
+    runs this before committing gets the answer their commit will produce.
+
+    Deliberately not cached. `REPO` is a module global that the writer test
+    repoints at a mirrored tree between calls, so a cache keyed on the
+    pathspecs alone would answer for the wrong repository.
+
+    `check=True`: if git cannot answer, this raises rather than returning an
+    empty list. An enumeration that silently yields nothing is the
+    check-that-cannot-fail shape this file is full of warnings about.
+    """
+
+    out = subprocess.run(
+        ["git", "ls-files", "-z", "--", *pathspecs],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    return sorted(p for p in out.split("\0") if p)
+
+
+def tracked_in_dir(rel: str) -> list[str]:
+    """Tracked file names DIRECTLY inside `rel` — one level, like `iterdir()`.
+
+    The depth filter is the load-bearing half. A git pathspec is recursive
+    and its `*` crosses `/`, so `git ls-files -- backend/tests` answers for
+    the whole subtree while the `glob("test_*.py")` it replaces answered for
+    one level. Dropping the filter would quietly move published counts.
+    """
+
+    prefix = rel.rstrip("/") + "/"
+    return [
+        p[len(prefix) :]
+        for p in tracked(rel)
+        if p.startswith(prefix) and "/" not in p[len(prefix) :]
+    ]
+
+
 # ── helpers ──────────────────────────────────────────────────────────────
 
 
@@ -540,13 +610,30 @@ BACKEND_PKG = "backend/jobtracker"
 
 
 def _package_modules(rel: str) -> set[str]:
-    """Top-level module/package names under a package directory.
+    """Top-level module/package names under a package directory, FROM THE INDEX.
 
-    `__pycache__` and `*.pyc` are excluded because `package_space.py` excludes
-    them; anything else present on one side and not the other is real drift.
+    Sourced from `tracked()` rather than a filesystem walk — see the block
+    comment above it for why, and for the #621 failure that forced the change.
+    This is the one enumeration in this file where git's recursion is not only
+    harmless but required: a package is a directory of directories, and the
+    top-level NAME is the first path segment under the prefix, which only a
+    recursive listing can supply.
+
+    `__pycache__` and `*.pyc` stay excluded, and the exclusion is semantic
+    rather than defensive. `package_space.py` copies with
+    `ignore=("__pycache__", "*.pyc")`, so a force-added `__pycache__` under
+    `backend/` would appear on the backend side and legitimately NOT on the
+    Space side — a false red against a correctly-packaged Space. The index
+    cannot normally hold either (`.gitignore:2` ignores `__pycache__/`); the
+    filter is here so the two rules cannot drift apart, not because it is
+    expected to fire.
+
     Raises rather than returning an empty set when the directory is missing —
     a reader that quietly yields nothing when its subject moved is the
-    check-that-cannot-fail shape this file is full of warnings about.
+    check-that-cannot-fail shape this file is full of warnings about. The guard
+    stays on the FILESYSTEM deliberately: `git ls-files` on a deleted package
+    returns an empty list with a zero exit code, so the index alone cannot tell
+    "the package moved" from "the package is empty".
     """
 
     root = REPO / rel
@@ -555,11 +642,13 @@ def _package_modules(rel: str) -> set[str]:
             f"  ✗ {rel}: not a directory. The package moved or was deleted — "
             f"update VENDORED_SPACE_PKG / BACKEND_PKG in scripts/readme_facts.py."
         )
-    return {
-        entry.name
-        for entry in root.iterdir()
-        if entry.name != "__pycache__" and entry.suffix != ".pyc"
+    prefix = rel.rstrip("/") + "/"
+    names = {
+        p[len(prefix) :].split("/", 1)[0]
+        for p in tracked(rel)
+        if p.startswith(prefix)
     }
+    return {n for n in names if n != "__pycache__" and not n.endswith(".pyc")}
 
 
 def ts_gate_definitions() -> dict[str, float]:
@@ -571,17 +660,23 @@ def ts_gate_definitions() -> dict[str, float]:
     the backend test's count assertion exists to prevent, and the one that let
     `booklet/src/visuals/DecisionTrace.tsx` sit unnoticed while #229 was being
     written about `apps/web`.
+
+    From the index (#621). This used to `rglob` the roots and skip a
+    hand-written `{node_modules, .next, dist}`, which is the shape that misses
+    the NEXT build directory rather than the three someone thought of:
+    `coverage/`, `test-results/` and `playwright-report/` are all gitignored
+    under `apps/web` and none of them was on that list. Asking git removes the
+    list and the need to maintain it. It also decides one case the list got
+    backwards — `booklet/src/.next/` is not gitignored, so a file tracked there
+    IS repository material and is now counted; there are none today.
     """
 
     found: dict[str, float] = {}
     for root_rel in TS_GATE_ROOTS:
-        root = REPO / root_rel
-        for path in sorted(root.rglob("*")):
-            if path.suffix not in (".ts", ".tsx") or not path.is_file():
+        for rel in tracked(root_rel):
+            if not rel.endswith((".ts", ".tsx")):
                 continue
-            if {"node_modules", ".next", "dist"} & set(path.relative_to(root).parts):
-                continue
-            rel = path.relative_to(REPO).as_posix()
+            path = REPO / rel
             for m in TS_GATE_DEF.finditer(path.read_text(encoding="utf-8")):
                 if "GATE" in m.group(1):
                     found[f"{rel}::{m.group(1)}"] = float(m.group(2))
@@ -656,7 +751,19 @@ def tracker_metric(row: str, metric: str) -> float:
 
 
 def test_modules() -> list[Path]:
-    return sorted((REPO / "backend" / "tests").glob("test_*.py"))
+    """The tracked `test_*.py` modules directly under `backend/tests/` (#621).
+
+    From the index, so an unstaged scratch module on somebody's disk cannot
+    inflate the published module and test-function counts. `tracked_in_dir`
+    keeps this to one level, which is what the `glob` it replaces did.
+    """
+
+    root = "backend/tests"
+    return [
+        REPO / root / name
+        for name in tracked_in_dir(root)
+        if name.startswith("test_") and name.endswith(".py")
+    ]
 
 
 _FIXTURE_DECORATORS = {"fixture", "pytest.fixture", "pytest_asyncio.fixture"}
@@ -755,9 +862,10 @@ def workflow_pin(pattern: str, what: str) -> int:
     named the toolchain.
     """
     hits: set[str] = set()
-    for p in sorted((REPO / ".github/workflows").iterdir()):
-        if p.suffix in (".yml", ".yaml"):
-            hits.update(re.findall(pattern, p.read_text(encoding="utf-8")))
+    for name in tracked_in_dir(".github/workflows"):
+        if name.endswith((".yml", ".yaml")):
+            path = REPO / ".github/workflows" / name
+            hits.update(re.findall(pattern, path.read_text(encoding="utf-8")))
     if not hits:
         raise SystemExit(f"  ✗ .github/workflows: no {what} found")
     if len(hits) > 1:
@@ -1445,7 +1553,9 @@ FACTS: dict[str, dict] = {
     "e2eSpecs": {
         "kind": "static",
         "describe": "*.spec.ts files under apps/web/tests/e2e/",
-        "compute": lambda: len(list((REPO / "apps/web/tests/e2e").glob("*.spec.ts"))),
+        "compute": lambda: len(
+            [n for n in tracked_in_dir("apps/web/tests/e2e") if n.endswith(".spec.ts")]
+        ),
         "sites": [
             r"\((\d+) spec files under",
             # Anchored on the em dash, not on whichever spec happened to be
@@ -1462,7 +1572,7 @@ FACTS: dict[str, dict] = {
         "kind": "static",
         "describe": "workflow files in .github/workflows/",
         "compute": lambda: len(
-            [p for p in (REPO / ".github/workflows").iterdir() if p.suffix in (".yml", ".yaml")]
+            [n for n in tracked_in_dir(".github/workflows") if n.endswith((".yml", ".yaml"))]
         ),
         "sites": [r"GitHub Actions — (\d+) workflows", r"# (\d+) workflows"],
     },
@@ -1525,7 +1635,11 @@ FACTS: dict[str, dict] = {
         "kind": "static",
         "describe": "revision modules in backend/alembic/versions/",
         "compute": lambda: len(
-            [p for p in (REPO / "backend/alembic/versions").glob("*.py") if p.name != "__init__.py"]
+            [
+                n
+                for n in tracked_in_dir("backend/alembic/versions")
+                if n.endswith(".py") and n != "__init__.py"
+            ]
         ),
         "sites": [r"# (\d+) revisions incl\."],
     },
