@@ -156,10 +156,12 @@ Worth stating so nobody audits it a second time:
 
 ## The gate
 
-`scripts/check_test_data.py`, run by `backend-ci.yml` in its own job, named
-**`Test data baseline agrees with the tree`**. It needs no database, no torch
-and no network — it is stdlib Python and one `git ls-files`, and it answers in
-under a second.
+`scripts/check_test_data.py`, run by `test-data.yml` — its own workflow, whose
+only job is named **`Test data baseline agrees with the tree`**. It needs no
+database, no torch and no network — it is stdlib Python and one `git ls-files`,
+and it answers in about six seconds.
+
+It has moved twice, and both moves were forced by the same property.
 
 It was a *step* inside the `test` job until #615, which was two problems. `test`
 is the ~25-minute suite job, so the fast answer waited on the slow one; and
@@ -167,12 +169,35 @@ is the ~25-minute suite job, so the fast answer waited on the slow one; and
 `MERGEABLE`. Requiring `test` would have fixed the second by making the first
 worse. Hence a job of its own, which can be required on its own.
 
-> **Not yet required.** Making that job name a required status check is a
-> branch-protection change, which is the owner's to make and is deliberately not
-> made by the pull request that created the job. Until it is, this gate reds
-> loudly and blocks nothing. If you are reading this and
-> `required_status_checks.contexts` still does not name it, that is the open
-> half of #615.
+It was then a job inside `backend-ci.yml` until #617, and that home stopped
+being correct the moment the owner made the check **required**. `backend-ci.yml`
+is path-filtered to `backend/**` and a short list of siblings, so a pull request
+touching none of those paths — a documentation change, or one confined to
+`apps/web/components/**` — never produces this context at all. A required
+context that is never produced neither passes nor fails: it sits at *Expected —
+waiting for status*, and nobody but an admin can merge. That is not a strict
+gate, it is a wedge, and it is the same "check that cannot fire" defect the path
+filters in `backend-ci.yml` are commented against.
+
+Adding the two scan roots that live outside `backend/` to that workflow's
+filters (`apps/web/tests/**`, `ml/**`) was the correct patch while the check was
+advisory: it made the gate fire on the trees it reads. It could not fix the
+wedge, because the wedge is about the paths the gate does **not** read — the
+gate has to run on a pull request that changes nothing it scans, in order to say
+so. Only an unfiltered workflow does that. The cost argument the old filters
+carried also inverts here: `ml/**` was firing the entire ~25-minute backend
+suite, two Postgres services included, so that a six-second stdlib script could
+read a model blob's directory. Splitting it removes that too.
+
+> **Required, and matched by name.** `required_status_checks.contexts` names
+> **`Test data baseline agrees with the tree`** — the job's `name:`, not its
+> file or its job id. Moving the job between workflow files is therefore
+> invisible to branch protection, which is what made the #617 split safe; but
+> *renaming* the job silently un-requires the gate, because protection keeps
+> waiting for a context nothing produces and the check that replaced it is
+> advisory without anyone having decided that. The other two required contexts,
+> `README numbers agree with the code` and `Scan for secrets`, are unfiltered
+> for the same reason this one now is.
 
 ```
 python3 scripts/check_test_data.py                   # check (what CI runs)
