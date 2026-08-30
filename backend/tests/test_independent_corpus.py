@@ -336,6 +336,36 @@ RECORDED = {
     # 54 -> 0 (#451). The whole `update-from-another-domain` family leaves
     # "counted by the product but on no screen" and enters the queue.
     "dropped": 0,
+    # ── and the four numbers that make those two mean something (#624) ───────
+    #
+    # `lost` and `dropped` are LEFTOVERS: what is neither on a card nor in the
+    # queue. A leftover has no denominator, so a regression that stopped
+    # GRADING n messages would take both to zero and read as a perfect board —
+    # the shape that took `role_missing` from 213 to 0 while breaking the board
+    # (#536). The three populations below plus those two are asserted to close
+    # against `must_be_addressed`, which the test counts from `cases` and not
+    # from any counter the scorer increments.
+    "addressed_on_a_card": 13207,
+    "addressed_in_the_queue": 2673,
+    # THE ADDITIVE PERSIST'S OWN OUTCOME, and it is zero. `replay` calls
+    # `_persist_review_items_additive` since #624, so an arriving item can now
+    # be refused a row because the sync already settled its (thread,
+    # application). Measured at this seed: 2,873 refs offered, 2,873 persisted,
+    # 0 dropped. Not for want of running — the settled query returns 602 rows
+    # across 62 of the 240 day-batches — but no arriving item's
+    # `review_dedup_key` collides with one of theirs. The `is_reviewed` arm
+    # cannot fire at all during a replay: nothing on the sync path writes that
+    # flag, and 0 rows carry it when the replay ends.
+    #
+    # So this is a zero that cannot currently be non-zero, said plainly rather
+    # than left to read as coverage (#536). It is pinned because it is what
+    # catches the suppression the day a family produces a queued message
+    # sharing a thread AND an identity with mail already on a card — which is
+    # #614's half of the work, not this one's.
+    "suppressed_as_settled": 0,
+    # The population the five close against. Pinned as well as computed, so a
+    # corpus that quietly stopped requiring mail to be addressed is loud.
+    "must_be_addressed": 15880,
     # Noise that MINTED A CARD. Went 0 -> 2 on 2026-08-22, when the corpus first
     # contained ATS mail that is not about the user at all (a profile-completion
     # nudge scoring `assessment` at 0.90), and back to 0 once the reference
@@ -1394,6 +1424,7 @@ def test_only_a_card_that_is_AHEAD_of_reality_is_counted() -> None:
                 groups=[("rowA", ["m1"])],
                 reviewed={"m2"},  # HELD — the whole point
                 dropped=set(),
+                suppressed=set(),
                 status={"rowA": card_reads},
                 title={"rowA": ("Northwind", "Software Engineer")},
             ),
@@ -1674,7 +1705,7 @@ def test_a_wrong_title_is_actually_caught() -> None:
 
     def scored(title: dict[str, tuple[str, str]]):
         return score_board(
-            Replay(groups=cards, reviewed=set(), dropped=set(), status={}, title=title),
+            Replay(groups=cards, reviewed=set(), dropped=set(), suppressed=set(), status={}, title=title),
             cases_,
         )
 
@@ -1718,6 +1749,7 @@ def test_a_wrong_title_is_actually_caught() -> None:
             groups=[("rowA", ["m0"])],
             reviewed=set(),
             dropped=set(),
+            suppressed=set(),
             status={},
             title={"rowA": ("Northwind Labs", "")},
         ),
@@ -1776,6 +1808,7 @@ def test_the_new_failure_modes_can_actually_fire() -> None:
             groups=[("rowA", ["m1"]), ("rowB", ["m2"])],
             reviewed=set(),
             dropped=set(),
+            suppressed=set(),
             status={"rowA": "applied", "rowB": "applied"},
             title={},
         ),
@@ -1792,6 +1825,7 @@ def test_the_new_failure_modes_can_actually_fire() -> None:
             groups=[("rowA", ["m1", "m2"])],
             reviewed=set(),
             dropped=set(),
+            suppressed=set(),
             status={"rowA": "applied"},
             title={},
         ),
@@ -1803,18 +1837,46 @@ def test_the_new_failure_modes_can_actually_fire() -> None:
     # pattern was demoted and now fires at 0. A branch with no live example is
     # a branch nobody is watching.
     fell = score_board(
-        Replay(groups=[], reviewed=set(), dropped={"m1"}, status={}, title={}),
+        Replay(groups=[], reviewed=set(), dropped={"m1"}, suppressed=set(), status={}, title={}),
         [anchor],
     )
     assert fell.dropped == 1 and fell.lost == 0
     gone = score_board(
-        Replay(groups=[], reviewed=set(), dropped=set(), status={}, title={}),
+        Replay(groups=[], reviewed=set(), dropped=set(), suppressed=set(), status={}, title={}),
         [anchor],
     )
     assert gone.lost == 1 and gone.dropped == 0, (
         "LOST and DROPPED must be told apart by whether the product counted "
         "the message, which is the entire reason they are two numbers"
     )
+
+    # SUPPRESSED-AS-SETTLED, the third of the same kind (#624). It reads 0
+    # against the real corpus and — measured, not assumed — currently CANNOT
+    # read anything else there: no family produces a queued message sharing
+    # both a thread and an identity with mail already on a card, so the
+    # additive persist's settled filter never bites. That is exactly the
+    # "asserted empty and never fired" shape this test exists for, so the
+    # branch is forced here instead.
+    #
+    # Told apart from LOST deliberately. Both are "no card, no queue, no
+    # counter"; they differ in whether the product CHOSE it, and collapsing
+    # them would put a designed suppression in the counter that exists for
+    # silent loss.
+    refused = score_board(
+        Replay(
+            groups=[],
+            reviewed=set(),
+            dropped=set(),
+            suppressed={"m1"},
+            status={},
+            title={},
+        ),
+        [anchor],
+    )
+    assert refused.suppressed_as_settled == 1
+    assert refused.lost == 0 and refused.dropped == 0
+    assert refused.total == 0, "a designed suppression is not a defect"
+    assert [f.mode for f in refused.failures] == ["SUPPRESSED-AS-SETTLED"]
 
     # THE CONTROL. Same shape, correct outcome, and nothing is scored — a
     # scorer that flagged everything would have passed both cases above.
@@ -1823,12 +1885,18 @@ def test_the_new_failure_modes_can_actually_fire() -> None:
             groups=[("rowA", ["m1", "m2"])],
             reviewed=set(),
             dropped=set(),
+            suppressed=set(),
             status={"rowA": "rejected"},
             title={},
         ),
         [anchor, case("m2", joins="m1", card_status="rejected")],
     )
     assert clean.total == 0
+    # AND THE GOOD OUTCOMES ARE COUNTED, which is the left-hand side of the
+    # closure in `test_every_application_mail_is_addressed`. Both messages are
+    # on a card here; a scorer that only counted the leftovers would report
+    # zero for the whole population and the closure would be unstatable.
+    assert clean.addressed_on_a_card == 2 and clean.addressed_in_the_queue == 0
 
 
 @pytest.mark.asyncio
@@ -1971,6 +2039,55 @@ async def test_every_application_mail_is_addressed(
     assert score.dropped == RECORDED["dropped"]
     assert score.unaddressed == RECORDED["lost"] + RECORDED["dropped"]
 
+    # ── AND THE FIVE OUTCOMES CLOSE (#624) ──────────────────────────────────
+    #
+    # Everything above this line asserts that two counters are zero. Two zeroes
+    # are worth exactly as much as the denominator behind them, and there was
+    # none: `lost` and `dropped` are what is left after a message is found on a
+    # card or in the queue, so a change that stopped examining n messages moves
+    # both toward zero and every assertion above gets GREENER. That is the
+    # defect shape this file exists to avoid, and it was here.
+    #
+    # The population is counted from `cases`, in the test, on purpose. A
+    # denominator `score_board` maintained would fall with the buckets and this
+    # could not fail; counting it here means a `continue` added to that loop
+    # reds immediately.
+    #
+    # `lost` IS IN THE SUM, which #624's brief left out on the grounds that it
+    # is zero. Leaving it out asserts `lost == 0` a second time, in arithmetic,
+    # so a real regression would raise here instead of failing the pinned
+    # assertion above that names the FAMILIES. Both spellings hold today; this
+    # one keeps the diagnosis.
+    must_be_addressed = sum(1 for c in cases if c.must_be_addressed)
+    assert must_be_addressed == RECORDED["must_be_addressed"], (
+        f"{must_be_addressed} messages must be addressed, recorded "
+        f"{RECORDED['must_be_addressed']} — the corpus changed shape"
+    )
+    assert (
+        score.addressed_on_a_card
+        + score.addressed_in_the_queue
+        + score.suppressed_as_settled
+        + score.dropped
+        + score.lost
+        == must_be_addressed
+    ), (
+        f"{score.addressed_on_a_card} on a card + "
+        f"{score.addressed_in_the_queue} in the queue + "
+        f"{score.suppressed_as_settled} suppressed as settled + "
+        f"{score.dropped} dropped + {score.lost} lost = "
+        f"{score.addressed_on_a_card + score.addressed_in_the_queue + score.suppressed_as_settled + score.dropped + score.lost}"
+        f", but {must_be_addressed} messages must be addressed. Some of them "
+        "are being graded by nothing."
+    )
+    for name in (
+        "addressed_on_a_card",
+        "addressed_in_the_queue",
+        "suppressed_as_settled",
+    ):
+        assert getattr(score, name) == RECORDED[name], (
+            f"{name} is {getattr(score, name)}, recorded {RECORDED[name]}"
+        )
+
 
 # ── the cards that must be blank ─────────────────────────────────────────────
 
@@ -2090,6 +2207,7 @@ def test_mail_that_names_no_role_must_leave_the_card_blank() -> None:
                 groups=[("rowA", ["m1"])],
                 reviewed=set(),
                 dropped=set(),
+                suppressed=set(),
                 status={"rowA": "applied"},
                 title={"rowA": ("Northwind", position)},
             ),
@@ -2121,6 +2239,7 @@ def test_mail_that_names_no_role_must_leave_the_card_blank() -> None:
             groups=[("rowA", ["m1"])],
             reviewed=set(),
             dropped=set(),
+            suppressed=set(),
             status={"rowA": "applied"},
             title={"rowA": ("Northwind", "Chief Vibes Officer")},
         ),
