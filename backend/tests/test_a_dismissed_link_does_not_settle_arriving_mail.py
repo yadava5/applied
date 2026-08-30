@@ -5,7 +5,7 @@ Why this file exists
 
 One idea, "this question is already answered", was spelled twice. #587 moved
 the READ path (``GET /applications/review`` and the ``needs_review`` tile on
-``GET /applications/summary``) to ``_not_filed_on_a_live_application``. The
+``GET /applications/summary``) to ``_not_filed_on_an_application_that_answers``. The
 WRITE path — :func:`applications._persist_review_items_additive`, the settled
 filter every routine sync runs — kept the predicate that replaced:
 
@@ -44,33 +44,62 @@ The case matrix, and what the mutation is expected to do to it
 
 A sibling ARRIVES on the thread of a stored row that is:
 
-===========================  ==============  =====================================
-stored row                   arriving ref    why
-===========================  ==============  =====================================
-unlinked, un-reviewed        STORED          unchanged behaviour
-linked to a DISMISSED card   STORED          **the fix**
-linked to a LIVE card        suppressed      **the regression guard**
-``is_reviewed`` + dismissed  suppressed      the arm a careless rewrite drops
-linked to a STRANGER's card  STORED          the write-path-only scoping case
-===========================  ==============  =====================================
+================================  ==============  ================================
+stored row                        arriving ref    why
+================================  ==============  ================================
+unlinked, un-reviewed             STORED          unchanged behaviour
+linked to a RESYNC-dismissed card STORED          **the #596 fix**
+linked to a USER-dismissed card   suppressed      **#597, and it FLIPPED**
+linked to a LIVE card             suppressed      **the regression guard**
+``is_reviewed`` + resync-dismissed suppressed     the arm a careless rewrite drops
+linked to a STRANGER's card       STORED          the write-path-only scoping case
+================================  ==============  ================================
+
+THE THIRD ROW USED TO READ "STORED", AND SAYING SO IS THE POINT. When this
+module shipped, the settled-test read ``dismissed_at`` alone: every dismissal
+un-settled its mail, so the sibling arriving behind a hand-dismissed card was
+stored and queued exactly like the resync one. #597 decided that a hand
+dismissal is FINAL — the user said "this is not an application" and fresh mail
+on that card does not reopen the question — so the row flips to suppressed.
+The table is rewritten rather than appended to because "dismissed → stored" is
+no longer a true row of it, and a table carrying both the old claim and its
+replacement would document a product that does not exist.
+
+The two dismissal cases are now DIRECTIONAL: same ``dismissed_at``, opposite
+``dismissed_reason``, opposite answer. One "dismissed" case could never have
+told them apart.
 
 The last one has no read-path twin and cannot get one: a cross-user link is a
 stale link, and no endpoint will ever create the row, so only the write path
 can be asked about it.
 
-MUTATION, and its exact expected red set. Swap the write path's
-``_filed_on_a_live_application(user_id)`` back to
-``Email.application_id.is_not(None)`` — a same-typed swap, SQL boolean for SQL
-boolean, and exactly the pre-fix state. Then and only then:
+TWO MUTATIONS, because there are now two clauses to prove.
 
-* ``…dismissed_card…`` REDS,
+#596's. Swap the write path's ``_filed_on_an_application_that_answers(user_id)``
+back to ``Email.application_id.is_not(None)`` — a same-typed swap, SQL boolean
+for SQL boolean, and exactly the pre-fix state. Then and only then:
+
+* ``…resync_dismissed_card…`` REDS,
 * ``…another_users_card…`` REDS,
-* ``…all_five_cases…`` REDS,
-* the LIVE arm, the ``is_reviewed`` arm and the unlinked arm stay GREEN —
-  those three are settled (or unsettled) identically under both spellings.
+* ``…all_six_cases…`` REDS,
+* the LIVE arm, the ``is_reviewed`` arm, the unlinked arm and the
+  USER-dismissed arm stay GREEN. The first three are settled (or unsettled)
+  identically under both spellings; the fourth is settled under both — by the
+  ``dismissed_reason`` clause here, by the bare link test there — which is
+  precisely why it needs the OTHER mutation to be worth anything.
 
-If one of those three reds under the mutation the FIXTURE is wrong, not the
-product. If either of the first two stays green the test is vacuous.
+#597's. Swap ``DISMISSED_BY_USER`` for ``DISMISSED_BY_RESYNC`` inside
+:func:`_filed_on_an_application_that_answers` — one reason constant for the
+other, same type, same column. Then:
+
+* ``…user_dismissed_card…`` REDS (the sibling is stored again),
+* ``…resync_dismissed_card…`` REDS (it is suppressed instead),
+* ``…all_six_cases…`` REDS,
+* the LIVE, ``is_reviewed``, unlinked and stranger arms stay GREEN — none of
+  them names a dismissal reason at all.
+
+If an arm predicted GREEN reds, the FIXTURE is wrong, not the product. If an
+arm predicted RED stays green the test is vacuous.
 
 The fixture positive control
 ----------------------------
@@ -141,7 +170,11 @@ ARRIVED_AT = datetime(2026, 8, 26, 9, 15, 0)
 
 # Invented employers. No real mailbox material anywhere in this module.
 LIVE_COMPANY = "Halberd Dynamics"
-DISMISSED_COMPANY = "Ironvale Freight"
+RESYNC_DISMISSED_COMPANY = "Ironvale Freight"
+# Its own employer, not a second card at ``RESYNC_DISMISSED_COMPANY``: one
+# employer holding both reasons would make each assertion depend on which row
+# ``_company_rows`` returned first, which is luck rather than a property.
+USER_DISMISSED_COMPANY = "Cindervale Robotics"
 STRANGER_COMPANY = "Marrowgate Analytics"
 
 
@@ -181,13 +214,26 @@ CASES: tuple[Case, ...] = (
     # THE FIX. The link outlived the verdict that justified it: a re-sync
     # dismissed the card and re-parked the message in the same pass.
     Case(
-        key="dismissed-card",
+        key="resync-dismissed-card",
         subject="Your application to Ironvale Freight",
         snippet="Requisition IVF-40188, Backend Engineer.",
-        link=DISMISSED_COMPANY,
+        link=RESYNC_DISMISSED_COMPANY,
         link_owner=OWNER,
         is_reviewed=False,
         arriving_stored=True,
+    ),
+    # #597, AND THE ROW THAT FLIPPED. Byte-identical to the case above but for
+    # the employer and the reason on its card. The user removed this one by
+    # hand, so their "no" answers for the whole thread and the sibling arriving
+    # behind it is suppressed rather than queued.
+    Case(
+        key="user-dismissed-card",
+        subject="Your application to Cindervale Robotics",
+        snippet="Requisition CVR-40188, Backend Engineer.",
+        link=USER_DISMISSED_COMPANY,
+        link_owner=OWNER,
+        is_reviewed=False,
+        arriving_stored=False,
     ),
     # THE REGRESSION GUARD. A card the user can see answers for its own thread,
     # and the fix must not become "is_reviewed alone".
@@ -206,7 +252,7 @@ CASES: tuple[Case, ...] = (
         key="reviewed-on-a-dismissed-card",
         subject="Update on your Ironvale Freight application",
         snippet="Requisition IVF-77301, Data Engineer.",
-        link=DISMISSED_COMPANY,
+        link=RESYNC_DISMISSED_COMPANY,
         link_owner=OWNER,
         is_reviewed=True,
         arriving_stored=False,
@@ -232,7 +278,7 @@ BY_KEY = {case.key: case for case in CASES}
 SEEDED_IDS = frozenset(f"s-{case.key}" for case in CASES)
 EXPECTED_STORED_AFTER_FULL_SYNC = SEEDED_IDS | {
     "a-unlinked",
-    "a-dismissed-card",
+    "a-resync-dismissed-card",
     "a-another-users-card",
 }
 EXPECTED_SURFACED_BY_FULL_SYNC = 3
@@ -316,7 +362,7 @@ def headers() -> dict[str, str]:
 
 @pytest.fixture
 async def seeded(cloud_app) -> dict[str, int]:
-    """Three cards and the five stored rows of :data:`CASES`.
+    """Four cards and the six stored rows of :data:`CASES`.
 
     Written straight at the session rather than through the API: two of these
     states are ones only a re-sync produces (a NEEDS_REVIEW message still linked
@@ -339,10 +385,19 @@ async def seeded(cloud_app) -> dict[str, int]:
             # `resync` and not `user`: the state #481 found was produced by a
             # re-sync, and the reason column is what says who removed the row.
             (
-                DISMISSED_COMPANY,
+                RESYNC_DISMISSED_COMPANY,
                 OWNER,
                 datetime(2026, 8, 22, 5, 2, 29),
                 "resync",
+            ),
+            # THE SAME `dismissed_at`, the opposite reason (#597). Sharing the
+            # timestamp is deliberate: it leaves the reason column as the only
+            # variable between this card and the one above it.
+            (
+                USER_DISMISSED_COMPANY,
+                OWNER,
+                datetime(2026, 8, 22, 5, 2, 29),
+                "user",
             ),
             # LIVE, and not the owner's. Dismissing it would collapse this case
             # into the one above and it would discriminate nothing.
@@ -462,7 +517,7 @@ async def test_the_fixture_set_is_what_the_tests_assume(client, headers, seeded)
     Three claims, and each closes a way this module could be green while
     proving nothing:
 
-    1. the five rows exist, stored at ``needs_review``, linked as the table
+    1. the six rows exist, stored at ``needs_review``, linked as the table
        says — including the cross-user link, which is the case no endpoint can
        create;
     2. the arriving ids are DISJOINT from the seeded ones, so a "stored" arm is
@@ -483,8 +538,11 @@ async def test_the_fixture_set_is_what_the_tests_assume(client, headers, seeded)
     linked = {m["message_id"]: m["application_id"] for m in body["messages"]}
     assert set(linked) == set(SEEDED_IDS)
     assert linked["s-unlinked"] is None
-    assert linked["s-dismissed-card"] == seeded[DISMISSED_COMPANY]
-    assert linked["s-reviewed-on-a-dismissed-card"] == seeded[DISMISSED_COMPANY]
+    assert linked["s-resync-dismissed-card"] == seeded[RESYNC_DISMISSED_COMPANY]
+    assert linked["s-user-dismissed-card"] == seeded[USER_DISMISSED_COMPANY]
+    assert (
+        linked["s-reviewed-on-a-dismissed-card"] == seeded[RESYNC_DISMISSED_COMPANY]
+    )
     assert linked["s-live-card"] == seeded[LIVE_COMPANY]
     assert linked["s-another-users-card"] == seeded[STRANGER_COMPANY], (
         "the stale cross-user link is the premise of one whole case; without it "
@@ -494,9 +552,35 @@ async def test_the_fixture_set_is_what_the_tests_assume(client, headers, seeded)
     board = await client.get("/applications", headers=headers)
     assert board.status_code == 200, board.text
     assert [row["company"] for row in board.json()["applications"]] == [LIVE_COMPANY], (
-        "the dismissed card must be off the board and the stranger's card must "
-        "never have been on it"
+        "both dismissed cards must be off the board and the stranger's card "
+        "must never have been on it"
     )
+
+    # DIRECTIONAL CONTROL for the pair the whole #597 half rests on: the two
+    # dismissed cards differ in the reason column and in nothing else. Read at
+    # the session because no endpoint of the owner's shows a dismissed row's
+    # reason alongside its timestamp.
+    from sqlmodel import select
+
+    from jobtracker.database import get_session
+
+    async with get_session() as session:
+        rows = {
+            row.company: (row.dismissed_at, row.dismissed_reason)
+            for row in (
+                await session.exec(
+                    select(Application).where(Application.user_id == uuid.UUID(OWNER))
+                )
+            ).all()
+        }
+
+    assert rows[RESYNC_DISMISSED_COMPANY][1] == "resync"
+    assert rows[USER_DISMISSED_COMPANY][1] == "user"
+    assert (
+        rows[RESYNC_DISMISSED_COMPANY][0]
+        == rows[USER_DISMISSED_COMPANY][0]
+        is not None
+    ), "the two dismissed rows must differ in the REASON and nothing else"
 
     # The hardcoded expectations, reconciled against the table they describe.
     # Hardcoding is what stops a mistake in ``CASES`` quietly redefining what is
@@ -520,7 +604,7 @@ async def test_the_fixture_set_is_what_the_tests_assume(client, headers, seeded)
 
 
 # =============================================================================
-# The five cases, one arriving sibling at a time
+# The six cases, one arriving sibling at a time
 # =============================================================================
 
 
@@ -536,27 +620,60 @@ async def test_a_sibling_of_an_unlinked_row_is_stored(client, headers, seeded):
     assert f"a-{case.key}" in await _stored_message_ids(client, headers)
 
 
-async def test_a_sibling_of_a_row_on_a_dismissed_card_is_stored(
+async def test_a_sibling_of_a_row_on_a_resync_dismissed_card_is_stored(
     client, headers, seeded
 ):
-    """THE FIX, and the LOST mode it closes.
+    """THE #596 FIX, and the LOST mode it closes.
 
-    The stored row is linked to a card a re-sync dismissed. The queue shows it
+    The stored row is linked to a card a RE-SYNC dismissed. The queue shows it
     as an open question; the sync used to treat it as the answer and drop the
     mail arriving behind it.
 
-    MUTATION: swap ``_filed_on_a_live_application(user_id)`` in
-    ``_persist_review_items_additive`` back to
+    MUTATION (#596's): swap ``_filed_on_an_application_that_answers(user_id)``
+    in ``_persist_review_items_additive`` back to
     ``Email.application_id.is_not(None)`` and this fails — the arriving sibling
     is not stored at all, which is production's state.
+
+    MUTATION (#597's): swap the reason constant and this fails too, the other
+    way — the resync card starts answering and the sibling is suppressed.
     """
 
-    case = BY_KEY["dismissed-card"]
+    case = BY_KEY["resync-dismissed-card"]
     assert await _sync(case) == 1, (
-        "the arriving sibling was filtered out as settled by a card the user "
-        "cannot see"
+        "the arriving sibling was filtered out as settled by a card that a "
+        "machine removed and the user cannot see"
     )
     assert f"a-{case.key}" in await _stored_message_ids(client, headers)
+
+
+async def test_a_sibling_of_a_row_on_a_user_dismissed_card_is_not_stored(
+    client, headers, seeded
+):
+    """#597, AND IT IS THE ROW THIS MODULE USED TO ASSERT THE OTHER WAY.
+
+    A human took this card off the board. That is a standing instruction, not a
+    verdict a later message may argue with, so the whole thread is answered:
+    the arriving sibling is filtered out as settled and never stored.
+
+    The directional twin of the resync case above — same ``dismissed_at``, same
+    un-reviewed stored row, same arriving shape, opposite ``dismissed_reason``,
+    opposite answer.
+
+    MUTATION (#597's): swap ``DISMISSED_BY_USER`` for ``DISMISSED_BY_RESYNC``
+    in :func:`_filed_on_an_application_that_answers` and this fails — the
+    sibling is stored, which is what the product did before this change.
+
+    MUTATION (#596's): GREEN. ``application_id IS NOT NULL`` is true of this
+    link too, so the old spelling suppressed it for a different reason. That is
+    exactly why one dismissal case could not carry both claims.
+    """
+
+    case = BY_KEY["user-dismissed-card"]
+    assert await _sync(case) == 0, (
+        "mail arriving on a card the user dismissed by hand was surfaced again "
+        "— the queue is asking about an application they removed on purpose"
+    )
+    assert f"a-{case.key}" not in await _stored_message_ids(client, headers)
 
 
 async def test_a_sibling_of_a_row_on_a_live_card_is_still_suppressed(
@@ -590,7 +707,7 @@ async def test_a_sibling_of_a_reviewed_row_on_a_dismissed_card_is_suppressed(
     the readers as ``is_reviewed == False`` and the sync as the other arm of
     its ``or_``.
 
-    MUTATION: green under the swap. Settled either way, on both clauses.
+    MUTATION: green under both swaps. Settled every way, on ``is_reviewed``.
     """
 
     case = BY_KEY["reviewed-on-a-dismissed-card"]
@@ -618,21 +735,23 @@ async def test_a_sibling_of_a_row_on_another_users_card_is_stored(
 
 
 # =============================================================================
-# All five in ONE sync, which is the shape a real delta has
+# All six in ONE sync, which is the shape a real delta has
 # =============================================================================
 
 
-async def test_one_sync_carrying_all_five_cases_stores_exactly_three(
+async def test_one_sync_carrying_all_six_cases_stores_exactly_three(
     client, headers, seeded
 ):
-    """The matrix as one set, so a fix cannot pass four arms and add a fifth row.
+    """The matrix as one set, so a fix cannot pass five arms and add a sixth row.
 
     A sync does not arrive one message at a time, and the settled filter is
     built ONCE per call over every thread the batch names — a per-case run
     cannot show that one case's stored row does not settle another's arriving
     sibling.
 
-    MUTATION: REDS under the swap, at two of the three stored ids.
+    MUTATION: REDS under either swap — #596's at two of the three stored ids,
+    #597's by storing ``a-user-dismissed-card`` and dropping
+    ``a-resync-dismissed-card``.
     """
 
     assert await _sync(*CASES) == EXPECTED_SURFACED_BY_FULL_SYNC
