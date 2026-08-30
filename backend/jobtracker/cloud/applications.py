@@ -4579,10 +4579,17 @@ def _filed_on_an_application_that_answers(user_id: uuid.UUID):
     MACHINE-DISMISSED — the ``==`` is false for NULL under SQL three-valued
     logic, and the ``or_`` therefore does not fire. That is deliberate and it
     errs in the documented safe direction: such a row does NOT answer, so its
-    mail is surfaced and the user is asked one question. Rows predating the
-    reason column, and any future writer that forgets it, degrade to asking
-    rather than to silently swallowing mail. A stranded message is unreachable
-    forever; a surfaced one costs a click.
+    mail is surfaced and the user is asked one question, rather than being
+    silently swallowed. A stranded message is unreachable forever; a surfaced
+    one costs a click.
+
+    NO SUCH ROW EXISTS TODAY, and the reason is worth writing down so nobody
+    builds a test on the shape. ``dismissed_at`` and ``dismissed_reason``
+    arrived in the SAME revision (``e4cbb4aadccd``, both nullable, no backfill)
+    and all three writers set both, so a dismissed row without a reason cannot
+    predate anything. The clause defends against a FUTURE writer that forgets
+    the reason, not against history. A fixture that constructs the shape is
+    exercising an unreachable state and proves nothing about production.
 
     ONE function names these columns, and both spellings of the settled idea are
     built from it — :func:`_not_filed_on_an_application_that_answers` for the readers,
