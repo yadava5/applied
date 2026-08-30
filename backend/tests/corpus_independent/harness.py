@@ -93,7 +93,7 @@ from jobtracker.database.models import EmailCategory
 from jobtracker.cloud.applications import (
     Application,
     Email,
-    _not_filed_on_a_live_application,
+    _not_filed_on_an_application_that_answers,
     _persist_review_items,
     classify_review_item,
     employers_with_several_applications,
@@ -387,15 +387,16 @@ async def _read_the_board(session, dropped: set[str]) -> Replay:
     # drifted twice. The first version read ``application_id IS NULL`` alone and
     # claimed in a comment to match the product; it did not. The second spelled
     # the product's three clauses out by hand, and #587 then replaced the link
-    # clause with :func:`_not_filed_on_a_live_application` — "no card the user
-    # can SEE answers this" — leaving this copy asserting the OLD product while
-    # its comment said it asserted the current one. A copy cannot be kept
-    # honest by a comment, so the middle clause is the function itself.
+    # clause with :func:`_not_filed_on_an_application_that_answers` — "no
+    # application of mine answers this", which since #597 counts a card the
+    # user dismissed BY HAND as answering — leaving this copy asserting the OLD
+    # product while its comment said it asserted the current one. A copy cannot
+    # be kept honest by a comment, so the middle clause is the function itself.
     queued = (
         await session.exec(
             select(Email.message_id).where(
                 Email.user_id == _USER,
-                _not_filed_on_a_live_application(_USER),
+                _not_filed_on_an_application_that_answers(_USER),
                 Email.classified_as == EmailCategory.NEEDS_REVIEW,
                 Email.is_reviewed == False,  # noqa: E712 — SQL boolean
             )
@@ -491,7 +492,7 @@ async def _still_in_the_queue(session, message_id: str) -> bool:
             select(Email.message_id).where(
                 Email.user_id == _USER,
                 Email.message_id == message_id,
-                _not_filed_on_a_live_application(_USER),
+                _not_filed_on_an_application_that_answers(_USER),
                 Email.classified_as == EmailCategory.NEEDS_REVIEW,
                 Email.is_reviewed == False,  # noqa: E712 — SQL boolean
             )
