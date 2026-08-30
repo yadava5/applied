@@ -1,95 +1,358 @@
 {
   "_README": [
-    "Per-file counts of sender addresses on domains that are not",
-    "RFC-reserved, under the roots scripts/check_test_data.py scans.",
-    "Paths and counts ONLY \u2014 never the matched strings, or this file",
-    "would republish the material the gate exists to stop.",
-    "This is a RATCHET, not a backlog. A number going up fails. A",
-    "number going down is allowed but is never routine \u2014 see docs/TEST_DATA_POLICY.md.",
+    "Per-file counts AND digests of sender addresses on domains that",
+    "are not RFC-reserved, under the roots scripts/check_test_data.py",
+    "scans. The digest is a truncated SHA-256 over the sorted,",
+    "lower-cased, de-duplicated set of matches in that file.",
+    "No matched string is ever written here \u2014 that would republish",
+    "the material the gate exists to stop. A hash is not the string:",
+    "see 'Why a digest is allowed where a literal is not' in docs/TEST_DATA_POLICY.md.",
+    "Any divergence fails, in EITHER direction: a count up, a count",
+    "down, a new file, a cleared file, or a same-count SWAP that",
+    "moves the digest. This is a RATCHET, not a backlog \u2014 moving the",
+    "numbers is a deliberate act with a reason, see docs/TEST_DATA_POLICY.md.",
     "Regenerate with: python3 scripts/check_test_data.py --write-baseline"
   ],
-  "counts": {
-    "apps/web/tests/e2e/import.spec.ts": 10,
-    "apps/web/tests/unit/auth-credentials.test.mjs": 13,
-    "apps/web/tests/unit/auth-redirect.test.mjs": 1,
-    "apps/web/tests/unit/classify-request.test.mjs": 2,
-    "apps/web/tests/unit/demo-verdicts.test.mjs": 1,
-    "apps/web/tests/unit/parse-mail-html.test.mjs": 8,
-    "apps/web/tests/unit/reclassify-asks-which-application.test.mjs": 7,
-    "apps/web/tests/unit/reference-does-not-outrank-report.test.mjs": 1,
-    "apps/web/tests/unit/review-classify.test.mjs": 5,
-    "apps/web/tests/unit/scan-correction.test.mjs": 2,
-    "backend/jobtracker/classifier/hybrid.py": 2,
-    "backend/jobtracker/classifier/rules.py": 1,
-    "backend/jobtracker/cloud/applications.py": 2,
-    "backend/jobtracker/cloud/gmail_oauth.py": 1,
-    "backend/jobtracker/cloud/pipeline.py": 5,
-    "backend/jobtracker/config.py": 1,
-    "backend/jobtracker/email_clients/parser.py": 1,
-    "backend/tests/conftest.py": 1,
-    "backend/tests/corpus/generator.py": 73,
-    "backend/tests/corpus/mail.py": 12,
-    "backend/tests/corpus_independent/generate.py": 6,
-    "backend/tests/test_a_lifecycle_word_does_not_hide_the_employer.py": 3,
-    "backend/tests/test_a_reference_does_not_outrank_a_report.py": 1,
-    "backend/tests/test_a_reply_speaks_for_itself.py": 2,
-    "backend/tests/test_a_resync_keeps_the_humans_decisions.py": 5,
-    "backend/tests/test_a_second_application_is_a_second_card.py": 2,
-    "backend/tests/test_adversarial_corpus.py": 4,
-    "backend/tests/test_agreement_is_not_a_correction.py": 1,
-    "backend/tests/test_an_autoresponder_to_outreach_is_not_an_application.py": 1,
-    "backend/tests/test_application_identity.py": 33,
-    "backend/tests/test_application_mail_is_capped.py": 1,
-    "backend/tests/test_body_is_never_persisted.py": 2,
-    "backend/tests/test_classification_method_reports.py": 2,
-    "backend/tests/test_cloud_pipeline.py": 84,
-    "backend/tests/test_corrected_rows_carry_no_confidence.py": 1,
-    "backend/tests/test_credentials_cloud.py": 1,
-    "backend/tests/test_database.py": 12,
-    "backend/tests/test_dismissed_card_does_not_settle_its_mail.py": 1,
-    "backend/tests/test_dropped_verdict_is_logged.py": 4,
-    "backend/tests/test_email_clients.py": 17,
-    "backend/tests/test_expand_only_gate.py": 2,
-    "backend/tests/test_extraction_rejects_boilerplate.py": 2,
-    "backend/tests/test_gmail_client_fetch.py": 15,
-    "backend/tests/test_gmail_connection_cap.py": 1,
-    "backend/tests/test_gmail_oauth_cloud.py": 55,
-    "backend/tests/test_gmail_oauth_return_host.py": 2,
-    "backend/tests/test_gmail_sync_says_what_it_looked_at.py": 2,
-    "backend/tests/test_hold_reason_and_employer_gaps.py": 11,
-    "backend/tests/test_identity_from_lever_confirmations.py": 2,
-    "backend/tests/test_identity_from_microsoft_confirmations.py": 2,
-    "backend/tests/test_identity_survives_the_snippet.py": 1,
-    "backend/tests/test_independent_corpus.py": 2,
-    "backend/tests/test_ingestion_hole_166.py": 24,
-    "backend/tests/test_lifecycle_drop_is_counted.py": 4,
-    "backend/tests/test_mail_corpus_instrument.py": 2,
-    "backend/tests/test_mail_listing.py": 5,
-    "backend/tests/test_main_cloud.py": 1,
-    "backend/tests/test_migration_url.py": 1,
-    "backend/tests/test_none_of_these_opens_a_row.py": 1,
-    "backend/tests/test_one_employer_rule.py": 1,
-    "backend/tests/test_own_sent_mail_is_not_an_update.py": 5,
-    "backend/tests/test_persist_message_refs_is_batched.py": 2,
-    "backend/tests/test_relayed_follow_up_is_not_your_own.py": 2,
-    "backend/tests/test_reopen_after_rejection.py": 2,
-    "backend/tests/test_request_cost_phases.py": 1,
-    "backend/tests/test_resync_splits_the_merged_card.py": 2,
-    "backend/tests/test_rls_postgres.py": 2,
-    "backend/tests/test_rules_classifier_interview_and_offer.py": 6,
-    "backend/tests/test_rules_classifier_rejection.py": 2,
-    "backend/tests/test_scan_classify.py": 1,
-    "backend/tests/test_sender_domain_anchoring.py": 9,
-    "backend/tests/test_stage_write_policy.py": 1,
-    "backend/tests/test_suggested_category.py": 2,
-    "backend/tests/test_sync_never_removes_a_sibling_application.py": 3,
-    "backend/tests/test_the_review_answer_keeps_the_title.py": 2,
-    "backend/tests/test_the_role_in_the_lead_segment_is_read.py": 1,
-    "backend/tests/test_thread_id_survives_a_metadata_refetch.py": 1,
-    "backend/tests/test_tracking_sender_checks.py": 11,
-    "backend/tests/test_training_corpus_integrity.py": 4,
-    "backend/tests/test_unsure_does_not_remove_a_card.py": 3,
-    "backend/tests/test_user_supplied_role.py": 2,
-    "backend/tests/test_weekly_labeling_workflow.py": 22
+  "files": {
+    "apps/web/tests/e2e/import.spec.ts": {
+      "count": 10,
+      "digest": "d1b6e6e5919b2326"
+    },
+    "apps/web/tests/unit/auth-credentials.test.mjs": {
+      "count": 13,
+      "digest": "40cd22e21e0ee012"
+    },
+    "apps/web/tests/unit/auth-redirect.test.mjs": {
+      "count": 1,
+      "digest": "088dc979c13e2b32"
+    },
+    "apps/web/tests/unit/classify-request.test.mjs": {
+      "count": 2,
+      "digest": "769cb4366a1da579"
+    },
+    "apps/web/tests/unit/demo-verdicts.test.mjs": {
+      "count": 1,
+      "digest": "4f8d3c3a646b76f0"
+    },
+    "apps/web/tests/unit/parse-mail-html.test.mjs": {
+      "count": 8,
+      "digest": "9b9bd637e49fa8ef"
+    },
+    "apps/web/tests/unit/reclassify-asks-which-application.test.mjs": {
+      "count": 7,
+      "digest": "7841dc7055a85fd3"
+    },
+    "apps/web/tests/unit/reference-does-not-outrank-report.test.mjs": {
+      "count": 1,
+      "digest": "9df1079d69522438"
+    },
+    "apps/web/tests/unit/review-classify.test.mjs": {
+      "count": 5,
+      "digest": "bd0d961c01f54c14"
+    },
+    "apps/web/tests/unit/scan-correction.test.mjs": {
+      "count": 2,
+      "digest": "769cb4366a1da579"
+    },
+    "backend/jobtracker/classifier/hybrid.py": {
+      "count": 2,
+      "digest": "f28601e965723bb1"
+    },
+    "backend/jobtracker/classifier/rules.py": {
+      "count": 1,
+      "digest": "210b2f5f3e1e9bc6"
+    },
+    "backend/jobtracker/cloud/applications.py": {
+      "count": 2,
+      "digest": "d1ba4b5820aadebc"
+    },
+    "backend/jobtracker/cloud/gmail_oauth.py": {
+      "count": 1,
+      "digest": "8c490f89ffd2eb11"
+    },
+    "backend/jobtracker/cloud/pipeline.py": {
+      "count": 5,
+      "digest": "7d8977d743f13978"
+    },
+    "backend/jobtracker/config.py": {
+      "count": 1,
+      "digest": "aff56cfd2a41e1c8"
+    },
+    "backend/jobtracker/email_clients/parser.py": {
+      "count": 1,
+      "digest": "01f4506118947fc6"
+    },
+    "backend/tests/conftest.py": {
+      "count": 1,
+      "digest": "e410019b92a93394"
+    },
+    "backend/tests/corpus/generator.py": {
+      "count": 73,
+      "digest": "98447e48bb1b59ee"
+    },
+    "backend/tests/corpus/mail.py": {
+      "count": 12,
+      "digest": "83bdc645c6ab472c"
+    },
+    "backend/tests/corpus_independent/generate.py": {
+      "count": 6,
+      "digest": "ed01baa05cc73082"
+    },
+    "backend/tests/test_a_lifecycle_word_does_not_hide_the_employer.py": {
+      "count": 3,
+      "digest": "e5835ed309d61404"
+    },
+    "backend/tests/test_a_reference_does_not_outrank_a_report.py": {
+      "count": 1,
+      "digest": "9df1079d69522438"
+    },
+    "backend/tests/test_a_reply_speaks_for_itself.py": {
+      "count": 2,
+      "digest": "f42ad8382156df14"
+    },
+    "backend/tests/test_a_resync_keeps_the_humans_decisions.py": {
+      "count": 5,
+      "digest": "1844a809f2177c57"
+    },
+    "backend/tests/test_a_second_application_is_a_second_card.py": {
+      "count": 2,
+      "digest": "e3e686e62e0fa999"
+    },
+    "backend/tests/test_adversarial_corpus.py": {
+      "count": 4,
+      "digest": "ff71d9d7068a3d6e"
+    },
+    "backend/tests/test_agreement_is_not_a_correction.py": {
+      "count": 1,
+      "digest": "1141fd29c9ba9311"
+    },
+    "backend/tests/test_an_autoresponder_to_outreach_is_not_an_application.py": {
+      "count": 1,
+      "digest": "f5955c7a6d340bc3"
+    },
+    "backend/tests/test_application_identity.py": {
+      "count": 33,
+      "digest": "421bc859199bae72"
+    },
+    "backend/tests/test_application_mail_is_capped.py": {
+      "count": 1,
+      "digest": "220e2bbf039824d3"
+    },
+    "backend/tests/test_body_is_never_persisted.py": {
+      "count": 2,
+      "digest": "210b2f5f3e1e9bc6"
+    },
+    "backend/tests/test_classification_method_reports.py": {
+      "count": 2,
+      "digest": "4a2d56cec36e8b1e"
+    },
+    "backend/tests/test_cloud_pipeline.py": {
+      "count": 84,
+      "digest": "2ba4b8956d1514ce"
+    },
+    "backend/tests/test_corrected_rows_carry_no_confidence.py": {
+      "count": 1,
+      "digest": "1141fd29c9ba9311"
+    },
+    "backend/tests/test_credentials_cloud.py": {
+      "count": 1,
+      "digest": "01f4506118947fc6"
+    },
+    "backend/tests/test_database.py": {
+      "count": 12,
+      "digest": "71a2425326f8d746"
+    },
+    "backend/tests/test_dismissed_card_does_not_settle_its_mail.py": {
+      "count": 1,
+      "digest": "8a63a117bcf30887"
+    },
+    "backend/tests/test_dropped_verdict_is_logged.py": {
+      "count": 4,
+      "digest": "724250aa0d4514c9"
+    },
+    "backend/tests/test_email_clients.py": {
+      "count": 17,
+      "digest": "b8eab5003a3c373e"
+    },
+    "backend/tests/test_expand_only_gate.py": {
+      "count": 2,
+      "digest": "fbd3343e388a6696"
+    },
+    "backend/tests/test_extraction_rejects_boilerplate.py": {
+      "count": 2,
+      "digest": "22239cb24d768528"
+    },
+    "backend/tests/test_gmail_client_fetch.py": {
+      "count": 15,
+      "digest": "c0d02cfff3bb0ffa"
+    },
+    "backend/tests/test_gmail_connection_cap.py": {
+      "count": 1,
+      "digest": "8c490f89ffd2eb11"
+    },
+    "backend/tests/test_gmail_oauth_cloud.py": {
+      "count": 55,
+      "digest": "21d20faf6df2d32d"
+    },
+    "backend/tests/test_gmail_oauth_return_host.py": {
+      "count": 2,
+      "digest": "778bf911853af1de"
+    },
+    "backend/tests/test_gmail_sync_says_what_it_looked_at.py": {
+      "count": 2,
+      "digest": "f5955c7a6d340bc3"
+    },
+    "backend/tests/test_hold_reason_and_employer_gaps.py": {
+      "count": 11,
+      "digest": "2da412abaaa2efba"
+    },
+    "backend/tests/test_identity_from_lever_confirmations.py": {
+      "count": 2,
+      "digest": "1141fd29c9ba9311"
+    },
+    "backend/tests/test_identity_from_microsoft_confirmations.py": {
+      "count": 2,
+      "digest": "8a63a117bcf30887"
+    },
+    "backend/tests/test_identity_survives_the_snippet.py": {
+      "count": 1,
+      "digest": "7eeab08837356369"
+    },
+    "backend/tests/test_independent_corpus.py": {
+      "count": 2,
+      "digest": "38709a5de11a6e12"
+    },
+    "backend/tests/test_ingestion_hole_166.py": {
+      "count": 24,
+      "digest": "8762ddc7ee21ac5f"
+    },
+    "backend/tests/test_lifecycle_drop_is_counted.py": {
+      "count": 4,
+      "digest": "f42ad8382156df14"
+    },
+    "backend/tests/test_mail_corpus_instrument.py": {
+      "count": 2,
+      "digest": "b1b15ccb98e3177d"
+    },
+    "backend/tests/test_mail_listing.py": {
+      "count": 5,
+      "digest": "7ba221b4b03aff29"
+    },
+    "backend/tests/test_main_cloud.py": {
+      "count": 1,
+      "digest": "1f3e659ebe0fdf1e"
+    },
+    "backend/tests/test_migration_url.py": {
+      "count": 1,
+      "digest": "bcd916a9417a0dd0"
+    },
+    "backend/tests/test_none_of_these_opens_a_row.py": {
+      "count": 1,
+      "digest": "220e2bbf039824d3"
+    },
+    "backend/tests/test_one_employer_rule.py": {
+      "count": 1,
+      "digest": "f5955c7a6d340bc3"
+    },
+    "backend/tests/test_own_sent_mail_is_not_an_update.py": {
+      "count": 5,
+      "digest": "a0410cfd9c8e5f14"
+    },
+    "backend/tests/test_persist_message_refs_is_batched.py": {
+      "count": 2,
+      "digest": "7720c7cc3d563db7"
+    },
+    "backend/tests/test_relayed_follow_up_is_not_your_own.py": {
+      "count": 2,
+      "digest": "f721444cbb52d206"
+    },
+    "backend/tests/test_reopen_after_rejection.py": {
+      "count": 2,
+      "digest": "7d7580bbf54424f4"
+    },
+    "backend/tests/test_request_cost_phases.py": {
+      "count": 1,
+      "digest": "152684cabac919e8"
+    },
+    "backend/tests/test_resync_splits_the_merged_card.py": {
+      "count": 2,
+      "digest": "4a2d56cec36e8b1e"
+    },
+    "backend/tests/test_rls_postgres.py": {
+      "count": 2,
+      "digest": "e00245863b27c4ab"
+    },
+    "backend/tests/test_rules_classifier_interview_and_offer.py": {
+      "count": 6,
+      "digest": "b2ba6762a8c88ad4"
+    },
+    "backend/tests/test_rules_classifier_rejection.py": {
+      "count": 2,
+      "digest": "01f4ac8341f5c383"
+    },
+    "backend/tests/test_scan_classify.py": {
+      "count": 1,
+      "digest": "4b3b9fbfceebd8ed"
+    },
+    "backend/tests/test_sender_domain_anchoring.py": {
+      "count": 9,
+      "digest": "b9c63533d815cb13"
+    },
+    "backend/tests/test_stage_write_policy.py": {
+      "count": 1,
+      "digest": "220e2bbf039824d3"
+    },
+    "backend/tests/test_suggested_category.py": {
+      "count": 2,
+      "digest": "bd4b9dfedafc9bef"
+    },
+    "backend/tests/test_sync_never_removes_a_sibling_application.py": {
+      "count": 3,
+      "digest": "0deb823e3b07bfae"
+    },
+    "backend/tests/test_the_review_answer_keeps_the_title.py": {
+      "count": 2,
+      "digest": "595b6c9df4cae9d7"
+    },
+    "backend/tests/test_the_role_in_the_lead_segment_is_read.py": {
+      "count": 1,
+      "digest": "210b2f5f3e1e9bc6"
+    },
+    "backend/tests/test_thread_id_survives_a_metadata_refetch.py": {
+      "count": 1,
+      "digest": "4a2d56cec36e8b1e"
+    },
+    "backend/tests/test_tracking_sender_checks.py": {
+      "count": 11,
+      "digest": "3e59719a841e6a8b"
+    },
+    "backend/tests/test_training_corpus_integrity.py": {
+      "count": 4,
+      "digest": "c2deadc7ff60c0e8"
+    },
+    "backend/tests/test_unsure_does_not_remove_a_card.py": {
+      "count": 3,
+      "digest": "8a63a117bcf30887"
+    },
+    "backend/tests/test_user_supplied_role.py": {
+      "count": 2,
+      "digest": "35e017d9fa8c0113"
+    },
+    "backend/tests/test_weekly_labeling_workflow.py": {
+      "count": 22,
+      "digest": "0822d1a02af661c2"
+    },
+    "ml/demo/space/jobtracker/classifier/hybrid.py": {
+      "count": 2,
+      "digest": "f28601e965723bb1"
+    },
+    "ml/demo/space/jobtracker/classifier/rules.py": {
+      "count": 1,
+      "digest": "210b2f5f3e1e9bc6"
+    },
+    "ml/demo/space/jobtracker/email_clients/parser.py": {
+      "count": 1,
+      "digest": "01f4506118947fc6"
+    }
   }
 }

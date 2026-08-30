@@ -89,9 +89,10 @@ recurring defect.
 ## The baseline is a ratchet, not a backlog
 
 `scripts/test_data_baseline.json` lists the tracked files that already contain
-addresses on non-reserved domains. **It is not a to-do list, and working it down
-is not an improvement.** (No count is written here on purpose: a number in prose
-drifts silently and nothing gates this file. The baseline is its own authority.)
+addresses on non-reserved domains, with a count and a digest for each. **It is
+not a to-do list, and working it down is not an improvement.** (No count is
+written here on purpose: a number in prose drifts silently and nothing gates
+this file. The baseline is its own authority.)
 
 Three reasons, and the first is the one that settles it:
 
@@ -115,6 +116,25 @@ is deliberately still open. Until it is made, **nothing already published is
 deleted**, and this section exists so that a future reader who notices the
 baseline does not helpfully "fix" it.
 
+### The ratchet turns both ways
+
+Until #615 a count going DOWN was printed and forgiven. That was slack with a
+mechanism: remove three addresses this month, add three different ones next
+month, green both times, and nothing in the repository records that either
+happened. Divergence in **either** direction now fails.
+
+Be precise about what that buys, because the gate does not do what a careless
+reading of this paragraph suggests. It does **not** prevent a removal, and a
+pull request whose only change lowers the baseline is **green** — because once
+the baseline is re-recorded it matches the tree again, which is the whole point.
+What the gate guarantees is narrower and is enough: no change to this material
+can reach `main` without a commit that re-records the baseline. The audit is
+that commit and its message, not the check. The check is what makes the commit
+impossible to skip.
+
+So: removal is allowed, it is not routine, and it is never silent. State in the
+commit body which files moved and why, and read the three reasons above first.
+
 Record it the way `docs/ML_PROMOTION_POLICY.md` records Cycle H's 0.9583: a
 number that is correct as it stands and must not be corrected.
 
@@ -136,39 +156,107 @@ Worth stating so nobody audits it a second time:
 
 ## The gate
 
-`scripts/check_test_data.py`, wired into `backend-ci.yml` as a required step. It
-needs no database, no torch and no network — it is stdlib Python and one
-`git ls-files`.
+`scripts/check_test_data.py`, run by `backend-ci.yml` in its own job, named
+**`Test data baseline agrees with the tree`**. It needs no database, no torch
+and no network — it is stdlib Python and one `git ls-files`, and it answers in
+under a second.
+
+It was a *step* inside the `test` job until #615, which was two problems. `test`
+is the ~25-minute suite job, so the fast answer waited on the slow one; and
+`test` is not a required context, so a red gate left the pull request
+`MERGEABLE`. Requiring `test` would have fixed the second by making the first
+worse. Hence a job of its own, which can be required on its own.
+
+> **Not yet required.** Making that job name a required status check is a
+> branch-protection change, which is the owner's to make and is deliberately not
+> made by the pull request that created the job. Until it is, this gate reds
+> loudly and blocks nothing. If you are reading this and
+> `required_status_checks.contexts` still does not name it, that is the open
+> half of #615.
 
 ```
-python3 scripts/check_test_data.py                  # check (what CI runs)
+python3 scripts/check_test_data.py                   # check (what CI runs)
 python3 scripts/check_test_data.py --write-baseline  # deliberately re-record
 ```
 
-It reads tracked files under `backend/tests/`, `backend/jobtracker/` and
-`apps/web/tests/` — from `git ls-files`, never a filesystem walk, because a walk
-reaches `node_modules`, `.venv*`, `.next` and `__pycache__`, and a gate that
-reports hundreds of hits it does not own is a gate that gets turned off. Product
-source is in scope on purpose: #593's requisition numbers were not confined to
-tests.
+It reads tracked files under `backend/tests/`, `backend/jobtracker/`,
+`apps/web/tests/` and `ml/` — from `git ls-files`, never a filesystem walk,
+because a walk reaches `node_modules`, `.venv*`, `.next` and `__pycache__`, and
+a gate that reports hundreds of hits it does not own is a gate that gets turned
+off. Product source is in scope on purpose: #593's requisition numbers were not
+confined to tests.
 
-It counts, per file, the addresses whose domain is not reserved. **A count going
-up fails. A scanned file appearing that is not in the baseline fails.** A count
-going down does not fail; it is printed, and lowering the recorded number is a
-deliberate act with a reason in the commit body.
+`ml/` was added in #615. It had been neither scanned nor named as excluded,
+which is a blind spot rather than a decision — and #593's corrected inventory
+named `ml/demo/space/jobtracker/classifier/rules.py` explicitly, hours before
+the first cut of this gate merged without it. Note that
+**`ml/demo/space/jobtracker/` is a generated copy** of `backend/jobtracker/`,
+written by `ml/demo/package_space.py` and committed: the same material was
+tracked twice and scanned once. A consequence worth knowing before it surprises
+you — **repackaging the Space moves the baseline**, because whatever is in
+`backend/jobtracker/` gets copied in. That is correct behaviour, not a bug in
+the gate; re-record and say so.
+
+For each file it records two things: the **count** of addresses whose domain is
+not reserved, by occurrence, and a **digest** — a truncated SHA-256 over the
+sorted, lower-cased, de-duplicated set of those addresses.
+
+**Any divergence from the baseline fails, in either direction:** a count up, a
+count down, a scanned file that the baseline does not list, a baselined file
+that has gone to zero, or a file whose count is unchanged while its digest is
+not. That last case is the one the count-only first cut could not see —
+replacing one published address with a brand-new one nets to zero (#615).
+
+A tracked file that cannot be read or decoded **fails**. It used to be counted
+as zero, so an unreadable file read as clean; a skip that passes is the same
+defect as a ratchet that only ratchets one way.
 
 There is **no denylist**, and there will not be one. A list of the exact strings
 this gate exists to forbid would republish every one of them, in a new tracked
 file, in a public repository. The check is on shape.
 
+### Why a digest is allowed where a literal is not
+
+The obvious objection to storing a hash of the material is that it is still
+derived from the material. It is, and the distinction is worth writing down
+rather than assuming.
+
+A denylist is **publication**: it hands the exact strings to every reader,
+every fork and every code-search index, in a file that did not previously
+contain them. A digest gives a reader who *already holds a candidate string*
+the ability to confirm it, and gives a reader who does not hold one nothing at
+all. It is a confirmation oracle, not a disclosure, and it is strictly weaker
+than the thing being avoided.
+
+Be honest about the limit: a file with a single address has a digest over a
+single-element set, so anyone who guesses that address can check the guess. No
+salt fixes this — a salt committed next to the digest is not a salt, and a salt
+kept outside the repository makes the baseline irreproducible by CI, which is
+the one property it must have. The trade is accepted deliberately: confirming a
+string you already possess is not the harm this policy exists to prevent, and
+the alternative is a gate that cannot see a swap.
+
+### What is not scanned
+
+Named so it is a decision and not another blind spot. Outside the four roots
+above: `docs/`, `README.md`, `booklet/`, `scripts/`, `api/`, and everything in
+`apps/web/` that is not under `tests/`. Those surfaces are covered by the rule
+and by review, not by this gate. `apps/web/components/marketing/` and
+`apps/web/lib/demo/` are called out under [What is already
+clean](#what-is-already-clean) and are deliberately out of scope.
+
 ### What the gate does not check
 
-- **It counts.** Swapping one non-reserved address for another, or sanitising
-  one file while adding an address to the same file, nets to zero and is
-  invisible to it. So is a real requisition number, a real subject line or a
-  real role title — those carry no `@`. The gate measures one shape well; the
-  rule above is wider than the gate, on purpose, and review is what covers the
-  difference.
+- **It only sees addresses.** A real requisition number, a real subject line or
+  a real role title carries no `@` and is invisible to it. The gate measures one
+  shape well; the rule above is wider than the gate, on purpose, and review is
+  what covers the difference.
+- **It sees the set, not the string.** Since #615 a same-count swap fails,
+  because the digest is over the set. But the gate still cannot tell a *better*
+  address from a worse one — replacing one non-reserved address with a different
+  non-reserved address reds exactly as loudly as replacing it with nothing, and
+  the reader has to look at the diff to know which happened. That is deliberate:
+  the gate's job is to make the change visible, not to judge it.
 - **It reads files.** Commit messages, PR bodies and issue bodies are in the
   rule's scope and out of the gate's reach entirely. Six public issues already
   carry this material; nothing mechanical will catch the seventh.
@@ -187,11 +275,31 @@ That is the leak #593 predicted and the one that had already landed.
 
 This repository's named recurring defect is a check that cannot fail, and it has
 shipped four rounds of it. `backend/tests/test_test_data_gate.py` builds a
-throwaway git tree and asserts three things, which are the three the gate
-claims: a count going up in a baselined file reds, a brand-new file with a hit
-reds, and an address on a reserved domain stays green. That last case is not
-padding — a gate that reddened on `careers@halberd.test` would punish the shape
-this document tells you to write. It nearly did: review found that the first cut
-matched `example.com` exactly and so flagged
+throwaway git tree and asserts every claim the gate makes, each of which is a
+separate code path:
+
+| case | verdict |
+| --- | --- |
+| a count going up in a baselined file | red |
+| a brand-new file with a hit | red |
+| a same-count swap — the set moved, the total did not | red |
+| a count going down | red |
+| a baselined file going to zero | red |
+| a tracked file that cannot be decoded | red, in check *and* in `--write-baseline` |
+| a pre-#615 counts-only baseline | refused, not half-read |
+| re-recording after a removal | green — the escape hatch has to work |
+| the same addresses reordered, re-cased or duplicated | green |
+| an address on a reserved domain | green |
+| an untracked file | not scanned |
+
+The green rows are not padding. A gate that reddened on `careers@halberd.test`
+would punish the shape this document tells you to write. It nearly did: review
+found that the first cut matched `example.com` exactly and so flagged
 `donotreply@email.careers.example.com`, the `.com` analogue of the address cited
-above as the shape to copy. Subdomain cases are in the test now.
+above as the shape to copy. Subdomain cases are in the test now. The
+reorder-stays-green row is the control on the swap row — without it, the swap
+red could have come from the bytes changing rather than from the set changing.
+
+The test module lives inside a scanned root, so every probe address in it is
+assembled at run time from fragments split at the `@`. It asserts that about
+itself, and it asserts that the baseline file never contains any of them.
