@@ -54,6 +54,11 @@ even when both messages sit on the wrong cards:
   but the product NAMES it (``pipeline.DroppedVerdict``), so a person can find
   out. Counted separately from LOST for exactly that reason: one of these is
   invisible and the other is merely bad.
+* **SUPPRESSED AS SETTLED** — offered to the review queue and refused by
+  ``_persist_review_items_additive``, because the sync had already settled this
+  message's (thread, application). Reaching NOTHING for a designed reason is
+  still a different thing from reaching nothing, so it gets its own bucket and
+  stays out of ``total``. It reads 0 on this corpus; see ``BoardScore``.
 
 * **WRONG COMPANY / WRONG ROLE** — the card holds the right mail and is NAMED
   after something else. Everything above this line is about which messages
@@ -94,12 +99,11 @@ from jobtracker.cloud.applications import (
     Application,
     Email,
     _not_filed_on_an_application_that_answers,
-    _persist_review_items,
     classify_review_item,
     employers_with_several_applications,
     reconcile_orphaned_classifications,
+    sync_gmail_pipeline_additive,
     threads_naming_one_application,
-    upsert_applications_for_user,
 )
 
 from .generate import Case, snippet_of
@@ -292,6 +296,38 @@ def _item(v: Verdict) -> pipeline.PipelineItem:
 
 
 @dataclass
+class SyncTotals:
+    """``MergeResult`` summed over the day-batches, which nothing here could see.
+
+    ``sync_gmail_pipeline_additive`` returns what each sync DID — rows created,
+    rows advanced, rows taken off the board, items surfaced to the queue — and
+    the hand-assembled loop this replaced never called it, so those five numbers
+    existed only in production. They are not a second reading of the board: the
+    board says what is there NOW, and these say how it got there. A rebuild and
+    a steady accumulation can leave the same board.
+
+    ``purged`` is ``len(MergeResult.removed)`` by construction, so only one of
+    the two is kept; carrying both would be a pair that cannot disagree.
+    """
+
+    #: Day-batches handed to the sync. Every day, including one whose mail rolls
+    #: up to nothing — that is a sync a user really makes, and it is where the
+    #: per-batch catch-up and the emptied-row dismissal get their chance.
+    syncs: int = 0
+    created: int = 0
+    updated: int = 0
+    purged: int = 0
+    needs_review: int = 0
+
+    def add(self, result) -> None:
+        self.syncs += 1
+        self.created += result.created
+        self.updated += result.updated
+        self.purged += result.purged
+        self.needs_review += result.needs_review
+
+
+@dataclass
 class Replay:
     """Where every message ended up, which is the whole question.
 
@@ -306,6 +342,15 @@ class Replay:
     groups: list[tuple[str, list[str]]]
     reviewed: set[str]
     dropped: set[str]
+    #: Offered to the review queue and REFUSED a row by the additive persist,
+    #: which is a fourth outcome and had nowhere to go until the harness started
+    #: calling that function (#624). Observed rather than re-derived: the ids the
+    #: sync handed :func:`_persist_review_items_additive`, minus the ids the
+    #: database holds a row for afterwards. Spelling the settled predicate out
+    #: here a second time would make this a copy of the thing it is measuring.
+    suppressed: set[str]
+    #: What the syncs REPORTED, summed. See :class:`SyncTotals`.
+    synced: SyncTotals
     #: card label -> the stage the board shows for it.
     status: dict[str, str]
     #: card label -> the two fields a user actually READS on the card:
@@ -315,15 +360,69 @@ class Replay:
     title: dict[str, tuple[str, str]]
 
 
-async def replay(session, verdicts: list[Verdict]) -> Replay:
-    """Sync the corpus in day-sized batches; return where everything landed.
+async def _stored(session, message_ids: list[str]) -> set[str]:
+    """Which of these messages the database holds a row for, right now."""
 
-    The WHOLE sync, not just the rollup: ``collect_review_items`` and
-    ``_persist_review_items`` run too, and the dropped verdicts are collected.
-    Skipping them was not a shortcut, it was a blind spot — the queue is where
-    a message goes when the product is honest about not knowing, and a harness
-    that cannot see the queue scores that as the same outcome as losing the
-    message.
+    return set(
+        (
+            await session.exec(
+                select(Email.message_id).where(
+                    Email.user_id == _USER, Email.message_id.in_(message_ids)
+                )
+            )
+        ).all()
+    )
+
+
+async def replay(session, verdicts: list[Verdict]) -> Replay:
+    """Sync the corpus in day-sized batches, through the real additive sync.
+
+    ONE ENTRYPOINT OF TWO, NAMED, because "the WHOLE sync" is what this
+    docstring used to claim and it was not true (#624). Each day-batch is handed
+    to ``sync_gmail_pipeline_additive`` whole — the function the ROUTINE and AUTO
+    syncs call, which is the dashboard's connect-time backfill and the inbox
+    relay. So ``upsert_applications_for_user``, the per-batch
+    ``reconcile_orphaned_classifications``, ``_dismiss_rows_left_without_mail``
+    (reached through the upsert), ``_persist_review_items_additive`` with its
+    cross-sync settled test and ``settled_applications`` suppression, and the
+    ``MergeResult`` accounting all run here exactly as they run for a user.
+
+    NOT CROSSED, and this is the half a passing gate does not cover:
+    ``purge_and_rebuild_gmail_pipeline``, the explicit "Re-sync" button. It
+    removes AUTO rows a scan contradicts, calls ``_reset_review_queue``, and
+    persists review items through ``_persist_review_items`` unfiltered. None of
+    that is exercised by this harness at any seed. Crossing one entrypoint is
+    progress, not coverage of both.
+
+    THE DAY BATCH IS THE HARNESS'S CHOICE, not the product's. A real sync rolls
+    up whatever arrived since the last cursor; a day is the honest middle
+    between one-message-at-a-time (10,040 syncs, which is not what happens) and
+    the whole mailbox at once (a rebuild, which hides every delta-only defect).
+    See the module docstring.
+
+    The rollup, ``collect_review_items`` and the dropped verdicts run and are
+    collected. Skipping them was not a shortcut, it was a blind spot — the queue
+    is where a message goes when the product is honest about not knowing, and a
+    harness that cannot see the queue scores that as the same outcome as losing
+    the message.
+
+    HOW IT USED TO BE WRONG, kept because the shape recurs. The loop called
+    ``_persist_review_items`` — the REBUILD persist — while being additive in
+    every other respect: day batches, nothing purged, no ``_reset_review_queue``.
+    That combination exists nowhere in the product, and the two functions share
+    a name stem and most of a shape, so nothing in the file said the choice had
+    been made rather than inherited.
+
+    IT CHANGED NO NUMBER, and that is worth stating rather than discovering
+    again. Measured over the whole corpus at seed 20260822: 2,873 review refs
+    offered, 2,873 persisted, 0 dropped by the additive filter. The filter is not
+    inert for want of running — its settled query returned 602 rows across 62 of
+    the 240 day-batches — but not one of those rows' ``review_dedup_key``
+    collides with an arriving item's. They are thread-mates naming a DIFFERENT
+    application, which is #454's key doing exactly its job. So this corpus can
+    now say the suppression does not over-fire; it still cannot say it fires
+    correctly, because no family produces a queued message sharing both a thread
+    and an identity with mail already on a card. That is #614's half.
     """
 
     by_day: dict[int, list[Verdict]] = defaultdict(list)
@@ -331,6 +430,8 @@ async def replay(session, verdicts: list[Verdict]) -> Replay:
         by_day[v.case.received_at.toordinal()].append(v)
 
     dropped: set[str] = set()
+    suppressed: set[str] = set()
+    synced = SyncTotals()
     for day in sorted(by_day):
         batch = [_item(v) for v in by_day[day]]
         known_multi = await employers_with_several_applications(session, _USER)
@@ -341,17 +442,24 @@ async def replay(session, verdicts: list[Verdict]) -> Replay:
             batch, fell_out, known_multi, known_threads
         )
         dropped.update(d.message_id for d in fell_out)
-        if rolled:
-            await upsert_applications_for_user(session, _USER, rolled)
-        if review:
-            await _persist_review_items(session, _USER, review)
-        if rolled or review:
-            await session.commit()
+        # UNCONDITIONALLY, including on a day whose mail rolls up to nothing and
+        # asks nothing. That is a sync a user really makes — the auto sync runs
+        # on a schedule, not on there being something to find — and it is the
+        # only way the per-batch catch-up and the emptied-row dismissal get the
+        # chance production gives them. The old loop skipped both.
+        offered = [r.message_id for r in review]
+        synced.add(
+            await sync_gmail_pipeline_additive(session, _USER, rolled, review)
+        )
+        if offered:
+            suppressed |= set(offered) - await _stored(session, offered)
 
-    return await _read_the_board(session, dropped)
+    return await _read_the_board(session, dropped, suppressed, synced)
 
 
-async def _read_the_board(session, dropped: set[str]) -> Replay:
+async def _read_the_board(
+    session, dropped: set[str], suppressed: set[str], synced: SyncTotals
+) -> Replay:
     """The board, exactly as :func:`replay` left it.
 
     Extracted verbatim so :func:`answer_the_queue` can take the SAME reading
@@ -411,6 +519,8 @@ async def _read_the_board(session, dropped: set[str]) -> Replay:
         ],
         reviewed=set(queued),
         dropped=dropped,
+        suppressed=suppressed,
+        synced=synced,
         status={
             f"row{r.id}:{r.company}": getattr(r.status, "value", str(r.status))
             for r in live
@@ -604,7 +714,12 @@ async def answer_the_queue(
     await reconcile_orphaned_classifications(session, _USER)
     await session.commit()
 
-    return score, await _read_the_board(session, replayed.dropped)
+    # The same totals, unchanged: they describe what the SYNCS did, and
+    # answering the queue is not a sync. Re-reading the board is not a second
+    # measurement of them.
+    return score, await _read_the_board(
+        session, replayed.dropped, replayed.suppressed, replayed.synced
+    )
 
 
 def _row_ids(replayed: Replay) -> set[int]:
@@ -699,6 +814,64 @@ class BoardScore:
     #: About a real application and dropped under the review floor. Counted by
     #: the product, so recoverable by a person who goes looking.
     dropped: int = 0
+
+    #: ── what happened to mail that MUST be addressed ────────────────────────
+    #:
+    #: The two good outcomes, counted rather than skipped. ``lost`` and
+    #: ``dropped`` above are leftovers, so on their own they have no
+    #: denominator: a change that stopped GRADING n messages would take both to
+    #: zero and read as a perfect board, which is how a merge regression once
+    #: took ``role_missing`` from 213 to 0 (#536). With these two the five
+    #: populations can be made to close against a count taken from ``cases``,
+    #: and the closure is arithmetic — see
+    #: ``test_every_application_mail_is_addressed``.
+    addressed_on_a_card: int = 0
+    addressed_in_the_queue: int = 0
+    #: THE FOURTH OUTCOME, and it exists because :func:`replay` now calls the
+    #: additive persist (#624). ``_persist_review_items_additive`` refuses a row
+    #: to an arriving item whose (thread, application) the sync has already
+    #: settled — either a sibling is ``is_reviewed``, or a sibling is filed on a
+    #: card that answers for it. The message then reaches no card, no queue and
+    #: no counter, which is LOST's definition for an outcome the product chose;
+    #: scoring designed behaviour as the estate's worst failure mode would put a
+    #: deliberate suppression in the counter that exists for silent loss.
+    #:
+    #: OUT OF ``total`` for that reason, and NOT a blessing: whether suppressing
+    #: an uncertain update to an application already on a card is right is not
+    #: settled by this commit. The bucket makes the population visible, which is
+    #: the precondition for deciding.
+    #:
+    #: 0 ON THIS CORPUS, AND THE ZERO IS MEASURED. Both arms were checked at
+    #: seed 20260822. ``is_reviewed`` CANNOT fire during a replay — the flag is
+    #: written only by ``classify_review_item`` and ``_settle_thread_siblings``,
+    #: neither of which the sync path calls, and there are 0 such rows when the
+    #: replay ends. The filed arm DOES select rows (602 across 62 of the 240
+    #: day-batches) and none of their dedup keys collides with an arriving
+    #: item's. So this counter is currently a zero that cannot be non-zero, in
+    #: the sense #536 names, and it is pinned anyway: it is what will catch the
+    #: suppression the moment a family produces a queued message sharing a
+    #: thread AND an identity with mail already on a card.
+    #:
+    #: WHEN THE ZERO EXPIRES, so that a later reader does not cite it as a
+    #: product fact. Two #614 families are expected to make it legitimately
+    #: non-zero, and until one of them lands this number says "the corpus has no
+    #: case of this shape", NOT "the sync suppresses nothing":
+    #:
+    #:   * the same-thread-same-identity uncertain follow-up (#630) — a reply
+    #:     quoting the confirmation's subject, so Gmail threads it and the role
+    #:     derives to the same token, arriving below the auto-file gate;
+    #:   * the interleaved family — answer the queue, THEN deliver more mail.
+    #:     Today the harness answers once, after the last day, so the
+    #:     ``is_reviewed`` arm of the settled filter cannot fire at all. That is
+    #:     a property of the harness's phase ordering, not of the product, and
+    #:     it is the same "an arm no fixture can reach" shape #624 removed one
+    #:     arm over.
+    #:
+    #: The only evidence today that the FILTER itself bites — as opposed to this
+    #: counter counting — is an uncommitted control that reverts #454's identity
+    #: component inside the additive persist and takes this to 602. That control
+    #: belongs in the tree; it is named as the first item of #614's control set.
+    suppressed_as_settled: int = 0
     failures: list[Failure] = field(default_factory=list)
 
     @property
@@ -1090,10 +1263,41 @@ def score_board(
             )
 
     # ── every application mail is addressed ──────────────────────────────────
+    #
+    # FIVE OUTCOMES, ALL COUNTED, because four of them used to be a `continue`.
+    # A message that must be addressed is on a card, in the queue, suppressed by
+    # the additive persist, dropped under the floor, or lost — and the first two
+    # were invisible here, which left `lost` and `dropped` as leftovers with no
+    # denominator. The five are asserted to close against a population counted
+    # from `cases` rather than from a counter this loop increments; a
+    # denominator this loop maintains would fall with the buckets and the
+    # closure could not fail.
     for case in cases:
         if not case.must_be_addressed:
             continue
-        if case.message_id in on_a_card or case.message_id in replayed.reviewed:
+        if case.message_id in on_a_card:
+            score.addressed_on_a_card += 1
+            continue
+        if case.message_id in replayed.reviewed:
+            score.addressed_in_the_queue += 1
+            continue
+        if case.message_id in replayed.suppressed:
+            # Recorded as a Failure so `rank` can name the FAMILIES being
+            # suppressed, and excluded from `total` by `BoardScore` rather than
+            # by not existing — the same shape `update_held_for_review` uses. A
+            # designed outcome that leaves no trace is one nobody can audit.
+            score.suppressed_as_settled += 1
+            score.failures.append(
+                Failure(
+                    mode="SUPPRESSED-AS-SETTLED",
+                    family=case.family,
+                    detail=(
+                        "the additive persist refused it a row: the sync had "
+                        "already settled this thread's application"
+                    ),
+                    message_ids=(case.message_id,),
+                )
+            )
             continue
         named = case.message_id in replayed.dropped
         if named:
