@@ -41,6 +41,21 @@ ACCEPTING TWIN one edit away. A refusal test on its own passes for a reader that
 always returns ``None``, which is precisely the reader this module must not
 ship: a control has to be directional.
 
+THE TWO REFUSAL BRANCHES WERE REWRITTEN AFTER THIS FILE FIRST SHIPPED, and the
+reason is recorded here because these 44 cases are what missed it. An
+independent cross-check found 26 of 48 adversarial subjects in this shape coming
+back with a title nobody would want on a card, all from one root cause: both
+branches probed ``role.split()[-1]``, so a second word on the right walked past
+them. ``… (Remote, US)`` split one job into two identity keys and "Engineering
+Manager Interview Invitation" became a card title.
+
+Both probes are gone. A candidate ending in ANY parenthetical refuses, through
+the same regex the employer side strips with; and the region right of the
+title's head noun must be INTRODUCED — by a comma, a dash, a level or a
+connective — rather than space-joined. The generated grid in
+``test_the_trailing_segments_right_edge_is_structural.py`` is what grades them,
+because hand-written cases are what failed here.
+
 Every fixture here is INVENTED. "Brackenhill" and "Northwind" are not companies;
 no real mailbox content appears in this file, in the reader, or in the commit.
 """
@@ -159,18 +174,83 @@ def test_the_subject_outranks_a_body_that_names_a_different_title() -> None:
 # ── refusal 1: a lifecycle word as the candidate's last word ─────────────────
 
 
-def test_a_lifecycle_tail_is_what_the_mail_is_about_not_what_the_job_is() -> None:
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        # The case this test was written with, and the only one the original
+        # last-word probe caught.
+        "Engineering Manager Interview",
+        # ...and the four that revived it by putting ONE MORE WORD on the right.
+        # An independent cross-check found these; they are the reason the probe
+        # is gone and a positive structural rule stands in its place.
+        "Engineering Manager Interview Invitation",
+        "Software Engineer Interview Confirmation",
+        "Software Engineer Offer Letter",
+        "Software Engineer Interview Reminder",
+        # Refused with NO vocabulary at all: none of "Event", "Newsletter" or
+        # "Alert" is in any set in the module, and none of them needs to be.
+        "Senior Engineer Hiring Event",
+        "Engineer Newsletter",
+        "Software Engineer Job Alert",
+    ],
+)
+def test_a_lifecycle_tail_is_what_the_mail_is_about_not_what_the_job_is(
+    candidate: str,
+) -> None:
     """THE MOST MISSABLE REFUSAL IN THIS MODULE.
 
     "Engineering Manager Interview" is Title-Case, is title-SHAPED, and its head
     noun ("manager") is real, so ``_clean_role``, ``_TITLE_SHAPED`` and
-    ``_ROLE_HEAD_NOUNS`` all accept it. Only a lifecycle test on the tail
-    refuses, and it is the same cut ``_employer_from_subject_segment`` already
-    makes on the employer half of an ATS subject.
+    ``_ROLE_HEAD_NOUNS`` all accept it. Something has to refuse the tail, and it
+    is the same cut ``_employer_from_subject_segment`` already makes on the
+    employer half of an ATS subject.
+
+    IT IS A RULE ABOUT POSITION, NOT A LIST OF WORDS, and that is what changed.
+    The first version tested the last WORD against the nine
+    ``_SUBJECT_LIFECYCLE_TAIL`` stems, so appending any noun revived it —
+    "Engineering Manager Interview" refused and "Engineering Manager Interview
+    Invitation" became a card title. What refuses all eight of these now is that
+    the material stands SPACE-JOINED to the right of the title's head noun,
+    where English puts what a compound is about rather than what it is. No set
+    contains "Invitation", "Letter", "Reminder", "Event", "Newsletter" or
+    "Alert", and widening one to reach them is what this rule exists to avoid:
+    a wordlist's gaps fail open, and this rule's gaps fail closed.
     """
 
-    subject = f"{EMPLOYER} | {BOILER} | Engineering Manager Interview - {EMPLOYER} (Remote)"
+    subject = f"{EMPLOYER} | {BOILER} | {candidate} - {EMPLOYER} (Remote)"
     assert pipeline.role_from_message(subject, "") is None
+
+
+def test_the_nine_stems_still_earn_their_keep_where_structure_cannot_see() -> None:
+    """...and why the stems are KEPT rather than deleted with the probe.
+
+    A comma introduces a title's own continuation — that is what #626's own
+    title is made of, and refusing it would refuse the bug this reader exists to
+    fix. So a lifecycle segment written after a comma is invisible to the
+    structural rule, and the nine stems are scanned over the whole post-head
+    region to catch it. They are NOT widened; this is the only position they
+    still work in.
+    """
+
+    hidden = f"{EMPLOYER} | {BOILER} | Software Engineer, Final Interview - {EMPLOYER}"
+    assert pipeline.role_from_message(hidden, "") is None
+    # Directional: the same shape with an invented word in the stem's place is a
+    # title and resolves, so the refusal above is the stem and not the comma.
+    twin = f"{EMPLOYER} | {BOILER} | Software Engineer, Final Quorvex - {EMPLOYER}"
+    assert pipeline.role_from_message(twin, "") == "Software Engineer, Final Quorvex"
+
+
+def test_a_lifecycle_word_left_of_the_head_noun_is_part_of_the_title() -> None:
+    """The accepting twin the position rule buys, which a whole-string scan loses.
+
+    "Applications Engineer" is a real job title and "Application" is one of the
+    nine stems. It survives because the stem stands LEFT of the head noun, where
+    it modifies the job instead of naming what the mail is about. A scan of the
+    whole candidate would refuse it; the post-head region for it is empty.
+    """
+
+    subject = f"{EMPLOYER} | {BOILER} | Applications Engineer - {EMPLOYER} (Remote)"
+    assert pipeline.role_from_message(subject, "") == "Applications Engineer"
 
 
 def test_the_same_subject_without_the_lifecycle_word_resolves() -> None:
@@ -215,6 +295,29 @@ def test_a_real_title_from_that_same_employer_resolves() -> None:
     assert pipeline.role_from_message(subject, "") == "Software Engineer"
 
 
+def test_the_employer_refusal_is_isolated_from_the_structural_rule() -> None:
+    """The control that keeps the employer refusal MUTABLE.
+
+    "Brackenhill Developer Tools" is now refused twice over — by the explicit
+    candidate-equals-employer test AND by the structural rule, since "Tools"
+    stands space-joined right of "Developer". A branch that two rules refuse is
+    a branch no mutation can red, and an untestable guard is the same shape as a
+    guard that is not there.
+
+    So the isolating fixture ENDS on its head noun: "Brackenhill Developer" has
+    an empty post-head region, passes ``_clean_role``, ``_TITLE_SHAPED`` and the
+    head-noun test, and would file the company as the job title if the equality
+    refusal were removed.
+    """
+
+    employer = "Brackenhill Developer"
+    subject = f"{employer} | {BOILER} | {employer} - {employer} (Remote)"
+    assert pipeline.role_from_message(subject, "") is None
+    # Directional, and one word away: the same employer, a real title.
+    other = f"{employer} | {BOILER} | Platform Engineer - {employer} (Remote)"
+    assert pipeline.role_from_message(other, "") == "Platform Engineer"
+
+
 # ── refusal 3: a requisition id in the title's place ─────────────────────────
 
 
@@ -232,21 +335,47 @@ def test_a_requisition_id_is_not_a_job_title(candidate: str) -> None:
 
 
 def test_a_title_carrying_a_requisition_id_still_resolves() -> None:
-    """The accepting twin: the id rides along, the title is still read."""
+    """The accepting twin: the id rides along, the title is still read.
+
+    THIS IS WHY THE PAREN REFUSAL RUNS AFTER ``_clean_role``. That function
+    deletes a requisition-id parenthetical and the employer-side strip deletes
+    it too, so both placements converge on one token and there is no split to
+    prevent. Testing the RAW candidate would refuse this for nothing.
+    """
 
     subject = f"{EMPLOYER} | {BOILER} | Software Engineer II (Req ID: 10475660) - {EMPLOYER}"
     assert pipeline.role_from_message(subject, "") == "Software Engineer II"
+    # The other placement of the same id, which is what "converge" means here.
+    other = f"{EMPLOYER} | {BOILER} | Software Engineer II - {EMPLOYER} (Req ID: 10475660)"
+    assert pipeline.role_from_message(other, "") == "Software Engineer II"
 
 
 # ── refusal 4: a bare work-arrangement word outside the parentheses ──────────
 
 
-@pytest.mark.parametrize("tail", ["Remote", "Hybrid", "Onsite", "On-Site"])
+@pytest.mark.parametrize(
+    "tail",
+    ["Remote", "Hybrid", "Onsite", "On-Site", "On Site", "In-Office", "In Office",
+     "Virtual", "Telecommute"],
+)
 def test_a_bare_work_arrangement_tail_is_not_part_of_the_title(tail: str) -> None:
     """The parenthetical strip does not reach a location written without brackets.
 
     "…New Grad Remote" is exactly as Title-Case as "…New Grad", and the extra
     word changes the ``role_token``, which splits one application into two.
+
+    WHY THE SET SURVIVED THE STRUCTURAL REWRITE. The reported title continues
+    past its head noun through a comma, so ``_post_head_is_introduced`` licenses
+    everything after "Engineer" — including a work arrangement space-joined onto
+    the end of it. Structure closes this placement for a title that ENDS on its
+    head noun and cannot close it for this one, which is the reported bug's own
+    title. Deleting the set would have flipped every case below to resolving.
+
+    All nine spellings, because the previous last-word probe could only reach
+    the two-word members through ``_normalize_token`` folding the hyphen in
+    "On-Site" — a whitespace-split token cannot contain a space, so "On Site"
+    written as two words was unreachable. The region is normalised as a whole
+    now, so both spellings of both members are live.
     """
 
     subject = f"{EMPLOYER} | {BOILER} | {REPORTED_TITLE} {tail} - {EMPLOYER}"
@@ -260,43 +389,94 @@ def test_the_same_location_inside_the_parentheses_resolves() -> None:
     assert pipeline.role_from_message(subject, "") == REPORTED_TITLE
 
 
-def test_a_parenthesised_arrangement_on_the_title_is_refused_as_well() -> None:
-    """BOTH PLACEMENTS OR NEITHER.
+@pytest.mark.parametrize(
+    "parenthetical",
+    [
+        # What a work-arrangement vocabulary knows.
+        "Remote",
+        # ...and what it does not, which is the whole point. The tail-side strip
+        # is UNCONDITIONAL, so a vocabulary-gated role side leaves every place
+        # name nobody listed minting a second token. Place names are an open set.
+        "Remote, US",
+        "Bengaluru",
+        "Hybrid Optional",
+        # An invented proper noun: no list anywhere can contain it.
+        "Quorvale",
+    ],
+)
+def test_a_parenthesised_arrangement_on_the_title_is_refused_as_well(
+    parenthetical: str,
+) -> None:
+    """BOTH PLACEMENTS OR NEITHER — and it is STRUCTURAL, not lexical.
 
-    "<Role> (Remote) - <Employer>" and "<Role> - <Employer> (Remote)" are one
-    posting written the two ways an ATS writes it. The reader strips the second
-    and would keep the first, handing back "Software Engineer (Remote)" against
-    the other's "Software Engineer" — and ``normalize_role_token`` deletes the
+    "<Role> (X) - <Employer>" and "<Role> - <Employer> (X)" are one posting
+    written the two ways an ATS writes it. The reader strips the second and
+    would keep the first, handing back "Software Engineer (Remote)" against the
+    other's "Software Engineer" — and ``normalize_role_token`` deletes the
     brackets but KEEPS THE WORD, so those are two ``role_token``s for one job.
     That is the split this whole module exists to prevent, reached from the
     other direction, so the odd spelling refuses to the review queue.
+
+    THE FIRST VERSION OF THIS GUARD TESTED THE LAST WORD against a
+    work-arrangement list and did not hold: "(Remote, US)" has two words in it,
+    so the list never saw "Remote" and the split shipped. Fixing the DETECTOR
+    while keeping the list would not have closed it either — "(Bengaluru)" is
+    not a work arrangement and the tail side strips it anyway.
+
+    So the rule is: ANY parenthetical on the role side refuses, through the very
+    same ``_TRAILING_SEGMENT_PAREN`` the employer side strips with, which is
+    what stops the two edges drifting apart in a later edit. STRIPPING instead
+    of refusing was rejected outright and for a worse reason than the split:
+    "Software Engineer (Platform)" and "Software Engineer (Security)" at one
+    employer would collapse onto one token and start capturing each other's mail.
     """
 
-    attached = f"{EMPLOYER} | {BOILER} | Software Engineer (Remote) - {EMPLOYER}"
-    trailing = f"{EMPLOYER} | {BOILER} | Software Engineer - {EMPLOYER} (Remote)"
+    attached = (
+        f"{EMPLOYER} | {BOILER} | Software Engineer ({parenthetical}) - {EMPLOYER}"
+    )
+    trailing = (
+        f"{EMPLOYER} | {BOILER} | Software Engineer - {EMPLOYER} ({parenthetical})"
+    )
     assert pipeline.role_from_message(attached, "") is None
     assert pipeline.role_from_message(trailing, "") == "Software Engineer"
     # ...and this is the reason, not a taste: the two spellings never join.
     assert pipeline.normalize_role_token(
-        "Software Engineer (Remote)"
+        f"Software Engineer ({parenthetical})"
     ) != pipeline.normalize_role_token("Software Engineer")
 
 
-def test_a_parenthesised_cohort_on_the_title_is_kept() -> None:
-    """The accepting twin: a parenthetical that is not a work arrangement.
+def test_a_parenthesised_cohort_on_the_title_now_refuses_too() -> None:
+    """THIS TEST FLIPPED, and the flip is the cost of Fix 1 stated out loud.
 
-    ``_ROLE_PAREN`` exists because "Software Engineer I, Entry-Level (Graduation
-    Date: Fall 2026)" is a real posted title, and refusing every parenthetical
-    to catch a location would take that with it.
+    It used to assert that "Software Engineer I (Graduation Date: Fall 2026)"
+    KEEPS its cohort parenthetical, because ``_ROLE_PAREN`` exists for exactly
+    that real posted title. Under the structural rule it refuses, and there is
+    no way to keep it that does not reopen the split: telling a cohort from a
+    location needs to know what "Bengaluru" is.
+
+    IT IS RECALL NOT GAINED, NOT A REGRESSION. Every subject of this shape
+    resolves to ``None`` on main — the reader that reads them at all is the one
+    this branch adds — so nothing that used to work stops working. The message
+    goes to the review queue, a person types the title once, and at most one
+    token is ever minted for the job.
+
+    The same title in the LEAD segment is untouched: this is right-edge hygiene
+    inside one reader, not a change to ``_ROLE_PAREN``.
     """
 
     subject = (
         f"{EMPLOYER} | {BOILER} | Software Engineer I (Graduation Date: Fall 2026) - "
         f"{EMPLOYER}"
     )
-    assert (
-        pipeline.role_from_message(subject, "")
-        == "Software Engineer I (Graduation Date: Fall 2026)"
+    assert pipeline.role_from_message(subject, "") is None
+    # The cohort without its brackets is a comma-introduced continuation, which
+    # is title material and still resolves — so the refusal above is the
+    # parenthesis and nothing else.
+    plain = f"{EMPLOYER} | {BOILER} | Software Engineer I, Entry-Level - {EMPLOYER}"
+    assert pipeline.role_from_message(plain, "") == "Software Engineer I, Entry-Level"
+    # ``_ROLE_PAREN`` itself is unmoved: the span still accepts the cohort.
+    assert pipeline._TITLE_SHAPED.match(
+        "Software Engineer I (Graduation Date: Fall 2026)"
     )
 
 
