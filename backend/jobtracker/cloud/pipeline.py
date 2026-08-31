@@ -228,17 +228,11 @@ CONSUMER_WEBMAIL_DOMAINS: frozenset[str] = frozenset(
     }
 )
 
-# Relays that carry ONE EMPLOYER'S mail per message — an ATS, a job board, or an
-# assessment vendor. What they have in common is the only thing the subject
-# readers need: the message was sent on behalf of a company, so the company is
-# named in the TEXT even though it is absent from the domain. Consumer webmail is
-# not here, and that exclusion is the whole point of the name: a display name or
-# a sentence subject in a person's mail is a PERSON.
-PLATFORM_RELAY_DOMAINS: frozenset[str] = ATS_RELAY_DOMAINS | ASSESSMENT_RELAY_DOMAINS
-
 # Every domain whose brand must NOT be used as the employer. Composed from the
 # three sets above so membership can never drift between them.
-RELAY_DOMAINS: frozenset[str] = PLATFORM_RELAY_DOMAINS | CONSUMER_WEBMAIL_DOMAINS
+RELAY_DOMAINS: frozenset[str] = (
+    ATS_RELAY_DOMAINS | ASSESSMENT_RELAY_DOMAINS | CONSUMER_WEBMAIL_DOMAINS
+)
 
 # Corporate/recruiting noise words stripped from a sender display-name before
 # it is used as a company token ("Acme Recruiting" / "Acme via Lever" → "acme").
@@ -347,21 +341,21 @@ def _domain_brand(domain: str) -> str:
     return labels[-2]
 
 
-def _company_from_subject(subject: str, platform_relay: bool = False) -> str:
+def _company_from_subject(subject: str, assessment_relay: bool = False) -> str:
     """The company a subject names, as a grouping token, or ``""``.
 
-    ``platform_relay`` carries the SAME fence :func:`_employer_from_subject`
+    ``assessment_relay`` carries the SAME fence :func:`_employer_from_subject`
     applies, and it is passed rather than re-derived so the two entry points
-    cannot answer the question differently. Without it the invitation reading
-    would fire on consumer webmail, where "Sarah Chen invites you to interview"
-    is a person and not a company — the grouping equivalent of the "Julee
-    Johnson → OFFERED" row.
+    cannot answer the question differently. See :data:`_EMPLOYER_INVITES` for
+    why the fence is that narrow: off an assessment vendor, "<Name> invites you
+    to a technical screening" is a RECRUITER, and reading it here is the
+    grouping equivalent of the "Julee Johnson → OFFERED" row.
     """
 
     match = _SUBJECT_COMPANY.search(subject or "")
     if match:
         return _normalize_token(match.group(1))
-    if platform_relay:
+    if assessment_relay:
         invited = _EMPLOYER_INVITES.search(subject or "")
         if invited:
             return _normalize_token(invited.group(1))
@@ -387,10 +381,10 @@ def company_key(
     1. Take the sender-domain brand (``jobs.acme.com`` → ``acme``).
     2. If that brand is a shared relay (ATS / job board / assessment vendor /
        consumer webmail) it does NOT identify the employer, so derive the
-       company from the subject ("application to <Company>", and — for platform
-       relays only — "<Company> invites you to take an assessment") and then
-       from the cleaned sender display-name, falling back to the relay brand
-       only if neither yields anything.
+       company from the subject ("application to <Company>", and — for an
+       ASSESSMENT vendor only — "<Company> invites you to take an assessment")
+       and then from the cleaned sender display-name, falling back to the relay
+       brand only if neither yields anything.
 
     Always returns a non-empty token (``"unknown"`` as the last resort) so
     callers can group without None-guards.
@@ -405,7 +399,7 @@ def company_key(
         return brand
 
     from_subject = _company_from_subject(
-        subject, platform_relay=brand in PLATFORM_RELAY_DOMAINS
+        subject, assessment_relay=brand in ASSESSMENT_RELAY_DOMAINS
     )
     if from_subject:
         return from_subject
@@ -941,25 +935,30 @@ _EMPLOYER_BARE_AT = re.compile(r"(?i:\bat\s+)(" + _COMPANY_CAPTURE + r")")
 # employer on opposite sides of the verb and so cannot share a pattern.
 #
 # "INTERVIEW" IS NOT ON THIS LIST, and it was, until it was measured. An
-# interview is the one thing on the list a PERSON invites you to in their own
-# name, and the scheduling tools that send those mails are already ATS relays
-# here (`goodtime`, `modernloop`), so the platform fence does not exclude them:
+# interview is the one thing on this list a PERSON invites you to in their own
+# name, and two of the vendors this reading is fenced to — Karat and HireVue —
+# sell exactly that:
 #
-#     "Sarah Chen invites you to interview"            -> ('sarah', 'Sarah Chen')
+#     "Sarah Chen invites you to interview"             -> ('sarah', 'Sarah Chen')
 #     "Sarah Chen invites you to schedule an interview" -> ('sarah', 'Sarah Chen')
 #
-# both through Greenhouse — which is #535's exact tuple, re-minted through a new
-# door. Removing the noun refuses all four measured shapes of it. What it costs
-# is a genuine "<Employer> invites you to complete an on-demand interview",
-# which now reads nothing and goes to the review queue, where a person decides.
-# That is the direction this module takes everywhere else, and a wrong employer
-# on the board is strictly worse than a queued one.
+# which is #535's exact tuple, re-minted through a new door. Removing the noun
+# refuses all four measured shapes of it. What it costs is a genuine "<Employer>
+# invites you to complete an on-demand interview", which now reads nothing and
+# goes to the review queue, where a person decides. That is the direction this
+# module takes everywhere else, and a wrong employer on the board is strictly
+# worse than a queued one.
 #
-# The residual, stated rather than hidden: "Sarah Chen invites you to take an
-# assessment" still resolves the person. Nobody writes that about themselves in
-# the third person, and the sender-display-name path already answers ('sarah',
-# 'Sarah Chen') for an ATS message whose display name is a person — so this is
-# the bargain step 3 already makes, not a new one.
+# THE NOUNS THAT REMAIN CARRY THE SAME RISK IN A SMALLER POPULATION, and that is
+# the honest statement of it rather than a claim of safety. "<Person> invites you
+# to a technical screening" resolves the person, and so do the take-home
+# exercise, test and challenge wordings. What contains it is the CALLER'S fence,
+# not this list: those subjects reach this pattern only from one of the fourteen
+# assessment vendors, never from the ATS and scheduling relays (`goodtime`,
+# `modernloop`, Greenhouse) whose mail routinely carries a recruiter's name. An
+# earlier draft fenced this to ATS relays as well and filed "Sarah Chen" as a
+# company from a Greenhouse subject, above `AUTO_FILE_GATE`, with no display name
+# involved at all.
 _INVITATION_OBJECT = r"(?:assessments?|tests?|challenges?|screenings?|exercises?)"
 
 # "<Employer> invites you to take an assessment" — THE EMPLOYER AS THE SENTENCE
@@ -980,7 +979,7 @@ _INVITATION_OBJECT = r"(?:assessments?|tests?|challenges?|screenings?|exercises?
 #
 # 1. THE VERB IS THE ANCHOR. The capture is not "the subject starts with a
 #    capital"; it is the grammatical subject of "invites/invited you", which is
-#    an agent, and in mail relayed by a platform the agent is the employer.
+#    an agent, and in an assessment vendor's mail the agent is the employer.
 # 2. THE OBJECT MUST BE AN ASSESSMENT. Without it "Sarah Chen invites you to our
 #    webinar" reads as a company. The bounded ``[^\n]{0,40}?`` is the same idiom
 #    `_EMPLOYER_ANCHORED` uses and is bounded for the same reason: an unbounded
@@ -997,10 +996,23 @@ _INVITATION_OBJECT = r"(?:assessments?|tests?|challenges?|screenings?|exercises?
 #    "action", which groups with nothing. No observed subject has that shape;
 #    every prefix in the mailbox carries a bracket, a colon or a comma.
 #
-# The caller adds a FOURTH fence it cannot express here: the message must have
-# come from a platform relay, and the capture must not name that relay. An
-# assessment vendor writes "Coderbyte invites you to take an assessment" about
-# its own product mail, and that names the courier.
+# The caller adds a FOURTH fence it cannot express here, and it is the one that
+# does the most work: the message must have come from an ASSESSMENT VENDOR —
+# `ASSESSMENT_RELAY_DOMAINS`, not the wider relay vocabulary — and the capture
+# must not name that vendor.
+#
+# THE NARROWNESS IS THE POINT. Read off an ATS or a scheduling relay as well,
+# this pattern mints a RECRUITER as a company: measured on Greenhouse with no
+# display name at all, "Sarah Chen invites you to a technical screening" and four
+# more wordings resolved ('sarah', 'Sarah Chen'), classify at 0.90-0.95, and so
+# clear `AUTO_FILE_GATE` and file a card nobody chose — #535 all over again,
+# through a door #535 never had. Scoped to the vendors, the same subjects resolve
+# to nothing and go to the review queue. What it costs is a genuine "<Employer>
+# invites you to take an assessment" relayed by an ATS rather than by the vendor:
+# that queues now too, and queuing is the direction this module takes everywhere.
+#
+# An assessment vendor writes "Coderbyte invites you to take an assessment" about
+# its own product mail, and that names the courier — hence the second half.
 _EMPLOYER_INVITES = re.compile(
     r"(?:^|[|:;,.!?\]\)>–—-])\s*"
     r"(" + _COMPANY_CAPTURE + r")"
@@ -2524,12 +2536,11 @@ def _employer_from_subject(
         patterns = (_EMPLOYER_AT_SIGN, *patterns)
     # LAST, so this is PURELY ADDITIVE: every subject that resolves today
     # resolves to the same employer, and only a subject that matched nothing at
-    # all can reach the new reading. It is also fenced to PLATFORM relays, which
-    # is the fence that keeps #535's shapes out of it — an ATS or an assessment
-    # vendor sends one employer's mail per message, while "<Name> invites you to
-    # interview" off consumer webmail is a person, and a person is exactly what
-    # steps 3 and 4 of :func:`resolve_employer` are fenced away from too.
-    if relay_brand in PLATFORM_RELAY_DOMAINS:
+    # all can reach the new reading. It is also fenced to ASSESSMENT VENDORS and
+    # nothing wider — not consumer webmail, where a name is a person, and not the
+    # ATS and scheduling relays either, whose mail routinely puts a RECRUITER'S
+    # name in exactly this position. See :data:`_EMPLOYER_INVITES`.
+    if relay_brand in ASSESSMENT_RELAY_DOMAINS:
         patterns = (*patterns, _EMPLOYER_INVITES)
 
     for pattern in patterns:
@@ -3556,9 +3567,11 @@ def resolve_employer(
          not an employer here).
       2. An employer named explicitly in the subject ("... at <Company>",
          "on behalf of <Company>", and — for ATS relays only — a trailing
-         "@ <Company>"). This is the relay case (Lever/Greenhouse). For any
-         PLATFORM relay it also reads the employer as the sentence subject of an
-         invitation, "<Company> invites you to take an assessment" (#687).
+         "@ <Company>"). This is the relay case (Lever/Greenhouse). For an
+         ASSESSMENT VENDOR only it also reads the employer as the sentence
+         subject of an invitation, "<Company> invites you to take an
+         assessment" (#687) — see :data:`_EMPLOYER_INVITES` for why that fence
+         is narrower than the one the rest of this list uses.
       3. (ATS relays only) the sender DISPLAY NAME — "Crusoe Hiring Team" →
          Crusoe, "Team Talent @ MotherDuck" → MotherDuck.
       4. (ATS relays only) the subject's leading segment before a ``|`` or a
@@ -3655,6 +3668,32 @@ def employer_named_in_body(snippet: str, sender_email: str = "") -> tuple[str, s
     mail. The check compares the capture against the sender's own brand, not
     against a list of companies that also happen to sell recruiting software
     (#508 is the scar from conflating those two).
+
+    …EXCEPT ON THE ONE PATH WHERE THERE IS NO SENDING BRAND TO COMPARE AGAINST,
+    and #687 widened that path by fourteen names, deliberately and with the cost
+    written down here rather than discovered later. The call below passes
+    ``brand if brand in RELAY_DOMAINS else ""``, so for a sender that is NOT a
+    relay :func:`_names_the_relay` falls back to the vocabulary — and with the
+    assessment vendors now in that vocabulary:
+
+        "…your interest in Karat"  from a corporate domain
+            before  ('karat', 'Karat')
+            after    None
+
+    …with HireVue, Woven, Coderbyte and Mettl the same. Through an ATS it is
+    unchanged, because a brand IS known there and the precise question gets
+    asked.
+
+    KEPT, on a positive argument rather than a shrug: on that path the vocabulary
+    is the only signal there is, and the population it now covers is real —
+    "you have been invited by HackerRank to complete an assessment", sent from an
+    employer's own domain, names the COURIER, and refusing it is right. What it
+    costs is a genuine employer whose name is a vendor's, mentioned in body prose
+    from a third party's domain: that row reaches the queue with no suggested
+    name instead of a correct one. Display grade, so the cost is a queue row a
+    human already has open, never a card. If it ever needs reversing, the change
+    is here — narrow the fallback set — and not in
+    :func:`_names_the_relay`, which four other callers depend on.
     """
 
     if not snippet:

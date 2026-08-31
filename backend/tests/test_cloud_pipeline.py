@@ -496,7 +496,6 @@ def test_relay_domain_sets_partition_without_drift() -> None:
     assert p.RELAY_DOMAINS == (
         p.ATS_RELAY_DOMAINS | p.ASSESSMENT_RELAY_DOMAINS | p.CONSUMER_WEBMAIL_DOMAINS
     )
-    assert p.PLATFORM_RELAY_DOMAINS == p.ATS_RELAY_DOMAINS | p.ASSESSMENT_RELAY_DOMAINS
     # Pairwise disjoint, all three ways. Kept as three assertions rather than a
     # length sum so a failure names WHICH pair drifted.
     assert not (p.ATS_RELAY_DOMAINS & p.CONSUMER_WEBMAIL_DOMAINS)

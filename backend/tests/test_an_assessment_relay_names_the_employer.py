@@ -32,8 +32,19 @@ THE FENCES ARE WHAT MAKE THE SECOND HALF SAFE, and #535 is the record of what
 their absence costs: a leading-capitals rule minted companies named "Invitation",
 "Decision", "Sorry" and "Sarah Chen", every one of them above ``AUTO_FILE_GATE``
 and so filed without a human seeing it. The reading here fires only when the
-sentence is an invitation to an assessment, only for mail a PLATFORM relayed, and
-never when the capture names the relay that sent it.
+sentence is an invitation to an assessment, only for mail an ASSESSMENT VENDOR
+relayed, and never when the capture names the vendor that sent it.
+
+THE VENDOR FENCE IS NARROWER THAN "A RELAY" AND THAT IS THE WHOLE OF IT. A draft
+of this fix fenced the reading to every platform relay — ATS and job board as
+well as assessment vendor — on the argument that all of them front one employer
+per message. Measured, that filed a RECRUITER as a company: through Greenhouse,
+with no display name at all, "Sarah Chen invites you to a technical screening"
+and four more wordings resolved ('sarah', 'Sarah Chen'). Those classify at
+0.90-0.95, above ``AUTO_FILE_GATE``, so ``_qualifies_for_hard_row`` files them
+without a human in the loop — #535 exactly, through a door #535 never had.
+``test_an_ats_relay_never_reads_a_recruiters_name_as_the_employer`` is that
+class, and it fails if the fence is ever widened back.
 
 WHAT THIS DOES NOT DO. It does not touch the two live rows: a code fix does not
 reach already-ingested mail, and repairing them is a separate owner-approved data
@@ -43,6 +54,7 @@ needs a production query, which is out of bounds here.
 
 from __future__ import annotations
 
+import re
 import time
 
 import pytest
@@ -68,6 +80,15 @@ REPORTED_BODY = (
 # brand-under-a-subdomain case, which is the part that could break.
 ROBLOX_SENDER = "assessment@email.roblox.example"
 ROBLOX_SUBJECT = "[Action Required] Your Roblox Assessments Invitation"
+
+# An ATS relay and a scheduling relay: mail that fronts one employer, and whose
+# subjects routinely carry a RECRUITER'S name. These are the senders the
+# invitation reading must NOT be enabled for.
+ATS_SENDER = "no-reply@us.greenhouse-mail.example"
+SCHEDULING_SENDER = "no-reply@goodtime.example"
+
+# The vendor senders the reading IS enabled for.
+VENDOR_SENDER = "do-not-reply@coderbyte.example"
 
 
 def test_the_reported_message_names_the_employer_and_not_the_platform() -> None:
@@ -201,50 +222,157 @@ def test_a_platform_that_is_also_an_employer_can_still_be_applied_to() -> None:
         "no-reply@us.greenhouse-mail.example", "HackerRank | Application Received", "no-reply"
     ) == ("hackerrank", "HackerRank")
 
-    # THE COST. Its own domain, subject naming nobody: was ('coderbyte',
-    # 'Coderbyte'), is now None and goes to the review queue.
-    assert (
-        p.resolve_employer("careers@coderbyte.example", "Application Received", "Coderbyte Careers")
-        is None
-    )
+    # THE COST, AND IT IS A CLASS RATHER THAN ONE SUBJECT SHAPE. Every subject
+    # from the vendor's own domain that does not name the vendor as the object of
+    # "applying to" / "interest in" now resolves to nothing. That includes the
+    # LEADING-SEGMENT shape, which reads for every ATS: step 4 of
+    # `resolve_employer` stays `if brand in ATS_RELAY_DOMAINS`, so
+    # "Coderbyte | Application Received" off coderbyte's own domain is refused
+    # where "Crusoe | Application Received" off Greenhouse is not.
+    #
+    # The bargain is the one the set already makes with Handshake — a
+    # Handshake-relayed message naming Handshake is refused, and
+    # `_names_the_relay`'s comment calls that case its control — but the SIZE of
+    # it is stated here rather than left at one example.
+    for subject in (
+        "Application Received",
+        "Coderbyte | Application Received",
+        "Your application has been received",
+        "Update on your application",
+        "Next steps",
+        "Coderbyte - interview scheduled",
+    ):
+        assert (
+            p.resolve_employer("careers@coderbyte.example", subject, "Coderbyte Careers") is None
+        ), subject
 
 
-def test_the_invitation_reading_refuses_the_shapes_535_minted() -> None:
-    """The negative controls, from the issue that recorded this exact failure.
+def test_an_ats_relay_never_reads_a_recruiters_name_as_the_employer() -> None:
+    """THE FENCE, and the class a wider one filed as companies.
 
-    #535's list is ordinary ATS subject lines that a loose leading-capitals rule
-    turned into companies. They are run here through a PLATFORM relay, which is
-    the population this reading is enabled for, so nothing about the sender is
-    protecting them — the verb anchor and the assessment object are.
+    Every subject here reaches ``_employer_from_subject`` and satisfies
+    ``_EMPLOYER_INVITES`` completely — capture, verb, object noun, boundary. The
+    only thing refusing them is that the sender is an ATS or a scheduling relay
+    rather than an assessment vendor. Measured with the fence at
+    ``ATS | ASSESSMENT``, every one of them resolved a PERSON:
+
+        "Sarah Chen invites you to a technical screening"    ('sarah','Sarah Chen')
+        "…to complete a take-home exercise"                  ('sarah','Sarah Chen')
+        "…to take a test"                                    ('sarah','Sarah Chen')
+        "…to complete a challenge"                           ('sarah','Sarah Chen')
+        "Michael Rodriguez invites you to a phone screening" ('michael','Michael Rodriguez')
+
+    ``sender_name=None`` throughout, deliberately: there is no display name to
+    blame and no step-3 path to attribute it to. On the base commit all of these
+    return None and go to the review queue, and they classify at 0.90-0.95 —
+    above ``AUTO_FILE_GATE`` — so a resolved employer means a board card named
+    after a recruiter that nobody approved.
     """
 
+    for sender in (ATS_SENDER, SCHEDULING_SENDER):
+        for subject in (
+            "Sarah Chen invites you to a technical screening",
+            "Sarah Chen invites you to complete a take-home exercise",
+            "Sarah Chen invites you to take a test",
+            "Sarah Chen invites you to complete a challenge",
+            "Michael Rodriguez invites you to a phone screening",
+            "Sarah Chen invites you to take an assessment",
+        ):
+            assert p.resolve_employer(sender, subject, None) is None, (sender, subject)
+            assert not p.company_key(sender, subject, None).startswith(
+                ("sarah", "michael")
+            ), (sender, subject)
+
+    # THE CONTROL, so this cannot be satisfied by a resolver that refuses
+    # everything: the identical grammar, off a VENDOR, still reads the employer.
+    assert p.resolve_employer(
+        VENDOR_SENDER, "Northwind Labs invites you to a technical screening", None
+    ) == ("northwind", "Northwind Labs")
+
+
+def test_the_invitation_reading_refuses_a_non_assessment_invitation() -> None:
+    """The object fence, off a vendor, where nothing else is refusing.
+
+    THE SENDER IS A VENDOR ON PURPOSE. An earlier version of this test ran
+    #535's own subject list through Greenhouse, and five of its seven rows were
+    inert: "Invitation to interview | Acme", "Decision on your application |
+    Acme", "Sorry for the delay…", "Congratulations Ayush…" and "Reminder:
+    Complete your assessment | HackerRank" contain no "invites/invited you" at
+    all, so they return None whatever this pattern does. That is precisely the
+    critique #535 levelled at the test written for IT — "15 of the 18 already
+    returned None" — reproduced in the fix for it. They are kept below, in the
+    second block, labelled as what they are: they belong to the lead-segment
+    rule, not to this one.
+    """
+
+    # (1) LIVE ROWS. These satisfy the capture, the verb and the boundary; only
+    # the object noun is refusing them, so each one moves if that fence goes.
+    for subject in (
+        "Sarah Chen invites you to a coffee chat",
+        "Sarah Chen invites you to connect on LinkedIn",
+        "Northwind Labs invites you to our webinar",
+        "Northwind Labs invites you to complete a survey",
+        "Northwind Labs invites you to a product demo",
+        "Northwind Labs invites you to our newsletter",
+        "Northwind Labs invites you to a meetup",
+    ):
+        assert p.resolve_employer(VENDOR_SENDER, subject, None) is None, subject
+
+    # (2) #535's own subjects, which this rule cannot see at all. Asserted as
+    # regression cover for the lead-segment rule, and NOT as evidence about the
+    # invitation reading — they carry no invitation verb, and the assertion
+    # beside each one says so rather than letting a later reader assume it.
     for subject in (
         "Invitation to interview | Acme",
         "Decision on your application | Acme",
         "Sorry for the delay in getting back to you | Acme",
         "Congratulations Ayush on your application | Acme",
         "Reminder: Complete your assessment | HackerRank",
-        # An invitation whose object is not an assessment: the verb alone is not
-        # enough, or every "X invites you to our webinar" becomes an employer.
-        "Sarah Chen invites you to a coffee chat",
-        "Sarah Chen invites you to connect on LinkedIn",
     ):
-        assert (
-            p.resolve_employer("no-reply@us.greenhouse-mail.example", subject, "no-reply") is None
-        ), subject
+        assert p.resolve_employer(VENDOR_SENDER, subject, None) is None, subject
+        assert re.search(r"invit(?:es|ed)\s+you", subject, re.IGNORECASE) is None, (
+            f"{subject!r} now carries the invitation VERB, so it is no longer "
+            "inert here and belongs in block (1) with the rest of the live rows. "
+            "(The noun 'Invitation' is not the verb and does not reach this rule.)"
+        )
+
+
+def test_every_invitation_object_noun_is_covered() -> None:
+    """One case per member of ``_INVITATION_OBJECT``, both directions.
+
+    The domain set gets this treatment and the noun set did not, which left
+    ``exercises?``, ``tests?`` and ``challenges?`` carried by no assertion at
+    all — three of five members, free to be deleted or misspelled in silence.
+    Singular and plural are both exercised because the pattern spells the plural
+    with ``s?`` and a member could lose it without any other case noticing.
+
+    The refusals are the other half: a noun that is NOT on the list must not
+    resolve, or the fence is "any invitation" and "…invites you to our webinar"
+    becomes an employer.
+    """
+
+    for noun in ("assessment", "test", "challenge", "screening", "exercise"):
+        for spelling in (noun, noun + "s"):
+            subject = f"Northwind Labs invites you to complete a {spelling}"
+            assert p.resolve_employer(VENDOR_SENDER, subject, None) == (
+                "northwind",
+                "Northwind Labs",
+            ), spelling
+
+    for noun in ("webinar", "newsletter", "survey", "meetup", "demo", "interview"):
+        subject = f"Northwind Labs invites you to a {noun}"
+        assert p.resolve_employer(VENDOR_SENDER, subject, None) is None, noun
 
 
 def test_an_interview_invitation_is_not_read_as_an_employer() -> None:
-    """The noun set carries the RIGHT members, which deletion cannot prove.
+    """"interview" is off the object list, and this is why.
 
-    An interview is the one thing on the object list a PERSON invites you to in
-    their own name, and the scheduling tools that send those mails — GoodTime,
-    ModernLoop — are already ATS relays, so the platform fence does not stand
-    between them and this reading. Measured with "interviews?" in the set, the
-    first THREE shapes below resolved ('sarah', 'Sarah Chen') through Greenhouse,
-    which is #535's exact tuple re-minted through a new door. The fourth resolved
-    ('acme', 'Acme') — correctly, which is why it is the cost and not a fifth
-    defect.
+    An interview is the one thing on that list a PERSON invites you to in their
+    own name — and two of the fourteen vendors the reading IS fenced to, Karat
+    and HireVue, sell exactly that, so the vendor fence does not cover it.
+    Measured with "interviews?" in the set, the first three shapes below resolved
+    ('sarah', 'Sarah Chen'). The fourth resolved ('acme', 'Acme') — correctly,
+    which is why it is the COST of the removal and not a fifth defect.
 
     The control at the end is what stops this being satisfiable by refusing
     everything: the same grammar with an assessment object still reads.
@@ -258,15 +386,88 @@ def test_an_interview_invitation_is_not_read_as_an_employer() -> None:
         # word for its assessment reads nothing and goes to the review queue.
         "Acme invites you to complete an on-demand interview",
     ):
-        assert (
-            p.resolve_employer("no-reply@us.greenhouse-mail.example", subject, "no-reply") is None
-        ), subject
+        assert p.resolve_employer("scheduling@karat.example", subject, None) is None, subject
 
     assert p.resolve_employer(
-        "no-reply@us.greenhouse-mail.example",
+        "scheduling@karat.example",
         "Northwind Labs invites you to complete a technical screening",
-        "no-reply",
+        None,
     ) == ("northwind", "Northwind Labs")
+
+
+def test_the_invitation_verb_reads_both_tenses_and_the_auxiliary() -> None:
+    """``invit(?:es|ed)`` and the optional ``has``/``have``, one case each.
+
+    Written as four branches in one alternation and covered by one wording, so
+    three of them were free to be deleted in silence. Real invitation mail uses
+    all four.
+    """
+
+    for verb in (
+        "invites you to take an assessment",
+        "invited you to take an assessment",
+        "has invited you to take an assessment",
+        "have invited you to take an assessment",
+    ):
+        assert p.resolve_employer(VENDOR_SENDER, f"Netic AI {verb}", REPORTED_NAME) == (
+            "netic",
+            "Netic AI",
+        ), verb
+
+    # The control: a verb that is not an invitation names nobody.
+    assert (
+        p.resolve_employer(VENDOR_SENDER, "Netic AI expects you to take an assessment", None)
+        is None
+    )
+
+
+def test_every_boundary_character_is_load_bearing() -> None:
+    """One case per member of the boundary class, plus the refusal it exists for.
+
+    The prefix is LOWERCASE on purpose. Behind a Title-Case word the capture can
+    swallow "." and "-" itself (``_COMPANY_CAPTURE`` admits both inside a token),
+    so a Title-Case probe would pass for two members without the class containing
+    them at all — the class would be wider than anything under test. A lowercase
+    prefix cannot start a capture, so each character below is the only thing
+    letting the match begin.
+    """
+
+    for char in "|:;,.!?])>\u2013\u2014-":
+        subject = f"your invitation{char} Netic AI invites you to take an assessment"
+        assert p.resolve_employer(VENDOR_SENDER, subject, REPORTED_NAME) == (
+            "netic",
+            "Netic AI",
+        ), char
+
+    # The refusal the class exists for: no boundary, no match. Without this the
+    # test above is satisfied by a pattern with no boundary requirement at all.
+    assert (
+        p.resolve_employer(
+            VENDOR_SENDER, "your invitation Netic AI invites you to take an assessment", None
+        )
+        is None
+    )
+
+
+def test_the_gap_between_the_verb_and_the_object_is_bounded() -> None:
+    """``[^\n]{0,40}?`` measured at the bound, not asserted as a constant.
+
+    38 characters of filler puts the gap at exactly 40 and reads; 39 puts it at
+    41 and reads nothing. That is a threshold with a case sitting ON it, which is
+    what makes widening the bound to 400 — or dropping it entirely — a change
+    this file can see. The linearity test beside it could not: measured, an
+    unbounded gap ran in 0.26 ms against a 50 ms budget, so every mutation of the
+    bound passed it.
+    """
+
+    def _subject(filler_len: int) -> str:
+        return f"Netic AI invites you {'x' * filler_len} assessment"
+
+    assert p.resolve_employer(VENDOR_SENDER, _subject(38), REPORTED_NAME) == (
+        "netic",
+        "Netic AI",
+    )
+    assert p.resolve_employer(VENDOR_SENDER, _subject(39), REPORTED_NAME) is None
 
 
 def test_a_prefix_before_the_employer_is_read_through() -> None:
@@ -307,20 +508,31 @@ def test_a_vendor_that_names_itself_names_the_courier() -> None:
         assert p.resolve_employer(f"do-not-reply@{domain}.example", subject, display) is None, domain
 
 
-def test_consumer_webmail_is_fenced_out_of_the_invitation_reading() -> None:
-    """A display name — or a sentence subject — in a person's mail is a PERSON.
+def test_the_grouping_key_carries_the_same_fence_as_the_resolver() -> None:
+    """``company_key`` is the second entry point and gets the identical fence.
 
-    The same fence steps 3 and 4 of ``resolve_employer`` already carry, applied
-    to the new reading at BOTH entry points. Passing ``platform_relay=True`` by
-    hand shows the fence is what refuses this and not some later guard.
+    Both callers pass ``brand in ASSESSMENT_RELAY_DOMAINS``; neither re-derives
+    it. Calling ``_company_from_subject`` with the flag forced ON shows what the
+    fence is holding back — the person's name — so a reader can see the fence is
+    what refuses this and not some later guard, and a mutation that swaps the set
+    at either call site reds here.
     """
 
-    sender, subject = "sarah.chen@gmail.example", "Sarah Chen invites you to take an assessment"
+    subject = "Sarah Chen invites you to take an assessment"
 
-    assert p.resolve_employer(sender, subject, None) is None
-    assert p.company_key(sender, subject, None) == "gmail"
-    assert p._company_from_subject(subject, platform_relay=True) == "sarah chen"
+    for sender, expected_key in (
+        ("sarah.chen@gmail.example", "gmail"),  # consumer webmail: a name is a PERSON
+        (ATS_SENDER, "greenhouse-mail"),  # an ATS: a name is a RECRUITER
+        (SCHEDULING_SENDER, "goodtime"),
+    ):
+        assert p.resolve_employer(sender, subject, None) is None, sender
+        assert p.company_key(sender, subject, None) == expected_key, sender
+
+    assert p._company_from_subject(subject, assessment_relay=True) == "sarah chen"
     assert p._company_from_subject(subject) == ""
+
+    # ...and the direction that must still work.
+    assert p.company_key(VENDOR_SENDER, REPORTED_SUBJECT, REPORTED_NAME) == "netic ai"
 
 
 def test_the_body_names_the_employer_at_display_grade() -> None:
@@ -355,6 +567,49 @@ def test_the_body_names_the_employer_at_display_grade() -> None:
         "Thank you so much for your interest in Northwind Labs. After careful review...",
         "no-reply@us.greenhouse-mail.example",
     ) == ("northwind", "Northwind Labs")
+
+
+def test_the_body_reader_refuses_a_vendor_name_when_no_relay_sent_it() -> None:
+    """The consumer of ``RELAY_DOMAINS`` that adding to the set also moves.
+
+    ``employer_named_in_body`` passes ``brand if brand in RELAY_DOMAINS else ""``
+    to ``_names_the_relay``, whose no-brand branch falls back to the VOCABULARY.
+    So growing the vocabulary by fourteen names changes this function too, and
+    the change is a REFUSAL:
+
+        "…your interest in Karat", from a corporate domain
+            before  ('karat', 'Karat')
+            after    None
+
+    That is not an oversight; it is the decision, and it is asserted in both
+    directions so it cannot drift back silently. It is kept because on that path
+    the vocabulary is the only signal there is and the population is real — "you
+    have been invited by HackerRank to complete an assessment", sent from an
+    employer's own domain, names the COURIER. It costs a queue row with no
+    suggested name where there used to be a correct one, and this function is
+    display grade, so it cannot cost a card.
+    """
+
+    for vendor in ("Karat", "HireVue", "Woven", "Coderbyte", "Mettl"):
+        body = f"Thank you for your interest in {vendor}. After careful review..."
+
+        # No relay sent it, so the vocabulary decides — and now refuses.
+        assert p.employer_named_in_body(body, "talent@northwindlabs.example") is None, vendor
+
+        # Through a relay a BRAND is known, the precise question gets asked, and
+        # #508's direction is intact: a vendor named through a different courier
+        # is an employer.
+        assert p.employer_named_in_body(body, "no-reply@ashbyhq.example") == (
+            vendor.lower(),
+            vendor,
+        ), vendor
+
+    # The control: a name that is on no list is unaffected on either path.
+    plain = "Thank you for your interest in Northwind Labs. After careful review..."
+    assert p.employer_named_in_body(plain, "talent@northwindlabs.example") == (
+        "northwind",
+        "Northwind Labs",
+    )
 
 
 @pytest.mark.parametrize(
@@ -396,24 +651,56 @@ def test_the_reading_is_additive_and_moves_no_existing_answer(
     assert p.resolve_employer(sender, subject, name) == expected
 
 
+#: The same pattern with the gap left UNBOUNDED — what removing ``{0,40}`` gives.
+#: Built here rather than imported so the comparison below is against a real
+#: alternative and not against a constant somebody can edit into agreement.
+_UNBOUNDED_INVITES = re.compile(
+    r"(?:^|[|:;,.!?\]\)>\u2013\u2014-])\s*"
+    r"(" + p._COMPANY_CAPTURE + r")"
+    r"(?i:\s+(?:has\s+|have\s+)?invit(?:es|ed)\s+you\b"
+    r"[^\n]*?\b" + p._INVITATION_OBJECT + r"\b)"
+)
+
+
 def test_the_invitation_pattern_is_linear() -> None:
     """A subject is caller-supplied text, and this family has a ReDoS scar.
 
-    Measured rather than argued, the way ``test_leading_run_is_linear`` does it:
-    the capture is bounded to four words and the gap before the object noun is
-    bounded to 40 characters, so a long run cannot make the engine retry more
-    than a constant number of ways per start position.
+    THE PAYLOAD IS THE WHOLE TEST, and the first version of this file got it
+    wrong. It timed three strings that had no punctuation in them, so only ``^``
+    could ever start a match, so there was exactly ONE start position and the
+    gap bound could not matter: an unbounded gap ran in 0.26 ms against a 50 ms
+    budget, and mutating the bound to 400, to greedy, or away entirely reddened
+    nothing. A budget assertion that cannot fail is worse than no assertion.
+
+    A comma before every candidate gives the engine 2,000 start positions. Each
+    one matches the capture and the verb and then looks for the object noun that
+    is not there: bounded, it gives up after 40 characters; unbounded, it scans
+    to the end of the string, which is quadratic and measurable — 3 ms against
+    770 ms here, and 4x that when the payload doubles.
+
+    The ratio is asserted for the reason ``_assert_control`` exists in
+    ``test_company_name_regexes_are_linear.py``: it is what proves the budget
+    below is measuring the bound rather than the machine.
     """
 
-    blowup = 5_000
+    payload = ",A invites you " * 2_000
     budget_ms = 50.0
+    min_slowdown = 20.0
 
-    for payload in (
-        "A" + " " * blowup + "x",
-        "A invites you to " + " " * blowup + "assessment",
-        ("A invites you " * blowup),
-    ):
-        start = time.perf_counter()
-        p._EMPLOYER_INVITES.search(payload)
-        elapsed_ms = (time.perf_counter() - start) * 1000
-        assert elapsed_ms < budget_ms, f"{elapsed_ms:.2f} ms, budget {budget_ms} ms"
+    start = time.perf_counter()
+    p._EMPLOYER_INVITES.search(payload)
+    bounded_ms = (time.perf_counter() - start) * 1000
+
+    start = time.perf_counter()
+    _UNBOUNDED_INVITES.search(payload)
+    unbounded_ms = (time.perf_counter() - start) * 1000
+
+    ratio = unbounded_ms / bounded_ms if bounded_ms > 0 else float("inf")
+    assert ratio > min_slowdown, (
+        f"the unbounded gap was only {ratio:.0f}x the bounded one "
+        f"({unbounded_ms:.2f} ms vs {bounded_ms:.3f} ms). Below {min_slowdown:.0f}x "
+        "this payload can no longer tell a bounded gap from an unbounded one, so "
+        "the budget assertion below would pass either way — which is exactly the "
+        "defect this test was rewritten to fix."
+    )
+    assert bounded_ms < budget_ms, f"{bounded_ms:.2f} ms, budget {budget_ms} ms"
