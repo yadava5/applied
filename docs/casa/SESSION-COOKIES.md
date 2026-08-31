@@ -24,7 +24,8 @@ across `apps/web` returns exactly them and nothing else outside test stubs.
 
 The application writes two cookies of its own: the recovery marker
 (`apps/web/lib/auth/recoverySession.ts:69-72`) and the PKCE verifier deletions
-(`apps/web/lib/supabase/pkceVerifierCookies.ts:159`).
+written by `expireSpentPkceVerifierCookies`
+(`apps/web/lib/supabase/pkceVerifierCookies.ts:172-178`).
 
 ---
 
