@@ -60,6 +60,32 @@ useDefault = true
     # caught. Verified 2026-08-11: matches 5 values, all in backend/tests/,
     # and zero files outside it.
     '''[a-z0-9-]+-test-jwt-secret-at-least-32-bytes-long-(?:for-)?hs256''',
+
+    # backend/tests/test_rls_postgres.py, commit ff063fc only (2026-08-14).
+    #
+    # A cron shared-secret fixture, long enough to satisfy the endpoint's
+    # minimum-length check, in a test that asserts the scheduled sync carries a
+    # per-user RLS identity rather than an exemption. It protects nothing: it is
+    # written in the test, compared in the test, and discarded.
+    #
+    # Unlike the two entries above, this value is NOT in the tree. It was
+    # replaced by ``f"cron-probe-{uuid.uuid4()}"``, which is strictly better --
+    # a fresh value per run cannot be matched by any rule. It is allowlisted
+    # anyway because this scan reads HISTORY, and the header of
+    # .github/workflows/gitleaks.yml is right that deleting a file does not
+    # unpublish what is still in the pack. Removing this entry would red the
+    # weekly scan forever on a value no current code contains.
+    #
+    # Allowlisted as the exact literal rather than as a shape, deliberately.
+    # The jwt entry above became a shape because several modules kept adopting
+    # that convention; this convention was ABANDONED in the same file it
+    # appeared in, so there is nothing to generalise for and a narrower
+    # allowlist keeps more real credentials catchable.
+    #
+    # Verified 2026-08-31 over full history: appears in exactly ONE commit and
+    # exactly ONE file, `backend/tests/test_rls_postgres.py`, and in zero
+    # config, env or deployment files in any tree it ever existed in.
+    '''rls-cron-probe-secret-at-least-16-chars''',
   ]
 
   # Deliberately NOT allowlisted:
