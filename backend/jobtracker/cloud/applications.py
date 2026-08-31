@@ -1512,8 +1512,16 @@ async def _application_in_conversation(
     and are four applications — but where the mail carries no key at all, the
     conversation is the only structure left, and an employer replying inside its
     own confirmation is talking about that application. This is what keeps an
-    update from opening a card, and it is the reason a duplicate confirmation
-    (the same one re-sent into the same thread) does not mint a second one.
+    update from opening a card.
+
+    IT SAYS NOTHING ABOUT A DUPLICATE CONFIRMATION, and it used to claim to be
+    "the reason a duplicate confirmation does not mint a second one". No
+    confirmation ever reaches this function: :func:`_resolve_application` sends
+    a cluster carrying an applied signal to :func:`_is_a_further_application`,
+    and conversation routing is the ELSE arm of that branch. A re-sent
+    confirmation is kept off the board by rule 0's stored link instead. Prose
+    about a state the code cannot reach is how this repository has twice
+    acquired a test that greens against nothing.
 
     Ambiguity is refused rather than guessed: a thread whose filed mail spans
     more than one of this employer's rows names no single card, so it falls
@@ -1559,22 +1567,83 @@ async def _is_a_further_application(
     Without this, the split worked on a rebuild and did nothing on the syncs
     that actually run, which is how the reported bug survived its first fix.
 
-    A STORED ROW PLAYS THE PART OF THE FIRST ANCHOR. Three things must hold:
+    A STORED ROW PLAYS THE PART OF THE FIRST ANCHOR. One thing must hold
+    before any other is asked: THE CLUSTER CARRIES A CONFIRMATION. A rejection
+    or interview invite reports on an application, it does not assert one, so
+    it never mints. That test is first because it is what bounds the whole
+    rule — an anonymous UPDATE cluster can never reach either branch below,
+    which is the unbounded-growth scenario PR #76 fixed and the one #641's fix
+    may not reopen.
 
-    * the cluster carries a confirmation — a rejection or interview invite
-      reports on an application, it does not assert one, so it never mints;
-    * the employer's board is entirely anonymous — where some row names a role
-      or a requisition number, a role-less confirmation is far more likely the
-      supporting message rule 3 was written for (Roblox's email-verification
-      mail) than a second application;
-    * one of those anonymous rows already holds a confirmation of its own —
-      without this, a rejection that minted a row would make the confirmation
-      following it look like a SECOND application and split one card in two,
-      which is the same defect pointing the other way.
+    Then the BOARD decides which question is being asked, because an
+    all-anonymous board and a mixed one carry different evidence.
 
-    All three together make the claim literally true: this employer has an
-    application whose confirmation is on the board, and here is another
-    confirmation that is not.
+    **AN ENTIRELY ANONYMOUS BOARD.** One of those anonymous rows must already
+    hold a confirmation of its own — without this, a rejection that minted a
+    row would make the confirmation following it look like a SECOND application
+    and split one card in two, which is the same defect pointing the other way.
+    That makes the claim literally true: this employer has an application whose
+    confirmation is on the board, and here is another confirmation that is not.
+    SOME, not every: here the held confirmation IS the pairing evidence, the
+    stored row standing in for the first anchor.
+
+    **A BOARD WHERE SOMETHING IS IDENTIFIED (#641).** This used to return False
+    outright, on the argument that a role-less confirmation beside a keyed row
+    is far more likely the supporting message rule 3 was written for (Roblox's
+    email-verification mail) than a second application. That argument is right
+    about ONE row and wrong about several. Where the employer already holds two
+    or more live cards, :func:`pipeline.partition_applications` has ALREADY
+    given this confirmation its own cluster on the rule "a new confirmation is a
+    new application" — and returning False hands it to
+    :func:`_pick_application`'s rule 4, which files it onto the employer's
+    oldest live row. The partition's decision was honoured one layer up and
+    reversed one layer down: no new card, no queue entry, no counter, and a
+    whole application invisible.
+
+    IT IS WORSE THAN AN INVISIBLE CARD. Rule 4's oldest live row may be a
+    REJECTED one — ``_company_rows`` sorts live-first, and a rejected row is
+    live — and a confirmation dated after that rejection then trips
+    :func:`_reopening_evidence`, which walks a settled application out of its
+    terminal status on a card the mail was never about.
+
+    So on a mixed board, three things:
+
+    * TWO OR MORE LIVE ROWS, counted the way
+      :func:`employers_with_several_applications` counts them. LIVE ONLY: a
+      dismissed row is not on the board, and letting one push the employer over
+      the threshold would turn the Roblox case — one live card with a
+      resync-dismissed duplicate beside it — into a minting one.
+    * EVERY LIVE ANONYMOUS AUTO ROW ALREADY HOLDS A CONFIRMATION. Vacuously
+      true when there are none, which is the ordinary shape of this board. An
+      anonymous auto row with no confirmation of its own is plausibly THIS
+      acknowledgement's own application — the sync mints one whenever the first
+      role-less mail it reads from an employer is a rejection or an assessment,
+      and the confirmation that row reports on simply has not been read yet —
+      and splitting one application into two cards is what this arm refuses.
+      EVERY rather than the some-condition
+      above, and the difference is not cosmetic: on the anonymous board a held
+      confirmation is evidence FOR a second application, here an unheld row is
+      evidence AGAINST one, so one unconfirmed row is enough.
+    * AUTO ROWS ONLY, the same restriction rule 3 applies and for the same
+      reason (:func:`_is_auto_row`). A MANUAL row is a human's own entry and has
+      no linked mail at all; a row :func:`classify_review_item` minted is a
+      human's answer to "which application is this about?" and may hold nothing
+      but the update they answered. Counting either would make the quantifier
+      false FOREVER at any employer holding one — reinstating #641 through a
+      side door, with every gate still green. This is the narrowing most likely
+      to be dropped as redundant, so it has a control of its own.
+
+    WHEN THE QUANTIFIER DECLINES the fold lands by rule 4 on ``rows[0]``, which
+    may be an IDENTIFIED row rather than the unconfirmed anonymous one the
+    refusal was about. That is imprecise, and it is written down rather than
+    fixed: it is exactly as imprecise as the anonymous branch above, whose fold
+    target is also ``rows[0]``. Steering rule 4 would change three call sites
+    that are right about their own callers.
+
+    THE REMEDY FOR A SPARE CARD IS A DISMISS CLICK, not a merge. There is no
+    merge endpoint in this repository — ``POST /applications/{id}/split`` exists
+    and nothing pairs with it — so the direction is chosen knowing that: a spare
+    card can be removed, an application that never appears cannot be recovered.
     """
 
     if not any(m.category in pipeline.APPLIED_SIGNAL_CATEGORIES for m in rolled.messages):
@@ -1584,23 +1653,58 @@ async def _is_a_further_application(
     anonymous = [
         row for row in rows if row.req_id is None and row.role_token is None
     ]
-    if len(anonymous) != len(rows):
+    if len(anonymous) == len(rows):
+        # THE ANONYMOUS BOARD, unchanged. Left byte-for-byte, including the
+        # SOME quantifier, because #641 is about the other board and a fix that
+        # quietly re-tuned this one would be two changes wearing one issue
+        # number.
+        ids = [row.id for row in anonymous if row.id is not None]
+        if not ids:
+            return False
+        held = (
+            await session.exec(
+                select(Email.id).where(
+                    Email.user_id == user_id,
+                    Email.application_id.in_(ids),
+                    Email.classified_as.in_(
+                        [EmailCategory(c) for c in sorted(pipeline.APPLIED_SIGNAL_CATEGORIES)]
+                    ),
+                )
+            )
+        ).all()
+        return bool(held)
+
+    # THE MIXED BOARD (#641). See the docstring for why each of the three
+    # narrowings below is load-bearing on its own.
+    live = [row for row in rows if row.dismissed_at is None]
+    if len(live) < 2:
         return False
-    ids = [row.id for row in anonymous if row.id is not None]
-    if not ids:
-        return False
-    held = (
+    unconfirmed = [
+        row.id
+        for row in live
+        if row.req_id is None
+        and row.role_token is None
+        and _is_auto_row(row.source)
+        and row.id is not None
+    ]
+    if not unconfirmed:
+        return True
+    # Same predicate as the branch above — an Email filed against the row whose
+    # committed verdict is an applied signal — quantified the other way. The two
+    # category lists must stay identical or the two boards would disagree about
+    # what a confirmation is.
+    confirmed = (
         await session.exec(
-            select(Email.id).where(
+            select(Email.application_id).where(
                 Email.user_id == user_id,
-                Email.application_id.in_(ids),
+                Email.application_id.in_(sorted(unconfirmed)),
                 Email.classified_as.in_(
                     [EmailCategory(c) for c in sorted(pipeline.APPLIED_SIGNAL_CATEGORIES)]
                 ),
             )
         )
     ).all()
-    return bool(held)
+    return set(unconfirmed) <= {row_id for row_id in confirmed if row_id is not None}
 
 
 async def _anonymous_homes(
@@ -1745,14 +1849,36 @@ def _pick_application(
         # Rule 4. Deliberately looks at ALL rows, not just the identity-less
         # ones, and always returns one rather than minting.
         #
-        # A cluster reaches here only when the scan found NO role for this
-        # employer in ANY of its mail (`partition_applications` gives anonymous
-        # messages their own cluster only when nothing else at the employer is
-        # identified), so there is no keyed sibling it could be confused with.
-        # Returning None instead would mint a fresh row on EVERY sync at any
-        # employer that already has two rows — the same unbounded growth PR #76
-        # fixed for a different reason. `_company_rows` orders live-first then
-        # oldest-first, so the choice is stable across syncs.
+        # THE PREMISE THAT USED TO BE WRITTEN HERE WAS FALSE (#641). It read
+        # "a cluster reaches here only when the scan found NO role for this
+        # employer in ANY of its mail", and `partition_applications` has never
+        # promised that. Its anchors branch mints anonymous clusters beside
+        # keyed ones with no all-anonymous requirement, and its `known_multi`
+        # carve-out gives an anonymous message its own cluster at an employer
+        # whose other mail is fully identified. A keyed sibling IS reachable
+        # from this line, so the tie-break below can and did hand a
+        # confirmation an application it was never about.
+        #
+        # WHAT NARROWS IT NOW IS THE CALLER, not this line. On the sync path
+        # `_resolve_application` offers a cluster that ASSERTS an application —
+        # one carrying a confirmation — to `_is_a_further_application` first,
+        # and at an employer holding two or more live cards that gate mints
+        # rather than folding. What still arrives here is UPDATE mail with no
+        # identity: it reports on an application instead of asserting one, so
+        # it must land on a row rather than open one, and rule 4 is right for
+        # it. The other two call sites (review-classify, orphan-reconcile) ask
+        # about a single message a human already spoke about, and are right for
+        # their own reasons.
+        #
+        # AND THE ARGUMENT THAT USED TO JUSTIFY IT IS OBSOLETE — said rather
+        # than deleted, because deleting it invites someone to re-derive it.
+        # "Returning None would mint a fresh row on EVERY sync" was true before
+        # rule 0 existed. `_anonymous_homes` now reads the stored message →
+        # application link for the whole pass, so a cluster whose mail is
+        # already filed is handed its own row above and never reaches this
+        # line; re-minting is bounded by the link, not by this tie-break.
+        # `_company_rows` orders live-first then oldest-first, so the choice is
+        # stable across syncs.
         return rows[0]
 
     # Rule 3 — adopt the employer's single pre-identity row, in place.
@@ -2109,7 +2235,12 @@ async def _persist_message_refs(
     ``siblings`` — ids of OTHER rows at the same employer, passed only when the
     cluster being filed carries no identity of its own (no requisition id, no
     role token). Such a cluster is resolved by :func:`_pick_application`'s rule
-    4, which returns the employer's oldest live row: a tie-break, not evidence.
+    4 — the employer's oldest live row, a tie-break and not evidence — WHEN IT
+    IS AN UPDATE. Since #641 that is the only kind that reaches the tie-break
+    on the sync path: an anonymous cluster carrying a confirmation is offered to
+    :func:`_is_a_further_application` first and, at an employer holding two or
+    more live cards, mints its own row instead. The guard below is unchanged and
+    still needed — update mail is exactly what still lands by tie-break.
     A tie-break must never overrule a link an earlier, better-informed scan
     already made, so a message already filed against a sibling STAYS there.
     Without this an ordinary sync that re-read one message without its snippet
