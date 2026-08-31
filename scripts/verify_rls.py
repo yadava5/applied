@@ -56,12 +56,34 @@ for somebody to notice it changed.
 ``anon`` by definition. ``aclexplode`` reports it as grantee OID 0, which
 ``pg_get_userbyid`` cannot turn into a name, so it is mapped by hand.
 
-The boundary, stated rather than left implied: ``relacl`` holds TABLE-level
-grants. A column grant (``GRANT SELECT (email) ON ...``) lives in
-``pg_attribute.attacl`` and this does not look there. That is a real gap and an
-acceptable one — ``ALTER DEFAULT PRIVILEGES``, the mechanism that hands out
-privileges nobody wrote down, cannot produce a column grant — but the summary
-line says "table-level" so a green run does not claim more than it checked.
+WHY THE GRANT CHECK LOOKS AT MORE THAN ORDINARY TABLES
+------------------------------------------------------
+``ALTER DEFAULT PRIVILEGES ... ON TABLES`` does not mean ``relkind = 'r'``. It
+stamps views, materialised views and partitioned tables too, so a check that
+looked only at ordinary tables would miss precisely what the default-privilege
+mechanism creates. The grant query therefore covers ``r, v, m, p, f``.
+
+A view is the worse case, not a milder one. A view owned by the same role that
+owns the tables, with ``security_invoker`` off, runs its query AS that owner —
+and in production that owner is ``BYPASSRLS``. So ``anon`` holding SELECT on
+such a view returns every user's rows with every policy skipped, while the ten
+tables underneath stay perfectly protected and this script, before the widening,
+printed its green summary and exited 0.
+
+The other three checks are deliberately NOT widened. "Does this view have RLS
+enabled and a policy" is a different question with a different answer — a view
+has no ``relrowsecurity`` to set — and answering it here would be a redesign
+rather than this fix. The asymmetry is intentional; see the comment on the
+query.
+
+THE BOUNDARY, STATED RATHER THAN LEFT IMPLIED
+---------------------------------------------
+``relacl`` holds relation-level grants. A column grant (``GRANT SELECT (email)
+ON ...``) lives in ``pg_attribute.attacl`` and this does not look there. The gap
+is real and it is acceptable, because the mechanism this check exists for cannot
+produce one: ``ALTER DEFAULT PRIVILEGES`` on columns is rejected outright with
+``ERROR: default privileges cannot be set for columns``. The summary line says
+so rather than implying full coverage.
 """
 
 from __future__ import annotations
@@ -156,11 +178,21 @@ def collect_failures(
             continue
         held.setdefault((table, grantee), []).append(privilege)
     for (table, grantee), privileges in sorted(held.items()):
-        # sorted(), not the order the ACL happened to be built in: this text is
-        # asserted on in the tests and printed into a public run log, and neither
-        # wants a line that changes when nothing about the database did.
+        # Both sorts are asserted on in the tests — the groups by
+        # `test_two_mis_granted_tables_are_named_in_a_stable_order`, the
+        # privileges within a line by
+        # `test_every_privilege_one_role_holds_is_one_line_in_a_stable_order`.
+        # They are not cosmetic: this text goes into a public run log, and a
+        # line that reordered itself when nothing about the database had moved
+        # would make a diff of two runs unreadable.
+        #
+        # set() as well as sorted(), because aclexplode CAN repeat a
+        # (grantee, privilege) pair — one row per GRANTOR, so two roles granting
+        # anon SELECT yields SELECT twice. Without it the line reads
+        # "anon holds SELECT, SELECT", which reads as a parser bug and buries
+        # the fact that anon has SELECT at all.
         failures.append(
-            f"{table}: {grantee} holds {', '.join(sorted(privileges))} — nothing "
+            f"{table}: {grantee} holds {', '.join(sorted(set(privileges)))} — nothing "
             f"may be granted to {grantee} on a table holding user rows. ALTER "
             f"DEFAULT PRIVILEGES can issue that grant without it appearing in any "
             f"revision, so its absence from the migration is not evidence it is "
@@ -218,9 +250,19 @@ def main() -> int:
         # `relacl` is NULL when nothing beyond the owner's implicit privileges
         # applies, and `aclexplode(NULL)` yields no rows, so a table with no
         # grants simply does not appear here. That is the right answer rather
-        # than a gap: nothing granted is nothing to report. Every table IS
+        # than a gap: nothing granted is nothing to report. Every relation IS
         # returned, exempt ones included — see collect_failures for why the
         # exemption is applied there and not in this WHERE clause.
+        #
+        # relkind IN ('r','v','m','p','f') and NOT the bare 'r' the three
+        # queries above use. That asymmetry is deliberate, not drift:
+        # `ALTER DEFAULT PRIVILEGES ... ON TABLES` stamps views, matviews and
+        # partitioned tables as well as ordinary ones, so 'r' alone would blind
+        # this check to most of what the mechanism it exists for can create —
+        # and a view over a protected table, owned by a BYPASSRLS role with
+        # security_invoker off, is the worst of those, not the mildest. The
+        # RLS/policy checks stay on 'r' because "is RLS forced on this view" is
+        # a question with no answer; see the module docstring.
         grants = conn.execute(
             """
             SELECT c.relname,
@@ -230,20 +272,30 @@ def main() -> int:
             FROM pg_class c
             JOIN pg_namespace n ON n.oid = c.relnamespace
             CROSS JOIN LATERAL aclexplode(c.relacl) AS a
-            WHERE n.nspname = 'public' AND c.relkind = 'r'
+            WHERE n.nspname = 'public' AND c.relkind IN ('r','v','m','p','f')
             ORDER BY 1, 2, 3
             """
         ).fetchall()
 
-        tables, policies = conn.execute(
+        # Three scalars, and the third is not the first: `tables` counts the
+        # ordinary tables the RLS checks judge, `relations` counts everything
+        # the grant check scanned. They are equal today and would diverge the
+        # moment somebody added a view — which is the case worth naming in the
+        # summary rather than papering over with one number for both.
+        tables, policies, relations = conn.execute(
             """
             SELECT (SELECT count(*) FROM pg_class c
                       JOIN pg_namespace n ON n.oid = c.relnamespace
                      WHERE n.nspname = 'public' AND c.relkind = 'r'
                        AND NOT (c.relname = ANY(%s))),
-                   (SELECT count(*) FROM pg_policies WHERE schemaname = 'public')
+                   (SELECT count(*) FROM pg_policies WHERE schemaname = 'public'),
+                   (SELECT count(*) FROM pg_class c
+                      JOIN pg_namespace n ON n.oid = c.relnamespace
+                     WHERE n.nspname = 'public'
+                       AND c.relkind IN ('r','v','m','p','f')
+                       AND NOT (c.relname = ANY(%s)))
             """,
-            (list(exempt),),
+            (list(exempt), list(exempt)),
         ).fetchone()
 
     failures = collect_failures(unprotected, policyless, role, grants, exempt)
@@ -253,18 +305,24 @@ def main() -> int:
             print(f"::error::{line}")
         return 1
 
-    # "on those {tables}" and not "on any table", because the grant check skips
-    # the exempt one and `alembic_version` can legitimately be granted to anon.
-    # An earlier draft said "any table" and was measured printing it against a
-    # database where anon held SELECT on alembic_version — a green run stating
-    # something broader than it checked, which is the defect this whole script
-    # exists to catch, in the one line anybody reads. "table-level" is the
-    # second half of the same honesty: relacl carries table grants only, and a
-    # column grant lives in pg_attribute.attacl where this does not look.
+    # This clause names the set it actually examined and nothing wider. Two
+    # earlier drafts did not, and both were caught by reading a real green run
+    # rather than by review:
+    #
+    #   "on any table"      — printed against a database where anon held SELECT
+    #                         on alembic_version, which the check exempts.
+    #   "on those {tables}" — {tables} counts ordinary tables, but the grant
+    #                         check also scans views, matviews and partitioned
+    #                         tables, so it understated its own reach.
+    #
+    # Hence {relations}, which is the count of exactly what was scanned, and the
+    # parenthetical, which keeps the one real gap visible: relacl is
+    # relation-level, and a column grant lives in pg_attribute.attacl.
     summary = (
         f"RLS verified: {tables}/{tables} tables ENABLE+FORCE, "
         f"{policies} policies, {RUNTIME_ROLE} is NOBYPASSRLS, "
-        f"no {'/'.join(FORBIDDEN_GRANTEES)} table-level grants on those {tables}."
+        f"no {'/'.join(FORBIDDEN_GRANTEES)} grants on any of the {relations} "
+        f"relations in public (relation-level; column grants not examined)."
     )
     print(summary)
     step_summary = os.environ.get("GITHUB_STEP_SUMMARY")

@@ -30,6 +30,15 @@ The three roles production DOES grant to — ``jobtracker_app``, ``postgres``,
 ``service_role`` — get a passing case for the same reason in reverse. A check
 that reddens the state that exists is not a ratchet, it is an outage.
 
+There was a fourteenth case, ``test_a_healthy_database_produces_no_failures``,
+asserting ``verdict(grants=OWNER_GRANTS) == []``. It was removed as strictly
+redundant, which is a different charge from the vacuous one below: it CAN fail,
+but it cannot fail ALONE. Its ``grants`` are a subset of the production-roles
+case's, every other argument is identical, the assertion is the same, and
+``collect_failures`` only ever adds failures as rows are added — so any mutation
+that reds it reds that one too. A test whose kill set is a subset of another's
+adds a number to the suite total and nothing to its strength.
+
 WHAT THIS FILE DELIBERATELY DOES NOT COVER
 ------------------------------------------
 The two facts about ``aclexplode`` the query rests on — that grantee OID 0 is
@@ -40,6 +49,14 @@ so writing one would produce a test that is green by construction, which is the
 defect this repository keeps finding. Both were checked by hand against
 postgres:16 when the query was written; the reasoning is in the comment above
 the query in ``scripts/verify_rls.py``.
+
+The same applies, and matters more, to the relation kinds the query selects.
+``collect_failures`` never sees a ``relkind`` — the SQL decides which relations
+become rows, so no test in this file can tell an ``r``-only query from one that
+also covers views and matviews. That distinction is load-bearing (a view owned
+by a BYPASSRLS role returns every user's rows), and it is verified only by
+running the query against a real server. Nothing in CI does that yet; the
+script's one execution site is ``db-migrate.yml``, against production.
 """
 
 from __future__ import annotations
@@ -100,9 +117,16 @@ def grant(table: str, grantee: str, *privileges: str) -> list[tuple[str, str, st
     return [(table, grantee, privilege) for privilege in privileges]
 
 
-# The full owner set Postgres materialises for `postgres` the moment any grant
-# is made on a table, measured against postgres:16. Present in every production
-# row set, and it must never contribute a failure.
+# The owner privilege set Postgres materialises for `postgres` the moment any
+# grant is made on a relation, measured against postgres:16.
+#
+# This is the SHAPE of what production returns for its owner, not a
+# transcription of it: production runs PostgreSQL 17.6, which adds MAINTAIN to
+# this list. The difference costs nothing, and saying which it is costs less
+# than someone later trusting it as a measured production fixture — no
+# assertion in this file depends on WHICH privileges `postgres` holds, only on
+# the fact that holding them is not a failure, because `postgres` is not in
+# FORBIDDEN_GRANTEES. If that ever stops being true, re-measure against 17.
 OWNER_GRANTS = grant(
     "applications",
     "postgres",
@@ -179,11 +203,18 @@ def test_a_grant_to_public_is_a_failure() -> None:
 
 
 def test_the_roles_production_actually_grants_to_are_not_a_failure() -> None:
-    """The measured state of all ten tables on 2026-08-31, and it must be green.
+    """The three roles production grants to, and all three must be green.
 
     ``jobtracker_app`` holds DELETE/INSERT/SELECT/UPDATE, ``postgres`` owns
     everything, and ``service_role`` is Supabase's. Reddening this is not a
     stricter gate, it is a failed production migration on the next merge.
+
+    The role NAMES are production's, measured 2026-08-31. The privilege lists
+    are representative rather than transcribed — ``service_role`` really holds
+    eight, not the four written here — and that is deliberate: none of these
+    three is in ``FORBIDDEN_GRANTEES``, so no assertion here depends on which
+    privileges they hold. Stated so the fixture is not mistaken for a
+    measurement it is not.
     """
 
     grants = (
@@ -221,6 +252,54 @@ def test_every_privilege_one_role_holds_is_one_line_in_a_stable_order() -> None:
         "anon on a table holding user rows. ALTER DEFAULT PRIVILEGES can issue that "
         "grant without it appearing in any revision, so its absence from the migration "
         "is not evidence it is not there."
+    ]
+
+
+def test_two_mis_granted_tables_are_named_in_a_stable_order() -> None:
+    """Several violations come out ordered by (table, grantee), not by arrival.
+
+    Written because that sort had no coverage at all. Every other case in this
+    file produces at most ONE violating group, and with one group there is
+    nothing to order — so unsorting ``held.items()``, or reversing it, passed
+    all twelve tests. The comment above the sort said the tests asserted it,
+    which made the comment a claim about a gate that could not fail: this
+    repository's named defect, in a file whose subject is that defect.
+
+    Three groups across two tables, so both halves of the sort key matter.
+    ``PUBLIC`` sorts before ``anon`` because it is capitalised, which is worth
+    seeing written down — the order is bytewise, not conceptual.
+    """
+
+    grants = (
+        grant("emails", "anon", "SELECT")
+        + grant("applications", "anon", "UPDATE")
+        + grant("applications", "PUBLIC", "SELECT")
+    )
+
+    lines = verdict(grants=grants)
+
+    assert len(lines) == 3
+    assert lines[0].startswith("applications: PUBLIC holds SELECT")
+    assert lines[1].startswith("applications: anon holds UPDATE")
+    assert lines[2].startswith("emails: anon holds SELECT")
+
+
+def test_the_same_privilege_granted_twice_is_named_once() -> None:
+    """``aclexplode`` emits one row per GRANTOR, so a pair can repeat.
+
+    Two roles granting ``anon`` SELECT yields SELECT twice for the same
+    (table, grantee). Without the ``set()`` the line reads
+    "anon holds SELECT, SELECT", which reads as a bug in this script and buries
+    the only fact that matters — that ``anon`` has SELECT at all.
+    """
+
+    grants = grant("emails", "anon", "SELECT", "INSERT", "SELECT", "SELECT")
+
+    assert verdict(grants=grants) == [
+        "emails: anon holds INSERT, SELECT — nothing may be granted to anon on a "
+        "table holding user rows. ALTER DEFAULT PRIVILEGES can issue that grant "
+        "without it appearing in any revision, so its absence from the migration is "
+        "not evidence it is not there."
     ]
 
 
@@ -273,12 +352,6 @@ def test_a_bypassrls_runtime_role_is_a_failure() -> None:
         "role jobtracker_app has BYPASSRLS — every policy in this database is "
         "decorative for the API's own connection."
     ]
-
-
-def test_a_healthy_database_produces_no_failures() -> None:
-    """All four checks clean, including a full set of legitimate grants."""
-
-    assert verdict(grants=OWNER_GRANTS) == []
 
 
 def test_the_privilege_failures_come_last() -> None:
