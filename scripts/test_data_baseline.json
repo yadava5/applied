@@ -18,6 +18,10 @@
       "count": 10,
       "digest": "d1b6e6e5919b2326"
     },
+    "apps/web/tests/unit/ats-anchoring-651.test.mjs": {
+      "count": 15,
+      "digest": "5930591baf5d7b23"
+    },
     "apps/web/tests/unit/auth-credentials.test.mjs": {
       "count": 13,
       "digest": "40cd22e21e0ee012"
