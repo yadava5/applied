@@ -14,6 +14,29 @@ version: 2
 #     installed for a past experiment. Bumping it would falsify the record.
 #     (No such file is tracked as of 2026-08-31; the decline is kept because
 #     the tree returns whenever a run is committed, and the reason still holds.)
+#   - backend/uv.lock — a LOCAL development lockfile. Dependabot reads uv.lock
+#     through a separate `uv` package-ecosystem, NOT through `pip`: see
+#     dependabot-core, where uv/lib/dependabot/uv/file_fetcher.rb declares
+#     ECOSYSTEM_SPECIFIC_FILES = %w(uv.lock) while the python fetcher's list is
+#     %w(Pipfile setup.py setup.cfg) and never names it. So the /backend entry
+#     below does not cover it, and an earlier version of this file wrongly said
+#     it did.
+#     Declined rather than covered, for two reasons. It is referenced nowhere in
+#     .github/, vercel.json or docs/ — CI and the Vercel function build from
+#     requirements.txt, never from this file. And its constraints are derived:
+#     `transformers>=4.40,<5` in uv.lock is the same cap, resolved out of
+#     backend/pyproject.toml, which the /backend entry DOES cover. Bumping the
+#     source is the operative change; `uv lock` regenerates this file.
+#     The cost, stated rather than hidden: the three open transformers alerts
+#     are reported against this path, and they will stay open. They are the
+#     accepted cost recorded in backend/requirements.txt either way, held by a
+#     deliberate cap with no 4.x fix. And after a pip PR moves pyproject.toml
+#     this file is stale until someone re-locks.
+#     Adding a `uv` entry at /backend instead would be legal — the uniqueness
+#     rule is per-ecosystem — but uv's fetcher also reads pyproject.toml, which
+#     is the overlap that produced the duplicate #58/#60 pull requests this file
+#     spends the block below documenting. Do not add one without checking that
+#     first.
 #   (`apps/macos` used to be listed here — Dependabot's `swift` ecosystem needs
 #    a Package.swift and this project's only SwiftPM state was a
 #    Package.resolved inside the .xcodeproj. The whole tree was deleted when the
@@ -178,6 +201,17 @@ updates:
   # ungrouped on purpose: booklet's `pdf` script drives Puppeteer directly and a
   # major there can change the PDF, so that one wants a human and a re-export
   # rather than a green install.
+  #
+  # EXPECT SOME OF THESE PULL REQUESTS TO LAND RED, and do not read that as a
+  # broken config. .github/workflows/booklet.yml rebuilds the System Card on any
+  # `booklet/**` pull request and exits 1 on a single byte of difference in
+  # apps/web/public/system-card. `react`, `react-dom`, `vite` and
+  # `@vitejs/plugin-react` all change bundle bytes and hashed filenames, and
+  # Dependabot cannot rebuild the card. Those need `npm run build:system-card`
+  # and a commit on the branch, exactly as that workflow's comment describes.
+  # `puppeteer`, `typescript` and `@types/*` do not reach the output —
+  # `build:system-card` is `tsc --noEmit && vite build`, so type-only changes
+  # cannot alter it.
   - package-ecosystem: "npm"
     directory: "/booklet"
     schedule:
