@@ -58,11 +58,17 @@ stale job.
    `backend/data/evaluation/`. Any macro-F1 regression beyond
    `--tolerance 0.001` fails the job.
 2. **`rls-postgres`** — `needs: test`. Runs `tests/test_rls_postgres.py`
-   against its own `postgres:16` service container, then parses the JUnit
-   XML and **fails if the suite reports zero tests or any skip**. That guard
-   is the point of the job: these tests once waited on a database URL no
-   workflow set, and a skip is green. The migration suite
-   (`tests/test_migrations_postgres.py`) rides along under the same guard.
+   against its own `postgres:17` service container — production is 17.6, and
+   the owner privilege set the catalog reports differs between majors — then
+   parses the JUnit XML and **fails if the suite reports zero tests or any
+   skip**. That guard is the point of the job: these tests once waited on a
+   database URL no workflow set, and a skip is green. Two further suites ride
+   along under the same guard: the migration chain
+   (`tests/test_migrations_postgres.py`) and, since issue #691,
+   `tests/test_verify_rls_gate_postgres.py`, which executes
+   `scripts/verify_rls.py`'s own catalog queries against a chain-built
+   database. Before that, the post-migration RLS gate's SQL ran in exactly one
+   place — `db-migrate.yml`, against production.
 3. **`expand-only`** — deliberately **not** `needs: test`, unlike the two
    jobs around it. It walks the Alembic chain one revision at a time against
    a `postgres:16` service and fails a revision that drops or narrows
