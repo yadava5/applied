@@ -11,6 +11,16 @@ import { Reveal } from "./Reveal";
  * repeated rows are the argument — nothing was added, the signal was just made
  * legible. Categories are illustrative (they mirror the app's demo fixture),
  * not a benchmark.
+ *
+ * NAMING RULE FOR THESE ROWS (#638). Naming the CHANNEL is accurate and is the
+ * point of the scene: `greenhouse.io` really is the relay this mail arrives
+ * through, so it stays. Naming the EMPLOYER is fabrication — a row that puts a
+ * real company's name on an invented subject line with an invented confidence
+ * asserts, on a public page, that a specific company sent a specific verdict.
+ * Every employer here is invented and shared with the app's own fixtures
+ * (`lib/demo/demoData.ts`). Two rows used to name real companies and were
+ * swapped in #638; `tests/unit/no-real-employer-in-shipped-fixtures.test.mjs`
+ * is what stops the next one.
  */
 
 type Row = {
@@ -32,10 +42,10 @@ const CAT = {
 
 const ROWS: Row[] = [
   { from: "no-reply@greenhouse.io", subject: "Update on your application to Northstar", cat: "rejection", conf: 0.94 },
-  { from: "jobs@stripe.com", subject: "We received your application", cat: "applied", conf: 0.95 },
+  { from: "jobs@junipercloud.io", subject: "We received your application", cat: "applied", conf: 0.95 },
   { from: "talent@harbor.io", subject: "Take-home exercise — due in 48 hours", cat: "assessment", conf: 0.97 },
   { from: "digest@jobboard.com", subject: "12 new roles match your search", cat: "other", conf: 0.98 },
-  { from: "recruiting@datadog.com", subject: "Next steps for your candidacy", cat: "interview", conf: 0.96 },
+  { from: "recruiting@kestreldynamics.com", subject: "Next steps for your candidacy", cat: "interview", conf: 0.96 },
   { from: "maya@earlystage.xyz", subject: "Quick question about your background", cat: "needs_review", conf: 0.61 },
   { from: "people@beacon.io", subject: "We’d like to make you an offer", cat: "offer", conf: 0.99 },
 ];
