@@ -51,7 +51,9 @@ function rulesClassify(subject, body, sender) {
   let isAts = false;
   if (sender && sender.includes('@')) {
     const dom = sender.toLowerCase().split('@').pop();
-    isAts = rules.ats.some((a) => dom.includes(a));
+    // Anchored the way `rules.is_ats_sender` is (#651): a listed domain or a
+    // proper subdomain of one, never a host that merely contains the name.
+    isAts = rules.ats.some((a) => dom === a || dom.endsWith(`.${a}`));
   }
   for (const [cat, g] of Object.entries(rules.cats)) {
     let s = 0;
