@@ -226,7 +226,19 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16
+        # postgres:17, matching production's 17.6. Bumped from 16 for issue
+        # #691, which adds `tests/test_verify_rls_gate_postgres.py` to this
+        # job: that module executes `scripts/verify_rls.py`'s own catalog
+        # queries, and they read `pg_class.relacl`, where the owner's
+        # privilege set differs between majors (`MAINTAIN` exists on 17 and
+        # not on 16). A gate whose whole subject is what the catalog says
+        # should be read against the catalog production actually has.
+        #
+        # This moves the RLS and migration suites above onto 17 as well. Both
+        # were re-run against a postgres:17 container before the bump landed.
+        # The `expand-only` job below stays on 16 on purpose; the reason is on
+        # its own service block.
+        image: postgres:17
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -335,6 +347,49 @@ jobs:
               )
           PY
 
+      - name: Run the RLS gate's own SQL against a real Postgres
+        # tests/test_verify_rls_gate_postgres.py runs scripts/verify_rls.py —
+        # the post-migration gate — against a database the real Alembic chain
+        # built. Until issue #691 that script's queries had exactly ONE
+        # execution site, db-migrate.yml, against PRODUCTION: reverting the
+        # grant query's relkind widening, which re-opens an anon-granted view
+        # over `applications`, reddened zero of its thirteen unit tests,
+        # because those exercise a pure function over query RESULTS and never
+        # see a relkind. It runs here because this is the job with a Postgres,
+        # for the same reason the two suites above are not in `test`.
+        env:
+          JOBTRACKER_ENVIRONMENT: test
+          PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
+          JOBTRACKER_TEST_PG_ADMIN_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/test_db
+        run: |
+          pytest tests/test_verify_rls_gate_postgres.py -q \
+            --junit-xml="$RUNNER_TEMP/verify-rls-results.xml"
+
+      - name: Assert the RLS gate's SQL suite actually ran
+        # Third instance of the same guard, and the one with the most to lose:
+        # this module skips itself when no Postgres is reachable, a skip is
+        # green, and what would silently go unverified is the check that
+        # decides whether production still has tenant isolation.
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse(
+              os.path.join(os.environ["RUNNER_TEMP"], "verify-rls-results.xml")
+          ).getroot()
+          suite = root if root.tag == "testsuite" else root.find("testsuite")
+          total = int(suite.get("tests", 0))
+          skipped = int(suite.get("skipped", 0))
+          print(f"RLS gate SQL suite: {total} tests, {skipped} skipped")
+          if total == 0 or skipped:
+              sys.exit(
+                  "The RLS gate's SQL did not run. Nothing in this build "
+                  "executed scripts/verify_rls.py's queries against a database."
+              )
+          PY
+
   expand-only:
     # Refuses a revision that removes or narrows something without declaring it.
     #
@@ -364,6 +419,12 @@ jobs:
 
     services:
       postgres:
+        # Deliberately still 16 while `rls-postgres` above moved to 17. Every
+        # comparison this job makes is WITHIN one run — each revision's
+        # fingerprint against the previous revision's, on this same server —
+        # so parity with production's major buys it nothing here, while a
+        # major bump risks a fingerprint delta that has nothing to do with the
+        # change under review. Bump it when it has a reason of its own.
         image: postgres:16
         env:
           POSTGRES_USER: postgres

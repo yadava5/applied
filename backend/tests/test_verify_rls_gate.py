@@ -48,15 +48,21 @@ mutation of ``collect_failures`` that could make an assertion about them fail,
 so writing one would produce a test that is green by construction, which is the
 defect this repository keeps finding. Both were checked by hand against
 postgres:16 when the query was written; the reasoning is in the comment above
-the query in ``scripts/verify_rls.py``.
+the query in ``scripts/verify_rls.py``. Since #691 the grantee-0 half is no
+longer only a hand check: dropping the mapping reds
+``test_a_grant_to_public_is_a_failure`` in the Postgres module named below.
 
 The same applies, and matters more, to the relation kinds the query selects.
 ``collect_failures`` never sees a ``relkind`` — the SQL decides which relations
 become rows, so no test in this file can tell an ``r``-only query from one that
 also covers views and matviews. That distinction is load-bearing (a view owned
 by a BYPASSRLS role returns every user's rows), and it is verified only by
-running the query against a real server. Nothing in CI does that yet; the
-script's one execution site is ``db-migrate.yml``, against production.
+running the query against a real server. ``tests/test_verify_rls_gate_postgres.py``
+is where that happens since issue #691: it applies the Alembic chain to a
+throwaway Postgres and calls ``main()``, so the queries this file cannot reach
+now execute somewhere other than production. Reverting the grant query to
+``relkind = 'r'`` reds exactly one test there — and, measured again on the way
+in, none of the thirteen here. That is why both files exist.
 """
 
 from __future__ import annotations
