@@ -2508,13 +2508,18 @@ def _post_name_refusal(
     tree — "A NEW CONFIRMATION IS A NEW APPLICATION. AN UPDATE IS NOT" — and
     acts on it: a role-less CONFIRMATION at a multi-application employer is
     deliberately NOT asked about, because "which of these is it about?" is the
-    wrong question for mail asserting a new one. Measured on this family's own
-    mail before it was written: 160 role-less confirmations in this shape, at
-    two-card employers, and 160 of them reached a card with none queued. So a
-    refusal family built on confirmations would assert a queue the product does
-    not use for that mail, and would grade the anchor rule instead of the
-    reader. An update is the mail for which the queue IS the designed answer,
-    which is what makes a refusal observable at all.
+    wrong question for mail asserting a new one.
+
+    MEASURED ON A DISCARDED FIRST DRAFT OF THIS FAMILY, said that way because
+    the draft is not in the tree and nobody can re-run it. 160 role-less
+    CONFIRMATIONS in this shape, at two-card employers: 160 reached a card, 0
+    were queued, and ``cards`` came out equal to the ground-truth identity count
+    exactly — so none of them minted a row either. They folded onto a row their
+    employer already had. A refusal family built on confirmations would
+    therefore assert a queue the product does not use for that mail, and would
+    grade the anchor rule instead of the reader. An update is the mail for which
+    the queue IS the designed answer, which is what makes a refusal observable
+    at all.
     """
 
     display, token = b.employer()
