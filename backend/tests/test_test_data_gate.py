@@ -11,8 +11,11 @@ and each is a separate code path:
 * a tracked file that cannot be read or decoded             -> red
 * an address on an RFC-reserved domain                      -> green
 * the same addresses in a different order or case           -> green
+* an address ASSEMBLED at run time on a routable domain     -> red
+* the same assembly with an RFC-reserved literal suffix     -> green
 
-The last two are not padding. A gate that reddened on ``careers@halberd.test``
+The reserved-domain row and the reordering row are not padding. A gate that
+reddened on ``careers@halberd.test``
 would punish the exact shape ``docs/TEST_DATA_POLICY.md`` tells people to write,
 which is the inverted-gate failure: a check that defends the bug. And a digest
 that moved when the file was merely reformatted would make the gate a nuisance
@@ -25,6 +28,15 @@ named "refuse new real sender addresses" while the mechanism refused a larger
 *count*. Slack accumulated the same way: remove three this month, add three
 different ones next month, green both times.
 
+The last two rows are #647. Until then the gate could see a LITERAL and nothing
+else: ``f"careers@{domain}"`` was not an address to it, and neither was
+``"careers@%s.com"``, ``"careers@" + domain`` nor ``"careers@{0}.com".format()``.
+Every interpolation form this repository actually uses was invisible, so a
+fixture author writing senders the natural way got a green gate unconditionally
+— and it was hiding senders on real companies' own domains, assembled by passing
+the domain in from a call site. The addresses are not written out anywhere in
+this module, for the reason the next section gives.
+
 Note on this file
 -----------------
 
@@ -32,8 +44,25 @@ Note on this file
 address written here would become its own baseline entry — the checker would
 have been made to republish, in the file that tests it, the material it exists
 to stop. Every probe address is therefore assembled at run time from fragments
-split at the ``@``, so no address is ever present in this source. See
-:func:`test_this_module_is_not_itself_a_finding`, which asserts it.
+split at the ``@``, and no LITERAL address is ever present in this source. See
+:func:`test_this_module_is_not_itself_a_finding`, which asserts exactly that —
+and, since #647, asserts nothing more.
+
+Because this module IS a finding now, with a baseline entry of its own. Its
+probe helpers are ``f"{_LOCAL}@{_ROUTABLE}"``: a wholly interpolated domain, the
+shape the gate cannot prove safe and therefore counts. Two consequences, worth
+knowing before they surprise somebody.
+
+* ``_reserved()`` is ``f"{_LOCAL}@{_RESERVED}"`` and is counted too, even though
+  ``_RESERVED`` is ``careers.example.test``. That is a false positive in spirit
+  and it is unavoidable: proving it safe means resolving a module constant, and
+  a text scan that started doing dataflow would be a different tool. The gate
+  reads the template, and this template seals nothing.
+* Editing a probe moves this module's baseline entry. That is the ratchet
+  working. The alternative — writing the probes in a shape the gate cannot see,
+  in order to keep the number at zero — is precisely the defect #647 is about,
+  and this file above all others does not get to be written in the style its own
+  subject is blind to.
 """
 
 from __future__ import annotations
@@ -117,18 +146,12 @@ def tree(tmp_path: Path) -> Path:
     tests.mkdir(parents=True)
     (tmp_path / "scripts").mkdir()
 
-    (tests / "test_existing.py").write_text(
-        f'SENDER = "{_routable()}"\n', encoding="utf-8"
-    )
+    (tests / "test_existing.py").write_text(f'SENDER = "{_routable()}"\n', encoding="utf-8")
     (tests / "test_pair.py").write_text(
         f'A = "{_routable()}"\nB = "{_routable_2()}"\n', encoding="utf-8"
     )
-    (tests / "test_clean.py").write_text(
-        f'SENDER = "{_reserved()}"\n', encoding="utf-8"
-    )
-    subprocess.run(
-        ["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True
-    )
+    (tests / "test_clean.py").write_text(f'SENDER = "{_reserved()}"\n', encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
     return tmp_path
 
 
@@ -182,9 +205,7 @@ def test_a_count_going_up_in_a_baselined_file_reds(tree: Path) -> None:
     _write_baseline(gate, tree)
 
     path = tree / "backend" / "tests" / "test_existing.py"
-    path.write_text(
-        f'SENDER = "{_routable()}"\nOTHER = "hr@{_ROUTABLE}"\n', encoding="utf-8"
-    )
+    path.write_text(f'SENDER = "{_routable()}"\nOTHER = "hr@{_ROUTABLE}"\n', encoding="utf-8")
     assert _check(gate, tree) == 1
 
 
@@ -222,9 +243,7 @@ def test_a_brand_new_file_reds(tree: Path) -> None:
 
     new = tree / "backend" / "tests" / "test_added.py"
     new.write_text(f'SENDER = "{_routable()}"\n', encoding="utf-8")
-    subprocess.run(
-        ["git", "add", "-A"], cwd=tree, check=True, capture_output=True
-    )
+    subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
     assert _check(gate, tree) == 1
 
 
@@ -250,9 +269,7 @@ def test_a_reserved_domain_stays_green(tree: Path) -> None:
         'I = "no-reply@ats.example.test"\n',
         encoding="utf-8",
     )
-    subprocess.run(
-        ["git", "add", "-A"], cwd=tree, check=True, capture_output=True
-    )
+    subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
     assert _check(gate, tree) == 0
 
 
@@ -264,9 +281,7 @@ def test_an_untracked_file_is_not_scanned(tree: Path) -> None:
 
     stray = tree / "backend" / "tests" / "node_modules"
     stray.mkdir()
-    (stray / "vendor.js").write_text(
-        f'const s = "{_routable()}";\n', encoding="utf-8"
-    )
+    (stray / "vendor.js").write_text(f'const s = "{_routable()}";\n', encoding="utf-8")
     assert _check(gate, tree) == 0
 
 
@@ -332,7 +347,7 @@ def test_reordering_the_same_addresses_stays_green(tree: Path) -> None:
 
     path = tree / "backend" / "tests" / "test_pair.py"
     path.write_text(
-        f'# reordered, re-cased, and one duplicate line removed from nowhere\n'
+        f"# reordered, re-cased, and one duplicate line removed from nowhere\n"
         f'B = "{_routable_2().upper()}"\nA = "{_routable()}"\n',
         encoding="utf-8",
     )
@@ -351,9 +366,7 @@ def test_an_unreadable_file_reds(tree: Path) -> None:
 
     blob = tree / "backend" / "tests" / "test_blob.py"
     blob.write_bytes(b"\xff\xfe\x00\x01 not utf-8 \xc3\x28\n")
-    subprocess.run(
-        ["git", "add", "-A"], cwd=tree, check=True, capture_output=True
-    )
+    subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
 
     findings, skipped = gate.scan(tree)
     assert [s.path for s in skipped] == ["backend/tests/test_blob.py"], skipped
@@ -374,9 +387,7 @@ def test_write_baseline_refuses_an_unreadable_file(tree: Path) -> None:
 
     blob = tree / "backend" / "tests" / "test_blob.py"
     blob.write_bytes(b"\xff\xfe\x00\x01 not utf-8 \xc3\x28\n")
-    subprocess.run(
-        ["git", "add", "-A"], cwd=tree, check=True, capture_output=True
-    )
+    subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
 
     assert gate.main(["--write-baseline", "--repo-root", str(tree)]) == 1
     assert _baseline(tree).read_text(encoding="utf-8") == before
@@ -410,9 +421,7 @@ def test_a_docstring_is_scanned_not_just_a_literal(tree: Path) -> None:
 
     new = tree / "backend" / "tests" / "test_docstring.py"
     new.write_text(f'"""Graded against {_routable()}."""\n', encoding="utf-8")
-    subprocess.run(
-        ["git", "add", "-A"], cwd=tree, check=True, capture_output=True
-    )
+    subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
     assert _check(gate, tree) == 1
 
 
@@ -431,9 +440,7 @@ def test_ml_is_scanned(tree: Path) -> None:
     space = tree / "ml" / "demo" / "space" / "jobtracker" / "classifier"
     space.mkdir(parents=True)
     (space / "rules.py").write_text(f'RELAY = "{_routable()}"\n', encoding="utf-8")
-    subprocess.run(
-        ["git", "add", "-A"], cwd=tree, check=True, capture_output=True
-    )
+    subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
     assert _check(gate, tree) == 1
 
 
@@ -456,12 +463,8 @@ def test_a_root_that_is_not_scanned_stays_green(tree: Path) -> None:
     _write_baseline(gate, tree)
     unscanned = tree / "docs" / "space" / "jobtracker" / "classifier"
     unscanned.mkdir(parents=True)
-    (unscanned / "rules.py").write_text(
-        f'RELAY = "{_routable()}"\n', encoding="utf-8"
-    )
-    subprocess.run(
-        ["git", "add", "-A"], cwd=tree, check=True, capture_output=True
-    )
+    (unscanned / "rules.py").write_text(f'RELAY = "{_routable()}"\n', encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
     assert _check(gate, tree) == 0
 
 
@@ -514,7 +517,262 @@ def test_the_digest_is_stable_and_set_shaped() -> None:
 
 
 def test_this_module_is_not_itself_a_finding() -> None:
-    """This file lives inside a scanned root. It must score zero."""
+    """This file lives inside a scanned root. No LITERAL address may be in it.
+
+    That is the property the note at the top of this module claims, and it is
+    the one that matters: a literal here would republish, in the file that tests
+    the checker, the material the checker exists to stop.
+
+    It is NOT the same claim as "scores zero", and since #647 it must not be
+    written as one. The probe helpers assemble ``f"{_LOCAL}@{_ROUTABLE}"`` at run
+    time; the gate now reads a wholly interpolated domain as unprovable; so this
+    module has a baseline entry. Re-asserting ``count == 0`` here would be an
+    inverted gate — a test that reds precisely because the gate started seeing
+    the construction style this file is written in, which is the fix.
+    """
 
     gate = _load()
-    assert gate.scan_file(Path(__file__)).count == 0
+    matches = gate.matches_in(Path(__file__).read_text(encoding="utf-8"))
+
+    assert [match for match in matches if not match.interpolated] == []
+    # The discriminating half. An empty list above is also what a scan that
+    # never read the file returns, and what a scanner whose pattern had stopped
+    # matching returns. Something has to be found here, or the line above is
+    # green for a reason that has nothing to do with this file.
+    assert [match for match in matches if match.interpolated] != []
+
+
+# ---------------------------------------------------------------------------
+# #647 — an address that is assembled at run time
+#
+# A SET NEEDS ONE CASE PER MEMBER. A gate that learned f-strings and stayed
+# blind to `%s` would have moved the blind spot rather than closed it, so there
+# is a row below for every interpolation form this repository uses, and a
+# RESERVED twin for every row. Read the two halves together: a red on its own is
+# equally consistent with "the pattern got greedy and now matches everything".
+#
+# One honesty note about the arithmetic. There are four FORMS but three
+# matchers: `{...}` serves f-string fields, `str.format` fields and JavaScript
+# template literals alike, so the `f-string` row and the `str-format` row
+# exercise the same `_FIELD` pattern and are not two independent proofs. `%s` is
+# separate machinery. Concatenation is separate machinery AND the only
+# non-regex control flow in the scanner — a loop that walks the `+` chain — so
+# it gets both exits tested: a chain ending in a literal (`+ ".com"`) here, and
+# a chain ending in an expression (`+ domain`) in the unsealed cases below.
+# ---------------------------------------------------------------------------
+
+#: form -> (a routable assembly, its reserved twin). The two differ ONLY in the
+#: literal suffix, so a row that reds on the left and greens on the right has
+#: isolated the suffix as the cause rather than the interpolation.
+ASSEMBLY_FORMS = [
+    pytest.param(
+        'SENDER = f"careers@{token}.com"',
+        'SENDER = f"careers@{token}.test"',
+        id="f-string-field",
+    ),
+    pytest.param(
+        'SENDER = "careers@%s.com" % token',
+        'SENDER = "careers@%s.test" % token',
+        id="percent-s",
+    ),
+    pytest.param(
+        'SENDER = "careers@" + token + ".com"',
+        'SENDER = "careers@" + token + ".test"',
+        id="concatenation",
+    ),
+    pytest.param(
+        'SENDER = "careers@{0}.com".format(token)',
+        'SENDER = "careers@{0}.test".format(token)',
+        id="str-format",
+    ),
+]
+
+#: The same four forms with NO literal suffix at all, because the whole domain
+#: interpolates. This is the shape that was hiding real companies' addresses in
+#: `test_gmail_oauth_cloud.py`, where `_one_app_batch` and `_ats_msg` both build
+#: a sender this way: the template says nothing about where the mail goes and
+#: the call site says everything. It has no
+#: reserved twin by construction — that is the point. Nothing about
+#: `careers@{domain}` can be proved from `careers@{domain}`.
+UNSEALED_FORMS = [
+    pytest.param('SENDER = f"careers@{domain}"', id="f-string-field"),
+    pytest.param('SENDER = "careers@%s" % domain', id="percent-s"),
+    pytest.param('SENDER = "careers@" + domain', id="concatenation"),
+    pytest.param('SENDER = "careers@{0}".format(domain)', id="str-format"),
+]
+
+PROBE = "backend/tests/test_assembled.py"
+
+
+@pytest.mark.parametrize("routable, reserved", ASSEMBLY_FORMS)
+def test_each_assembled_form_reds_and_its_reserved_twin_stays_green(
+    tree: Path, routable: str, reserved: str
+) -> None:
+    """Both directions, per form, end to end through the gate.
+
+    Asserting the exit code alone would not be enough — a red is a red for many
+    reasons — so the count for the probe file is asserted too, and the reserved
+    twin has to leave the file out of `findings` entirely rather than merely
+    exit zero.
+    """
+
+    gate = _load()
+    _write_baseline(gate, tree)
+    probe = tree / "backend" / "tests" / "test_assembled.py"
+
+    probe.write_text(routable + "\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
+    findings, skipped = gate.scan(tree)
+    assert skipped == []
+    assert findings[PROBE].count == 1, findings
+    assert _check(gate, tree) == 1
+
+    probe.write_text(reserved + "\n", encoding="utf-8")
+    findings, _ = gate.scan(tree)
+    assert PROBE not in findings, findings
+    assert _check(gate, tree) == 0
+
+
+@pytest.mark.parametrize("source", UNSEALED_FORMS)
+def test_a_wholly_interpolated_domain_cannot_be_proved_and_counts(tree: Path, source: str) -> None:
+    """`careers@{domain}` is flagged because nothing in it is sealed.
+
+    This is the case #647 was filed for, and the one that was hiding real
+    routable domains: the template is silent about where the mail goes, and the
+    call site — a plain string argument, carrying no `@` and so invisible to any
+    address scanner — is where the company's own domain actually is.
+    """
+
+    gate = _load()
+    _write_baseline(gate, tree)
+    probe = tree / "backend" / "tests" / "test_assembled.py"
+    probe.write_text(source + "\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
+
+    findings, _ = gate.scan(tree)
+    assert findings[PROBE].count == 1, findings
+    assert _check(gate, tree) == 1
+
+
+@pytest.mark.parametrize(
+    "domain, sealed, allowed",
+    [
+        ("{}", "", False),
+        ("{}.com", ".com", False),
+        ("{}.test", ".test", True),
+        ("{}.invalid", ".invalid", True),
+        ("{}.localhost", ".localhost", True),
+        ("careers.{}.test", ".test", True),
+        ("{}.example.com", ".example.com", True),
+        # The two that discriminate, and the reason the rule is not "the tail
+        # has to start with a dot". A half-interpolated LABEL under a literal
+        # reserved TLD is safe, because the TLD is what decides and no
+        # interpolation reaches it — `acme-{n}hub.example` is in this tree, in
+        # `test_tracking_sender_checks.py`. A tail that merely LOOKS reserved
+        # but is not sealed at a dot is not safe: `{}example.com` interpolates
+        # to `notexample.com`, which `is_allowed` already refuses in its literal
+        # form and which a sloppier reading of this same rule would pass.
+        ("acme-{}hub.example", ".example", True),
+        ("{}example.com", ".com", False),
+        # No marker at all: the domain is sealed in its entirety, and the
+        # function has to agree with the literal path rather than raise on the
+        # missing marker. It used to raise; the concatenation-overlap case below
+        # is what found that.
+        ("northwind.com", "northwind.com", False),
+        ("halberd.test", "halberd.test", True),
+    ],
+)
+def test_the_sealed_suffix_is_what_no_interpolation_can_change(
+    domain: str, sealed: str, allowed: bool
+) -> None:
+    gate = _load()
+    assert gate.sealed_suffix(domain) == sealed
+    assert gate.is_allowed(gate.sealed_suffix(domain)) is allowed
+
+
+#: A one-line JavaScript object and a one-line Python dict, each holding an
+#: address. `ADDRESS` is substituted at run time with `_routable()` for the
+#: reason the module note gives — writing the probe out here would put a literal
+#: non-reserved address in a scanned root, which is the thing being tested.
+BRACE_WRAPPERS = [
+    pytest.param(
+        'ROWS = [{ sender_email: "ADDRESS", flagged: 1 }]',
+        id="single-line-object-literal",
+    ),
+    pytest.param('M = {"a": _raw("a", "S", "ADDRESS", "")}', id="single-line-dict"),
+]
+
+
+@pytest.mark.parametrize("wrapper", BRACE_WRAPPERS)
+def test_a_literal_inside_braces_is_still_read_as_a_literal(wrapper: str) -> None:
+    """The regression the obvious implementation of #647 would have shipped.
+
+    Normalising every `{...}` in a file to a marker before scanning is the first
+    thing anyone tries, and it eats a single-line JavaScript object or Python
+    dict WHOLE — the literal address inside it disappears. Measured on this tree
+    before the approach was abandoned: eight real addresses lost, across
+    `review-classify.test.mjs`, `test_gmail_client_fetch.py`,
+    `test_email_clients.py` and `reclassify-asks-which-application.test.mjs`.
+    Markers are matched INSIDE the address pattern instead, never as a pre-pass,
+    and these two cases are what says so.
+    """
+
+    gate = _load()
+    address = _routable()
+    assert gate.matches_in(wrapper.replace("ADDRESS", address)) == [gate.Match(address, False)]
+
+
+def test_an_address_inside_an_assembled_run_is_counted_once() -> None:
+    """The two readers must not both bill the same characters.
+
+    `TEMPLATE`/`CONCAT_HEAD` and `EMAIL` scan the same string, and a literal
+    address sitting INSIDE a `+` chain is read by both. The shape is contrived —
+    it measures zero occurrences in this tree — but the guard against it is real
+    code in `matches_in`, and untested code inside a gate is this repository's
+    named recurring defect. Delete the `spans` check and this case returns two
+    matches for one address.
+    """
+
+    gate = _load()
+    source = 'S = "reply@" + host + "' + _routable() + '"'
+    assert len(gate.matches_in(source)) == 1, gate.matches_in(source)
+
+
+def test_renaming_the_interpolated_variable_does_not_move_the_digest(
+    tree: Path,
+) -> None:
+    """A template is digested by its LITERAL parts, so `{domain}` -> `{d}` is a
+    rename and not a change. The control on the swap case below, and the same
+    argument as `test_reordering_the_same_addresses_stays_green`: a gate that
+    reddens on a formatting change is a nuisance, and a nuisance gets deleted.
+    """
+
+    gate = _load()
+    probe = tree / "backend" / "tests" / "test_assembled.py"
+    probe.write_text('SENDER = f"careers@{domain}.com"\n', encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
+    _write_baseline(gate, tree)
+
+    probe.write_text('SENDER = f"careers@{d}.com"\n', encoding="utf-8")
+    assert _check(gate, tree) == 0
+
+
+def test_swapping_a_templates_literal_suffix_reds(tree: Path) -> None:
+    """The discriminating half of the test above. The count does not move and
+    the interpolation does not move; only the literal suffix does, `.com` to
+    `.io`. Without this, "renaming stays green" is also consistent with a
+    scanner that had stopped distinguishing templates at all.
+    """
+
+    gate = _load()
+    probe = tree / "backend" / "tests" / "test_assembled.py"
+    probe.write_text('SENDER = f"careers@{domain}.com"\n', encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
+    _write_baseline(gate, tree)
+    before = _recorded(tree)[PROBE]
+
+    probe.write_text('SENDER = f"careers@{domain}.io"\n', encoding="utf-8")
+    findings, _ = gate.scan(tree)
+    assert findings[PROBE].count == before["count"] == 1
+    assert findings[PROBE].digest != before["digest"]
+    assert _check(gate, tree) == 1
