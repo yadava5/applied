@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+
 import { expect, test, type Page } from "@playwright/test";
 
 import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./helpers";
@@ -114,6 +117,65 @@ async function seedPriorVisit(page: Page): Promise<void> {
 /** The change ledger, scoped so a company name matches it and not the board. */
 function ledger(page: Page) {
   return page.getByTestId("since-last-look");
+}
+
+/**
+ * What the in-page stage probe hands back. Installed, and explained at length,
+ * by the deadline test below.
+ */
+interface StageProbe {
+  /** ms from the page's own `change` event to the ROW answering it. */
+  respondedAt: number | null;
+  /** ms from that same event to the BOARD's column counts moving. */
+  committedAt: number | null;
+  /** The column the row started in, so the probe can say what it watched. */
+  restingColumn: string;
+  /** The column label once the write landed. */
+  committedColumn: string | null;
+  /** The stage accent the row was drawn with at rest, and the one it moved to. */
+  restingAccent: string;
+  respondedAccent: string | null;
+  /** How many times the sampler looked — zero would mean it never ran. */
+  samples: number;
+}
+
+declare global {
+  interface Window {
+    __stageProbe?: { done: Promise<StageProbe> };
+  }
+}
+
+/**
+ * The demo transport's simulated write latency, read out of the component that
+ * owns it rather than restated here.
+ *
+ * The deadline below is derived from this number so the two cannot drift. A
+ * write that got SLOWER would leave a hardcoded bound measuring something
+ * arbitrary; one that got FASTER would leave it unable to tell an optimistic
+ * paint from a committed one at all, and the test would then pass on the very
+ * defect it exists for.
+ *
+ * Anchored to `changeStatus` specifically — `DemoDashboard` has nine `delay()`
+ * calls and only this one is the round trip a stage change waits on — and it
+ * throws rather than falling back to a literal: a parse that quietly returned
+ * 300 when it found nothing would be a gate that cannot fail.
+ */
+async function demoWriteLatencyMs(): Promise<number> {
+  const file = resolve(test.info().project.testDir, "../../components/demo/DemoDashboard.tsx");
+  const source = await readFile(file, "utf8");
+  const at = source.indexOf("async changeStatus(");
+  if (at === -1) {
+    throw new Error(
+      `${file} no longer declares 'async changeStatus(' — the stage deadline test cannot derive its bound from the code any more. Re-anchor it rather than hardcoding the delay.`,
+    );
+  }
+  const delayed = /await delay\((\d+)\)/.exec(source.slice(at));
+  if (!delayed) {
+    throw new Error(
+      `${file}'s 'changeStatus' no longer awaits 'delay(<ms>)' — the stage deadline test cannot derive its bound from the code any more. Re-anchor it rather than hardcoding the delay.`,
+    );
+  }
+  return Number(delayed[1]);
 }
 
 test.describe("live demo (/demo)", () => {
@@ -326,6 +388,217 @@ test.describe("live demo (/demo)", () => {
         .getByRole("region", { name: /interviewing/i })
         .getByText("Harbor Analytics", { exact: true }),
     ).toBeVisible();
+  });
+
+  test("the card answers a stage change before the write returns", async ({ page }) => {
+    // WHY THIS IS NOT THE TEST ABOVE (#601).
+    //
+    // That one proves the stage control EXISTS and that the board ends up
+    // right. It cannot see WHEN, and neither can anything else in this file:
+    // every assertion here is an auto-retrying `expect`, which is correct for
+    // flake resistance and is exactly why the optimistic hop is invisible to
+    // all of them. Invert `ApplicationRow`'s
+    // `setOptimistic({ from: app.status, to: next })` to
+    // `{ from: next, to: app.status }` and its reconciliation clears the
+    // overlay on the very next render: the card then sits still for the whole
+    // round trip, and the entire estate stays green — because "the card is at
+    // interviewing" is still true a round trip later. Against a real backend
+    // that is a dead control: you pick a stage and nothing moves until the
+    // server answers.
+    //
+    // So this asserts a DEADLINE rather than an eventuality, and it takes the
+    // time IN THE PAGE — a probe stamped by the page's own `change` event and
+    // read by an 8ms sampler — so that no part of the number is Playwright's
+    // IPC, the runner's load, or how many workers happen to be running.
+    //
+    // THE SIGNAL is the row's stage accent: `ApplicationRow`'s inline
+    // `borderLeft`, which is the one thing on the card drawn from
+    // `shownStatus` and therefore from the optimistic overlay. It is read as
+    // the style attribute the component WROTE, not as the interpolated
+    // `getComputedStyle` colour, and that is a measurement decision with a
+    // number behind it: the row carries `transition-colors`, so the computed
+    // colour only differs as a string once the 150ms ramp has moved the
+    // serialized value far enough to round differently — measured at 45-55ms
+    // after a commit that lands at 3-5ms. That 45ms is colour-serialization
+    // resolution, not the product, and putting it inside a deadline would be
+    // measuring the browser.
+    //
+    // AND NOTE WHAT THE SIGNAL DOES UNDER THE MUTANT — it is why the deadline
+    // is doing the work here rather than being an existence check in disguise.
+    // The accent reaches interviewing's colour in BOTH worlds: optimistically
+    // within a few ms, or at commit, when the row re-mounts in the
+    // interviewing column already wearing it. Measured with the swap applied,
+    // on both servers: the card answered at 309/312/338ms and the write
+    // returned at 309/312/338ms. Only a clock separates them.
+    //
+    // /demo is the surface, and it is not a stand-in here: the twin mounts the
+    // REAL `ApplicationRow` and only the transport is simulated.
+    const writeMs = await demoWriteLatencyMs();
+    // A floor, not a target. Below it, "painted optimistically" and "painted
+    // when the write returned" stop being separable by any clock, and this
+    // test would go green on the defect it was written for. It says so out
+    // loud instead of quietly weakening.
+    expect(
+      writeMs,
+      "the demo write no longer takes long enough for a deadline to separate an optimistic paint from a committed one",
+    ).toBeGreaterThanOrEqual(250);
+    // Half the write, and the margin under it is MEASURED rather than
+    // guessed. 20 consecutive runs against a production build put the answer
+    // at 0.8/1.0/1.2ms (min/median/max), and 20 more against `next dev` — the
+    // slower of the two servers CI runs this spec on — at 3.1/3.7/4.7ms. So
+    // the bound sits 32x above the worst observation, while the number it has
+    // to stay under to catch the defect is the full ~310. Most of the window
+    // is margin on purpose, not a tight fit around the measurement: CI's
+    // runners are slower than this machine, and with `retries: 2` a marginal
+    // bound would land as a green "flaky" rather than a red — a check that
+    // cannot fail, which is the thing this file is not allowed to become.
+    const deadlineMs = writeMs / 2;
+
+    await page.goto("/demo");
+    await expect(page.getByRole("region", { name: /interviewing — 4/i })).toBeVisible();
+
+    const select = page.getByLabel("Change stage for Quarry Data");
+    const selectId = await select.getAttribute("id");
+    expect(selectId, "the stage control carries the id the probe addresses it by").toBeTruthy();
+
+    // Armed BEFORE the change: the probe needs the row's resting accent and
+    // its column's resting count to compare against, and its `change`
+    // listener has to be on the document (capture phase, so the stamp is
+    // taken before React is handed the event) by the time the option is
+    // picked.
+    await page.evaluate(
+      ({ id, capMs }) => {
+        const rowOf = () => document.getElementById(id)?.closest("div.board-row") ?? null;
+        const columnOf = () => document.getElementById(id)?.closest("section[aria-label]") ?? null;
+        const accentOf = (el: Element) => el.getAttribute("style") ?? "";
+        // The row carries exactly one inline style and it is the accent. It is
+        // compared with whitespace and the trailing `;` stripped, because the two
+        // writers spell it differently: the prerendered markup arrives as
+        // `border-left:2px solid …` and React re-serializes it as
+        // `border-left: 2px solid …;`. That is measured, not guessed — the mutant's
+        // own failure output shows both spellings — and comparing the raw text
+        // would let a re-render that rewrote the SAME accent count as an
+        // answer, a false green in precisely the direction this test refuses.
+        const sameAccent = (a: string, b: string) =>
+          a.replace(/[\s;]+/g, "") === b.replace(/[\s;]+/g, "");
+
+        const row = rowOf();
+        const column = columnOf();
+        if (!row || !column) {
+          throw new Error("stage probe: the row, or the column it sits in, is not on the page");
+        }
+        const state: StageProbe = {
+          respondedAt: null,
+          committedAt: null,
+          restingColumn: column.getAttribute("aria-label") ?? "",
+          committedColumn: null,
+          restingAccent: accentOf(row),
+          respondedAccent: null,
+          samples: 0,
+        };
+
+        let resolve: (probe: StageProbe) => void = () => {};
+        const done = new Promise<StageProbe>((r) => {
+          resolve = r;
+        });
+        window.__stageProbe = { done };
+
+        let t0: number | null = null;
+        let observer: MutationObserver | null = null;
+        let ticker = 0;
+        let cap = 0;
+
+        function finish() {
+          observer?.disconnect();
+          window.clearInterval(ticker);
+          window.clearTimeout(cap);
+          resolve(state);
+        }
+
+        function sample() {
+          state.samples += 1;
+          if (t0 === null) return;
+          const now = performance.now();
+          const el = rowOf();
+          // Null-guarded on purpose: the row unmounts and re-mounts when the
+          // board finally moves it between columns, and a throw inside an
+          // observer callback is SWALLOWED — the probe would hang to its cap
+          // and the red would read as the defect rather than as a broken
+          // probe.
+          if (el && state.respondedAt === null) {
+            const accent = accentOf(el);
+            if (!sameAccent(accent, state.restingAccent)) {
+              state.respondedAt = now - t0;
+              state.respondedAccent = accent;
+            }
+          }
+          const col = columnOf();
+          if (col && state.committedAt === null) {
+            const label = col.getAttribute("aria-label") ?? "";
+            if (label !== state.restingColumn) {
+              state.committedAt = now - t0;
+              state.committedColumn = label;
+            }
+          }
+          if (state.respondedAt !== null && state.committedAt !== null) finish();
+        }
+
+        document.addEventListener(
+          "change",
+          () => {
+            if (t0 === null) t0 = performance.now();
+          },
+          true,
+        );
+        // BOTH, and the interval is not redundant. The observer sees the
+        // accent because it is an attribute write, but the board's own commit
+        // arrives as a re-parent whose useful part (the column's `aria-label`)
+        // it would only catch incidentally, and neither the select's value nor
+        // an animating colour is a mutation at all. 8ms is half a frame, so
+        // the sampler cannot be what makes a measurement late.
+        observer = new MutationObserver(sample);
+        observer.observe(document.body, {
+          subtree: true,
+          childList: true,
+          attributes: true,
+          characterData: true,
+        });
+        ticker = window.setInterval(sample, 8);
+        cap = window.setTimeout(finish, capMs);
+      },
+      { id: selectId!, capMs: 5_000 },
+    );
+
+    await select.selectOption("interviewing");
+    const probe = await page.evaluate(() => window.__stageProbe!.done);
+
+    // The probe measured what it believes it measured: its sampler ran, it
+    // watched the row in the column it started in, and it saw the write land.
+    // Without these three, a green above could mean the probe never looked.
+    expect(probe.samples, "the probe's sampler ran at all").toBeGreaterThan(0);
+    expect(probe.restingColumn, "the probe watched the row in its resting column").toMatch(
+      /^applied — /,
+    );
+    expect(probe.committedColumn, "the demo write landed and the board moved the row").toBe(
+      "interviewing — 5",
+    );
+
+    const story =
+      `card answered at ${probe.respondedAt ?? "never"}ms, ` +
+      `write returned at ${probe.committedAt}ms; ` +
+      `accent [${probe.restingAccent}] -> [${probe.respondedAccent ?? "unchanged"}]. ` +
+      `The card must answer within ${deadlineMs}ms of a ${writeMs}ms write — a card that ` +
+      `answers only when the write returns is not optimistic, it is a dead control (#601).`;
+    expect(probe.respondedAt, story).not.toBeNull();
+    expect(probe.respondedAt, story).toBeLessThan(deadlineMs);
+    // And it answered with the stage the reader PICKED. The deadline only
+    // proves the accent MOVED; a row that hopped to some other stage inside
+    // the window would satisfy it just as well. `--viz-embeddings` is
+    // interviewing's colour in `summary.ts`'s STAGES — the same token the row
+    // is still wearing once the write lands, which is why asserting it here
+    // costs nothing in flake: it is the style the component wrote, not an
+    // interpolated one.
+    expect(probe.respondedAccent, story).toContain("--viz-embeddings");
   });
 
   test("a card opens into the mail behind it", async ({ page }) => {
