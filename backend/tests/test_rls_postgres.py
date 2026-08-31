@@ -1411,6 +1411,139 @@ async def test_without_the_rollback_the_next_probe_runs_as_the_previous_user(
     )
 
 
+async def test_the_identity_guc_does_not_survive_a_commit_on_a_reused_connection(
+    pg_app: AsyncEngine,
+) -> None:
+    """``is_local => true`` on the claims GUC, asserted as BEHAVIOUR at last.
+
+    The one-line security property this whole module rests on lives at
+    ``connection.py``'s ``set_config('request.jwt.claims', '...', true)``. It is
+    what makes the backend safe behind Supavisor's TRANSACTION pooling: a
+    session-scoped claim would ride the physical connection into whatever client
+    the pooler hands it to next, which is the co-tenant ``search_path``
+    poisoning this estate has already had once, with an identity instead of a
+    schema.
+
+    Flipping that ``true`` to ``false`` was caught by exactly ONE test out of
+    ~2025 — a regex over the generated SQL string in
+    ``test_request_cost_phases.py``. Every Postgres test here, including the two
+    directly above, stayed green. Two independent reasons, and both had to be
+    designed around to get a real assertion:
+
+    1. ``database_pool_size`` defaults to 0, so the Postgres engine uses
+       ``NullPool``: every ``get_session()`` is a virgin connection and a
+       session-scoped GUC dies with it, unobserved. So this test pins ONE
+       connection, exactly as the probe-loop tests above do.
+    2. Pinning the connection is still not enough. Postgres ROLLS BACK a
+       session-level ``SET`` along with its transaction, so the ``await
+       conn.rollback()`` those tests use discards the leak too. Measured on
+       postgres:16: ``set_config(..., false)`` then ROLLBACK leaves the GUC
+       empty; then COMMIT leaves it set. **COMMIT is the moment that
+       discriminates**, and it is also the production shape — a request commits
+       and the pooler takes the connection back.
+
+    Transaction 2 binds NO identity on purpose. That is a real production
+    shape, not a hypothetical: the cron's enrollment enumeration runs with
+    nothing bound (see ``test_cron_enumeration_uses_the_enrollment_table``), and
+    ``_apply_transaction_gucs`` early-returns after the ``search_path`` pin when
+    there is no identity — so it never overwrites a stale claim. A leaked one
+    would simply still be in force, and the enumeration would read as USER_A.
+
+    WHY TRANSACTION 2 DOES NOT ALSO COUNT ROWS. Measured while writing this: a
+    transaction-local GUC is not left *unset* when its transaction ends, it is
+    left DEFINED as the empty string. ``connection.py``'s comment says that
+    without an identity ``request.jwt.claims`` "stays unset so auth.uid()
+    returns NULL and RLS fails closed" — true on a virgin connection, which is
+    every connection while ``database_pool_size`` is 0, and not true on a reused
+    one. This module's local ``auth.uid()`` shim casts before it nullifs
+    (``current_setting(...)::jsonb ->> 'sub'``), so against ``''`` it RAISES
+    *invalid input syntax for type json* rather than returning NULL. Supabase's
+    own published helpers nullif the SETTING first and so are ``''``-safe, which
+    makes this a shim-fidelity gap rather than a product defect — but the shim
+    has five copies (here, ``pg_support.py``, ``test_migrations_postgres.py``,
+    ``scripts/check_expand_only.py``, ``docs/MIGRATIONS.md``) and fixing one is
+    drift, not a fix. So the row-level half of the property is asserted in
+    transaction 1, where a count of 1 over a two-row table can only have come
+    from ``auth.uid()``; transaction 2 asserts the GUC itself.
+    """
+
+    from jobtracker.credentials.cloud import save_gmail_credentials
+    from jobtracker.database import user_id_scope
+    from jobtracker.database.connection import get_engine
+
+    # Seeded rows are what make a count of 0 mean something. With an empty
+    # table every assertion below passes for free.
+    for user_id, address in ((USER_A, "a@example.com"), (USER_B, "b@example.com")):
+        with user_id_scope(user_id):
+            assert await save_gmail_credentials(user_id, _gmail_creds(address)) is True
+
+    probe = text(
+        "SELECT pg_backend_pid(), "
+        "coalesce(current_setting('request.jwt.claims', true), ''), "
+        "current_setting('search_path'), "
+        "(SELECT count(*) FROM user_credentials)"
+    )
+
+    async with get_engine().connect() as conn:
+        # ---- Transaction 1: USER_A, bound by the engine's `begin` listener.
+        with user_id_scope(USER_A):
+            first_pid, bound_claims, bound_path, bound_count = (
+                await conn.execute(probe)
+            ).one()
+
+        # THE POSITIVE CONTROL, before the property under test. Without it a
+        # green below is equally consistent with "the identity binding never
+        # fired on this connection", i.e. a test that cannot fail either way.
+        assert str(USER_A) in bound_claims, (
+            f"the bound transaction saw claims {bound_claims!r}; the begin "
+            "listener did not apply USER_A's identity, so nothing below is a "
+            "test of anything"
+        )
+        assert bound_count == 1, (
+            f"the bound transaction counted {bound_count} credential rows on an "
+            "unfiltered read of a two-row table. Only auth.uid() can bound that "
+            "to 1 — anything else means RLS is not being enforced on this run"
+        )
+        assert bound_path == "public", bound_path
+
+        # ---- The moment under test. `true` discards the claim here; `false`
+        # would leave it on the connection for the next tenant.
+        await conn.commit()
+
+        # ---- Transaction 2, SAME physical connection, no identity bound.
+        # Its own statement, not ``probe``: nothing here may touch a table, or
+        # the read would go through the auth.uid() shim (see the docstring).
+        second_pid, leaked_claims, leaked_path = (
+            await conn.execute(
+                text(
+                    "SELECT pg_backend_pid(), "
+                    "coalesce(current_setting('request.jwt.claims', true), ''), "
+                    "current_setting('search_path')"
+                )
+            )
+        ).one()
+        await conn.rollback()
+
+    assert second_pid == first_pid, (
+        f"the two transactions ran on backends {first_pid} and {second_pid}; "
+        "this is not one reused connection and it cannot observe a leak"
+    )
+    # search_path is pinned by the SAME statement that would carry the claim,
+    # so this proves transaction 2 really began and really ran the listener —
+    # an empty claims GUC on a transaction that never started is not a result.
+    assert leaked_path == "public", (
+        f"transaction 2's search_path was {leaked_path!r}, not the pinned "
+        "'public'; the begin listener did not run, so the empty claims below "
+        "prove nothing"
+    )
+    assert leaked_claims == "", (
+        f"request.jwt.claims survived the COMMIT as {leaked_claims!r}. It is "
+        "set with is_local => true precisely so it cannot: under Supavisor's "
+        "transaction pooling this connection is now poisoned with a previous "
+        "user's identity for whoever gets it next."
+    )
+
+
 async def test_cron_syncs_only_the_enrolled_user_and_leaks_no_identity(
     pg_app: AsyncEngine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
