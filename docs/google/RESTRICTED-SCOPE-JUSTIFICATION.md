@@ -73,7 +73,7 @@ tracker that cannot tell a user they were rejected does not do the one thing it
 exists to do.
 
 This is verified by a test, not just asserted. `test_the_fetched_body_is_what_makes_the_verdict_right`
-(`backend/tests/test_body_is_never_persisted.py:335-354`) takes one real
+(`backend/tests/test_body_is_never_persisted.py:344-362`) takes one real
 Greenhouse rejection and classifies it twice:
 
 | Input | Verdict |
@@ -126,7 +126,7 @@ nonetheless the narrower scope, so it was evaluated on capability:
 
 | Scope | Google's tier | Why it does not work |
 | --- | --- | --- |
-| `gmail.metadata` | **Restricted** | **Cannot run a Gmail query.** Applied lists messages with a `q` it builds itself — by default `in:inbox` plus a `newer_than:<N>m` age filter (`backend/jobtracker/cloud/gmail_client.py:92`, `:325-343`), passed to `users.messages.list` at `:629`. Google documents on [`users.messages.list`](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list) that the `q` parameter "cannot be used when accessing the api using the gmail.metadata scope." Without `q`, Applied cannot restrict its read to the inbox or to a recent window — it would have to enumerate *more* of the mailbox, not less. Separately, it returns no message body, which §3 shows is decisive. |
+| `gmail.metadata` | **Restricted** | **Cannot run a Gmail query.** Applied lists messages with a `q` it builds itself — by default `in:inbox` plus a `newer_than:<N>m` age filter (`DEFAULT_QUERY`, `backend/jobtracker/cloud/gmail_client.py:92`, composed by `build_gmail_query`, `:325-362`), passed to `users.messages.list` inside `_collect_page` at `:648`. Google documents on [`users.messages.list`](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list) that the `q` parameter "cannot be used when accessing the api using the gmail.metadata scope." Without `q`, Applied cannot restrict its read to the inbox or to a recent window — it would have to enumerate *more* of the mailbox, not less. Separately, it returns no message body, which §3 shows is decisive. |
 | `gmail.addons.current.message.metadata` | Sensitive | Grants access only to the message a Google Workspace Add-on is currently open on. Applied is a standalone web application whose sync runs on a schedule with no user present and no add-on surface. |
 | `gmail.addons.current.message.readonly` | Sensitive | Same architectural limitation. |
 | `gmail.labels` | Non-sensitive | Labels only — no message content of any kind. |
@@ -232,7 +232,7 @@ prominent, user-facing feature the data serves; there is no other use.
   and the email is flagged reviewed, so the answer is durable and a later sync
   will not overwrite it. It does **not** change any future classification.
   There is no per-user model and no per-user classifier state of any kind —
-  `get_rules_classifier()` (`backend/jobtracker/classifier/rules.py:984`) is a
+  `get_rules_classifier()` (`backend/jobtracker/classifier/rules.py:1633`) is a
   process-wide singleton that takes no user argument, so the same message
   classifies identically before and after any correction, for every account.
 
@@ -313,8 +313,8 @@ prominent, user-facing feature the data serves; there is no other use.
    Gmail's, because a sentinel search alone would pass for a body prefix that
    stops short of the sentinel.
 5. **Server-side narrowing before any message is transferred.** Applied builds
-   a Gmail `q` rather than enumerating the mailbox
-   (`gmail_client.py:340-343`), and the default read is `in:inbox` plus a
+   a Gmail `q` rather than enumerating the mailbox (`build_gmail_query`,
+   `gmail_client.py:359-362`), and the default read is `in:inbox` plus a
    `newer_than:<N>m` age filter, so ordinary syncs never see archived or sent
    mail, or mail older than the window. This is the minimisation that
    `gmail.metadata` would make impossible (§3.2).
@@ -322,18 +322,72 @@ prominent, user-facing feature the data serves; there is no other use.
    Two exceptions, stated because they are real and a reviewer will find them
    in the code:
 
-   - **A user-initiated rebuild searches `in:anywhere`**, which includes
-     archived and sent mail. The caller does not get a say: `gmail_oauth.py:1969`
-     forces it. A rebuild is a *destructive* scan — it can delete application
-     rows whose mail no longer matches — and one that reads only `in:inbox`
-     judges on a partial mailbox. On 2026-08-10 exactly that removed two
-     applications whose confirmations had been archived. The wider read is the
-     safeguard, not an oversight.
-   - **`range` is not a closed set.** `_parse_range_months` accepts 3, 6, 9 and
-     12; any other value, including `all` and an unrecognised one, yields no
-     age bound at all, and `build_gmail_query` then emits the base query alone.
-     The hosted UI only ever sends an allowed window, but the API accepts more
-     than the UI sends.
+   - **Three paths read `in:anywhere`**, which includes archived mail. Sent
+     mail is not included: `build_gmail_query` composes the base as
+     `in:anywhere -in:sent` (`gmail_client.py:359`), because the first windowed
+     scan ever run against the owner's mailbox filed four of its five new rows
+     off outreach he had written himself. One of the three paths forces the
+     wider read and two are the caller's own choice — an asymmetry the web
+     client documents at `apps/web/lib/gmail/sync-plan.ts:14-26` because getting
+     it backwards is silent in both directions:
+
+     - **Forced.** `POST /gmail/sync` with `mode="rebuild"`. The server sets
+       `mail_scope = "anywhere" if rebuild` and ignores any `scope` the caller
+       sent (`gmail_oauth.py:2222-2232`); the dashboard omits `scope` from that
+       body precisely because it has no say (`scanRequestBody`,
+       `sync-plan.ts:134-135`).
+     - **The caller's choice, and the dashboard always makes it.** `POST
+       /gmail/sync` with `mode="additive"` — the windowed scan's "Keep them"
+       disposition. `scanRequestBody` puts `scope: "anywhere"` on every additive
+       body (`sync-plan.ts:136`), so that scan reads archived mail on every run.
+     - **The caller's choice, off by default.** `GET /gmail/inbox?scope=anywhere`
+       — the inbox view's "All mail" segment (`InboxWorkbench.tsx:725-728`).
+       `buildInboxParams` always sends `scope` (`types.ts:242`) and
+       `DEFAULT_FILTERS` sets it to `inbox` (`types.ts:123-127`), so a user has
+       to pick "All mail" for this one to happen.
+
+     The rebuild is the one that is forced, and for a reason: it is a
+     *destructive* scan — it can delete application rows whose mail no longer
+     matches — and one that reads only `in:inbox` judges on a partial mailbox.
+     On 2026-08-10 exactly that removed two applications whose confirmations had
+     been archived. The wider read is the safeguard, not an oversight, and the
+     additive scan asks for the same width because the mail that would correct a
+     stale row is, by the time anyone notices, archived. Listed here are the
+     paths that build an `in:anywhere` *query*; a sync resuming from a Gmail
+     `historyId` cursor issues no query at all and narrows by label instead
+     (`gmail_client.py:785`, `:885-886`).
+   - **`range` is not a closed set, and "All time" is a choice the product
+     offers.** `_parse_range_months` accepts 3, 6, 9 and 12
+     (`_ALLOWED_RANGE_MONTHS`, `gmail_oauth.py:1544`, `:1547-1564`); any other
+     value, including `all` and an unrecognised one, yields no age bound at all,
+     and `build_gmail_query` then emits the base query alone. An earlier revision
+     of this document said the hosted UI only ever sends an allowed window. That
+     was not true when it was written. **Both hosted surfaces offer an "All
+     time" option, and choosing it produces a read with no age bound at all:**
+
+     - The inbox view's age control renders `RANGE_OPTIONS`, whose last entry is
+       `{ value: "all", label: "All time" }` (`types.ts:105-111`, rendered at
+       `InboxWorkbench.tsx:713-718`). `buildInboxParams` *omits* `range` entirely
+       when it is `"all"` (`types.ts:243`), and `gmail_inbox` declares `range`
+       with `default=None` (`gmail_oauth.py:1606`) and hands it to
+       `_parse_range_months`, which returns `None` for `None` (`:1555-1556`).
+       Omission and the literal `"all"` therefore mean the same thing on this
+       endpoint: no bound.
+     - The dashboard's scan dialog renders `SCAN_RANGE_OPTIONS`, the same five
+       choices (`sync-plan.ts:50-56`, rendered at `SyncBar.tsx:1235-1240`), and
+       `scanRequestBody` sends `range` literally, `"all"` included
+       (`sync-plan.ts:129-137`).
+
+     The two endpoints disagree about a *missing* `range`, which is why the
+     client cannot treat them alike: `GET /gmail/inbox` reads absence as
+     all-time, while `POST /gmail/sync` substitutes `_SYNC_DEFAULT_RANGE_MONTHS`,
+     twelve months (`gmail_oauth.py:2216-2221`). The comment at
+     `sync-plan.ts:110-122` records the bug that asymmetry caused — a "Rebuild
+     from all time" that quietly ran twelve months while the UI said otherwise —
+     and is why the scan path sends the literal. The honest statement is
+     therefore the reverse of the old one: the API grants no wider a window than
+     the UI can already ask for, and an unbounded read is a supported product
+     choice rather than a gap between the two.
 
    Neither exception widens the *scope*: `gmail.readonly` is what is granted
    either way, the body is still discarded after classification (§4), and
@@ -364,14 +418,14 @@ prominent, user-facing feature the data serves; there is no other use.
 
 | Claim | Where to check |
 | --- | --- |
-| Single scope, read-only | `backend/jobtracker/config.py:292-295`, requested at `backend/jobtracker/cloud/gmail_oauth.py:651` |
+| Single scope, read-only | `gmail_scopes`, `backend/jobtracker/config.py:292-295`, requested by `_build_flow` at `backend/jobtracker/cloud/gmail_oauth.py:783` |
 | The metadata measurement | `backend/jobtracker/cloud/gmail_client.py:27-34` |
-| Snippet gets a rejection wrong; body gets it right | `backend/tests/test_body_is_never_persisted.py:335-354` |
+| Snippet gets a rejection wrong; body gets it right | `test_the_fetched_body_is_what_makes_the_verdict_right`, `backend/tests/test_body_is_never_persisted.py:344-362` |
 | Body is never persisted | `backend/tests/test_body_is_never_persisted.py` (whole file) |
-| Stored snippet equals Gmail's own | `backend/tests/test_body_is_never_persisted.py:714` |
-| Body truncation | `backend/jobtracker/cloud/gmail_client.py:163` |
-| The hosted classifier is rules-only (the short-circuit itself) | `backend/jobtracker/classifier/hybrid.py:284` |
-| No per-user classifier state — a process-wide singleton, no user argument | `backend/jobtracker/classifier/rules.py:984` |
+| Stored snippet equals Gmail's own — `emails.body_snippet` by equality | `backend/tests/test_body_is_never_persisted.py:627` |
+| Body truncation | `_MAX_BODY_CHARS`, `backend/jobtracker/cloud/gmail_client.py:163` |
+| The hosted classifier is rules-only (the `_cloud_rules_only` short-circuit itself) | `backend/jobtracker/classifier/hybrid.py:308-326` |
+| No per-user classifier state — a process-wide singleton, no user argument | `get_rules_classifier`, `backend/jobtracker/classifier/rules.py:1633` |
 | Training is default-deny: allowlist empty, nothing in the deployment sets it | `backend/jobtracker/classifier/setfit_model.py:38-75` |
 | A training corpus spanning two users raises rather than trains | `backend/tests/test_training_is_single_user.py` |
 | One user's corpus still refuses unless that user is allowlisted | `backend/tests/test_training_is_owner_only.py` |
@@ -409,10 +463,12 @@ disclosed here rather than discovered:
   now, and the sentence above is true as written.
 - **`training_data.body_text` is populated, and it does not hold a body.** It
   holds a copy of Gmail's snippet. The longest value across every row is 201
-  characters. `test_body_is_never_persisted.py:714` pins it to the snippet by
+  characters. `test_body_is_never_persisted.py:722` pins it to the snippet by
   equality and rejects a full-body sentinel.
 
 ---
 
-*Prepared 2026-08-15. Production figures were read on that date; the code
-citations are against `main`.*
+*Prepared 2026-08-15. Production figures were read on that date. Every code
+citation in this document was re-resolved line by line against `main` on
+2026-08-31; where a line had moved, the citation was corrected and the
+surrounding prose now names the function or constant so it can be re-found.*
