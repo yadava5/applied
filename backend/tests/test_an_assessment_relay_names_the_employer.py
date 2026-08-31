@@ -240,9 +240,11 @@ def test_an_interview_invitation_is_not_read_as_an_employer() -> None:
     An interview is the one thing on the object list a PERSON invites you to in
     their own name, and the scheduling tools that send those mails — GoodTime,
     ModernLoop — are already ATS relays, so the platform fence does not stand
-    between them and this reading. Measured with "interviews?" in the set, all
-    four shapes below resolved ('sarah', 'Sarah Chen') through Greenhouse, which
-    is #535's exact tuple re-minted through a new door.
+    between them and this reading. Measured with "interviews?" in the set, the
+    first THREE shapes below resolved ('sarah', 'Sarah Chen') through Greenhouse,
+    which is #535's exact tuple re-minted through a new door. The fourth resolved
+    ('acme', 'Acme') — correctly, which is why it is the cost and not a fifth
+    defect.
 
     The control at the end is what stops this being satisfiable by refusing
     everything: the same grammar with an assessment object still reads.
