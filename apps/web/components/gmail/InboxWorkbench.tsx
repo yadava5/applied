@@ -614,13 +614,10 @@ export function InboxWorkbench({
       if (!res.ok) {
         // WHAT A FAILURE MAY CLAIM lives in `lib/gmail/file-outcome.ts`, with
         // the reasoning: the merge commits the filed mail before the sync is
-        // stamped, so a note telling the reader their board is untouched was
-        // false for every failure after that commit — not only the
-        // migrate-window 500 that surfaced it (#604). The 409 branch keeps its
-        // stronger claim, and the module says why it may.
-        //
-        // The old wording is quoted in that module and NOT here on purpose:
-        // `tests/unit/file-failure-note.test.mjs` greps this file for it.
+        // stamped, so "nothing was changed" was false for every failure after
+        // that commit — not only the migrate-window 500 that surfaced it
+        // (#604). The 409 branch keeps its stronger claim, and the module says
+        // why it may.
         setFiling({
           phase: "error",
           note: fileFailureNote(

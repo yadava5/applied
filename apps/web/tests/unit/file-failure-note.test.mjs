@@ -103,20 +103,51 @@ test("the not-connected refusal may still say nothing was filed", () => {
 });
 
 /**
+ * The component's source with its COMMENTS removed.
+ *
+ * The tripwire below greps for the sentence this change deleted, and that grep
+ * is a false positive waiting to happen: the correct thing for a comment beside
+ * the fix to do is QUOTE the wording it replaced, and `InboxWorkbench.tsx` does
+ * exactly that. A gate that reds because the code explains itself is an
+ * inverted gate — red when the product is right — and this repo has the scar.
+ * So the assertion runs against what the component can RENDER.
+ *
+ * Deliberately naive, and bounded by that: `//` is only stripped when it opens
+ * a line, so a `https://` inside a string is safe, and the positive control in
+ * the tripwire proves both that something was removed and that the code around
+ * it survived.
+ */
+function withoutComments(source) {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
+}
+
+/**
  * WIRING. Everything above passes against a module nothing imports, which is
  * exactly how the lie would survive its own fix.
  */
 test("TRIPWIRE: the workbench renders the builder and holds neither old literal", () => {
-  const source = readFileSync(
+  const raw = readFileSync(
     new URL("../../components/gmail/InboxWorkbench.tsx", import.meta.url),
     "utf8",
   );
+  const source = withoutComments(raw);
 
+  // The wiring first, so that a component which never adopted the builder reds
+  // on THAT and not on a stripper control which is only meaningful once it has.
   assert.match(
     source,
     /import \{ fileFailureNote \} from "@\/lib\/gmail\/file-outcome"/,
     "InboxWorkbench does not import the failure-note builder",
   );
+
+  // POSITIVE CONTROL for the stripper, and it is not decoration: if
+  // `withoutComments` silently returned the whole file, or ate it, the
+  // `doesNotMatch` below would be measuring the wrong string and would still be
+  // green. The component quotes the deleted sentence in a comment beside the
+  // fix, so this trio is exercised on every run.
+  assert.match(raw, /nothing was changed/, "the component no longer explains what it replaced");
+  assert.doesNotMatch(source, /nothing was changed/, "withoutComments did not strip a comment");
+  assert.match(source, /fileFailureNote\(/, "withoutComments ate the code as well");
   // All THREE failure kinds are handed to it — the 409, the generic status and
   // the thrown request. Asserting the kinds rather than a call count is what
   // makes a re-inlined branch visible: dropping one from the component leaves
@@ -128,14 +159,13 @@ test("TRIPWIRE: the workbench renders the builder and holds neither old literal"
   ]) {
     assert.match(source, kind, `no failure branch hands the builder ${kind}`);
   }
+  // Neither old literal can be RENDERED from here again. `nothing was filed`
+  // is still a sentence this product says — the 409 branch keeps it — but it
+  // says it from `file-outcome.ts`, so a copy of it in the component means one
+  // of the two corrected branches was re-inlined.
   assert.doesNotMatch(
     source,
-    /nothing was changed/,
-    "the false sentence is back in InboxWorkbench",
-  );
-  assert.doesNotMatch(
-    source,
-    /Couldn't reach the server — nothing was filed/,
+    /nothing was filed/,
     "the network branch's false sentence is back in InboxWorkbench",
   );
 });

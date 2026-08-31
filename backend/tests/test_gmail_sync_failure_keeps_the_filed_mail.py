@@ -45,7 +45,9 @@ WHAT EACH TEST BELOW IS FOR
     than the test above, in ``acquire_gmail_sync_lease``'s fallback read, which
     is outside the endpoint's ``try``. It shares a status code with the others
     and not a code path, so it is a claim about the first-time case and not a
-    control for the returning one.
+    control for the returning one — and it carries its own control instead,
+    because "no mail was filed" is otherwise true of a database nobody ever
+    posted to.
   * ``..._recovery_re_files_idempotently`` — what makes the new sentence true
     in the other direction. Once the migration lands, the same POST succeeds,
     adds no duplicate row over ``UNIQUE ix_emails_user_id_message_id``, and
@@ -268,6 +270,31 @@ async def _live_applications() -> int:
         ).one()
 
 
+async def _sync_state_rows() -> int:
+    """How many ``sync_state`` rows this user owns, counted WITHOUT the ORM.
+
+    The fact that MAKES the first-time case a different failure from the
+    returning one: no row, so the lease's conditional UPDATE matches nothing and
+    the fallback read runs — outside the endpoint's ``try``, before any mail is
+    parsed. Without this the "zero mail rows" assertion beside it is true of a
+    database where no sync has ever run for any reason at all.
+    """
+
+    from sqlalchemy import text
+
+    from jobtracker.database import get_session
+
+    async with get_session() as session:
+        rows = (
+            await session.exec(
+                text(
+                    "SELECT COUNT(*) FROM sync_state WHERE user_id = :uid"
+                ).bindparams(uid=USER_A_KEY)
+            )
+        ).all()
+    return rows[0][0]
+
+
 async def _cursor_row() -> tuple[Any, Any]:
     """``(last_sync_at, gmail_history_id)``, read WITHOUT the ORM.
 
@@ -439,9 +466,18 @@ async def test_first_time_user_files_nothing(client_500: AsyncClient) -> None:
     this is a 500 with genuinely nothing filed, which is what the revision's
     docstring claims and what makes "nothing was filed" a legitimate sentence
     for some failures and not for the one above.
+
+    Every assertion about an empty database is also true of a database nobody
+    ever posted to, so the same request is repeated with the columns back at
+    the end: it takes the lease, writes the row and files all three.
     """
 
     await _connect_gmail(USER_A)
+    # THE PRECONDITION, ASSERTED. It is the whole difference between this
+    # failure and the one above, and "no row" is also the state every other
+    # early death would leave behind — so it is checked before the request, not
+    # inferred from the empty board after it.
+    assert await _sync_state_rows() == 0, "this user is not a first-time syncer"
     await _set_ledger_columns(present=False)
 
     resp = await client_500.post(
@@ -451,6 +487,26 @@ async def test_first_time_user_files_nothing(client_500: AsyncClient) -> None:
     assert resp.status_code == 500, resp.text
     assert await _filed_mail_rows() == 0
     assert await _live_applications() == 0
+    # STILL no row, and that is the specific fact. ``acquire_gmail_sync_lease``
+    # CREATES the row when its conditional UPDATE finds none — but only after
+    # the ``load_gmail_sync_state`` that disambiguates "no row" from "someone
+    # else holds it", and that read is the one that raises. So a zero here says
+    # the run died inside the lease, before the insert and long before the
+    # merge, rather than merely saying nothing happened.
+    assert await _sync_state_rows() == 0
+
+    # THE CONTROL, on the same user and the same callsite: with the columns
+    # back, this identical request takes the lease, writes the row and files
+    # the mail. Without it every assertion above is also true of a database
+    # nobody ever posted to.
+    await _set_ledger_columns(present=True)
+    recovered = await client_500.post(
+        "/gmail/sync", json={"items": _filable_items()}, headers=HEADERS
+    )
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json()["created"] == 3, recovered.text
+    assert await _filed_mail_rows() == 3
+    assert await _sync_state_rows() == 1
 
 
 # =============================================================================
