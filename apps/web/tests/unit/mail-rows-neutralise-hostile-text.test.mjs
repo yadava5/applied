@@ -77,8 +77,31 @@ const SENTINEL = cp(0xfffd);
 
 /** The subject #424 measured: the bytes say `.exe`, the screen said `.jpg`. */
 const HOSTILE_SUBJECT = `Payroll ${RLO}gpj.exe${PDF}`;
-/** The sender that rendered to a byte-identical image of the genuine one. */
-const HOSTILE_SENDER = `no-reply${ZWSP}@greenhouse.io`;
+/**
+ * The forged/genuine sender pair, and the invariant that makes it mean
+ * something.
+ *
+ * PROVENANCE. #424 measured this against a real applicant-tracking system's
+ * no-reply address. The SHAPE is the measured one — a `no-reply` local part on
+ * an employer-facing ATS domain — and the particulars are invented on a domain
+ * reserved by RFC 2606, per `docs/TEST_DATA_POLICY.md`. Nothing here can reach
+ * a mailbox, and the property under test does not need a routable domain: a
+ * forgery rendering identically to a genuine address is just as true of an
+ * invented one.
+ *
+ * GENUINE IS A LITERAL ON PURPOSE. `scripts/check_test_data.py` cannot see an
+ * address that is interpolated or assembled — an `@` followed by `{` or a
+ * concatenation is invisible to its regex (#647) — so a pair built out of
+ * fragments would sail past that gate without it ever having read the domain.
+ *
+ * FORGED IS DERIVED FROM IT, not written a second time. That is what
+ * guarantees the two differ by exactly one invisible character, which is the
+ * whole property the strip-versus-sentinel assertion rests on. Two
+ * hand-written literals could lose it to a typo and the test would then pass
+ * for the wrong reason.
+ */
+const GENUINE_SENDER = "no-reply@harbourgate.test";
+const HOSTILE_SENDER = GENUINE_SENDER.replace("@", `${ZWSP}@`);
 
 function visibleText(html) {
   return html.replace(/<[^>]*>/g, "");
@@ -96,7 +119,7 @@ function assertRowIsHonest(html, where) {
   assert.equal(text.includes("exe.jpg"), false, `${where}: the override survived`);
   assert.match(text, /gpj\.exe/, `${where}: the subject's real bytes are not on the row`);
   assert.equal(
-    text.includes("no-reply@greenhouse.io"),
+    text.includes(GENUINE_SENDER),
     false,
     `${where}: the forged sender rendered as the GENUINE address — stripped, not substituted`,
   );
@@ -123,6 +146,15 @@ function stubLeaf(name) {
   Stub.displayName = `Stub(${name})`;
   return Stub;
 }
+
+test("the forged sender is the genuine one plus one invisible character", () => {
+  // Guards `assertRowIsHonest`. If the pair differed in any other byte, "the
+  // forged sender did not render as the GENUINE address" would pass for the
+  // wrong reason on every surface at once.
+  assert.equal(HOSTILE_SENDER.replaceAll(ZWSP, ""), GENUINE_SENDER);
+  assert.equal(HOSTILE_SENDER.length, GENUINE_SENDER.length + 1);
+  assert.notEqual(HOSTILE_SENDER, GENUINE_SENDER);
+});
 
 test("the filed ledger neutralises and flags a hostile row", async () => {
   const { FiledMailList } = await importTsx("components/mail/FiledMailList.tsx", {
@@ -153,7 +185,7 @@ test("the filed ledger neutralises and flags a hostile row", async () => {
         method: "rules",
         user_corrected: false,
         disposition: null,
-        company: `Green${ZWSP}house`,
+        company: `Harbour${ZWSP}gate`,
         application_id: null,
         on_board: false,
         gmail_link: null,
@@ -173,8 +205,8 @@ test("the filed ledger neutralises and flags a hostile row", async () => {
   assertRowIsHonest(html, "FiledMailList");
   // The employer beside the sender is mail-derived too, and an unterminated
   // override there would reverse the rest of the line, not just the name.
-  assert.equal(visibleText(html).includes("Greenhouse"), false);
-  assert.match(visibleText(html), new RegExp(`Green${SENTINEL}house`));
+  assert.equal(visibleText(html).includes("Harbourgate"), false);
+  assert.match(visibleText(html), new RegExp(`Harbour${SENTINEL}gate`));
 });
 
 test("the public /import row neutralises and flags a hostile row", async () => {
@@ -194,7 +226,7 @@ test("the public /import row neutralises and flags a hostile row", async () => {
       item: {
         id: "1",
         subject: HOSTILE_SUBJECT,
-        senderName: `Green${ZWSP}house`,
+        senderName: `Harbour${ZWSP}gate`,
         senderEmail: HOSTILE_SENDER,
         body: "",
         category: "rejection",
@@ -232,7 +264,7 @@ test("the signed-in live scan neutralises and flags a hostile row", async () => 
         subject: HOSTILE_SUBJECT,
         sender_name: null,
         sender_email: HOSTILE_SENDER,
-        company: `Green${ZWSP}house`,
+        company: `Harbour${ZWSP}gate`,
         category: "rejection",
         confidence: 0.94,
         needs_review: false,

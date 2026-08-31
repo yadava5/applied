@@ -42,6 +42,32 @@ const ZWSP = cp(0x200b); // ZERO WIDTH SPACE
 const SENTINEL = cp(0xfffd); // REPLACEMENT CHARACTER — what each one becomes
 
 /**
+ * The forged/genuine sender pair, and the invariant that makes it mean
+ * something.
+ *
+ * PROVENANCE. #424 measured this against a real applicant-tracking system's
+ * no-reply address. The SHAPE is the measured one — a `no-reply` local part on
+ * an employer-facing ATS domain — and the particulars are invented on a domain
+ * reserved by RFC 2606, per `docs/TEST_DATA_POLICY.md`. Nothing here can reach
+ * a mailbox, and the property under test does not need a routable domain: a
+ * forgery rendering identically to a genuine address is just as true of an
+ * invented one.
+ *
+ * GENUINE IS A LITERAL ON PURPOSE. `scripts/check_test_data.py` cannot see an
+ * address that is interpolated or assembled — an `@` followed by `{` or a
+ * concatenation is invisible to its regex (#647) — so a pair built out of
+ * fragments would sail past that gate without it ever having read the domain.
+ *
+ * FORGED IS DERIVED FROM IT, not written a second time. That is what
+ * guarantees the two differ by exactly one invisible character, which is the
+ * whole property the strip-versus-sentinel assertion rests on. Two
+ * hand-written literals could lose it to a typo and the test would then pass
+ * for the wrong reason.
+ */
+const GENUINE_SENDER = "no-reply@harbourgate.test";
+const FORGED_SENDER = GENUINE_SENDER.replace("@", `${ZWSP}@`);
+
+/**
  * THE SET, WRITTEN OUT INDEPENDENTLY OF THE MODULE.
  *
  * Deliberately not derived from `HOSTILE_CODE_POINTS`: a corpus graded by its
@@ -94,21 +120,36 @@ test("the RTL-override subject no longer renders a direction it does not have", 
   assert.equal(text.includes("exe.jpg"), false);
 });
 
+test("the forged sender is the genuine one plus one invisible character", () => {
+  // Guards the assertion below. If the pair differed in any other byte, "the
+  // forged sender did not render as the genuine address" would pass for the
+  // wrong reason and a strip would look like a fix.
+  assert.equal(FORGED_SENDER.replaceAll(ZWSP, ""), GENUINE_SENDER);
+  assert.equal(FORGED_SENDER.length, GENUINE_SENDER.length + 1);
+  assert.notEqual(FORGED_SENDER, GENUINE_SENDER);
+});
+
 test("the zero-width forgery does NOT render as the genuine address", () => {
   // This is the assertion that forces a sentinel rather than a strip. #424
-  // measured `no-reply<ZWSP>@greenhouse.io` rendering to a BYTE-IDENTICAL
-  // image to the real address. Deleting the ZWSP would leave exactly
-  // `no-reply@greenhouse.io` — so a "fix" that strips turns a forgery into a
-  // perfect impersonation and the row states a falsehood in clean text.
-  const text = visibleText(render(`no-reply${ZWSP}@greenhouse.io`));
+  // measured a `no-reply` ATS sender with a zero-width space injected before
+  // the `@`, rendering to a BYTE-IDENTICAL image of the real address — same
+  // SHA-256, both 8,522 bytes. Deleting the ZWSP would leave exactly
+  // GENUINE_SENDER, so a "fix" that strips turns a forgery into a perfect
+  // impersonation and the row states a falsehood in clean text.
+  const text = visibleText(render(FORGED_SENDER));
 
   assert.equal(text.includes(ZWSP), false, "U+200B reached the rendered text");
   assert.equal(
-    text.includes("no-reply@greenhouse.io"),
+    text.includes(GENUINE_SENDER),
     false,
     "the forged sender rendered as the genuine address — the sentinel was stripped, not substituted",
   );
-  assert.match(text, /no-reply.@greenhouse\.io/);
+  // Exactly what the line must read: the genuine address with a visible mark
+  // where the invisible character was. The flag renders first, hence endsWith.
+  assert.ok(
+    text.endsWith(GENUINE_SENDER.replace("@", `${SENTINEL}@`)),
+    `the line does not read as the marked address: ${JSON.stringify(text)}`,
+  );
 });
 
 // ---------------------------------------------------------------------------

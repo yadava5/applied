@@ -12,10 +12,18 @@
  *
  *   1. A subject of `Payroll ` + U+202E + `gpj.exe` + U+202C renders on screen
  *      as `Payroll exe.jpg`. The bytes say `.exe`. The screen says `.jpg`.
- *   2. `no-reply` + U+200B + `@greenhouse.io` renders, at 3x device pixel
+ *   2. `no-reply` + U+200B + `@harbourgate.test` renders, at 3x device pixel
  *      ratio, to a BYTE-IDENTICAL image to the genuine address — same SHA-256,
  *      both 8,522 bytes. Not "hard to tell apart": identical. Neither a reader
  *      nor a screenshot diff can separate them.
+ *
+ * THE ADDRESS ABOVE IS INVENTED AND THE MEASUREMENT IS NOT. #424 measured this
+ * against a real applicant-tracking system's no-reply address; the shape is
+ * that one, the particulars are invented on a domain RFC 2606 reserves, per
+ * `docs/TEST_DATA_POLICY.md`. `scripts/check_test_data.py` does not scan
+ * `apps/web/lib/`, so nothing forced this — the policy covers a docstring as
+ * much as a fixture, and an address a gate cannot see is exactly the one worth
+ * getting right by hand.
  *
  * NOTE THAT NEITHER EXAMPLE IS WRITTEN OUT LITERALLY ABOVE, and no literal
  * member of the set appears anywhere in this file. Every one is spelled with a
@@ -27,8 +35,8 @@
  * WHY A SENTINEL AND NOT A STRIP — THIS IS THE LOAD-BEARING DECISION.
  * The obvious fix is to delete these code points. For a SENDER that is worse
  * than doing nothing. Strip the zero-width space out of the forged
- * `no-reply` + U+200B + `@greenhouse.io` and what is left is exactly
- * `no-reply@greenhouse.io` — the genuine address, character for character. The
+ * `no-reply` + U+200B + `@harbourgate.test` and what is left is exactly
+ * `no-reply@harbourgate.test` — the genuine address, character for character. The
  * row would then render, in clean unambiguous text, a claim that is FALSE, and
  * it would render it beside a confidence chip that lends it an air of having
  * been checked. Stripping converts a forgery into a perfect impersonation.
@@ -62,7 +70,7 @@
  * evidence, not just text, and `components/mail/MailText.tsx` draws it.
  *
  * SCOPE, AND THE TWO THINGS DELIBERATELY OUTSIDE IT.
- *   - HOMOGLYPHS are not handled. A Cyrillic `greenhouse.io` is visually
+ *   - HOMOGLYPHS are not handled. A Cyrillic `harbourgate.test` is visually
  *     indistinguishable but NOT byte-identical, so unlike the zero-width case
  *     it is detectable by comparison. It is a different and much harder
  *     problem and #424 separates the two on purpose.
