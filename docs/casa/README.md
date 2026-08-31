@@ -21,14 +21,30 @@ form — and lives at
 ## How to read these
 
 Every one of them was written against **production**, read on **2026-08-15**,
-not against the migrations or the source alone. Three conventions hold
-throughout:
+not against the migrations or the source alone. Later readings supersede parts
+of that and say so in place: `SECRET-ACCESS-POLICY.md` §3.2 and
+`AUTHENTICATION-LOGGING.md` §2.1, §3.1 and §4 were corrected on **2026-08-16**,
+and the table-grant and role-membership figures in
+`ARCHITECTURE-AND-TENANT-ISOLATION.md` §4.1 were re-read on **2026-08-31**.
+Every figure carries the date it was read. Four conventions hold throughout,
+the second of them with a limit that is stated rather than glossed:
 
 - **Live figures carry their `N` and their query.** Where a number is a
   snapshot of production data rather than an invariant, it says so and the SQL
   is reproduced inline so it can be re-run.
-- **Claims cite `file:line`.** A reviewer should never have to take a
-  behavioural claim on trust when a citation would settle it.
+- **Claims cite `file:line` — in the four documents whose claims are about
+  code.** `ARCHITECTURE-AND-TENANT-ISOLATION.md`, `CRYPTOGRAPHY.md`,
+  `SECRET-ACCESS-POLICY.md` and `SESSION-COOKIES.md` give a path and a line for
+  their behavioural claims, and a reviewer should never have to take one of
+  those on trust when a citation would settle it. **Two documents carry no
+  citations, and cannot.** `AUTHENTICATION-LOGGING.md` is a reading of
+  Supabase's auth audit event stream and auth tables — none of that evidence
+  exists in this repository, so no `file:line` would be honest, and it is shown
+  to an assessor against the live project instead (see that document's §3.3,
+  which enumerates the redactions and how to see past them). This README is a
+  contents page and cites nothing either. Both are repo-**un**verifiable by
+  construction; that is stated here rather than left to be discovered by a
+  reviewer who takes the promise literally and finds no citation to follow.
 - **Each document ends with a "residual risk" section that is meant to be
   read.** Known gaps — no key rotation, one non-user-scoped policy, no
   tamper-evident archive of secret access — are stated in the documents rather
@@ -46,7 +62,7 @@ throughout:
 | --- | --- |
 | Fernet key rotation is not implemented; rotating today forces every user to reconnect | `CRYPTOGRAPHY.md` §3.3 |
 | One key serves both credential encryption and OAuth `state` signing | `CRYPTOGRAPHY.md` §3.4 |
-| `anon` retains a grant on `gmail_sync_enrollment` — inert, but drift | `ARCHITECTURE-AND-TENANT-ISOLATION.md` §4.1 |
+| The `anon` revocations are hand-run SQL — no Alembic revision performs one, and the revoke that cleared `gmail_sync_enrollment` is not recorded in this repository at all, so a database rebuilt from migrations would carry the default grants | `ARCHITECTURE-AND-TENANT-ISOLATION.md` §3, §4.1 |
 | Logs Explorer retention is plan-dependent; the plan and its window must be read from the dashboard and recorded — no number is asserted | `AUTHENTICATION-LOGGING.md` §4 |
 | The auth audit-log **database-write toggle** was not read; the mechanism explains the empty table but the setting itself is unconfirmed | `AUTHENTICATION-LOGGING.md` §2.1 |
 | No independent tamper-evident archive of secret access, and no export or SIEM streaming at this tier — Vercel's Activity Log is a vendor event feed with no documented retention | `SECRET-ACCESS-POLICY.md` §3.2, §4 |
