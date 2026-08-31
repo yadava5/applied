@@ -637,18 +637,217 @@ def test_the_body_reader_refuses_a_vendor_name_when_no_relay_sent_it() -> None:
         ),
     ],
 )
-def test_the_reading_is_additive_and_moves_no_existing_answer(
+def test_the_existing_subject_readings_are_untouched(
     sender: str, subject: str, name: str, expected: tuple[str, str]
 ) -> None:
-    """The new pattern is tried LAST, so nothing that resolved can move.
+    """Regression cover for the rules this change sits beside — and NOT for the
+    ordering claim, which is the test below.
 
-    One subject per rule that already answers — the anchored one, the
-    thank-you-for-applying one, the at-sign one, the leading segment, and #508's
-    Handshake row — because "purely additive" is a claim about the ORDER of the
-    patterns and the order is only visible when something else matches first.
+    THESE SENDERS CANNOT REACH THE NEW PATTERN. ``ashbyhq`` and
+    ``greenhouse-mail`` are ATS relays, so ``_employer_from_subject`` never puts
+    ``_EMPLOYER_INVITES`` in the tuple for them and no ordering is exercised
+    here at all. That is worth saying in place rather than leaving to be
+    rediscovered: this file's first draft made exactly this claim with exactly
+    these senders while the fence was ``ATS | ASSESSMENT``, and NARROWING the
+    fence to assessment vendors stranded the test without touching it. A
+    reorder mutation reddened nothing. The next person to narrow a fence will
+    strand a test the same way, so the rule is: a test named for a code path has
+    to be re-checked against the fence that path sits behind.
     """
 
     assert p.resolve_employer(sender, subject, name) == expected
+
+
+@pytest.mark.parametrize(
+    ("subject", "expected"),
+    [
+        # `_EMPLOYER_INTEREST_IN` — the invitation reading would say Netic AI.
+        (
+            "Thanks for your interest in Acme Corp - Netic AI invites you to take an assessment",
+            ("acme", "Acme"),
+        ),
+        # `_EMPLOYER_ANCHORED` — the invitation reading would say Stripe.
+        (
+            "Stripe invites you to take an assessment for your application to Netic AI",
+            ("netic", "Netic AI"),
+        ),
+        # `_EMPLOYER_ON_BEHALF` — the invitation reading would say Netic AI.
+        (
+            "Netic AI invites you to take an assessment on behalf of Acme Corp",
+            ("acme", "Acme"),
+        ),
+        # `_EMPLOYER_BARE_AT` — the invitation reading would say Northwind Labs.
+        (
+            "Northwind Labs invites you to take an assessment at Stripe",
+            ("stripe", "Stripe"),
+        ),
+    ],
+)
+def test_the_invitation_reading_is_tried_last(
+    subject: str, expected: tuple[str, str]
+) -> None:
+    """"Purely additive" is a claim about ORDER, and this is where it is tested.
+
+    Every subject satisfies ``_EMPLOYER_INVITES`` AND one older pattern, and the
+    two disagree — so the answer is decided by which runs first and nothing
+    else. Measured, moving the new pattern from last to first changes three of
+    these four; asserting the older pattern's answer is what makes that
+    reordering a red.
+
+    THE SENDER IS A VENDOR, deliberately. It is the only kind of sender that
+    reaches this pattern at all, so any sender that does not cross that fence
+    asserts nothing about ordering however carefully the subject is built (see
+    the test above).
+
+    ``_EMPLOYER_AT_SIGN`` is absent from this list because it cannot be
+    exercised here: it is prepended only for ATS relays, so off a vendor it is
+    not in the tuple. Its ordering against ``_EMPLOYER_ANCHORED`` is #325's and
+    is covered in ``test_cloud_pipeline.py``.
+    """
+
+    assert p.resolve_employer(VENDOR_SENDER, subject, REPORTED_NAME) == expected
+
+
+def test_the_object_noun_is_matched_on_word_boundaries() -> None:
+    """``\b`` on BOTH sides of the object noun, one case per side.
+
+    Without the leading one, "assessment" matches inside "reassessment", "test"
+    inside "pretest" and "contest", and an ordinary sentence becomes an
+    invitation to an assessment round. Without the trailing one,
+    "assessmentathon" does the same. Both were survivors: nothing in the file
+    distinguished ``\bassessments?\b`` from ``assessments?``.
+
+    NOT COVERED, AND THE DISAGREEMENT IS REAL RATHER THAN A GAP IN THIS TEST:
+    "a self-assessment" DOES resolve here, because "self-assessment" contains a
+    word boundary in front of "assessment". ``classifier/rules.py`` explicitly
+    vetoes ``\bself[- ]assessments?\b`` for ASSESSMENT, so the two lists
+    disagree about that phrase — the classifier says it is not an assessment and
+    this reader says the sentence names an employer. A leading ``\b`` cannot
+    close it; excluding it needs a lookbehind and a decision about what a
+    self-assessment invitation means, which is not this change's to make. Stated
+    here rather than pinned, because asserting today's answer would freeze a
+    behaviour nobody has chosen.
+    """
+
+    for subject in (
+        "Netic AI invites you to a reassessment of your file",
+        "Netic AI invites you to review the pretest results",
+        "Netic AI invites you to enter a contest",
+        "Netic AI invites you to an assessmentathon",
+    ):
+        assert p.resolve_employer(VENDOR_SENDER, subject, REPORTED_NAME) is None, subject
+
+    # The control: the same sentence with the noun standing on its own.
+    assert p.resolve_employer(
+        VENDOR_SENDER, "Netic AI invites you to an assessment of your skills", REPORTED_NAME
+    ) == ("netic", "Netic AI")
+
+
+def test_the_body_reader_accepts_every_auxiliary_and_refuses_a_future_one() -> None:
+    """One case per branch of the body pattern's auxiliary, plus the refusal.
+
+    Four branches — ``have been``, ``has been``, ``were``, ``are`` — carried by
+    a single wording, so three of them could be deleted in silence; measured,
+    narrowing the alternation to ``have been`` alone reddened nothing.
+
+    The refusal is the other half and it is not cosmetic. A FUTURE invitation is
+    not an invitation: "you will be invited by <Employer> once the team has
+    reviewed your application" names an employer in a message that is not an
+    assessment invite, and widening the alternation to admit it was also a
+    survivor.
+    """
+
+    for aux in ("have been", "has been", "were", "are"):
+        body = f"Hi Alex, You {aux} invited by Netic AI to complete an assessment."
+        assert p.employer_named_in_body(body, VENDOR_SENDER) == ("netic", "Netic AI"), aux
+
+    for aux in ("will be", "would be", "shall be"):
+        body = f"Hi Alex, You {aux} invited by Netic AI to complete an assessment."
+        assert p.employer_named_in_body(body, VENDOR_SENDER) is None, aux
+
+
+def test_the_body_reader_tries_the_interest_in_sentence_first() -> None:
+    """The body loop's ORDER, on a message where the two patterns disagree.
+
+    Same claim as ``test_the_invitation_reading_is_tried_last`` and it needs the
+    same kind of case: a body carrying BOTH sentences, naming two different
+    companies. The rejection preamble this function was built for keeps the
+    answer it has always given, and the invitation reading only ever adds one
+    where there was none. Swapping the tuple was a survivor.
+    """
+
+    both = (
+        "Thank you for your interest in Acme Corp. "
+        "You have been invited by Netic AI to complete an assessment."
+    )
+    assert p.employer_named_in_body(both, VENDOR_SENDER) == ("acme", "Acme")
+
+    # ...and each sentence alone still answers, so the test above is about ORDER
+    # rather than about one pattern having stopped working.
+    assert p.employer_named_in_body(
+        "Thank you for your interest in Acme Corp. We will be in touch.", VENDOR_SENDER
+    ) == ("acme", "Acme")
+    assert p.employer_named_in_body(
+        "You have been invited by Netic AI to complete an assessment.", VENDOR_SENDER
+    ) == ("netic", "Netic AI")
+
+
+def test_the_body_gap_is_bounded_like_its_subject_twin() -> None:
+    """``[^\n]{0,40}?`` in the BODY pattern, measured at the bound.
+
+    The subject half got this and the body half did not, so an unbounded body
+    gap was a survivor: a noun 55 characters from the verb started reading and
+    no assertion moved. 38 characters of filler puts the gap at exactly 40 and
+    reads; 39 puts it at 41 and reads nothing.
+    """
+
+    def _body(filler_len: int) -> str:
+        return f"You have been invited by Netic AI {'x' * filler_len} assessment"
+
+    assert p.employer_named_in_body(_body(38), VENDOR_SENDER) == ("netic", "Netic AI")
+    assert p.employer_named_in_body(_body(39), VENDOR_SENDER) is None
+    assert p.employer_named_in_body(_body(55), VENDOR_SENDER) is None
+
+
+#: The BODY pattern with its gap left unbounded, for the control below.
+_UNBOUNDED_INVITED_BY_BODY = re.compile(
+    r"(?i:\byou\s+(?:have\s+been|has\s+been|were|are)\s+invited\s+by\s+)"
+    r"(" + p._COMPANY_CAPTURE_SENTENCE + r")"
+    r"(?i:[^\n]*?\b" + p._INVITATION_OBJECT + r"\b)"
+)
+
+
+def test_the_body_pattern_is_linear() -> None:
+    """A BODY is longer than a subject, so the ReDoS surface is bigger, not smaller.
+
+    The subject twin got a real payload and a control; this one had neither. A
+    body made of repeated "you were invited by Acme" gives the engine one start
+    position per repetition, each matching the auxiliary and the capture and
+    then hunting an object noun that is not there: bounded it gives up after 40
+    characters, unbounded it scans to the end. Measured at 25,000 characters,
+    5 ms against 1,245 ms, and x4 on each doubling.
+    """
+
+    payload = "you were invited by Acme " * 1_000
+    budget_ms = 60.0
+    min_slowdown = 20.0
+
+    start = time.perf_counter()
+    p._EMPLOYER_INVITED_BY_BODY.search(payload)
+    bounded_ms = (time.perf_counter() - start) * 1000
+
+    start = time.perf_counter()
+    _UNBOUNDED_INVITED_BY_BODY.search(payload)
+    unbounded_ms = (time.perf_counter() - start) * 1000
+
+    ratio = unbounded_ms / bounded_ms if bounded_ms > 0 else float("inf")
+    assert ratio > min_slowdown, (
+        f"the unbounded body gap was only {ratio:.0f}x the bounded one "
+        f"({unbounded_ms:.2f} ms vs {bounded_ms:.3f} ms). Below {min_slowdown:.0f}x "
+        "this payload can no longer tell the two apart, so the budget below would "
+        "pass either way."
+    )
+    assert bounded_ms < budget_ms, f"{bounded_ms:.2f} ms, budget {budget_ms} ms"
 
 
 #: The same pattern with the gap left UNBOUNDED — what removing ``{0,40}`` gives.

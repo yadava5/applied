@@ -959,6 +959,20 @@ _EMPLOYER_BARE_AT = re.compile(r"(?i:\bat\s+)(" + _COMPANY_CAPTURE + r")")
 # earlier draft fenced this to ATS relays as well and filed "Sarah Chen" as a
 # company from a Greenhouse subject, above `AUTO_FILE_GATE`, with no display name
 # involved at all.
+#
+# THE WORD BOUNDARIES AROUND THIS ARE LOAD-BEARING and live at the two use sites.
+# Without the leading one "assessment" matches inside "reassessment" and "test"
+# inside "pretest" and "contest"; without the trailing one "assessmentathon"
+# reads. All four are gated.
+#
+# ONE DISAGREEMENT WITH THE CLASSIFIER, STATED RATHER THAN CLOSED: "a
+# self-assessment" satisfies this list, because "self-assessment" carries a word
+# boundary in front of "assessment" — while `classifier/rules.py` explicitly
+# VETOES ``\bself[- ]assessments?\b`` for ASSESSMENT. So the classifier says
+# that phrase is not an assessment and this reader says the sentence names an
+# employer. Closing it needs a lookbehind and a decision about what a
+# self-assessment invitation is, which is not #687's to make; it is recorded here
+# so the next reader finds it rather than rediscovering it.
 _INVITATION_OBJECT = r"(?:assessments?|tests?|challenges?|screenings?|exercises?)"
 
 # "<Employer> invites you to take an assessment" — THE EMPLOYER AS THE SENTENCE
