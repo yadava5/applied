@@ -25,9 +25,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { importTsx, markup, readSource } from "./helpers/renderTsx.mjs";
+import { importTsx, markup, readSource, stubModule } from "./helpers/renderTsx.mjs";
 
-const { MailSnippet, OpenInGmail } = await importTsx("components/mail/MailPreview.tsx");
+// `MailPreview` now draws its mail-supplied strings through `MailText` (#424),
+// and `renderTsx` rewrites only the ENTRY module — so a nested `.tsx` import is
+// one Node cannot load. This routes the REAL component through the stub
+// registry: same file, same transpiler, same React, nothing stood in for. See
+// `mail-rows-neutralise-hostile-text.test.mjs` for why the helper cannot do it.
+const { MailText } = await importTsx("components/mail/MailText.tsx");
+const { MailSnippet, OpenInGmail } = await importTsx("components/mail/MailPreview.tsx", {
+  stubs: { "@/components/mail/MailText": stubModule({ MailText }) },
+});
 
 /** A real snippet, as Gmail hands one over (already entity-decoded server-side). */
 const SNIPPET =

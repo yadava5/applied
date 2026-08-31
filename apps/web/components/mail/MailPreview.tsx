@@ -1,5 +1,7 @@
 import { ExternalLink } from "lucide-react";
 
+import { MailText } from "@/components/mail/MailText";
+import { safeText } from "@/lib/security/hostileText";
 import { cn } from "@/lib/utils";
 
 /**
@@ -30,7 +32,7 @@ export function MailSnippet({
   if (!snippet) return null;
   return (
     <p className={cn("mt-0.5 line-clamp-1 text-[11px] leading-snug text-dim", className)}>
-      {snippet}
+      <MailText value={snippet} />
     </p>
   );
 }
@@ -55,7 +57,7 @@ export function OpenInGmail({
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      aria-label={`Open “${subject}” in Gmail`}
+      aria-label={`Open “${safeText(subject)}” in Gmail`}
       title="open in gmail"
       className={cn(
         "grid h-6 w-6 shrink-0 place-items-center rounded text-dim transition-colors hover:bg-surface-2 hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong",
