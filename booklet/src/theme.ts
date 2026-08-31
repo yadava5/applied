@@ -224,3 +224,5 @@ export function hexWithAlpha(hex: string, alpha: number): string {
   const b = parseInt(cleaned.slice(4, 6), 16);
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
+
+// probe: booklet-only diff, to observe which workflows trigger. Reverted.
