@@ -12,6 +12,8 @@ version: 2
 #     Space; a PR against it would be reverted by the next package run.
 #   - ml/wandb/**/requirements.txt — a W&B run manifest recording what WAS
 #     installed for a past experiment. Bumping it would falsify the record.
+#     (No such file is tracked as of 2026-08-31; the decline is kept because
+#     the tree returns whenever a run is committed, and the reason still holds.)
 #   (`apps/macos` used to be listed here — Dependabot's `swift` ecosystem needs
 #    a Package.swift and this project's only SwiftPM state was a
 #    Package.resolved inside the .xcodeproj. The whole tree was deleted when the
@@ -149,6 +151,40 @@ updates:
     open-pull-requests-limit: 5
     groups:
       npm:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # ---------------------------------------------------------------------------
+  # Node — the System Card booklet (booklet/).
+  # ---------------------------------------------------------------------------
+  # A standalone Vite/React sub-project with its own workflow
+  # (.github/workflows/booklet.yml) whose `build:system-card` script writes into
+  # apps/web/public/system-card — so this manifest SHIPS, it is not a local
+  # authoring tool. .gitignore carries a deliberate carve-out to keep
+  # booklet/package-lock.json tracked.
+  #
+  # It was covered by nothing until now, and was not on the declined list at the
+  # top of this file either, so it was an oversight rather than a decision — the
+  # one thing that preamble claims does not happen here.
+  #
+  # What the gap actually cost: GHSA/CVE-2026-56876 (high) sits open against
+  # extract-zip 2.0.1, reached through puppeteer 23.11.1 -> @puppeteer/browsers
+  # 2.6.1. GitHub reports no patched version, which reads like "nothing to do".
+  # There is something to do: @puppeteer/browsers dropped extract-zip outright
+  # by 3.2.1 (its deps are yargs and modern-tar), and puppeteer 25.x pulls that.
+  # The fix is a dependency bump nobody was going to be told about.
+  #
+  # Grouped minor+patch like the other Node entry. The puppeteer major stays
+  # ungrouped on purpose: booklet's `pdf` script drives Puppeteer directly and a
+  # major there can change the PDF, so that one wants a human and a re-export
+  # rather than a green install.
+  - package-ecosystem: "npm"
+    directory: "/booklet"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    groups:
+      npm-booklet:
         patterns: ["*"]
         update-types: ["minor", "patch"]
 
