@@ -81,4 +81,4 @@ python-dateutil>=2.9.0.post0
 # patched releases without any major-version change.
 requests>=2.34.2        # PYSEC-2026-2275
 urllib3>=2.7.0          # PYSEC-2026-141, PYSEC-2026-142
-python-dotenv>=1.2.2    # PYSEC-2026-2270
+python-dotenv>=1.2.3    # PYSEC-2026-2270
