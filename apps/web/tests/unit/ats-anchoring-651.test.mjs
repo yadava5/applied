@@ -37,6 +37,24 @@
  * — a fix that anchors too hard and drops real relays is the same defect
  * pointing the other way.
  *
+ * ADDRESSES AND `docs/TEST_DATA_POLICY.md`. Every case that can sit on a
+ * domain that cannot route does. A lookalike is about a SUBSTRING, so the
+ * labels around the ATS name are free: `greenhouse.io.mailhost.test` still
+ * contains `greenhouse.io`, still is not it and still does not end in
+ * `.greenhouse.io`, which is the whole discrimination. Two kinds of case
+ * cannot be moved, and the reason is structural rather than lazy:
+ *
+ *   - a genuine-relay control has to MATCH a listed ATS domain, and no
+ *     reserved name is one or is a subdomain of one;
+ *   - `jobs@xgreenhouse.io` has to END with a listed name, which forces that
+ *     name's real TLD.
+ *
+ * Every address in this file that is on a routable domain already appears
+ * verbatim elsewhere in the tracked tree — most of them in
+ * `backend/tests/test_ingestion_hole_166.py`, the table this one ports — so
+ * nothing here is a string the repository had not already published. The
+ * baseline was re-recorded deliberately in the commit that added this file.
+ *
  * Run:  pnpm test:unit
  */
 
@@ -96,26 +114,30 @@ test("the fixture sits on the 0.80 rung, so the bonus is observable at all", () 
 // ---------------------------------------------------------------------------
 
 const LOOKALIKE_SENDERS = [
-  // The three the `is_ats_sender` docstring names as the reason for #260.
-  ["no-reply@greenhouse.io.mailgun.net", "the ATS name as the LEFT label"],
+  // The three the `is_ats_sender` docstring names as the reason for #260. Two
+  // of them carry a reserved host here instead of the routable one the Python
+  // table uses: a lookalike is about the SUBSTRING, so the labels AROUND the
+  // ATS name are free and `.test` cannot route. `notlever.co.example.com` is
+  // already under `example.com` and is quoted verbatim.
+  ["no-reply@greenhouse.io.mailhost.test", "the ATS name as the LEFT label"],
   ["careers@notlever.co.example.com", "the ATS name in the MIDDLE, glued left"],
   [
-    "hr@sohire.comcast.net",
+    "hr@sohire.company.test",
     "the docstring's third example — DOCUMENTATION, NOT EVIDENCE: it worked " +
       "through `hire.com`, which #348 removed from the list, so it is refused " +
       "twice over and cannot go red on the old line",
   ],
-  // The rest of the Python table.
-  ["jobs@xgreenhouse.io", "one character short of the real relay — ends with it, is not a subdomain"],
+  // The rest of the Python table. `xgreenhouse.io` is the one lookalike that
+  // CANNOT move to a reserved domain: its whole property is that the host ENDS
+  // with a listed name, which forces the real TLD. It is also the case that
+  // catches `domain.endsWith(a)` — the repair that looks right and is not.
+  ["jobs@xgreenhouse.io", "one character short of the real relay — ENDS with it, is not a subdomain"],
   ["noreply@workday.com.phish.example", "the classic suffix-looking prefix"],
-  // Added here: the live equivalent of the `sohire.comcast.net` shape, built on
-  // an entry the list still carries. It contains `myworkday.com` AND
-  // `workday.com` strictly inside the host, straddling a label boundary, and is
-  // a subdomain of neither.
-  ["careers@myworkday.company.net", "a listed domain straddling a label boundary, mid-host"],
-  // And the naive-repair case for the other load-bearing entry: `endsWith`
-  // alone accepts this, `=== || .` does not.
-  ["no-reply@evil-greenhouse-mail.io", "ends with a listed domain without the dot boundary"],
+  // Added here: the live equivalent of the `sohire` shape, built on an entry
+  // the list still carries. It contains `myworkday.com` AND `workday.com`
+  // strictly inside the host, straddling a label boundary, and is a subdomain
+  // of neither.
+  ["careers@myworkday.company.test", "a listed domain straddling a label boundary, mid-host"],
 ];
 
 for (const [sender, why] of LOOKALIKE_SENDERS) {
@@ -149,7 +171,7 @@ const REAL_RELAY_SENDERS = [
   ["no-reply@mail.ats.rippling.com", "a subdomain of a multi-label entry"],
   ["no-reply@lever.co", "the listed domain itself"],
   ["no-reply@hire.lever.co", "what `hire.com` was reaching for; covered by `lever.co` either way"],
-  ["hpe@myworkday.com", "the entry anchoring made load-bearing"],
+  ["no-reply@myworkday.com", "the entry anchoring made load-bearing"],
 ];
 
 for (const [sender, why] of REAL_RELAY_SENDERS) {
