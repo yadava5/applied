@@ -46,13 +46,15 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from collections.abc import Sequence
 from pathlib import Path
+from types import ModuleType
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "verify_rls.py"
 
 
-def _load():
+def _load() -> ModuleType:
     """Import the tool by path — it is a script, not a package module.
 
     Same loader as ``test_expand_only_gate.py``, ``test_test_data_gate.py`` and
@@ -115,14 +117,15 @@ OWNER_GRANTS = grant(
 
 
 def verdict(
-    unprotected=(),
-    policyless=(),
-    role=CLEAN_ROLE,
-    grants=(),
+    unprotected: Sequence[tuple[str, bool, bool]] = (),
+    policyless: Sequence[tuple[str]] = (),
+    role: tuple[bool] | None = CLEAN_ROLE,
+    grants: Sequence[tuple[str, str, str]] = (),
 ) -> list[str]:
     """Ask the gate for its verdict, defaulting every check to its clean state."""
 
-    return verifier.collect_failures(unprotected, policyless, role, grants)
+    result: list[str] = verifier.collect_failures(unprotected, policyless, role, grants)
+    return result
 
 
 # =============================================================================

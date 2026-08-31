@@ -55,6 +55,13 @@ for somebody to notice it changed.
 ``PUBLIC`` belongs in the same set because a grant to ``PUBLIC`` reaches
 ``anon`` by definition. ``aclexplode`` reports it as grantee OID 0, which
 ``pg_get_userbyid`` cannot turn into a name, so it is mapped by hand.
+
+The boundary, stated rather than left implied: ``relacl`` holds TABLE-level
+grants. A column grant (``GRANT SELECT (email) ON ...``) lives in
+``pg_attribute.attacl`` and this does not look there. That is a real gap and an
+acceptable one — ``ALTER DEFAULT PRIVILEGES``, the mechanism that hands out
+privileges nobody wrote down, cannot produce a column grant — but the summary
+line says "table-level" so a green run does not claim more than it checked.
 """
 
 from __future__ import annotations
@@ -246,10 +253,18 @@ def main() -> int:
             print(f"::error::{line}")
         return 1
 
+    # "on those {tables}" and not "on any table", because the grant check skips
+    # the exempt one and `alembic_version` can legitimately be granted to anon.
+    # An earlier draft said "any table" and was measured printing it against a
+    # database where anon held SELECT on alembic_version — a green run stating
+    # something broader than it checked, which is the defect this whole script
+    # exists to catch, in the one line anybody reads. "table-level" is the
+    # second half of the same honesty: relacl carries table grants only, and a
+    # column grant lives in pg_attribute.attacl where this does not look.
     summary = (
         f"RLS verified: {tables}/{tables} tables ENABLE+FORCE, "
         f"{policies} policies, {RUNTIME_ROLE} is NOBYPASSRLS, "
-        f"no {'/'.join(FORBIDDEN_GRANTEES)} privileges on any table."
+        f"no {'/'.join(FORBIDDEN_GRANTEES)} table-level grants on those {tables}."
     )
     print(summary)
     step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
