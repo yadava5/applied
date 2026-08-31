@@ -384,10 +384,34 @@ function score(
   const strongSubject = isReply ? POINTS.strong.replySubject : POINTS.strong.subject;
   const weakSubject = isReply ? POINTS.weak.replySubject : POINTS.weak.subject;
 
+  // THE ATS LIST IS A LIST OF DOMAINS, NOT OF SUBSTRINGS (#260, ported in #651).
+  //
+  // The match is ANCHORED, the same way `rules.is_ats_sender` is: a sender
+  // qualifies only when its domain IS a listed domain or is a PROPER subdomain
+  // of one. Do not "simplify" this back to `domain.includes(a)` — unanchored
+  // containment matched an ATS name anywhere in the host, so
+  // `greenhouse.io.mailgun.net`, `notlever.co.example.com` and
+  // `myworkday.company.net` all read as ATS relays, and every one of those is
+  // registrable by a stranger. `domain.endsWith(a)` is the same bug one step
+  // in: it still accepts `xgreenhouse.io`. Only `===` or a leading dot is a
+  // real boundary.
+  //
+  // It is load-bearing HERE and not only in Python, because `/import` is
+  // public and unauthenticated: the sender arrives as a string the visitor
+  // typed. On the 0.80 rung below, the +0.05 bonus lands exactly on 0.85 —
+  // the value `AUTO_FILE_GATE` uses on the server for "may assert a hard
+  // status" — so a domain anyone can register moved a message from held to
+  // filed in this engine's answer.
+  //
+  // Anchoring makes two entries of `rules.json`'s `ats_domains` load-bearing
+  // that containment had made redundant: `myworkday.com` does not end with
+  // `.workday.com`, and `greenhouse-mail.io` is not a suffix of
+  // `greenhouse.io`. Both are relays production really sees; neither may be
+  // deduplicated away.
   let isAts = false;
   if (sender && sender.includes("@")) {
     const domain = sender.toLowerCase().split("@").pop() ?? "";
-    isAts = ATS_DOMAINS.some((a) => domain.includes(a));
+    isAts = ATS_DOMAINS.some((a) => domain === a || domain.endsWith(`.${a}`));
   }
 
   // Where a pattern matched, from the same compiled RegExp that scored it.
