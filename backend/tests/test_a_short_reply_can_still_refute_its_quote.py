@@ -38,12 +38,15 @@ from __future__ import annotations
 
 import pytest
 
+from jobtracker.classifier import rules as rules_module
 from jobtracker.classifier.rules import (
     _MIN_ASSERTED_CHARS,
     _REFUTED_CONFIDENCE,
     _SEMANTIC_REFUTATIONS,
+    ATS_DOMAINS,
     PATTERNS,
     get_rules_classifier,
+    is_ats_sender,
     own_text_refutes,
     own_text_span,
     strip_quoted_history,
@@ -51,7 +54,15 @@ from jobtracker.classifier.rules import (
 from jobtracker.cloud.pipeline import AUTO_FILE_GATE, REVIEW_FLOOR
 from jobtracker.database.models import EmailCategory
 
-ATS = "no-reply@greenhouse.io"
+#: An invented recruiter on an RFC 2606 reserved domain. `greenhouse.io` was
+#: here and is a real routable host; `docs/TEST_DATA_POLICY.md` forbids one in
+#: a fixture and this repository is public.
+SENDER = "talent@cedarhollow.example"
+
+#: The same, as a relay this test ADDS to the ATS allowlist. See
+#: `test_the_cap_survives_the_ats_confidence_bonus` for why it has to be
+#: patched in rather than picked off the real list.
+ATS_RELAY = "talent@ats.cedarhollow.example"
 
 #: The offer this thread is about, as the sender's client quotes it back.
 QUOTED_OFFER = (
@@ -100,7 +111,7 @@ def test_a_short_withdrawal_over_a_quoted_offer_is_not_auto_filed(rules) -> None
         "the floor and this test proves nothing"
     )
 
-    result = rules.classify("Re: Your offer from Cedarhollow Systems", body, ATS)
+    result = rules.classify("Re: Your offer from Cedarhollow Systems", body, SENDER)
     assert result.confidence < AUTO_FILE_GATE, (
         f"a withdrawal was auto-filed as {result.category.value} at "
         f"{result.confidence}. Its own words revoke the offer; the only reason "
@@ -119,7 +130,7 @@ def test_the_capped_verdict_is_queued_and_not_binned(rules) -> None:
     """
 
     body = "We must withdraw the offer." + QUOTED_OFFER
-    result = rules.classify("Re: Your offer from Cedarhollow Systems", body, ATS)
+    result = rules.classify("Re: Your offer from Cedarhollow Systems", body, SENDER)
     assert REVIEW_FLOOR <= result.confidence < AUTO_FILE_GATE, (
         f"the capped verdict landed at {result.confidence}, outside "
         f"[{REVIEW_FLOOR}, {AUTO_FILE_GATE}). Under the floor it is dropped "
@@ -147,12 +158,47 @@ def test_the_floor_no_longer_decides_whether_a_withdrawal_is_filed(rules) -> Non
 
     subject = "Re: Your offer from Cedarhollow Systems"
     for label, body in (("under", under), ("over", over)):
-        result = rules.classify(subject, body, ATS)
+        result = rules.classify(subject, body, SENDER)
         assert result.confidence < AUTO_FILE_GATE, (
             f"the {label}-floor withdrawal was auto-filed as "
             f"{result.category.value} at {result.confidence}. One word of "
             "length is not a reason to file one and question the other."
         )
+
+
+def test_the_cap_survives_the_ats_confidence_bonus(rules, monkeypatch) -> None:
+    """WHY THE CAP IS APPLIED AFTER THE +0.05 AND NOT BEFORE.
+
+    The ATS bonus is +0.05 and the cap sits 0.05 under the gate, so capping
+    first hands every withdrawal that arrives through a relay straight back
+    over ``AUTO_FILE_GATE``: 0.80 + 0.05 IS 0.85. Most rescissions arrive
+    through a relay, so the ordering is not a detail.
+
+    THE RELAY IS INVENTED AND THE ALLOWLIST IS PATCHED, and that is forced
+    rather than chosen. ``is_ats_sender`` matches ``ATS_DOMAINS`` by exact
+    domain or proper subdomain (#260), all fifteen entries are real routable
+    hosts, and ``docs/TEST_DATA_POLICY.md`` forbids a routable address in a
+    fixture of a public repository. No single address can satisfy both, so the
+    test-only relay is added to the list the REAL predicate reads — the
+    predicate itself is not stubbed — and the first two assertions are the
+    positive control that the knob took effect and that the arithmetic it
+    exists to defend is still the arithmetic.
+    """
+
+    monkeypatch.setattr(rules_module, "ATS_DOMAINS", [*ATS_DOMAINS, "ats.cedarhollow.example"])
+    assert is_ats_sender(ATS_RELAY), "the patched allowlist never took effect"
+    assert _REFUTED_CONFIDENCE + 0.05 >= AUTO_FILE_GATE, (
+        "the bonus can no longer carry a capped verdict over the gate, so this "
+        "test has stopped being about anything"
+    )
+
+    body = "We must withdraw the offer." + QUOTED_OFFER
+    result = rules.classify("Re: Your offer from Cedarhollow Systems", body, ATS_RELAY)
+    assert result.confidence == _REFUTED_CONFIDENCE
+    assert result.confidence < AUTO_FILE_GATE, (
+        f"a relayed withdrawal was auto-filed at {result.confidence}. The cap "
+        "ran before the bonus and the bonus put it straight back."
+    )
 
 
 # ── the control that makes the narrow rule necessary ─────────────────────────
@@ -170,7 +216,7 @@ def test_a_short_acceptance_over_a_quoted_invite_still_auto_files(rules) -> None
     body = "Thursday works for me." + QUOTED_INVITE
     assert len(own_text_span(body) or "") < _MIN_ASSERTED_CHARS
 
-    result = rules.classify("Re: Interview for Backend Engineer", body, ATS)
+    result = rules.classify("Re: Interview for Backend Engineer", body, SENDER)
     assert result.category is EmailCategory.INTERVIEW
     assert result.confidence >= AUTO_FILE_GATE, (
         f"a short acceptance over a quoted invitation dropped to "
@@ -192,7 +238,7 @@ def test_a_scheduling_problem_is_not_a_retraction(rules) -> None:
     body = "Thursday no longer works for me." + QUOTED_INVITE
     assert len(own_text_span(body) or "") < _MIN_ASSERTED_CHARS
 
-    result = rules.classify("Re: Interview for Backend Engineer", body, ATS)
+    result = rules.classify("Re: Interview for Backend Engineer", body, SENDER)
     assert result.category is EmailCategory.INTERVIEW
     assert result.confidence >= AUTO_FILE_GATE, (
         f"a rescheduling reply dropped to {result.confidence}. The interview "
@@ -218,7 +264,7 @@ def test_a_reply_that_says_nothing_still_falls_back_to_its_quote(rules, filler: 
     assert strip_quoted_history(body) == body
     assert own_text_refutes(filler, "offer") == []
 
-    result = rules.classify("Fwd: Your offer from Cedarhollow", body, ATS)
+    result = rules.classify("Fwd: Your offer from Cedarhollow", body, SENDER)
     assert result.category is EmailCategory.OFFER
     assert result.confidence >= AUTO_FILE_GATE, (
         f"a forwarded offer scored {result.confidence}. The forwarder said "
@@ -244,7 +290,7 @@ def test_a_long_withdrawal_is_untouched_by_this_rule(rules) -> None:
     assert own_text_span(body) is not None
     assert len(own_text_span(body) or "") >= _MIN_ASSERTED_CHARS
 
-    result = rules.classify("Re: Your offer from Cedarhollow Systems", body, ATS)
+    result = rules.classify("Re: Your offer from Cedarhollow Systems", body, SENDER)
     assert result.confidence < AUTO_FILE_GATE
 
 
