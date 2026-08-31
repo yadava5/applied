@@ -7,6 +7,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ConnectGmailButton } from "@/components/gmail/ConnectGmailButton";
 import { MailSnippet, OpenInGmail } from "@/components/mail/MailPreview";
+import { MailText } from "@/components/mail/MailText";
+import { safeText } from "@/lib/security/hostileText";
 import { ReclassifyControl } from "@/components/mail/ReclassifyControl";
 import { selectClass } from "@/components/ui/formStyles";
 import { Segmented } from "@/components/ui/Segmented";
@@ -112,7 +114,14 @@ function pct(n: number) {
  * `scanMessagePayload`). A row the mine could not date cannot be stored at
  * all, and says so rather than offering a control that would fail.
  */
-function VerdictRow({
+/**
+ * EXPORTED so the suite can render it (#424). Every string on this row came
+ * from a stranger's outbox, and a bidi override or a zero-width character in a
+ * subject is invisible to source inspection by construction — the only honest
+ * check is to render the hostile bytes and read what comes out. `InboxWorkbench`
+ * itself fills its rows from a fetch, so it cannot stand in for this.
+ */
+export function VerdictRow({
   v,
   onCorrected,
   classify,
@@ -131,10 +140,17 @@ function VerdictRow({
       {/* basis-full on mobile gives the subject its own line; sm+ restores the
           single-row layout (same rule as the landing trace rows). */}
       <div className="min-w-0 basis-full sm:basis-0 sm:flex-1">
-        <p className="truncate text-sm font-medium text-strong">{v.subject}</p>
+        <p className="truncate text-sm font-medium text-strong">
+          <MailText value={v.subject} />
+        </p>
         <p className="truncate text-xs text-dim">
-          {v.sender_name ? `${v.sender_name} · ` : ""}
-          {v.sender_email}
+          {v.sender_name ? (
+            <>
+              <MailText value={v.sender_name} />
+              {" · "}
+            </>
+          ) : null}
+          <MailText value={v.sender_email} />
         </p>
         <MailSnippet snippet={v.snippet} />
       </div>
@@ -546,7 +562,11 @@ export function InboxWorkbench({
       if (jobOnly && !JOB_RELATED_CATEGORIES.includes(v.category)) return false;
       if (activeCategory && v.category !== activeCategory) return false;
       if (q) {
-        const hay = `${v.subject} ${v.sender_email} ${v.sender_name ?? ""} ${v.company}`;
+        // Search matches what the reader can SEE and type, so the haystack is
+        // built from the same neutralised strings the row draws (#424).
+        const hay = `${safeText(v.subject)} ${safeText(v.sender_email)} ${safeText(
+          v.sender_name,
+        )} ${safeText(v.company)}`;
         if (!hay.toLowerCase().includes(q)) return false;
       }
       return true;
@@ -962,8 +982,13 @@ export function InboxWorkbench({
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm text-strong">
-                      <span className="font-medium capitalize">{f.company}</span>
-                      <span className="text-dim"> · {f.subject}</span>
+                      <span className="font-medium capitalize">
+                        <MailText value={f.company} />
+                      </span>
+                      <span className="text-dim">
+                        {" · "}
+                        <MailText value={f.subject} />
+                      </span>
                     </p>
                   </div>
                   <span className="shrink-0 font-mono text-[11px] text-review">

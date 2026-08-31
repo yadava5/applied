@@ -154,5 +154,14 @@ test("TRIPWIRE: the row hands the suggested employer to the sentence", () => {
     new URL("../../components/dashboard/ReviewQueue.tsx", import.meta.url),
     "utf8",
   );
-  assert.match(src, /holdReasonSentence\(\s*item\.hold_reason,\s*AUTO_FILE_GATE,\s*item\.suggested_employer/);
+  // The third argument may be wrapped in `safeText` (#424): the suggested
+  // employer is a name the backend read OUT of a stranger's mail, so it can
+  // carry a direction override like any other header-derived string. The
+  // wrapper is optional in this pattern and the FIELD is not — swapping it
+  // for `null`, or for any other field, still reds this, which is the whole
+  // point of the tripwire.
+  assert.match(
+    src,
+    /holdReasonSentence\(\s*item\.hold_reason,\s*AUTO_FILE_GATE,\s*(?:safeText\(\s*)?item\.suggested_employer/,
+  );
 });
