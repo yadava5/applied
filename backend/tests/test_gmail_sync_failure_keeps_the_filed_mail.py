@@ -170,7 +170,7 @@ def _seed_items() -> list[dict]:
         {
             "message_id": "seed-1",
             "category": "applied",
-            "sender_email": "no-reply@greenhouse.io",
+            "sender_email": "no-reply@greenhouse.test",
             "subject": "Your application to Northwind",
             "sender_name": "Northwind",
             "received_at": "2026-07-01T12:00:00+00:00",
@@ -195,7 +195,7 @@ def _filable_items() -> list[dict]:
         {
             "message_id": "file-1",
             "category": "applied",
-            "sender_email": "no-reply@lever.co",
+            "sender_email": "no-reply@lever.test",
             "subject": "Your application to Cedartech",
             "sender_name": "Cedartech",
             "received_at": "2026-07-20T12:00:00+00:00",
@@ -205,7 +205,7 @@ def _filable_items() -> list[dict]:
         {
             "message_id": "file-2",
             "category": "applied",
-            "sender_email": "careers@initech.com",
+            "sender_email": "careers@initech.test",
             "subject": "Your application to Initech",
             "sender_name": "Initech",
             "received_at": "2026-07-21T12:00:00+00:00",
@@ -215,7 +215,7 @@ def _filable_items() -> list[dict]:
         {
             "message_id": "file-3",
             "category": "applied",
-            "sender_email": "jobs@aventine.com",
+            "sender_email": "jobs@aventine.test",
             "subject": "Your application to Aventine",
             "sender_name": "Aventine",
             "received_at": "2026-07-22T12:00:00+00:00",
