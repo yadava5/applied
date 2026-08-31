@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { Mail } from "lucide-react";
 
+import { MailText } from "@/components/mail/MailText";
 import { GATE } from "@/lib/classification/gate";
 import { classifyWithRules } from "@/lib/demo/rulesLayer";
 import {
@@ -109,7 +110,17 @@ function classify(messages: ParsedMessage[]): Classified[] {
   });
 }
 
-function Row({ item }: { item: Classified }) {
+/**
+ * One classified message.
+ *
+ * EXPORTED, AND RENAMED FROM `Row`, so the suite can render it (#424). This is
+ * the row `/import` draws, and `/import` is public and unauthenticated, so
+ * every string on it came from a stranger. A bidi override or a zero-width
+ * character in a subject is invisible to source inspection by construction —
+ * the only honest check is to render the hostile bytes and read what comes
+ * out — and `ImportMail` itself cannot be rendered without a real file drop.
+ */
+export function ImportRow({ item }: { item: Classified }) {
   const [open, setOpen] = useState(false);
   const dot = CATEGORY_DOT[item.category] ?? "var(--text-dim)";
   const meterPct = Math.round(item.confidence * 100);
@@ -124,10 +135,17 @@ function Row({ item }: { item: Classified }) {
         className="flex w-full flex-wrap items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-2"
       >
         <div className="min-w-0 basis-full sm:basis-0 sm:flex-1">
-          <p className="truncate text-sm font-medium text-strong">{item.subject}</p>
+          <p className="truncate text-sm font-medium text-strong">
+            <MailText value={item.subject} />
+          </p>
           <p className="truncate text-xs text-dim">
-            {item.senderName ? `${item.senderName} · ` : ""}
-            {item.senderEmail}
+            {item.senderName ? (
+              <>
+                <MailText value={item.senderName} />
+                {" · "}
+              </>
+            ) : null}
+            <MailText value={item.senderEmail} />
           </p>
         </div>
 
@@ -214,7 +232,7 @@ function Row({ item }: { item: Classified }) {
 
           {item.snippet && (
             <p className="mt-3 border-t border-line-soft pt-3 text-[12px] leading-relaxed text-muted">
-              {item.snippet}
+              <MailText value={item.snippet} />
               {item.body.length > item.snippet.length ? "…" : ""}
             </p>
           )}
@@ -501,7 +519,7 @@ export function ImportMail() {
             </div>
             <ul className="divide-y divide-line-soft">
               {state.items.map((item) => (
-                <Row key={item.id} item={item} />
+                <ImportRow key={item.id} item={item} />
               ))}
             </ul>
           </div>

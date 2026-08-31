@@ -2,6 +2,7 @@ import { Search } from "lucide-react";
 import Link from "next/link";
 
 import { MailSnippet, OpenInGmail } from "@/components/mail/MailPreview";
+import { MailText } from "@/components/mail/MailText";
 import { ReclassifyControl } from "@/components/mail/ReclassifyControl";
 import { GateMeter } from "@/components/viz/GateMeter";
 import { shortDate } from "@/lib/dashboard/dates";
@@ -261,10 +262,17 @@ export function FiledMailList({
                 className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line-soft px-1 py-3 last:border-b-0"
               >
                 <div className="min-w-0 basis-full sm:basis-0 sm:flex-1">
-                  <p className="truncate text-sm font-medium text-strong">{subject}</p>
+                  <p className="truncate text-sm font-medium text-strong">
+                    <MailText value={subject} />
+                  </p>
                   <p className="truncate text-xs text-dim">
-                    {sender}
-                    {m.company ? <span className="text-muted"> · {m.company}</span> : null}
+                    <MailText value={sender} />
+                    {m.company ? (
+                      <span className="text-muted">
+                        {" · "}
+                        <MailText value={m.company} />
+                      </span>
+                    ) : null}
                   </p>
                   <MailSnippet snippet={m.snippet} />
                 </div>

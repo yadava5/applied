@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { MailText } from "@/components/mail/MailText";
 import { ApplicationPicker } from "@/components/review/ApplicationPicker";
 import {
   CLASSIFY_FAILED,
@@ -18,6 +19,7 @@ import {
   type CandidateApplication,
   type ReviewAssignment,
 } from "@/lib/dashboard/review";
+import { safeText } from "@/lib/security/hostileText";
 import type { ScanMessagePayload } from "@/lib/gmail/scan-correction";
 import { liveClassify, type ClassifyFn } from "@/lib/gmail/transport";
 
@@ -229,7 +231,7 @@ export function ReclassifyControl({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        aria-label={`Reclassify “${subject}”`}
+        aria-label={`Reclassify “${safeText(subject)}”`}
         className="rounded border border-line px-2 py-1 text-xs font-medium text-muted transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong"
       >
         reclassify
@@ -250,7 +252,7 @@ export function ReclassifyControl({
     // the control to guarantee its own containing block.
     <div className="relative flex w-full flex-wrap items-center gap-2">
       <label className="sr-only" htmlFor={`reclass-${messageId}`}>
-        New category for “{subject}”
+        New category for “<MailText value={subject} />”
       </label>
       <select
         id={`reclass-${messageId}`}
