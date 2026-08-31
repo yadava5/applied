@@ -2347,6 +2347,396 @@ def _observed_not_applications(b: _Builder, n: int) -> None:
         )
 
 
+# ── #626: THE TRAILING SEGMENT NAMES THE ROLE ────────────────────────────────
+#
+# See ``_concatenated_post_names`` for the provenance of every string below.
+# In one line: real job titles and real locations off two PUBLIC Greenhouse
+# boards, in a subject shape no vendor documents, wrapped around invented
+# employers.
+
+#: Titles the shipped reader RESOLVES in this shape, and each is here for a
+#: property the other two do not have:
+#:
+#:   * seven words and two commas — the reported #626 title's own shape, which
+#:     ``_ROLE_PATTERNS`` cannot reach (``^``-anchored, comma-free capture
+#:     class, five-word cap);
+#:   * a slash inside the head noun, which ``_TITLE_SHAPED`` has to allow;
+#:   * AN INTERIOR SPACED DASH, which must SURVIVE. This is the case #553 is
+#:     about: the segment is cut at the LAST spaced dash, so "- London" stays
+#:     inside the title and only "- <Employer>" is taken off. A reader that cut
+#:     at the first dash would hand back "Research Engineer / Scientist,
+#:     Alignment" and mint a rival card for a job the board already tracks.
+_POST_NAME_RESOLVES: tuple[str, ...] = (
+    "Director, Engineering, Platform Operations & Productivity",
+    "ML/Research Engineer, Safeguards",
+    "Research Engineer / Scientist, Alignment - London",
+)
+
+#: Titles the shipped reader REFUSES in this shape, and refusing is correct:
+#: it fails closed, so the message reaches a person instead of a wrong card.
+#: They are pinned so that a later change cannot quietly start resolving them
+#: WRONG — which is what refusing protects against, not merely what it costs.
+#:
+#:   * "Commercial Account Executive, Named - West" carries a comma AND a
+#:     spaced hyphen, so the last-dash cut would take "West" for the employer
+#:     echo; the echo licence refuses because "West" is not the lead segment's
+#:     company.
+#:   * three carry a TRAILING PARENTHETICAL, which rule 1 refuses structurally
+#:     rather than by vocabulary — the whole argument of the reader's
+#:     "both placements or neither".
+#:   * "Deal Desk Strategist, Philippines or India" has a bare space-joined
+#:     continuation past the head noun.
+_POST_NAME_QUEUES: tuple[str, ...] = (
+    "Commercial Account Executive, Named - West",
+    "Customer Success Engineer, LATAM (Spanish, Portugese)",
+    "Account Executive - Public Sector (ASEAN)",
+    "Backend Engineer (Ruby), AI Engineering: Agent Observability",
+    "Deal Desk Strategist, Philippines or India",
+)
+
+#: Locations that behave like locations: whatever they say, the reader strips
+#: the parenthetical and reads the title in front of it.
+_POST_NAME_LOCATIONS: tuple[str, ...] = (
+    "Remote, US",
+    "Remote Ireland",
+    "Bangalore, India",
+)
+
+#: A PIPE IS NOT RELIABLY A SEGMENT BOUNDARY, and these two are the proof. Both
+#: are single ``location`` values on a public board — one posting, one field —
+#: and both contain pipes. Appended to a subject that is already pipe-segmented,
+#: the LAST pipe-segment stops being the post name and becomes a fragment of a
+#: city list: "Seattle, WA".
+#:
+#: The reader returns None for them today, and the refusal is not incidental: a
+#: city fragment carries no spaced dash and no employer echo, so the licence has
+#: nothing to license. THE ASSERTION IS THAT THEY STAY REFUSED. If a later
+#: change makes one of them resolve, it is reading a city as a job title, and
+#: the card it titles is a lie of exactly the kind #553 describes.
+_POST_NAME_PIPED_LOCATIONS: tuple[str, ...] = (
+    "Remote-Friendly (Travel-Required) | San Francisco, CA | Seattle, WA",
+    "New York City, NY; San Francisco, CA | New York City, NY | Seattle, WA",
+)
+
+#: The middle segment: the employer's own boilerplate. Invented, and varied
+#: only so the family is not one wording repeated — the reader never looks at
+#: this segment, and a family whose every message differs in a place nothing
+#: reads is measuring its own decoration.
+_POST_NAME_BOILERPLATE: tuple[str, ...] = (
+    "Application Received",
+    "Thank You For Applying",
+    "Application Confirmation",
+)
+
+#: The same middle segment on an UPDATE rather than an acknowledgement. See
+#: ``_post_name_refusal`` for why the refusals are updates.
+_POST_NAME_UPDATE_BOILERPLATE: tuple[str, ...] = (
+    "Application Update",
+    "Update On Your Application",
+    "Your Application Status",
+)
+
+#: Update wordings that name NO job title, so the subject's trailing segment is
+#: again the only place a role could come from. Both are rejections; the
+#: category is what makes the mail an update rather than an assertion that a new
+#: application exists, and the verdict itself is not what this family measures.
+_POST_NAME_UPDATE_BODIES: tuple[str, ...] = (
+    "Hi Ayush, Thank you for your time. After careful consideration we have "
+    "decided to move forward with other candidates for this role.",
+    "Hello Ayush, We appreciate you taking the time to apply. We will not be "
+    "moving forward with your candidacy for this role at this time.",
+)
+
+
+def _post_name_subject(
+    display: str,
+    boilerplate: str,
+    title: str,
+    location: str | None,
+    echo: str | None = None,
+) -> str:
+    """``<Employer> | <Boilerplate> | <Role> - <Echo> (<Location>)``.
+
+    ``echo`` defaults to the employer that opened the subject, which is the
+    whole shape. Passing a different company is what the cross-company case
+    does, and the reader must refuse it.
+    """
+
+    tail = f" ({location})" if location else ""
+    return f"{display} | {boilerplate} | {title} - {echo or display}{tail}"
+
+
+def _post_name_body(display: str) -> str:
+    """A confirmation that names the employer and NEVER names the job.
+
+    This is the reported #626 message, and it is the reason the family can
+    measure the reader at all: the body says "this role" throughout, so
+    ``_ROLE_BODY_PATTERNS`` has nothing to capture and the SUBJECT'S TRAILING
+    SEGMENT is the only place the title exists. If the reader stops reading it,
+    the card goes blank — there is no second path to the title that would keep
+    the counter still.
+    """
+
+    return (
+        f"Hi Ayush, Thank you for applying to {display}. We have received your "
+        "application for this role and the recruiting team is reviewing it now. "
+        "We will be in touch about this role if there is a fit."
+    )
+
+
+def _post_name_refusal(
+    b: _Builder,
+    i: int,
+    *,
+    title: str,
+    location: str | None,
+    echo_from: tuple[str, str] | None = None,
+    note: str,
+) -> None:
+    """One refusal, at an employer that already holds TWO applications.
+
+    THE SIBLINGS ARE THE INSTRUMENT, not scenery, and a family without them
+    reports a confident pass for a reader that refuses nothing. At a
+    SINGLE-card employer a message the reader declined still lands on that one
+    card, through ``_pick_application``'s rule 4 — correct behaviour, and blind
+    to whether the reader refused or resolved. Two live cards is the smallest
+    board on which "the product could not tell which application this is" has
+    an observable consequence.
+
+    THE REFUSAL ARRIVES AS AN UPDATE, AND THAT IS THE PRODUCT'S RULE RATHER
+    THAN THIS FAMILY'S CONVENIENCE. ``partition_applications`` states it in the
+    tree — "A NEW CONFIRMATION IS A NEW APPLICATION. AN UPDATE IS NOT" — and
+    acts on it: a role-less CONFIRMATION at a multi-application employer is
+    deliberately NOT asked about, because "which of these is it about?" is the
+    wrong question for mail asserting a new one. Measured on this family's own
+    mail before it was written: 160 role-less confirmations in this shape, at
+    two-card employers, and 160 of them reached a card with none queued. So a
+    refusal family built on confirmations would assert a queue the product does
+    not use for that mail, and would grade the anchor rule instead of the
+    reader. An update is the mail for which the queue IS the designed answer,
+    which is what makes a refusal observable at all.
+    """
+
+    display, token = b.employer()
+    for k, sibling in enumerate(b.roles(2)):
+        b.add(
+            family="concatenated-post-name",
+            subject=f"Thank you for applying to {display}",
+            sender=b.ats(i),
+            sender_name=f"{display} Careers",
+            body=_confirmation_body(display, sibling),
+            expected_category="applied",
+            identity=f"{token}|{sibling}",
+            employer=token,
+            day=(i % 40) + k,
+            note="a sibling application, so the refusal below is observable",
+        )
+    b.add(
+        family="concatenated-post-name",
+        subject=_post_name_subject(
+            display,
+            b.pick(_POST_NAME_UPDATE_BOILERPLATE),
+            title,
+            location,
+            echo=echo_from[0] if echo_from else None,
+        ),
+        sender=b.ats(i),
+        sender_name=f"{display} Careers",
+        body=b.pick(_POST_NAME_UPDATE_BODIES),
+        expected_category="rejection",
+        identity=None,
+        employer=token,
+        expect_review=True,
+        day=(i % 40) + 12,
+        note=note,
+    )
+
+
+def _concatenated_post_names(b: _Builder, n: int) -> None:
+    """A job title read out of the subject's LAST pipe-segment (#626).
+
+        <Employer> | <Boilerplate> | <Role> - <Employer> (<Location>)
+
+    WHAT THIS SHAPE IS, AND WHAT IT IS NOT. It is a CONCATENATION ARTIFACT and
+    not a vendor template, and stating it the second way would be a claim
+    nobody can check. Independent research across ten applicant-tracking
+    products found NO vendor documentation and NO verbatim public quote of this
+    shape. In all ten the confirmation subject is EMPLOYER-authored: the vendor
+    documents the MECHANISM — merge tokens an employer may insert into a
+    subject line — and withholds the default string. So the property this
+    reader's licence turns on, that the employer appears at BOTH ends, is
+    UNSOURCED. What the shape is consistent with is an employer configuring
+    something like ``{{Company}} | Application Received | {{Job Post Name}}``
+    where the job post name it interpolates already ends ``- Company
+    (Location)``: the employer bracketed its own subject twice without meaning
+    to, and no vendor ever wrote it down.
+
+    WHY THE FAMILY EXISTS. A blind cross-check swept 401,244 unique inputs
+    against ``_role_from_trailing_segment``: 1,098 reach it, and ZERO of this
+    corpus's 13,846 subjects and ZERO of 386,209 backend source literals do.
+    This corpus is the only instrument that has ever caught this module's
+    regressions — it is what caught the two titles #553 truncated — and until
+    now it was blind to the reader entirely. Everything grading the reader was
+    written by the hands that wrote it, which is the closed loop ``observed.py``
+    exists to break.
+
+    THE TITLES ARE REAL, and that is load-bearing rather than decorative: a
+    corpus written in one author's phrasing can only grade one author's
+    phrasing. Every job title and every location in this family is copied from
+    a PUBLIC Greenhouse board API — ``boards-api.greenhouse.io/v1/boards/
+    {anthropic,gitlab}/jobs``, read 2026-08-30. No mailbox content is involved;
+    the employers, senders, bodies and boilerplate are invented, as everywhere
+    else in this file.
+
+    TWO OF THE EIGHT TITLES ARE NOT BYTE-EXACT, said here rather than smoothed
+    over, because unsourced precision is the defect this repository keeps
+    finding in its own claims:
+
+      * ``Research Engineer / Scientist, Alignment - London`` appears on the
+        board only as ``[Expression of Interest] Research Engineer / Scientist,
+        Alignment - London``. The queue marker is dropped; the remainder is the
+        posting's own text, and it is the remainder that carries the interior
+        dash this family is about.
+      * ``Customer Success Engineer, LATAM (Spanish, Portugese) `` carries a
+        TRAILING SPACE on the board. It is dropped. The misspelling is the
+        board's and is kept.
+
+    The other six titles and all five locations are byte-exact.
+
+    WHAT IS ASSERTED, in three parts.
+
+    1. RESOLVING. Three titles across four tails — the three plain locations
+       and no parenthetical at all — at one employer each. The body never names
+       the job, so the trailing segment is the ONLY place the title exists and
+       ``role_missing`` is the counter this family owns: break the reader and
+       every one of these cards goes blank. They sit at SINGLE-application
+       employers deliberately, so that a resolved title is measured by the
+       card's NAME and no rule-4 filing decision is put in play.
+
+    2. REFUSING, each at an employer holding two other applications. Five
+       titles the reader declines, the two pipe-bearing locations, and one
+       subject whose echo names a DIFFERENT company from the lead segment.
+       Refusal is the designed answer — the reader fails closed — so ground
+       truth here is the review queue and not a card. Two things make that
+       observable and both are argued for in ``_post_name_refusal``: the
+       sibling applications, and the fact that these arrive as UPDATES rather
+       than acknowledgements, because the product deliberately never asks about
+       a role-less acknowledgement.
+
+    3. BOTH PLACEMENTS, ONE APPLICATION, and this is the case the reader's
+       parenthetical rule exists for. The same posting is written two ways —
+       ``<Role> - <Employer> (<Location>)`` and ``<Role> (<Location>) -
+       <Employer>`` — and they must never become two identities. The tail-side
+       strip reaches only the first; keeping the second would hand back
+       "<Role> (<Location>)", and ``normalize_role_token`` deletes the brackets
+       and KEEPS THE WORD, so one job would hold two role tokens and open two
+       cards. Both messages carry one identity here, so that split shows up as
+       a SPLIT rather than as a card nobody counted.
+    """
+
+    for i in range(n):
+        for title in _POST_NAME_RESOLVES:
+            for location in (*_POST_NAME_LOCATIONS, None):
+                display, token = b.employer()
+                b.add(
+                    family="concatenated-post-name",
+                    subject=_post_name_subject(
+                        display, b.pick(_POST_NAME_BOILERPLATE), title, location
+                    ),
+                    sender=b.ats(i),
+                    sender_name=f"{display} Recruiting",
+                    body=_post_name_body(display),
+                    expected_category="applied",
+                    identity=f"{token}|{title}",
+                    employer=token,
+                    day=i % 40,
+                    note=(
+                        "the title is in the trailing segment and NOWHERE else; "
+                        "a blank card here is the reader gone"
+                    ),
+                )
+
+        for title in _POST_NAME_QUEUES:
+            _post_name_refusal(
+                b,
+                i,
+                title=title,
+                location=b.pick(_POST_NAME_LOCATIONS),
+                note=(
+                    "the reader declines this title in this position; the queue "
+                    "is the designed answer and a card would be a guess"
+                ),
+            )
+
+        for location in _POST_NAME_PIPED_LOCATIONS:
+            _post_name_refusal(
+                b,
+                i,
+                title=_POST_NAME_RESOLVES[i % len(_POST_NAME_RESOLVES)],
+                location=location,
+                note=(
+                    "the location carries pipes, so the last pipe-segment is a "
+                    "city fragment; resolving one would title a card with a city"
+                ),
+            )
+
+        # THE ECHO NAMES SOMEBODY ELSE. Drawn from the pool so it cannot
+        # collide with a real employer by accident, and never filed under —
+        # the same thing the impersonation family does with a forged name.
+        _post_name_refusal(
+            b,
+            i,
+            title=_POST_NAME_RESOLVES[(i + 1) % len(_POST_NAME_RESOLVES)],
+            location=b.pick(_POST_NAME_LOCATIONS),
+            echo_from=b.employer(),
+            note=(
+                "the echo names a different company from the lead segment, so "
+                "the licence the dash depends on is absent"
+            ),
+        )
+
+        display, token = b.employer()
+        title = _POST_NAME_RESOLVES[i % len(_POST_NAME_RESOLVES)]
+        location = _POST_NAME_LOCATIONS[i % len(_POST_NAME_LOCATIONS)]
+        boilerplate = b.pick(_POST_NAME_BOILERPLATE)
+        # THE TAIL PLACEMENT FIRST, on purpose. It is the one that resolves, so
+        # it opens the card and titles it; the role-side placement then arrives
+        # at an employer holding exactly one application and must join it. The
+        # other order would have a blank-titled card opened first and would be
+        # measuring the rollup's tolerance for that, which is a different
+        # question.
+        tail_placement = b.add(
+            family="concatenated-post-name",
+            subject=_post_name_subject(display, boilerplate, title, location),
+            sender=b.ats(i),
+            sender_name=f"{display} Recruiting",
+            body=_post_name_body(display),
+            expected_category="applied",
+            identity=f"{token}|{title}",
+            employer=token,
+            day=i % 40,
+            note="one posting, written with the location on the TAIL side",
+        )
+        b.add(
+            family="concatenated-post-name",
+            subject=(
+                f"{display} | {boilerplate} | {title} ({location}) - {display}"
+            ),
+            sender=b.ats(i),
+            sender_name=f"{display} Recruiting",
+            body=_post_name_body(display),
+            expected_category="applied",
+            identity=f"{token}|{title}",
+            employer=token,
+            day=(i % 40) + 3,
+            joins=tail_placement.message_id,
+            note=(
+                "the same posting with the location on the ROLE side; two cards "
+                "here is the split the parenthetical rule exists to prevent"
+            ),
+        )
+
+
 _FAMILIES: tuple[tuple[str, object, int], ...] = (
     ("confirmation", _confirmations, 1100),
     ("rejection-plain", _rejections_plain, 550),
@@ -2390,6 +2780,13 @@ _FAMILIES: tuple[tuple[str, object, int], ...] = (
     ("one-thread-many-roles-in-the-queue", _one_thread_many_roles_in_the_queue, 60),
     ("requisition-inside-the-bound", _requisition_inside_the_bound, 60),
     ("double-acknowledgement", _double_acknowledgement, 60),
+    # 38 messages a group and 21 employers: 12 resolving cards, 8 refusals
+    # with two sibling applications apiece, and the both-placements pair.
+    # See ``_concatenated_post_names`` — and note the block comment above
+    # ``one-thread-many-roles-in-the-queue``: appended LAST because the
+    # builder shares one seeded RNG, so anywhere else re-draws every
+    # employer, role and wording after it.
+    ("concatenated-post-name", _concatenated_post_names, 20),
 )
 
 
