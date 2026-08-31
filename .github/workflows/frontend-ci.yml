@@ -18,6 +18,21 @@ on:
       # `apps/web/public/system-card/**` needs no line — it is already under
       # `apps/web/**`. Edit BOTH blocks below if you touch this one.
       - "booklet/**"
+      # The ATS-anchoring census in
+      # `apps/web/tests/unit/ats-anchoring-651.test.mjs` reads FOUR files and
+      # three of them are outside `apps/web/**`. Same reason as `booklet/**`
+      # above: without these lines, the PR most likely to reintroduce the #651
+      # substring bug -- one that edits only a port -- is exactly the PR that
+      # would not run the census guarding it.
+      #
+      # Named file by file rather than as `ml/**` and `backend/**`, because the
+      # census cannot discover a port that is not on its own list; matching the
+      # trigger to that list keeps the two honest about covering the same
+      # things, and keeps a backend-only PR from paying for a `next build`.
+      # Add a line here whenever a port is added to that test.
+      - "ml/browser/site/app.js"
+      - "ml/demo/space/jobtracker/classifier/rules.py"
+      - "backend/jobtracker/classifier/rules.py"
   push:
     branches:
       - main
@@ -26,6 +41,21 @@ on:
       - "apps/web/**"
       - ".github/workflows/frontend-ci.yml"
       - "booklet/**"
+      # The ATS-anchoring census in
+      # `apps/web/tests/unit/ats-anchoring-651.test.mjs` reads FOUR files and
+      # three of them are outside `apps/web/**`. Same reason as `booklet/**`
+      # above: without these lines, the PR most likely to reintroduce the #651
+      # substring bug -- one that edits only a port -- is exactly the PR that
+      # would not run the census guarding it.
+      #
+      # Named file by file rather than as `ml/**` and `backend/**`, because the
+      # census cannot discover a port that is not on its own list; matching the
+      # trigger to that list keeps the two honest about covering the same
+      # things, and keeps a backend-only PR from paying for a `next build`.
+      # Add a line here whenever a port is added to that test.
+      - "ml/browser/site/app.js"
+      - "ml/demo/space/jobtracker/classifier/rules.py"
+      - "backend/jobtracker/classifier/rules.py"
   workflow_dispatch:
 
 permissions:
