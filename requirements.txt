@@ -54,7 +54,7 @@ cryptography>=50.0.0
 # -----------------------------------------------------------------------------
 # Email Integration (cloud Gmail OAuth wired in C5, IMAP stays)
 # -----------------------------------------------------------------------------
-google-api-python-client>=2.198.0
+google-api-python-client>=2.199.0
 google-auth-httplib2>=0.1.1
 # >=1.2.4: Flow.from_client_config must accept + forward the explicit
 # code_verifier / autogenerate_code_verifier kwargs the stateless PKCE
