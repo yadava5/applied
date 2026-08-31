@@ -16,6 +16,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Dialog } from "@/components/ui/Dialog";
+import { MailText } from "@/components/mail/MailText";
 import { GateMeter } from "@/components/viz/GateMeter";
 import { useLocalToday } from "@/lib/dashboard/useLocalToday";
 import { filedAt, longDate, shortDate } from "@/lib/dashboard/dates";
@@ -132,13 +133,15 @@ function TrailMessage({
       />
       <div className="flex items-baseline justify-between gap-3">
         <p className="min-w-0 truncate text-sm font-medium text-strong">
-          {message.subject || "(no subject)"}
+          <MailText value={message.subject || "(no subject)"} />
         </p>
         <span className="tabular shrink-0 font-mono text-[10px] text-dim">
           {message.received_at ? shortDate(message.received_at) : ""}
         </span>
       </div>
-      <p className="truncate text-xs text-muted">{sender}</p>
+      <p className="truncate text-xs text-muted">
+        <MailText value={sender} />
+      </p>
       {meta ? (
         // The verdict, in the DecisionTrace's vocabulary: category, then the
         // confidence drawn against the 0.85 gate — green cleared it, amber
@@ -161,7 +164,9 @@ function TrailMessage({
         </p>
       ) : null}
       {message.snippet ? (
-        <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-dim">{message.snippet}</p>
+        <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-dim">
+          <MailText value={message.snippet} />
+        </p>
       ) : null}
       {message.gmail_link ? (
         <a
