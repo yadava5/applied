@@ -91,8 +91,8 @@
       "digest": "98447e48bb1b59ee"
     },
     "backend/tests/corpus/mail.py": {
-      "count": 12,
-      "digest": "83bdc645c6ab472c"
+      "count": 15,
+      "digest": "3128a7b6a559c695"
     },
     "backend/tests/corpus_independent/generate.py": {
       "count": 6,
@@ -147,8 +147,8 @@
       "digest": "4a2d56cec36e8b1e"
     },
     "backend/tests/test_cloud_pipeline.py": {
-      "count": 84,
-      "digest": "2ba4b8956d1514ce"
+      "count": 85,
+      "digest": "d6869e9d25b7d744"
     },
     "backend/tests/test_corrected_rows_carry_no_confidence.py": {
       "count": 1,
@@ -191,8 +191,8 @@
       "digest": "8c490f89ffd2eb11"
     },
     "backend/tests/test_gmail_oauth_cloud.py": {
-      "count": 55,
-      "digest": "21d20faf6df2d32d"
+      "count": 57,
+      "digest": "892ae0abd60ef025"
     },
     "backend/tests/test_gmail_oauth_return_host.py": {
       "count": 2,
@@ -263,8 +263,8 @@
       "digest": "7720c7cc3d563db7"
     },
     "backend/tests/test_relayed_follow_up_is_not_your_own.py": {
-      "count": 2,
-      "digest": "f721444cbb52d206"
+      "count": 3,
+      "digest": "6a3e03a7efa26280"
     },
     "backend/tests/test_reopen_after_rejection.py": {
       "count": 2,
@@ -309,6 +309,10 @@
     "backend/tests/test_sync_never_removes_a_sibling_application.py": {
       "count": 3,
       "digest": "0deb823e3b07bfae"
+    },
+    "backend/tests/test_test_data_gate.py": {
+      "count": 29,
+      "digest": "963c0a66acd2047c"
     },
     "backend/tests/test_the_review_answer_keeps_the_title.py": {
       "count": 2,

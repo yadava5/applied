@@ -27,6 +27,45 @@ their docstrings, and rewriting the prose around a deletion would ship a
 provenance claim that is no longer true. See "The baseline is a ratchet, not a
 backlog" in the policy document. This gate draws the line at NEW material.
 
+AN ADDRESS THAT IS ASSEMBLED AT RUN TIME
+
+Until #647 a LITERAL was the only thing this gate could see. `EMAIL`'s domain
+class admits letters, digits, dot and hyphen, so `f"careers@{domain}"` was not an
+address as far as the check was concerned — and neither was `"careers@%s.com"`,
+`"careers@" + domain`, nor `"careers@{0}.com".format(...)`. Every interpolation
+form this repository actually uses was invisible, so a fixture author writing
+senders the natural way got a green gate unconditionally. It was hiding senders
+on two real companies' own domains, assembled by passing the domain from a call
+site into `f"careers@{domain}"`, in a public repository, under a check reporting
+OK. The addresses are not written out here for the same reason there is no
+denylist: naming them would be the publication this file exists to prevent.
+
+The fix is NOT to admit `{`, `}` and `%` into the domain class. That matches a
+"domain" of `{token}.test` and hands that string to `is_allowed`, which then
+reads a template as though it were a name. The question is whether the address
+could RESOLVE somewhere, and for a template that is a question about the part of
+the domain no interpolation can change — see `sealed_suffix`.
+`f"careers@{token}.test"` is safe whatever `{token}` is and stays silent;
+`f"careers@{company}.com"` is not; and `f"careers@{domain}"`, where the whole
+domain arrives from somewhere else, cannot be proved either way and so counts.
+
+WHAT IT STILL CANNOT SEE
+
+Named here so the next reader inherits a decision rather than another blind spot.
+
+* An interpolated LOCAL part over a literal, routable domain — `f"{i}@corp.com"`.
+  The run after the `@` holds no marker so `TEMPLATE` does not fire, and the `}`
+  in front of the `@` keeps `EMAIL` from firing either. Three sites in the tree,
+  and one of them is `corpus/mail.py`'s iCalendar `UID:{uid}@google.com`, which
+  is not an address at all — which is why closing this is a separate judgement
+  about false positives and not a free widening.
+* A domain concatenated out of literals only, `"careers@" + "north" + "wind.com"`,
+  or built by adjacent-literal concatenation. Evasions rather than natural
+  style; neither occurs here.
+* Anything assembled through a call — `"@".join(...)`, a format string held in a
+  constant, a template read from a file. A text scan ends where dataflow begins,
+  and resolving constants is not something this file is going to start doing.
+
 HOW IT FAILS
 
 Per-file COUNT plus per-file DIGEST, compared against
@@ -96,9 +135,7 @@ SCAN_ROOTS = (
 #: `northwind.com`) is a real registration owned by somebody else and does not
 #: belong here.
 RESERVED_TLDS = (".test", ".example", ".invalid", ".localhost")
-RESERVED_DOMAINS = frozenset(
-    {"example.com", "example.net", "example.org", "localhost"}
-)
+RESERVED_DOMAINS = frozenset({"example.com", "example.net", "example.org", "localhost"})
 #: RFC 2606 §3 reserves those second-level names *and everything under them*, so
 #: `email.careers.example.com` is as un-routable as the bare name. Matching the
 #: bare name only is not a near-miss, it is an inverted gate: it reds on
@@ -106,12 +143,65 @@ RESERVED_DOMAINS = frozenset(
 #: `email.careers.example.test` this repository already uses and this gate's own
 #: failure message recommends — and the reader is then told by that message that
 #: `example.com` is fine. Caught in review before merge.
-RESERVED_SUFFIXES = tuple("." + d for d in ("example.com", "example.net", "example.org"))
+RESERVED_SUFFIXES = tuple(
+    "." + d for d in ("example.com", "example.net", "example.org")
+)
 
 #: Deliberately loose on the left of the `@` and strict on the right: the point
 #: is to notice an address at all, not to validate one. Anchoring the TLD at two
 #: or more letters keeps `@pytest.fixture` and `@playwright/test` out.
 EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+
+#: An INTERPOLATION MARKER: the ways this repository assembles a string at run
+#: time. `{...}` is ONE code path serving three syntaxes — an f-string field, a
+#: `str.format` field (`{}`, `{0}`, `{name}`) and a JavaScript template literal
+#: (`${...}`) — so those three are not three proofs. `%s` is the second form.
+#: Concatenation is the third and cannot be a character class at all, because
+#: the string literal ENDS at the `@`; it has its own reader below.
+_FIELD = r"\$?\{[^{}\n]*\}"
+_PERCENT = r"%(?:\([A-Za-z0-9_]*\))?[-#0+ ]*\*?[0-9]*(?:\.[0-9]+)?[sdrfi]"
+MARKER = f"(?:{_FIELD}|{_PERCENT})"
+
+#: What a marker is rendered as once a match has been canonicalised. Two braces
+#: cannot occur in a real domain, so a canonical template can never collide with
+#: a literal address in the digested set, and `rsplit` on it is unambiguous.
+MARKER_TOKEN = "{}"
+
+_LOCAL_CHAR = r"[A-Za-z0-9._%+\-]"
+_DOMAIN_CHAR = r"[A-Za-z0-9.\-]"
+_LOCAL_SEGMENT = f"(?:{_LOCAL_CHAR}|{MARKER})+"
+
+#: An address-shaped TEMPLATE: a local part (literal, interpolated or both), an
+#: `@`, and a domain run holding AT LEAST ONE marker. That requirement is what
+#: keeps this disjoint from `EMAIL` — a domain with no marker is a literal and
+#: is `EMAIL`'s business — so no run is ever counted twice.
+#:
+#: Note what this deliberately is NOT. It is not `EMAIL` with `{`, `}` and `%`
+#: added to the domain class. That would make `careers@{token}.test` a match
+#: whose "domain" is the string `{token}.test`, and hand that to `is_allowed`,
+#: which would then be reading a template as though it were a name. The question
+#: is whether the address could RESOLVE anywhere; see `sealed_suffix`.
+TEMPLATE = re.compile(
+    _LOCAL_SEGMENT + "@" + f"{_DOMAIN_CHAR}*{MARKER}(?:{_DOMAIN_CHAR}|{MARKER})*"
+)
+
+#: Concatenation, the form no marker can describe: `"careers@" + domain` ends
+#: its literal at the `@` and the domain arrives as separate operands.
+#: `CONCAT_HEAD` finds that ending — an optional leading expression, a local
+#: part, the `@`, the closing quote and a `+` — and `CONCAT_ELEMENT` walks the
+#: chain that follows, one quoted fragment or one expression at a time.
+CONCAT_HEAD = re.compile(
+    r"(?P<lead>[A-Za-z_][A-Za-z0-9_.]*\s*\+\s*)?"
+    r"['\"]"
+    f"(?P<local>(?:{_LOCAL_CHAR}|{MARKER})*)"
+    r"@['\"](?=\s*\+)"
+)
+CONCAT_ELEMENT = re.compile(
+    r"\s*\+\s*(?:"
+    r"(?P<quote>['\"])(?P<literal>[^'\"\n]*)(?P=quote)"
+    r"|(?P<expr>[A-Za-z_][A-Za-z0-9_.]*(?:\([^()\n]*\)|\[[^\[\]\n]*\])*)"
+    r")"
+)
 
 #: Hex characters of SHA-256 kept per file. Sixteen is 64 bits — far past any
 #: accidental collision across a baseline of fewer than a hundred files, and
@@ -129,6 +219,20 @@ class Finding(NamedTuple):
     digest: str
 
 
+class Match(NamedTuple):
+    """One address-shaped run, and how it was written.
+
+    `text` is what gets digested: a literal address verbatim, or a template with
+    its markers canonicalised. `interpolated` says which, and it is not
+    decoration — `test_test_data_gate.py` lives inside a scanned root and has to
+    assert that no LITERAL address is present in its own source while its
+    run-time probes stay legitimately visible.
+    """
+
+    text: str
+    interpolated: bool
+
+
 class Skipped(NamedTuple):
     """A tracked file the scanner could not read. Never silently a zero."""
 
@@ -143,6 +247,132 @@ def is_allowed(domain: str) -> bool:
     if domain in RESERVED_DOMAINS:
         return True
     return domain.endswith(RESERVED_TLDS) or domain.endswith(RESERVED_SUFFIXES)
+
+
+def canonical(text: str) -> str:
+    """A match with every interpolation marker rendered as `MARKER_TOKEN`.
+
+    Renaming the interpolated variable — `{domain}` to `{d}`, `%s` to `%(d)s` —
+    is then a formatting change and not a moved digest, for the same reason
+    `digest_of` lower-cases before it sorts.
+    """
+
+    return re.sub(MARKER, MARKER_TOKEN, text)
+
+
+def sealed_suffix(domain: str) -> str:
+    """The part of an interpolated domain that no interpolation can change.
+
+    `domain` is canonical, so everything after the LAST `MARKER_TOKEN` is
+    literal — but it is only a whole SUFFIX from its first dot onward, and that
+    distinction is the whole rule:
+
+    * `{}.test`            -> `.test`     — reserved whatever `{}` is. Safe.
+    * `acme-{}hub.example` -> `.example`  — the LABEL is half-interpolated, the
+      TLD is not, and the TLD is what decides. Safe. This shape is in the tree
+      (`test_tracking_sender_checks.py`) and a "the tail must start with a dot"
+      rule would have flagged it.
+    * `{}example.com`      -> `.com`      — FLAGGED, because `{}` may be `not`.
+      Exactly the discrimination `is_allowed` already makes between
+      `example.com` and `notexample.com`; the seal has to start at a dot or the
+      label is not sealed.
+    * `{}.com`             -> `.com`      — flagged.
+    * `{}`                 -> `""`        — nothing is sealed and nothing can be
+      proved, so `careers@{domain}` is flagged. This is the shape that hides a
+      real domain passed in from a call site.
+
+    A domain with no marker at all is sealed in its entirety and is returned
+    whole, so this function is total and agrees with the literal path: a
+    concatenation whose operands all turned out to be literals is judged exactly
+    as `EMAIL` would have judged it.
+
+    Returned so that `is_allowed` decides, unchanged: it already answers False
+    for `""` and for `.com`, and True for `.test` and `.example.com`.
+    """
+
+    if MARKER_TOKEN not in domain:
+        return domain
+    tail = domain.rsplit(MARKER_TOKEN, 1)[1]
+    return tail[tail.index(".") :] if "." in tail else ""
+
+
+def _read_concatenation(text: str, head: re.Match[str]) -> tuple[str, str, int] | None:
+    """Assemble `"careers@" + token + ".com"` into one canonical address.
+
+    Returns the local part, the domain and the offset the chain ended at — kept
+    apart rather than joined and re-split, because a literal fragment further
+    along the chain may itself contain an `@` and `rsplit` would then take the
+    wrong one. Returns None when what follows the `@` never interpolates:
+    `"a@" + "b.com"` is two literals and this reader does not claim it. See
+    "What it still cannot see" in the module docstring.
+    """
+
+    local = canonical(head.group("local"))
+    if head.group("lead"):
+        local = MARKER_TOKEN + local
+    if not local:
+        return None
+
+    parts: list[str] = []
+    position = head.end()
+    while (element := CONCAT_ELEMENT.match(text, position)) is not None:
+        parts.append(
+            MARKER_TOKEN
+            if element.group("expr") is not None
+            else element.group("literal")
+        )
+        position = element.end()
+
+    domain = "".join(parts)
+    if MARKER_TOKEN not in domain:
+        return None
+    return local, domain, position
+
+
+def matches_in(text: str) -> list[Match]:
+    """Every address-shaped run in `text` that is not provably un-routable.
+
+    Three readers over one string, and they are ordered so that the two which
+    can consume a wider span run first:
+
+    1. `TEMPLATE` — an interpolated domain. Judged on its `sealed_suffix`.
+    2. `CONCAT_HEAD` — a domain assembled with `+`. Judged the same way.
+    3. `EMAIL` — a literal address, judged on the domain itself, exactly as
+       before this function existed. Its matches are unchanged.
+
+    A literal address that sits INSIDE a run one of the first two already read
+    is dropped rather than counted twice. That case measures zero in this tree
+    today; the guard is here so the readers cannot start double-counting in
+    silence if one ever appears.
+    """
+
+    found: list[Match] = []
+    spans: list[tuple[int, int]] = []
+
+    for match in TEMPLATE.finditer(text):
+        spans.append(match.span())
+        # Split at the FIRST `@`, on the canonical text: a marker may hold an
+        # `@` of its own, and canonicalising has already replaced it.
+        local, domain = canonical(match.group(0)).split("@", 1)
+        if not is_allowed(sealed_suffix(domain)):
+            found.append(Match(f"{local}@{domain}", True))
+
+    for head in CONCAT_HEAD.finditer(text):
+        read = _read_concatenation(text, head)
+        if read is None:
+            continue
+        local, domain, end = read
+        spans.append((head.start(), end))
+        if not is_allowed(sealed_suffix(domain)):
+            found.append(Match(f"{local}@{domain}", True))
+
+    for match in EMAIL.finditer(text):
+        if any(start <= match.start() and match.end() <= end for start, end in spans):
+            continue
+        if not is_allowed(match.group(0).rsplit("@", 1)[1]):
+            found.append(Match(match.group(0), False))
+
+    return found
 
 
 def digest_of(addresses: Iterable[str]) -> str:
@@ -196,13 +426,8 @@ def scan_file(path: Path) -> Finding:
     one address for another moves the digest and not the count. Either fails.
     """
 
-    text = path.read_text(encoding="utf-8")
-    matched = [
-        match.group(0)
-        for match in EMAIL.finditer(text)
-        if not is_allowed(match.group(0).rsplit("@", 1)[1])
-    ]
-    return Finding(len(matched), digest_of(matched))
+    matched = matches_in(path.read_text(encoding="utf-8"))
+    return Finding(len(matched), digest_of(match.text for match in matched))
 
 
 def scan(repo_root: Path) -> tuple[dict[str, Finding], list[Skipped]]:
@@ -345,6 +570,14 @@ def report(
 
     print(
         f"""
+If the address is ASSEMBLED — an f-string, `%s`, `.format` or `+` — the gate
+reads the part of the domain that no interpolation can change. A template whose
+suffix is reserved stays silent: `f"careers@{{token}}.test"` is fine and is what
+to write. A template whose suffix is routable is counted, because
+`f"careers@{{company}}.com"` could be any company; and one with no literal suffix
+at all is counted too, because `f"careers@{{domain}}"` is whatever the call site
+passes in. Seal the suffix, or record the finding on purpose.
+
 If you ADDED an address: every address in a fixture, docstring, comment or
 sample must sit on a domain that cannot route — anything under `.test`,
 `.example` or `.invalid`, or under `example.com` / `.net` / `.org`;
