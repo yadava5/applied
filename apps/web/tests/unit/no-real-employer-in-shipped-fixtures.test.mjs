@@ -30,6 +30,15 @@
  * carries its own allowance design; this file covers the gap meanwhile, from
  * the suite that already runs on every PR (`npm run test:unit`).
  *
+ * AND THE SUITE HAS TO ACTUALLY RUN ON EVERY ROOT THIS FILE NAMES. The only
+ * workflow that invokes `pnpm test:unit` is `.github/workflows/frontend-ci.yml`,
+ * and its path filter was `apps/web/**` — so a pull request that edited only
+ * `booklet/src/content.ts`, which is where three of the five fabricated rows
+ * lived and is the half that was genuinely SERVED, would not have run this gate
+ * at all. `booklet/**` was added to that filter in the same commit as this
+ * file. If you add a root to `ROOTS` below that is outside `apps/web/`, add it
+ * there too, or the root is scanned only on the developer's own machine.
+ *
  * HOW IT DECIDES — three allowances, and everything else is a failure.
  *
  *   RESERVED   RFC 2606 §2/§3 and RFC 6761 §6.3. Citable, closed, and the only
