@@ -250,6 +250,11 @@ RECORDED_FAMILIES: dict[str, tuple[int, int, int]] = {
     # so, and it is the reason the accuracy figure over this corpus has to be
     # read with the corpus.
     "ambiguous-update": (450, 2, 0),
+    # #641. Both wordings are lifted from families already here — the
+    # role-naming confirmation and `repeat-anonymous`'s acknowledgement —
+    # so it discovers nothing, by construction and not by luck. It exists
+    # for the IDENTITY composition, which this metric cannot see.
+    "anonymous-third-application": (180, 2, 0),
     "assessment": (660, 2, 0),
     "bare-relay": (200, 1, 0),
     "conditional-explainer": (400, 2, 0),
@@ -291,7 +296,7 @@ RECORDED_FAMILIES: dict[str, tuple[int, int, int]] = {
     # combinatorial, and the "may only grow" direction on it is a pin on the
     # family's shape rather than on its evidence.
     #
-    # The corpus is 18,020 messages from this family on; the figures in this
+    # The corpus is 18,200 messages from this family on; the figures in this
     # file's module docstring describe the 17,260-message corpus measured
     # 2026-08-29 and are left as the dated measurements they are.
     "concatenated-post-name": (760, 148, 0),
@@ -814,7 +819,11 @@ def test_the_invented_families_still_discover_nothing(measured) -> None:
     # invented like every other family in this set — its evidence is in the
     # SUBJECT and is about the identity reader, which this metric does not see.
     # Recorded rather than absorbed, which is what the docstring above asks for.
-    assert len(zeros) == 28, "the recorded set of circular families"
+    # 28 -> 29 (#641). The 29th is `anonymous-third-application`, whose two
+    # wordings are copies of families already in this set; its evidence is in
+    # the ORDER and the DAYS of its three messages, which this metric does not
+    # see either.
+    assert len(zeros) == 29, "the recorded set of circular families"
     moved = {
         family: measured.families[family].no_strong
         for family in sorted(zeros)

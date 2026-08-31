@@ -3904,8 +3904,17 @@ def partition_applications(
             # The failure direction is deliberate and it is the one
             # :func:`_may_join` already argues for: an employer that sends two
             # confirmations for a SINGLE application, naming no role in either,
-            # mints two cards — visible, and a user can merge them. The merge
-            # they replace destroyed the record silently.
+            # mints two cards — visible, and the spare one is a dismiss click.
+            #
+            # THERE IS NO MERGE, and this comment used to say a user could
+            # perform one. `POST /applications/{id}/split` exists; nothing in
+            # this repository pairs with it. The conclusion survives the
+            # correction — a spare card can be taken off the board and a missing
+            # application cannot be recovered — but the remedy is dismissal, and
+            # naming a control that does not exist is how a failure direction
+            # gets argued for on evidence nobody checked. The same correction is
+            # already spelled out in :func:`group_double_acknowledgements`
+            # above, which found it first.
             anchors = sorted(
                 (i for i in anonymous if i.category in APPLIED_SIGNAL_CATEGORIES),
                 # Oldest first, message id breaking a tie, so cluster order — and
