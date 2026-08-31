@@ -12,6 +12,7 @@ import { selectClass } from "@/components/ui/formStyles";
 import { Segmented } from "@/components/ui/Segmented";
 import { GateMeter } from "@/components/viz/GateMeter";
 import { shortDate } from "@/lib/dashboard/dates";
+import { fileFailureNote } from "@/lib/gmail/file-outcome";
 import {
   applyVerdictCorrection,
   scanMessagePayload,
@@ -611,22 +612,30 @@ export function InboxWorkbench({
     try {
       const res = await transport.file(items);
       if (!res.ok) {
+        // WHAT A FAILURE MAY CLAIM lives in `lib/gmail/file-outcome.ts`, with
+        // the reasoning: the merge commits the filed mail before the sync is
+        // stamped, so a note telling the reader their board is untouched was
+        // false for every failure after that commit — not only the
+        // migrate-window 500 that surfaced it (#604). The 409 branch keeps its
+        // stronger claim, and the module says why it may.
+        //
+        // The old wording is quoted in that module and NOT here on purpose:
+        // `tests/unit/file-failure-note.test.mjs` greps this file for it.
         setFiling({
           phase: "error",
-          note:
-            res.status === 409
-              ? "Gmail isn't connected — nothing was filed."
-              : `Couldn't file these (${res.status}) — nothing was changed.`,
+          note: fileFailureNote(
+            res.status === 409 ? { kind: "not-connected" } : { kind: "status", status: res.status },
+          ),
         });
         return;
       }
       setFiling({ phase: "done", note: filedSummary(res.counts) });
       router.refresh();
     } catch {
-      setFiling({
-        phase: "error",
-        note: "Couldn't reach the server — nothing was filed.",
-      });
+      // Same lie, different trigger, and this one needs no schema drift: a
+      // dropped connection or a function killed on its ceiling after the
+      // merge's own commit leaves the mail filed with no response to say so.
+      setFiling({ phase: "error", note: fileFailureNote({ kind: "unreachable" }) });
     }
   }, [router, transport, verdicts]);
 
