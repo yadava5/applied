@@ -238,6 +238,28 @@ const MIN_ASSERTED_CHARS = 40;
  * in front of identity extraction: only scoring loses the history.
  *
  * Mirrors `strip_quoted_history` in the Python original.
+ *
+ * ---------------------------------------------------------------------------
+ * A KNOWN, DELIBERATE DIVERGENCE FROM PYTHON LIVES HERE — the rest of #417.
+ *
+ * The server no longer stops where this function stops. `own_text_span` in
+ * `backend/jobtracker/classifier/rules.py` reads the span before the boundary
+ * EVEN WHEN it is under `MIN_ASSERTED_CHARS`, and `classify` caps the verdict
+ * below the auto-file gate when those words refute the category the quote won
+ * with. So "We must withdraw the offer." above a quoted offer — 27 characters,
+ * under the floor — is held for review by the server and is still returned as
+ * `offer` at 0.95 BY THIS FILE.
+ *
+ * That is the demo confidently filing a rescinded offer as an offer, which is
+ * the defect #417 was opened about, in the engine #417 measured second.
+ *
+ * NOT AN OVERSIGHT, AND SAID OUT LOUD BECAUSE NO GATE CAN SAY IT. The backend
+ * change added no pattern, so every check that keeps the two engines honest is
+ * blind to it: `scripts/readme_facts.py` compares pattern COUNTS, the vendored
+ * Space copy is Python, and `rules.json` enumerates patterns rather than
+ * behaviour. `tests/unit/rescission-divergence-417.test.mjs` pins the gap at
+ * its measured size instead. That file is written to go RED when this is
+ * ported, and red there means "delete the pin", not "revert the port".
  */
 export function stripQuotedHistory(body: string): string {
   if (!body) return body;
