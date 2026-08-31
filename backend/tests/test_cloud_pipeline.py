@@ -488,12 +488,26 @@ def test_resolve_employer_fallbacks_never_name_a_relay_or_a_person() -> None:
 
 
 def test_relay_domain_sets_partition_without_drift() -> None:
-    # RELAY_DOMAINS is composed from the two subsets, so a domain can never be
-    # in the "never an employer" list yet missing from both halves.
-    assert p.RELAY_DOMAINS == p.ATS_RELAY_DOMAINS | p.CONSUMER_WEBMAIL_DOMAINS
+    # RELAY_DOMAINS is composed from the three subsets, so a domain can never be
+    # in the "never an employer" list yet missing from all of them. The third
+    # subset is #687's: assessment vendors relay ONE employer's mail per message
+    # the way an ATS does, but they are not an ATS and only one of the two earns
+    # the display-name and subject-lead fallbacks.
+    assert p.RELAY_DOMAINS == (
+        p.ATS_RELAY_DOMAINS | p.ASSESSMENT_RELAY_DOMAINS | p.CONSUMER_WEBMAIL_DOMAINS
+    )
+    assert p.PLATFORM_RELAY_DOMAINS == p.ATS_RELAY_DOMAINS | p.ASSESSMENT_RELAY_DOMAINS
+    # Pairwise disjoint, all three ways. Kept as three assertions rather than a
+    # length sum so a failure names WHICH pair drifted.
     assert not (p.ATS_RELAY_DOMAINS & p.CONSUMER_WEBMAIL_DOMAINS)
+    assert not (p.ATS_RELAY_DOMAINS & p.ASSESSMENT_RELAY_DOMAINS)
+    assert not (p.ASSESSMENT_RELAY_DOMAINS & p.CONSUMER_WEBMAIL_DOMAINS)
     assert "ashbyhq" in p.ATS_RELAY_DOMAINS and "ashbyhq" in p.RELAY_DOMAINS
     assert "gmail" in p.CONSUMER_WEBMAIL_DOMAINS and "gmail" in p.RELAY_DOMAINS
+    assert "coderbyte" in p.ASSESSMENT_RELAY_DOMAINS and "coderbyte" in p.RELAY_DOMAINS
+    # ...and an assessment vendor is NOT an ATS relay, which is what keeps steps
+    # 3 and 4 of `resolve_employer` off it.
+    assert "coderbyte" not in p.ATS_RELAY_DOMAINS
 
 
 def test_employer_from_text_validates_a_user_supplied_company() -> None:
