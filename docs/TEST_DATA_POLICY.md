@@ -240,6 +240,50 @@ There is **no denylist**, and there will not be one. A list of the exact strings
 this gate exists to forbid would republish every one of them, in a new tracked
 file, in a public repository. The check is on shape.
 
+### An address that is assembled at run time
+
+Until #647 the gate could see a **literal** and nothing else. Its domain pattern
+admitted letters, digits, dot and hyphen, so `f"careers@{domain}"` was not an
+address as far as the check was concerned — and neither was `"careers@%s.com"`,
+`"careers@" + domain`, nor `"careers@{0}.com".format(...)`. Every interpolation
+form this repository actually uses was invisible, which is the worse half of the
+finding: writing a sender as an f-string is the *natural* way to write one, and
+most of this suite does, so a fixture author got a green gate unconditionally.
+It was hiding senders on two real companies' own domains in
+`backend/tests/test_gmail_oauth_cloud.py`, assembled by passing the domain in
+from a call site — and the call site is a plain string with no `@` in it, so no
+address scanner will ever find it there either.
+
+The fix is **not** to let `{`, `}` and `%` into the domain pattern. That matches
+a "domain" of `{token}.test` and then asks whether that string is reserved,
+which is reading a template as though it were a name. The question is whether
+the address could **resolve** somewhere, and for a template that is a question
+about the part of the domain no interpolation can change — the **sealed
+suffix**, everything after the last interpolation from its first literal dot:
+
+| written as | sealed suffix | verdict |
+| --- | --- | --- |
+| `f"careers@{token}.test"` | `.test` | reserved whatever `{token}` is — **silent** |
+| `f"hello@acme-{n}hub.example"` | `.example` | the label interpolates, the TLD does not — **silent** |
+| `f"careers@{company}.com"` | `.com` | routable — **counted** |
+| `f"careers@{n}example.com"` | `.com` | `{n}` may be `not` — **counted** |
+| `f"careers@{domain}"` | none | nothing is sealed, nothing can be proved — **counted** |
+
+The three markers are `{...}` (which serves f-string fields, `str.format` fields
+and JavaScript template literals alike), `%s`, and `+` concatenation, which is
+read by walking the operand chain because its string literal ends at the `@`.
+
+A template is digested by its literal parts, so renaming `{domain}` to `{d}` is
+a formatting change and does not move the baseline, for the same reason
+re-ordering literals does not.
+
+One consequence to know before it surprises you: **`backend/tests/test_test_data_gate.py`
+is now a finding of its own**, because its probe addresses are built as
+`f"{local}@{domain}"` and a wholly interpolated domain is exactly the shape that
+cannot be proved. That is correct and it is not worked around. Writing the
+gate's own probes in a construction the gate cannot see is the defect #647 is
+about.
+
 ### Why a digest is allowed where a literal is not
 
 The obvious objection to storing a hash of the material is that it is still
@@ -276,6 +320,15 @@ clean](#what-is-already-clean) and are deliberately out of scope.
   a real role title carries no `@` and is invisible to it. The gate measures one
   shape well; the rule above is wider than the gate, on purpose, and review is
   what covers the difference.
+- **An assembled address still has edges it cannot reach**, named here so they
+  are a decision rather than another blind spot. An interpolated *local* part
+  over a literal routable domain — `f"{i}@corp.com"` — is invisible: the run
+  after the `@` holds no marker, and the `}` in front of it stops the literal
+  pattern too. Three sites in the tree, one of which is an iCalendar `UID:`
+  field and not an address at all, which is why closing it is a judgement about
+  false positives and not a free widening. A domain concatenated out of literals
+  only is invisible, and so is anything assembled through a call — `"@".join`, a
+  format string held in a constant. A text scan ends where dataflow begins.
 - **It sees the set, not the string.** Since #615 a same-count swap fails,
   because the digest is over the set. But the gate still cannot tell a *better*
   address from a worse one — replacing one non-reserved address with a different
@@ -315,6 +368,8 @@ separate code path:
 | re-recording after a removal | green — the escape hatch has to work |
 | the same addresses reordered, re-cased or duplicated | green |
 | an address on a reserved domain | green |
+| an address assembled at run time on a routable domain | red |
+| the same assembly with a reserved literal suffix | green |
 | an untracked file | not scanned |
 
 The green rows are not padding. A gate that reddened on `careers@halberd.test`
