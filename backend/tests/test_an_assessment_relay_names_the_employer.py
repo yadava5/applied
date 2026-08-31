@@ -2,10 +2,17 @@
 
 Two cards on the owner's board, same employer, filed apart:
 
-    id 246   **Coderbyte**   ASSESSMENT   do-not-reply@coderbyte.com
+    id 246   **Coderbyte**   ASSESSMENT   do-not-reply@coderbyte.example
              "Netic AI invites you to take an assessment"
-    id 248   Netic           APPLIED      no-reply@ashbyhq.com
+    id 248   Netic           APPLIED      no-reply@ashbyhq.example
              "Thanks for your interest in joining Netic!"
+
+EVERY ADDRESS BELOW CARRIES A RESERVED TLD, which is the test-data policy and
+is also free of cost here: the resolver reads the registrable BRAND label
+(``_domain_brand``), and ``coderbyte.example`` yields ``coderbyte`` exactly as
+the real host does. The wording, the subjects and the display names are the real
+ones; only the TLDs are invented. The corpus already writes vendor senders this
+way (``no-reply@hackerrank.example``, ``tests/corpus/mail.py``).
 
 Card 246 is Netic AI's assessment. The board instead showed an application at a
 company the owner never applied to, while the real one sat on a separate card
@@ -42,9 +49,10 @@ import pytest
 
 from jobtracker.cloud import pipeline as p
 
-# The message, byte-identical to the stored row (issue #687, cross-checked
-# against Gmail: 2026-08-31T00:33:34Z).
-REPORTED_SENDER = "do-not-reply@coderbyte.com"
+# The message as stored (issue #687, cross-checked against Gmail:
+# 2026-08-31T00:33:34Z). Subject, display name and body wording are the row's;
+# the sender's TLD is reserved per the note above.
+REPORTED_SENDER = "do-not-reply@coderbyte.example"
 REPORTED_SUBJECT = "Netic AI invites you to take an assessment"
 REPORTED_NAME = "Coderbyte"
 REPORTED_BODY = (
@@ -53,10 +61,12 @@ REPORTED_BODY = (
 )
 
 # Roblox sends its OWN assessments, so the platform and the employer are the same
-# company and ``roblox`` is the right answer. Sender and subject are the ones
-# already in the tree (test_application_identity.py, test_rules_classifier_
-# assessment.py) rather than invented for this file.
-ROBLOX_SENDER = "assessment@email.roblox.com"
+# company and ``roblox`` is the right answer. The subject is the one already in
+# the tree (test_application_identity.py, test_rules_classifier_assessment.py)
+# rather than invented for this file; the sender is that file's, with the TLD
+# reserved — the ``email.`` subdomain is kept because it is what makes this a
+# brand-under-a-subdomain case, which is the part that could break.
+ROBLOX_SENDER = "assessment@email.roblox.example"
 ROBLOX_SUBJECT = "[Action Required] Your Roblox Assessments Invitation"
 
 
@@ -107,7 +117,7 @@ def test_every_assessment_relay_on_the_list_is_covered() -> None:
     assert len(p.ASSESSMENT_RELAY_DOMAINS) >= 14, "the list shrank; check what was removed"
 
     for domain in sorted(p.ASSESSMENT_RELAY_DOMAINS):
-        sender = f"no-reply@{domain}.com"
+        sender = f"no-reply@{domain}.example"
         subject = "Northwind Labs invites you to take an assessment"
         resolved = p.resolve_employer(sender, subject, domain.title())
         assert resolved == ("northwind", "Northwind Labs"), domain
@@ -169,32 +179,32 @@ def test_a_platform_that_is_also_an_employer_can_still_be_applied_to() -> None:
     # Its own domain, subject naming it: `_employer_from_subject` carries no
     # relay fence, so the ATS confirmation shape still reads the employer.
     assert p.resolve_employer(
-        "careers@coderbyte.com", "Thank you for applying to Coderbyte", "Coderbyte"
+        "careers@coderbyte.example", "Thank you for applying to Coderbyte", "Coderbyte"
     ) == ("coderbyte", "Coderbyte")
     assert p.resolve_employer(
-        "no-reply@hirevue.com", "Thanks for your interest in HireVue!", "HireVue"
+        "no-reply@hirevue.example", "Thanks for your interest in HireVue!", "HireVue"
     ) == ("hirevue", "HireVue")
 
     # Through a DIFFERENT relay, named in the subject...
     assert p.resolve_employer(
-        "no-reply@ashbyhq.com", "Your application to Coderbyte", "Coderbyte"
+        "no-reply@ashbyhq.example", "Your application to Coderbyte", "Coderbyte"
     ) == ("coderbyte", "Coderbyte")
 
     # ...named in the display name (this is the path #508 was filed about, and
     # the ">= 4 characters" invariant above is why the vocabulary cannot eat it)...
     assert p.resolve_employer(
-        "no-reply@us.greenhouse-mail.io", "Application Received", "Karat Recruiting Team"
+        "no-reply@us.greenhouse-mail.example", "Application Received", "Karat Recruiting Team"
     ) == ("karat", "Karat")
 
     # ...and in the subject's leading segment.
     assert p.resolve_employer(
-        "no-reply@us.greenhouse-mail.io", "HackerRank | Application Received", "no-reply"
+        "no-reply@us.greenhouse-mail.example", "HackerRank | Application Received", "no-reply"
     ) == ("hackerrank", "HackerRank")
 
     # THE COST. Its own domain, subject naming nobody: was ('coderbyte',
     # 'Coderbyte'), is now None and goes to the review queue.
     assert (
-        p.resolve_employer("careers@coderbyte.com", "Application Received", "Coderbyte Careers")
+        p.resolve_employer("careers@coderbyte.example", "Application Received", "Coderbyte Careers")
         is None
     )
 
@@ -220,7 +230,60 @@ def test_the_invitation_reading_refuses_the_shapes_535_minted() -> None:
         "Sarah Chen invites you to connect on LinkedIn",
     ):
         assert (
-            p.resolve_employer("no-reply@us.greenhouse-mail.io", subject, "no-reply") is None
+            p.resolve_employer("no-reply@us.greenhouse-mail.example", subject, "no-reply") is None
+        ), subject
+
+
+def test_an_interview_invitation_is_not_read_as_an_employer() -> None:
+    """The noun set carries the RIGHT members, which deletion cannot prove.
+
+    An interview is the one thing on the object list a PERSON invites you to in
+    their own name, and the scheduling tools that send those mails — GoodTime,
+    ModernLoop — are already ATS relays, so the platform fence does not stand
+    between them and this reading. Measured with "interviews?" in the set, all
+    four shapes below resolved ('sarah', 'Sarah Chen') through Greenhouse, which
+    is #535's exact tuple re-minted through a new door.
+
+    The control at the end is what stops this being satisfiable by refusing
+    everything: the same grammar with an assessment object still reads.
+    """
+
+    for subject in (
+        "Sarah Chen invites you to interview",
+        "Sarah Chen invites you to an interview next week",
+        "Sarah Chen invites you to schedule an interview",
+        # The cost, asserted as a cost: a genuine employer using the vendor's own
+        # word for its assessment reads nothing and goes to the review queue.
+        "Acme invites you to complete an on-demand interview",
+    ):
+        assert (
+            p.resolve_employer("no-reply@us.greenhouse-mail.example", subject, "no-reply") is None
+        ), subject
+
+    assert p.resolve_employer(
+        "no-reply@us.greenhouse-mail.example",
+        "Northwind Labs invites you to complete a technical screening",
+        "no-reply",
+    ) == ("northwind", "Northwind Labs")
+
+
+def test_a_prefix_before_the_employer_is_read_through() -> None:
+    """The boundary fence, on the prefixes real subjects actually carry.
+
+    Fence 3 is what keeps an ordinary Title-Case opener out of the capture, and
+    it is only worth having if it still reads the employer behind a bracket, a
+    colon or a comma — which is how every observed prefix is punctuated.
+    """
+
+    for subject in (
+        "[Action Required] Netic AI invites you to take an assessment",
+        "Action Required: Netic AI invites you to take an assessment",
+        "Reminder: Netic AI invites you to take an assessment",
+        "Hi Ayush, Netic AI invites you to take an assessment",
+    ):
+        assert p.resolve_employer(REPORTED_SENDER, subject, REPORTED_NAME) == (
+            "netic",
+            "Netic AI",
         ), subject
 
 
@@ -239,7 +302,7 @@ def test_a_vendor_that_names_itself_names_the_courier() -> None:
         ("codesignal", "CodeSignal"),
     ):
         subject = f"{display} invites you to take an assessment"
-        assert p.resolve_employer(f"do-not-reply@{domain}.com", subject, display) is None, domain
+        assert p.resolve_employer(f"do-not-reply@{domain}.example", subject, display) is None, domain
 
 
 def test_consumer_webmail_is_fenced_out_of_the_invitation_reading() -> None:
@@ -250,7 +313,7 @@ def test_consumer_webmail_is_fenced_out_of_the_invitation_reading() -> None:
     hand shows the fence is what refuses this and not some later guard.
     """
 
-    sender, subject = "sarah.chen@gmail.com", "Sarah Chen invites you to take an assessment"
+    sender, subject = "sarah.chen@gmail.example", "Sarah Chen invites you to take an assessment"
 
     assert p.resolve_employer(sender, subject, None) is None
     assert p.company_key(sender, subject, None) == "gmail"
@@ -281,36 +344,36 @@ def test_the_body_names_the_employer_at_display_grade() -> None:
     assert (
         p.employer_named_in_body(
             "You have been invited by Northwind Labs to our summer barbecue.",
-            "no-reply@us.greenhouse-mail.io",
+            "no-reply@us.greenhouse-mail.example",
         )
         is None
     )
     # The pattern this was added beside still answers what it answered.
     assert p.employer_named_in_body(
         "Thank you so much for your interest in Northwind Labs. After careful review...",
-        "no-reply@us.greenhouse-mail.io",
+        "no-reply@us.greenhouse-mail.example",
     ) == ("northwind", "Northwind Labs")
 
 
 @pytest.mark.parametrize(
     ("sender", "subject", "name", "expected"),
     [
-        ("no-reply@ashbyhq.com", "Your application to Stripe", "Ashby", ("stripe", "Stripe")),
+        ("no-reply@ashbyhq.example", "Your application to Stripe", "Ashby", ("stripe", "Stripe")),
         (
-            "no-reply@us.greenhouse-mail.io",
+            "no-reply@us.greenhouse-mail.example",
             "Thank you for applying to Together AI",
             "Greenhouse",
             ("together", "Together AI"),
         ),
         (
-            "no-reply@ashbyhq.com",
+            "no-reply@ashbyhq.example",
             "Systems Research Engineer, GPU Programming @ Together AI",
             "Ashby",
             ("together", "Together AI"),
         ),
-        ("no-reply@ashbyhq.com", "Crusoe | Application Received", "no-reply", ("crusoe", "Crusoe")),
+        ("no-reply@ashbyhq.example", "Crusoe | Application Received", "no-reply", ("crusoe", "Crusoe")),
         (
-            "no-reply@ashbyhq.com",
+            "no-reply@ashbyhq.example",
             "Update on Backend Engineer with Handshake",
             "Handshake Recruiting Team",
             ("handshake", "Handshake"),

@@ -163,8 +163,8 @@ ATS_RELAY_DOMAINS: frozenset[str] = frozenset(
 # and subject-lead fallbacks: see :func:`resolve_employer`, whose steps 3 and 4
 # stay scoped to ATS relays.
 #
-# #687 IS WHAT THIS IS FOR. ``do-not-reply@coderbyte.com`` sent "Netic AI invites
-# you to take an assessment" and the board grew a card at **Coderbyte** — a
+# #687 IS WHAT THIS IS FOR. Coderbyte's own no-reply address sent "Netic AI
+# invites you to take an assessment" and the board grew a card at **Coderbyte** — a
 # company the owner never applied to — while the real Netic AI application sat on
 # a separate card that never advanced past APPLIED. ``ATS_RELAY_DOMAINS`` had 62
 # members and not one assessment vendor, even though ``classifier/rules.py``
@@ -939,9 +939,28 @@ _EMPLOYER_BARE_AT = re.compile(r"(?i:\bat\s+)(" + _COMPANY_CAPTURE + r")")
 # that drifts between them would make the same message readable in the subject
 # and unreadable in the body. Only the NOUN is shared; the two shapes put the
 # employer on opposite sides of the verb and so cannot share a pattern.
-_INVITATION_OBJECT = (
-    r"(?:assessments?|tests?|challenges?|screenings?|interviews?|exercises?)"
-)
+#
+# "INTERVIEW" IS NOT ON THIS LIST, and it was, until it was measured. An
+# interview is the one thing on the list a PERSON invites you to in their own
+# name, and the scheduling tools that send those mails are already ATS relays
+# here (`goodtime`, `modernloop`), so the platform fence does not exclude them:
+#
+#     "Sarah Chen invites you to interview"            -> ('sarah', 'Sarah Chen')
+#     "Sarah Chen invites you to schedule an interview" -> ('sarah', 'Sarah Chen')
+#
+# both through Greenhouse — which is #535's exact tuple, re-minted through a new
+# door. Removing the noun refuses all four measured shapes of it. What it costs
+# is a genuine "<Employer> invites you to complete an on-demand interview",
+# which now reads nothing and goes to the review queue, where a person decides.
+# That is the direction this module takes everywhere else, and a wrong employer
+# on the board is strictly worse than a queued one.
+#
+# The residual, stated rather than hidden: "Sarah Chen invites you to take an
+# assessment" still resolves the person. Nobody writes that about themselves in
+# the third person, and the sender-display-name path already answers ('sarah',
+# 'Sarah Chen') for an ATS message whose display name is a person — so this is
+# the bargain step 3 already makes, not a new one.
+_INVITATION_OBJECT = r"(?:assessments?|tests?|challenges?|screenings?|exercises?)"
 
 # "<Employer> invites you to take an assessment" — THE EMPLOYER AS THE SENTENCE
 # SUBJECT, which is the shape #687 filed under the wrong company.
@@ -950,7 +969,7 @@ _INVITATION_OBJECT = (
 # preposition ("application to <X>", "on behalf of <X>", "@ <X>"), so an
 # assessment vendor's standard invitation subject matched nothing at all and the
 # resolver fell through to the sender display name — which is the vendor's. The
-# live row: ``do-not-reply@coderbyte.com``, "Netic AI invites you to take an
+# live row: Coderbyte's own no-reply address, "Netic AI invites you to take an
 # assessment", filed at *Coderbyte*.
 #
 # THREE FENCES, and #535 is why each one is here rather than "a leading
@@ -968,12 +987,15 @@ _INVITATION_OBJECT = (
 #    gap between two quantified runs is what the ReDoS work in
 #    ``test_company_name_regexes_are_linear.py`` was cleaning up.
 # 3. THE CAPTURE STARTS AT A BOUNDARY — the start of the subject or immediately
-#    after punctuation. "Reminder: <Employer> invites you…" reads the employer;
-#    a Title-Case phrase glued to the front of one with no punctuation
-#    ("Action Required Netic AI invites you…") would still be captured whole,
-#    which is this rule's residual and is stated rather than hidden. It costs a
-#    long card title, not a wrong employer TOKEN, because
-#    `matches_company_token` compares leading words.
+#    after punctuation. That is what handles the prefixes real mail uses:
+#    "Reminder: <Employer> invites you…", "[Action Required] <Employer> invites
+#    you…" and "Hi Ayush, <Employer> invites you…" all read the employer,
+#    measured. A Title-Case phrase glued to the front with NO punctuation at all
+#    ("Action Required Netic AI invites you…") is still captured whole, and this
+#    residual is stated rather than hidden — it costs the TOKEN too, not only the
+#    card title: `_normalize_token(...).split(" ")[0]` of that capture is
+#    "action", which groups with nothing. No observed subject has that shape;
+#    every prefix in the mailbox carries a bracket, a colon or a comma.
 #
 # The caller adds a FOURTH fence it cannot express here: the message must have
 # come from a platform relay, and the capture must not name that relay. An
