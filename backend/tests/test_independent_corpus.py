@@ -44,8 +44,10 @@ from tests.corpus_independent.harness import (
 #: `joins`, `card_status` and the two title fields could be rewritten with this
 #: number unmoved — a corpus is what it asserts as much as what it contains.
 #: c4b1e3b6c5a4b3b9 since #626: the corpus gained a family, so it gained mail.
-CORPUS_DIGEST = "c4b1e3b6c5a4b3b9"
-CORPUS_SIZE = 18020
+#: 12ac85f9e15c0769 since #641, for the same reason — `anonymous-third-application`
+#: is 180 more messages and 60 more employers.
+CORPUS_DIGEST = "12ac85f9e15c0769"
+CORPUS_SIZE = 18200
 
 #: THE RECORDED RUN, in one place, because the README quotes it.
 #:
@@ -83,7 +85,11 @@ RECORDED_AFTER_ANSWERING = {
     # 9569 -> 10149 (#626): the 580 cards the new family puts on the board are
     # all there before the queue is answered, and answering mints none of its
     # own — `minted_a_card` below is unmoved at 421.
-    "cards": 10149,
+    # 10149 -> 10329 (#641): the same +180, all of it on the board before
+    # the queue is answered. Answering mints none of it — `minted_a_card`
+    # is unmoved at 421 — because none of the family's mail is ever held:
+    # it produces no updates and nothing uncertain.
+    "cards": 10329,
     "update_opened_a_card": 19,
     "noise_on_card": 0,
     # 62 BEFORE, 75 AFTER — and the interesting number is the one that is not
@@ -123,15 +129,17 @@ RECORDED_AFTER_ANSWERING = {
     # mis-titles". #536 is the standing note on zeros that cannot be non-zero.
     "role_wrong": 0,
     # The three title populations still close after answering:
-    # 8624 + 1106 + 400 == 10130.
+    # 8744 + 1166 + 400 == 10310.
     #
     # 8044 -> 8624 and 9550 -> 10130 (#626), both by the same 580. Every card the
     # new family adds carries a title this corpus can settle, so the whole of the
     # move lands in `roles_graded` and neither of the other two populations moves.
-    "roles_graded": 8624,
-    "blank_required": 1106,
+    # +120 / +60 / +180 (#641), the same three moves as before answering, so
+    # the populations still close after the phase: 8744 + 1166 + 400 == 10310.
+    "roles_graded": 8744,
+    "blank_required": 1166,
     "role_unsettleable": 400,
-    "titles_graded": 10130,
+    "titles_graded": 10310,
     # `score_board`'s `wrong_review`, READ UNDER A NAME THAT IS TRUE HERE. That
     # counter means "the product guessed instead of asking". After the phase the
     # product DID ask and was answered, so 150 is not 150 failures — it is 150
@@ -268,7 +276,11 @@ RECORDED_SYNC = {
     # ROLE-side acknowledgement landing on the card its TAIL-side twin opened. If
     # that ever mints instead of updating, this is the counter that says so before
     # `splits` does.
-    "created": 9728,
+    # created 9728 -> 9908 (#641), the same +180 the board reports, and
+    # `updated` does NOT move. The third confirmation used to be an UPDATE
+    # to a row that already existed and is now a CREATION; if a later change
+    # ever trades one for the other, these two counters say so together.
+    "created": 9908,
     "updated": 4019,
     "purged": 0,
     "needs_review": 3033,
@@ -295,8 +307,11 @@ RECORDED_EMPLOYER_SPELLINGS = {
     # +420 on both (#626), which is the family's employer count exactly: it spells
     # every employer ONE way — lead segment, echo, sender display — so it adds a
     # token and a display apiece and NOT a second spelling of either.
-    "tokens": 9096,
-    "distinct_displays": 9336,
+    # +60 on both (#641), which is the new family's employer count exactly:
+    # ONE sender for all three of its messages, so it adds a token and a
+    # display apiece and never a second spelling of either.
+    "tokens": 9156,
+    "distinct_displays": 9396,
     # UNMOVED, and that is the assertion. 150 is documented above as entirely the
     # `employer-spelling` family; a family that added one would be #532 returning.
     "tokens_with_several_spellings": 150,
@@ -312,20 +327,25 @@ RECORDED = {
 #: segment, 320 sibling confirmations that give those refusals somewhere to be
 #: ambiguous, 160 role-less updates the reader declines, and 40 messages of the
 #: both-placements pair. See the family's docstring in `generate.py`.
-    "size": 18020,
+    "size": 18200,
     # DISTINCT FAMILY LABELS in the generated corpus, which is 37 and not the
     # 35 generators in ``_FAMILIES``: two generators emit a second label of
     # their own (``hostile-zero-width``, ``hostile-homoglyph``). The README and
     # the System Card both print a family count and both had drifted — 32 and
     # 24 against a real 35 — because nothing recomputed it. Now something does.
-    "families": 38,
+    "families": 39,
     # DISTINCT EMPLOYER TOKENS, and this entry was decoration until 2026-08-23.
     # It read 9,180 and `readme_facts.py` published it to the README and the
     # Booklet, but no test recomputed it and it matched NO measure of the
     # corpus: employer tokens were 7,900, sender names 8,710, identities 9,410.
     # A published number nothing recomputes is a claim, which is the sentence
     # at the top of this dict, so it is now asserted below like the rest.
-    "companies": 8440,
+    # 8440 -> 8500 (#641): 60 employers, and they are the first in this corpus
+    # to carry BOTH a named identity and an anonymous one. Before the family
+    # there were ZERO such employers out of 8,440, which is why a fix to #641
+    # moved no number here and the bug could have been reinstated against a
+    # green board.
+    "companies": 8500,
     # ── #451 MOVED EVERY NUMBER BELOW THAT CARRIES A "451" NOTE ─────────────
     #
     # Two changes in one commit: the reference pattern
@@ -343,7 +363,10 @@ RECORDED = {
     # `abstained` do not move at all, so every one of its messages is
     # classified correctly — which is expected and is not what it measures.
     # Its subject shape is an IDENTITY problem, not a classification one.
-    "correct": 16790,
+    # 16790 -> 16970 (#641): +180, the whole of the new family, which every
+    # rule reads correctly. `wrong` and `abstained` do not move, so the family
+    # adds no classifier defect and its board numbers are about identity alone.
+    "correct": 16970,
     # 361 -> 304 (#451).
     "wrong": 304,
     # 1013 -> 926 (#451). It FELL, which is not what a demotion is supposed
@@ -391,7 +414,11 @@ RECORDED = {
     # 9148 -> 9728 (#626): +580, the family's own applications — 240 titled out
     # of the trailing segment, 320 siblings, 20 both-placements pairs. Its 160
     # refusals mint nothing, which is the point of them.
-    "cards": 9728,
+    # 9728 -> 9908 (#641): +180, the whole of the new family — two named
+    # applications and the anonymous third one that used to fold onto the
+    # older of them. Before the fix this read 9728 WITH the family present,
+    # which is the measurement the family exists to make.
+    "cards": 9908,
     # Mail about a real application that the product did nothing with. Two
     # numbers because both are unaddressed and only one is invisible; see #447.
     #
@@ -438,7 +465,9 @@ RECORDED = {
     # from any counter the scorer increments.
     # +600 / +160 (#626), and they close: 760 messages, 600 on a card and 160
     # in the queue, with `lost` and `dropped` still 0.
-    "addressed_on_a_card": 13807,
+    # 13807 -> 13987 (#641): +180. All three of each group land on a card,
+    # so the queue side is unmoved and the closure below still holds.
+    "addressed_on_a_card": 13987,
     "addressed_in_the_queue": 2833,
     # THE ADDITIVE PERSIST'S OWN OUTCOME, and it is zero. `replay` calls
     # `_persist_review_items_additive` since #624, so an arriving item can now
@@ -458,7 +487,9 @@ RECORDED = {
     "suppressed_as_settled": 0,
     # The population the five close against. Pinned as well as computed, so a
     # corpus that quietly stopped requiring mail to be addressed is loud.
-    "must_be_addressed": 16640,
+    # 16640 -> 16820 (#641): every message of the new family is about a
+    # real application, so all 180 must reach a card or the queue.
+    "must_be_addressed": 16820,
     # Noise that MINTED A CARD. Went 0 -> 2 on 2026-08-22, when the corpus first
     # contained ATS mail that is not about the user at all (a profile-completion
     # nudge scoring `assessment` at 0.90), and back to 0 once the reference
@@ -523,7 +554,8 @@ RECORDED = {
     # that graded nothing would report a perfect board.
     # 9252 -> 9148 (#451): the denominator follows `cards` exactly.
     # 9148 -> 9728 (#626): the denominator follows `cards` exactly, as ever.
-    "titles_graded": 9728,
+    # 9728 -> 9908 (#641): the denominator follows `cards` exactly, as ever.
+    "titles_graded": 9908,
     # Smaller, because a card whose ground truth keys on a requisition id, or
     # whose mail names no job at all, has a title this corpus either cannot
     # settle or must assert BLANK. See ``Case.role_truth``.
@@ -535,7 +567,10 @@ RECORDED = {
     # 7642 -> 8222 (#626): +580, the same 580, and NONE of it lands in
     # `blank_required` or `role_unsettleable` — every card the family adds has
     # a title spelled in its own mail.
-    "roles_graded": 8222,
+    # 8222 -> 8342 (#641): +120, the family's two NAMED applications per
+    # group. Its anonymous third lands in `blank_required` below, so the
+    # three populations still close: 8342 + 1166 + 400 == 9908.
+    "roles_graded": 8342,
     # The card names an employer nobody applied to. This is what a user would
     # call hallucinating, and the live filing path can do it: while fixing #512
     # the subject "Senior Software Engineer Interview | <name>" resolved to a
@@ -678,7 +713,11 @@ RECORDED = {
     # rather than a sentence: 7746 graded + 1106 required-blank + 400 req-id
     # (genuinely unsettleable) = 9252 cards. Before `role_unsettleable` existed
     # the third term was a pasted 400 and the close could not be stated at all.
-    "blank_required": 1106,
+    #
+    # 1106 -> 1166 (#641): the new family's 60 anonymous acknowledgements. Each
+    # must produce a BLANK card, and `role_invented` holding at 0 is what says
+    # the cards the fix now mints did not acquire a title from anywhere.
+    "blank_required": 1166,
     # The third population: the corpus knows WHICH application the card is, by
     # requisition id, and does not know what the job is called. Not a defect and
     # not an assertion — the term that makes "every card is accounted for"
@@ -2423,7 +2462,10 @@ def test_the_readable_window_is_the_product_s_window() -> None:
 # segment and 320 in a sibling confirmation's body. None is removed by the
 # derivation, which is the check that the family's ground truth is readable
 # rather than wished for.
-RECORDED_ROLE_IDENTITIES = 8604
+# 8604 -> 8724 (#641): +120, the new family's two NAMED applications per
+# employer. Its third is the sentinel sub-key and carries no title to grade,
+# which is the whole point of it.
+RECORDED_ROLE_IDENTITIES = 8724
 
 
 def test_ground_truth_never_asserts_a_title_no_message_spells(cases) -> None:

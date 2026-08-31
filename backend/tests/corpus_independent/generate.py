@@ -1076,6 +1076,90 @@ def _repeat_anonymous(b: _Builder, n: int) -> None:
             )
 
 
+def _anonymous_third_application(b: _Builder, n: int) -> None:
+    """A third application where the first two named their jobs and this one does not.
+
+    #641, and the shape this corpus was STRUCTURALLY unable to hold. Measured
+    BEFORE this family existed, at 8,440 employers carrying an identity (8,500
+    with it), ZERO held both a NAMED and an ANONYMOUS one — every family that produces an
+    anonymous identity produces nothing else at that employer, and the employer
+    pool is disjoint. So the defect could be reinstated and not one board count
+    would move. A corpus that cannot see a defect is worse than one that reports
+    it, because the green reads as evidence.
+
+    Two identified confirmations, days apart, so the board really does hold two
+    LIVE cards. Then an acknowledgement naming no role at all. Ground truth is
+    THREE identities at one employer, so a third confirmation that folds onto
+    either of the first two puts two applications on one card and scores as a
+    MERGE — the failure ``test_the_board_is_clean`` calls strictly worse than a
+    split, because it discards a record silently instead of showing it twice.
+
+    THE DAYS ARE LOAD-BEARING AND ARE NOT DECORATION. ``replay`` batches by
+    calendar day, and at a ``known_multi`` employer a confirmation arriving in
+    the SAME batch as exactly one identified message joins that message's
+    cluster in-scan — ``partition_applications``' ``len(keyed) != 1`` guard —
+    and never reaches the resolver at all. That is deliberate: it is the
+    single-card case's in-batch twin. So the three messages sit in three
+    different day batches with the anonymous one last, when the board holds two
+    cards and ``employers_with_several_applications`` names the employer.
+    Putting them in one batch would measure the guard and report it as this
+    family passing.
+
+    ONE SENDER FOR ALL THREE, and that is a correctness requirement rather than
+    a tidiness one. ``resolve_employer`` reads an ATS relay's display name and a
+    direct domain's brand, and the two need not agree; mixing them would give
+    the anonymous message a different employer token, so ``_company_rows`` would
+    find no siblings and the mint would happen for the wrong reason. The family
+    would then pass with the defect present.
+
+    NEITHER IDENTIFIED WORDING MAY BE ANONYMOUS and the third may not name a
+    role, or this measures the role reader instead of the composition. Both are
+    asserted against the product's own extraction in
+    ``test_independent_corpus.py`` rather than trusted to the prose here.
+    """
+
+    for i in range(n):
+        display, token = b.employer()
+        sender = b.ats(i)
+        first, second = b.roles(2)
+        base = i % 200
+        for k, role in enumerate((first, second)):
+            b.add(
+                family="anonymous-third-application",
+                subject=f"Thank you for applying to {display}",
+                sender=sender,
+                sender_name=f"{display} Recruiting",
+                body=(
+                    f"Hi Ayush, Thank you for applying to the {role} position at "
+                    f"{display}. Your application has been received and our team "
+                    "will review it shortly."
+                ),
+                expected_category="applied",
+                identity=f"{token}|{role}",
+                employer=token,
+                day=base + k * 4,
+                note="the board must hold TWO named cards before the third arrives",
+            )
+        b.add(
+            family="anonymous-third-application",
+            subject=f"Thanks for applying to {display}",
+            sender=sender,
+            sender_name=f"{display} Recruiting",
+            body=(
+                f"Hi Ayush, Thanks for applying to {display}! There are a ton of "
+                "great companies out there, so we appreciate your interest in "
+                "joining our team. While we are not able to reach out to every "
+                "applicant, our recruiting team will contact you if your skills "
+                "and experience are a strong match for the role."
+            ),
+            expected_category="applied",
+            identity=f"{token}|__third__",
+            employer=token,
+            day=base + 12,
+            note="a third application the mail names nothing about (#641)",
+        )
+
+
 def _double_acknowledgement(b: _Builder, n: int) -> None:
     """One submission, acknowledged twice, by two systems that word it differently.
 
@@ -2792,6 +2876,11 @@ _FAMILIES: tuple[tuple[str, object, int], ...] = (
     # builder shares one seeded RNG, so anywhere else re-draws every
     # employer, role and wording after it.
     ("concatenated-post-name", _concatenated_post_names, 20),
+    # #641. Appended last for the reason stated two entries above — the builder
+    # shares one seeded RNG — and it is the first family in this file whose
+    # employer carries BOTH a named identity and an anonymous one. Nothing else
+    # here could produce the composition the issue is about.
+    ("anonymous-third-application", _anonymous_third_application, 60),
 )
 
 
