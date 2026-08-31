@@ -276,6 +276,25 @@ RECORDED_FAMILIES: dict[str, tuple[int, int, int]] = {
     "update-outside-the-thread": (600, 5, 0),
     "update-picks-between-two": (750, 5, 0),
     "verdict-past-the-body-cap": (320, 2, 0),
+    # #626, and it is invented in the same sense as everything above it: the
+    # BODIES are the author's, so its discovery rate is 0.0% by construction and
+    # it belongs in this block. What is real about it is the half this metric
+    # does not measure — its subjects carry job titles and locations copied from
+    # public Greenhouse board APIs, and the thing it grades is the identity
+    # reader rather than the classifier.
+    #
+    # 148 WORDINGS OFF 760 MESSAGES, which is out of scale with every family
+    # here and is not a leak in the mask. The mask blanks the corpus's own
+    # parameters — the invented employers and the `ROLES` pool — and a real
+    # board title is in neither, so each (title x location x boilerplate)
+    # combination survives as its own wording. The number is therefore
+    # combinatorial, and the "may only grow" direction on it is a pin on the
+    # family's shape rather than on its evidence.
+    #
+    # The corpus is 18,020 messages from this family on; the figures in this
+    # file's module docstring describe the 17,260-message corpus measured
+    # 2026-08-29 and are left as the dated measurements they are.
+    "concatenated-post-name": (760, 148, 0),
     # ── invented, and non-zero for a reason that is NOT discovery. These are
     # noise and truncation families: their mail either is not about a job at
     # all, or is cut off before the verdict. A fall here is a finding of a
@@ -791,7 +810,11 @@ def test_the_invented_families_still_discover_nothing(measured) -> None:
     """
 
     zeros = {f for f, (_, _, n) in RECORDED_FAMILIES.items() if n == 0}
-    assert len(zeros) == 27, "the recorded set of circular families"
+    # 27 -> 28 (#626). The 28th is `concatenated-post-name`, whose bodies are
+    # invented like every other family in this set — its evidence is in the
+    # SUBJECT and is about the identity reader, which this metric does not see.
+    # Recorded rather than absorbed, which is what the docstring above asks for.
+    assert len(zeros) == 28, "the recorded set of circular families"
     moved = {
         family: measured.families[family].no_strong
         for family in sorted(zeros)
