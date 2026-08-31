@@ -6,8 +6,10 @@ isolation).
 
 Every number in this document was read against the **production** Supabase
 database on **2026-08-15**, not against the migrations, and every query used is
-reproduced inline so an assessor can re-run it. Where a figure is a snapshot of
-live data rather than an invariant, it is labelled as such with its `N`.
+reproduced inline so an assessor can re-run it. The table-grant and
+role-membership figures in §4.1 were re-read on **2026-08-31** and carry that
+date where they appear. Where a figure is a snapshot of live data rather than
+an invariant, it is labelled as such with its `N`.
 
 ---
 
@@ -92,14 +94,15 @@ FROM emails;
 **`training_data.body_text` is a badly named column, and the name is the whole
 risk of misreading this system.** It does not hold a body. It holds the same
 snippet, copied from `emails.body_snippet` by `_add_training_example`
-(`backend/jobtracker/cloud/applications.py:2219`, the copy itself at `:2238`).
+(`backend/jobtracker/cloud/applications.py:3476`, the copy itself at `:3495`).
 Two independent facts establish it:
 
 1. The longest value in that column across all 11 rows is **201 characters** —
    Gmail's snippet budget. No message body is 201 characters.
-2. `backend/tests/test_body_is_never_persisted.py:714` asserts
+2. `test_a_correction_does_not_carry_the_body_into_training_data`
+   (`backend/tests/test_body_is_never_persisted.py:722`) asserts
    `row.body_text == REJECTION_SNIPPET` by **equality**, not by sentinel
-   absence. The test's own comment explains why: a sentinel search alone passes
+   absence. The comment above it explains why: a sentinel search alone passes
    for a body prefix that stops short of the sentinel, so equality is what
    catches "a future improvement that feeds the corpus the full text the
    message was classified on". That assertion reddens on a full body even when
@@ -108,8 +111,8 @@ Two independent facts establish it:
 Two disclosures an assessor should have without asking:
 
 - **`training_data` has no foreign key to `emails`.** `training_data.email_id`
-  is a bare indexed integer, documented as such at
-  `backend/jobtracker/cloud/applications.py:2196`. One of the 7 populated rows
+  is a bare indexed integer, documented as such in `_orphan_training_examples`
+  (`backend/jobtracker/cloud/applications.py:3453`). One of the 7 populated rows
   today points at an `emails` row that no longer exists — its snippet copy
   (199 characters) outlived its source. This is deliberate: a `training_data`
   row is a *human's correction*, retained as the record of a decision rather
@@ -139,20 +142,31 @@ not implemented** — is in [`CRYPTOGRAPHY.md`](CRYPTOGRAPHY.md).
 | 4 | FastAPI → Google | HTTPS | `gmail.readonly` only; token decrypted per request, never logged |
 
 The browser never holds `BACKEND_API_URL` or a service-role key. The Supabase
-anon key it does hold is publishable by design and reaches no data: `anon`
-holds no grants on nine of the ten tables, and on the tenth the grant is inert
-because every policy there is scoped to the `jobtracker_app` role. See §4.1 for
-that exception in full.
+anon key it does hold is publishable by design and reaches no data: measured
+against production on 2026-08-31, `anon` holds **no grant on any of the ten
+tables**, so the privilege check refuses it before any policy is consulted; it
+is additionally not a member of `jobtracker_app`, so it could not match the
+three policies scoped to that role even if it did hold one. See §4.1 for the
+queries and for the condition this rests on.
 
-**How the revocation was applied, stated precisely, because it bears on
-reproducibility.** It is *not* a migration. The `REVOKE` statements were run by
-hand against production on 2026-08-03 and are recorded in
-`docs/harden-2026-08-03.sql`; no Alembic revision performs them, and
-`backend/alembic/versions/` contains no `revoke_anon_grants_*` file. Alembic
-does run on merge to `main` (`.github/workflows/db-migrate.yml`), so a database
-rebuilt from the migration chain alone would carry the default `anon` grants
-that production no longer has. Porting the revoke into a migration is the fix
-and is **open**.
+**How the revocations were applied, stated precisely, because it bears on
+reproducibility.** They are *not* migrations. The 2026-08-03 `REVOKE` was run
+by hand against production and is recorded in `docs/harden-2026-08-03.sql`. It
+covered the nine tables that existed then. `gmail_sync_enrollment` was created
+afterwards and still carried the default `anon` grant when this pack was
+written on 2026-08-15; it no longer does, and **the SQL that removed it is
+recorded nowhere in this repository** — `docs/harden-2026-08-03.sql` is the
+only hand-run SQL the repository holds, and it predates the table. Exactly one
+Alembic revision issues any `GRANT` or `REVOKE` at all
+(`backend/alembic/versions/e2b6f0a4d517_gmail_sync_enrollment.py:192`, which
+grants to `jobtracker_app` only); no revision revokes from `anon` anywhere. So
+apart from that one `GRANT`, the entire grant configuration production runs on
+sits outside the migration chain. Alembic does run on merge to `main`
+(`.github/workflows/db-migrate.yml`), so a database rebuilt from
+`backend/alembic/versions/` alone would carry Supabase's default `anon` and
+`authenticated` grants that production does not have, and the paragraph above
+would not be true of it. Porting the revokes into a migration is the fix and is
+**open**.
 
 ---
 
@@ -254,13 +268,17 @@ WHERE schemaname='public' AND tablename='gmail_sync_enrollment';
 --  gmail_sync_enrollment_owner_delete | DELETE | {jobtracker_app} | (user_id = auth.uid())
 ```
 
-This is deliberate and the reasoning is recorded at
-`backend/jobtracker/cloud/gmail_oauth.py:865-889`. Two features need a
+This is deliberate and the reasoning is recorded in `GmailSyncEnrollment`'s
+docstring, under the heading "THE DELIBERATE EXPOSURE"
+(`backend/jobtracker/database/models.py:1082-1089`). Two features need a
 deployment-wide answer rather than a per-user one: the scheduled sync must
-enumerate candidate users (`backend/jobtracker/cloud/cron.py:370`), and the
-Gmail connection cap must count total enrolled mailboxes against Google's
-limit (`gmail_oauth.py:925`). Neither can be answered from a user-scoped read —
-a cap that always counts 1 admits everybody forever.
+enumerate candidate users — `list_enrolled_user_ids`,
+`backend/jobtracker/cloud/cron.py:370` — and the Gmail connection cap must
+count total enrolled mailboxes against Google's limit —
+`gmail_connection_census`, `backend/jobtracker/cloud/gmail_oauth.py:1014`, with
+the count itself at `:1079` and its docstring at `:1019-1042` setting out why
+that count cannot come from `user_credentials`. Neither can be answered from a
+user-scoped read — a cap that always counts 1 admits everybody forever.
 
 The design response was to put the *membership fact* in its own table, holding
 `user_id` and timestamps and **no secret whatsoever**, so that the global read
@@ -276,25 +294,68 @@ the isolation here is enforced by application code rather than by the database,
 which is not true of the other nine tables. The data at risk is the set of user
 UUIDs and their enrollment timestamps.
 
-#### `anon` retains a grant on one table
+#### `anon` holds no grant on any table — measured 2026-08-31
+
+This supersedes the 2026-08-15 reading this section previously carried. Three
+catalogue queries, each reproduced so an assessor can re-run it:
 
 ```sql
-SELECT c.relname, (c.relacl::text LIKE '%anon=%') AS anon_has_grant
+-- 1. The privilege check itself, per table and per verb.
+SELECT c.relname,
+       has_table_privilege('anon',          c.oid, 'SELECT') AS anon_select,
+       has_table_privilege('anon',          c.oid, 'INSERT') AS anon_insert,
+       has_table_privilege('anon',          c.oid, 'UPDATE') AS anon_update,
+       has_table_privilege('anon',          c.oid, 'DELETE') AS anon_delete,
+       has_table_privilege('authenticated', c.oid, 'SELECT') AS auth_select
 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE n.nspname = 'public' AND c.relkind = 'r';
+WHERE n.nspname = 'public' AND c.relkind = 'r' ORDER BY c.relname;
+--  false in every column, on all ten tables, `gmail_sync_enrollment` included.
 ```
 
-Nine of ten tables return `false`. **`gmail_sync_enrollment` returns `true`** —
-it carries `anon=arwdDxtm` and `authenticated=arwdDxtm`.
+```sql
+-- 2. The ACL that check reads from.
+SELECT c.relname, c.relacl::text
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public' AND c.relkind = 'r' ORDER BY c.relname;
+--  All ten list only postgres, service_role and jobtracker_app. There is no
+--  `anon=` and no `authenticated=` entry on any of them.
+```
 
-The blanket revocation of `anon` grants on 2026-08-03
-(`docs/RLS-AUDIT-2026-08-03.md`) covered the tables that existed then;
-`gmail_sync_enrollment` was added afterwards and reintroduced the default
-grant. It is **not exploitable today**: every policy on that table is scoped to
-the role `jobtracker_app`, RLS is forced, and `anon` therefore matches no
-policy and reads nothing. It is unnecessary surface and an inconsistency with
-the other nine tables, and it should be revoked. Recorded here as an open item
-rather than left for an assessor to find.
+```sql
+-- 3. Role membership — Postgres matches a policy's TO clause through it.
+SELECT r.rolname AS member
+FROM pg_auth_members m
+JOIN pg_roles r ON r.oid = m.member
+JOIN pg_roles g ON g.oid = m.roleid
+WHERE g.rolname = 'jobtracker_app';
+--  postgres, and nothing else. `anon` is not a member.
+```
+
+So this section's earlier claim — that `gmail_sync_enrollment` retained
+`anon=arwdDxtm` and `authenticated=arwdDxtm`, and that the grant was inert
+*because* every policy on that table is scoped `TO jobtracker_app` — is
+retired. It was true on 2026-08-15 and is not true now, and what replaced it is
+both simpler and stronger. `anon` cannot reach these tables at all: it holds no
+grant on them, and the privilege check runs ahead of RLS, so the outer gate is
+shut before any policy is consulted. Query 3 closes the fallback question as
+well — `anon` is not a member of `jobtracker_app`, so it could not match a
+policy scoped to that role even if it had a grant.
+
+**The condition, without which the paragraph above is true only by accident.**
+Every one of those revocations was applied by hand (§3). No Alembic revision
+performs any of them, so a database rebuilt from `backend/alembic/versions/`
+alone gets Supabase's default `anon` and `authenticated` grants back and none
+of this is true of it — and the revocation that removed `anon` from
+`gmail_sync_enrollment` is not recorded as SQL anywhere in this repository at
+all. **Open item**: port the revokes into a migration, so that what an assessor
+measures is what the migration chain produces.
+
+**Which facts come from where.** Queries 1-3 and their answers are a production
+reading taken on **2026-08-31**; they cannot be reproduced from this repository
+and should be re-run rather than trusted. That no revision revokes from `anon`,
+that `docs/harden-2026-08-03.sql` is the only hand-run SQL the repository
+holds, and that `e2b6f0a4d517_gmail_sync_enrollment.py:192` is the only `GRANT`
+in the chain are **repo-verifiable**, and were checked against this tree.
 
 ### 4.2 Layer 2 — the connecting role cannot bypass RLS
 
@@ -327,12 +388,12 @@ safe under Supabase's shared PgBouncer in transaction-pooling mode:
 
 `backend/tests/test_rls_postgres.py` exercises this against a **real Postgres**,
 not SQLite — SQLite has no row-level security, so a test that ran there would
-prove nothing. It runs in CI against a Postgres service container
-(`.github/workflows/backend-ci.yml:175-177`), and the workflow explicitly guards
-against the skip-is-green failure mode: if `JOBTRACKER_TEST_PG_ADMIN_URL` were
-unset the tests would skip silently and the job would still pass, so the
-workflow parses the JUnit XML and fails the step when the suite reports zero
-tests or any skip (`:224-243`).
+prove nothing. It runs in CI in the `rls-postgres` job, against a Postgres
+service container (`.github/workflows/backend-ci.yml:208-210`), and the
+workflow explicitly guards against the skip-is-green failure mode: if
+`JOBTRACKER_TEST_PG_ADMIN_URL` were unset the tests would skip silently and the
+job would still pass, so the *Assert the RLS suite actually ran* step parses the
+JUnit XML and fails when the suite reports zero tests or any skip (`:257-277`).
 
 ### 4.3 Layer 3 — explicit `user_id` scoping in the application
 
@@ -349,11 +410,16 @@ rather than claiming a uniformity that does not hold** (`docs/ARCHITECTURE.md`
 states the blanket version; it is imprecise):
 
 - **`gmail_oauth.py`** carries no router-level dependency. Its user-facing
-  endpoints take `Depends(current_user)` individually (`:1028`, `:1072`,
-  `:1254`, `:1411`, `:1585`, `:2041`). The **OAuth callback** deliberately has
-  none — the request arrives from Google's redirect and cannot carry the user's
-  JWT, so identity comes from the HS256-signed `state` parameter instead, which
-  the handler verifies before binding the RLS identity (`:1242`).
+  endpoints take `Depends(current_user)` one endpoint at a time — as a
+  parameter on `gmail_status` (`:1182`), `gmail_authorize` (`:1237`),
+  `gmail_disconnect` (`:1432`), `gmail_inbox` (`:1603`) and `gmail_sync`
+  (`:2306`), and in the route decorator's own `dependencies=[…]` for
+  `gmail_pipeline` (`:1777`). Six endpoints, six declarations, none shared.
+  The **OAuth callback** deliberately has none — the request arrives from
+  Google's redirect and cannot carry the user's JWT, so identity comes from
+  the HS256-signed `state` parameter instead, which
+  `gmail_callback` puts through `_verify_state` before binding the RLS identity
+  (`:1349`).
 - **`cron.py`** is not user-authenticated at all. It is invoked by Vercel's
   scheduler and authenticates with the shared `JOBTRACKER_VERCEL_CRON_SECRET`
   bearer token (`:265`, `:286`). It then binds each user's identity
@@ -398,12 +464,14 @@ would be nothing left to revoke.
 - **One policy is not user-scoped (§4.1).** `gmail_sync_enrollment` is readable
   in full by the application role. The table holds no secret, but tenant
   isolation for it rests on application code rather than on the database.
-- **`anon` still holds a grant on `gmail_sync_enrollment` (§4.1).** Inert
-  today because that table's policies are role-scoped, but it is drift from the
-  2026-08-03 hardening and should be revoked. **Open item.**
-- **The 2026-08-03 `anon` revocation is hand-run SQL, not a migration (§3).**
-  Production has it; a database rebuilt from `backend/alembic/versions/` alone
-  would not. Porting it into a revision is the fix. **Open item.**
+- **The `anon` revocations are hand-run SQL, not migrations (§3, §4.1).**
+  Production carries them — measured 2026-08-31, `anon` holds no grant on any
+  of the ten tables and is not a member of `jobtracker_app` — but a database
+  rebuilt from `backend/alembic/versions/` alone would carry Supabase's default
+  `anon` and `authenticated` grants instead, because no revision revokes
+  anything. Worse, the revoke that cleared `gmail_sync_enrollment` is not
+  recorded as SQL in this repository at all, so it cannot be replayed from
+  here. Porting the revokes into a revision is the fix. **Open item.**
 - **32 of the 35 policies carry no role clause (§4.1).** Isolation does not
   depend on one — the `user_id = (SELECT auth.uid())` predicate, `FORCE` and
   `NOBYPASSRLS` are what enforce it — but the uniform role gate the pack would
@@ -411,5 +479,8 @@ would be nothing left to revoke.
 
 ---
 
-*Prepared 2026-08-15. Figures marked live are snapshots; re-run the queries
-inline to refresh them.*
+*Prepared 2026-08-15; §3, §4.1 and §5 corrected 2026-08-31 — `anon` now holds
+no grant on any table, which retires the "inert grant" argument this document
+previously made, and the grant configuration turns out to be hand-applied
+rather than carried by the migration chain. Figures marked live are snapshots;
+re-run the queries inline to refresh them.*
