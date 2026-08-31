@@ -1086,15 +1086,43 @@ def strip_quoted_history(body: str) -> str:
 
     Returns ``body`` unchanged when there is no quote, and when what remains is
     too thin to be an assertion (see :data:`_MIN_ASSERTED_CHARS`).
+
+    THE FLOOR IS NOT THE ONLY READER OF THAT SPAN. ``own_text_span`` below
+    returns it whether or not it clears the floor, because "which words get
+    SCORED" and "which words did the sender WRITE" are different questions and
+    #417 lives exactly where they differ.
+    """
+
+    own = own_text_span(body)
+    return body if own is None or len(own) < _MIN_ASSERTED_CHARS else own
+
+
+def own_text_span(body: str) -> str | None:
+    """The words this message wrote ABOVE its quoted history — floor or no floor.
+
+    ``None`` when there is no quote at all, which is a different answer from
+    ``""`` (a reply that quoted something and wrote nothing above it) and both
+    are different from a span too short to be scored.
+
+    ISSUE #417, the part that survived #441. ``strip_quoted_history`` refuses
+    to strip below :data:`_MIN_ASSERTED_CHARS`, so the whole body — quote
+    included — goes to the scorer. That is right for "fyi" over a forwarded
+    rejection and wrong for "We must withdraw the offer.", which is 27
+    characters. The floor cannot tell those apart because it counts characters,
+    and nothing else was looking at the span at all. This is what looks.
+
+    Deliberately NOT a lower floor: the floor is doing its job, which is to
+    stop a substanceless reply from being reduced to nothing. Lowering it moves
+    every short reply in the corpus; this moves only the ones whose own words
+    contradict the verdict their quote produced.
     """
 
     if not body:
-        return body
+        return None
     marker = _QUOTE_BOUNDARY.search(body)
     if marker is None:
-        return body
-    own = body[: marker.start()].strip()
-    return body if len(own) < _MIN_ASSERTED_CHARS else own
+        return None
+    return body[: marker.start()].strip()
 
 
 def asserted_text(body: str) -> str:
@@ -1298,6 +1326,127 @@ REPORTS_ON_AN_APPLICATION: frozenset[str] = (
 
 
 # =============================================================================
+# When a reply's own words contradict the verdict its quote produced
+# =============================================================================
+#
+# ISSUE #417. A reply under :data:`_MIN_ASSERTED_CHARS` keeps its quote, so the
+# quote is what gets scored. For "fyi" over a forwarded offer that is correct
+# and this machinery stays out of the way. For "We must withdraw the offer." it
+# is the defect: 27 characters of the sender's own words are discarded, the
+# quoted "we are pleased to offer you the position" wins at 0.95, and the board
+# asserts an offer the person does not hold.
+#
+# THE FIX MAY NOT BE "DISTRUST THE FALLBACK", and that is the whole shape of
+# what follows. "Thursday works for me" over a quoted interview invitation is
+# also under the floor, also scores its quote, and is RIGHT to: the card should
+# advance. Capping every fallback sends that correct auto-file to the review
+# queue. So the span is read, and the verdict is capped only when the span
+# REFUTES the category the quote won with.
+#
+# WHAT THE FILE ALREADY HAD, AND WHAT IT DID NOT. The comment on
+# ``_NOISE_NEGATIVES`` names the split this reuses: a negative is either a
+# GENRE FILTER ("this is not job mail") or a SEMANTIC REFUTATION ("this IS job
+# mail and it is not THIS category"). The refutations are derived from
+# ``PATTERNS`` below rather than restated, so a pattern edited there is edited
+# here too and the three surfaces that read the PATTERNS literals statically
+# (``scripts/readme_facts.py``, ``ml/demo/space/…/rules.py``,
+# ``apps/web/lib/demo/rules.json``) are untouched — the same reasoning that put
+# ``_NOISE_NEGATIVES`` in a frozenset rather than on ``CategoryPatterns``.
+#
+# But the derived set is NOT SUFFICIENT, measured rather than assumed:
+# ``PATTERNS[offer].negative`` holds ``unfortunately``, ``regret to inform``,
+# ``not (at this time|selected)``, ``schedule.{0,20}call``, ``thank you for
+# applying`` and ``application.{0,20}received``, and not one of them matches
+# "We must withdraw the offer." The vocabulary for a withdrawal was never
+# written — ``test_a_reply_speaks_for_itself.py`` says so in as many words —
+# so the derived half fixes nothing on its own and :data:`_RETRACTION` supplies
+# what is missing.
+
+#: "The thing this thread was about has been taken back."
+#:
+#: A STANCE, NOT A CATEGORY, which is why it is here and not in ``PATTERNS``.
+#: It never scores and never names a verdict — there is no ``rescinded``
+#: category and #10 forbids inventing one from three wordings invented by the
+#: author of the rules. All it can do is stop a verdict from being asserted.
+#:
+#: SCOPED TO THE OPPORTUNITY AND NOT TO A DIARY. "no longer" and "closed" are
+#: required to land near the role, the offer or the opening, because "Thursday
+#: no longer works for me" above a quoted invitation is a rescheduling note and
+#: the interview it belongs to still exists.
+#:
+#: Bounded on every quantifier and applied only to a span shorter than
+#: :data:`_MIN_ASSERTED_CHARS`, so the ReDoS reasoning that shaped
+#: ``_REPLY_SUBJECT`` has nothing to bite on here: the alternatives are
+#: disjoint and the two gaps are capped at 30 characters of a class that
+#: excludes the sentence delimiter.
+_RETRACTION = re.compile(
+    r"\b(?:withdraw|withdrawn|withdrawing|withdrawal|rescind(?:ed|ing)?"
+    r"|revok(?:e|ed|ing)|retract(?:ed|ing)?)\b"
+    r"|\bno longer\b[^.\n]{0,30}\b(?:available|able|open|hiring|proceeding|moving)\b"
+    r"|\b(?:role|position|offer|opportunity|req|requisition|opening)\b"
+    r"[^.\n]{0,30}\b(?:closed|cancell?ed|frozen|filled|eliminated|on hold)\b"
+    r"|\b(?:hiring freeze|headcount freeze|put on hold)\b",
+    re.IGNORECASE,
+)
+
+#: The categories a retraction can refute: everything that claims an
+#: application is ALIVE.
+#:
+#: DERIVED, so it cannot drift from the enum. ``rejection`` is subtracted by
+#: hand and it is the only judgement in this constant: "we have withdrawn your
+#: application from consideration" is a rejection written in retraction words,
+#: and the classifier is already too shy about asserting a negative outcome
+#: (recall 25.5% at 100% precision) to have that one pushed back into the
+#: queue.
+_RETRACTABLE: frozenset[str] = (
+    frozenset(c.value for c in EmailCategory)
+    - _SAYS_NOTHING_ABOUT_AN_APPLICATION
+    - {EmailCategory.REJECTION.value}
+)
+
+#: The semantic half of each category's negatives, compiled once.
+_SEMANTIC_REFUTATIONS: dict[str, tuple[re.Pattern[str], ...]] = {
+    category.value: tuple(
+        re.compile(p, re.IGNORECASE) for p in patterns.negative if p not in _NOISE_NEGATIVES
+    )
+    for category, patterns in PATTERNS.items()
+}
+
+#: What a verdict is worth once the sender's own words have contradicted it.
+#:
+#: BETWEEN ``pipeline.REVIEW_FLOOR`` (0.70) AND ``pipeline.AUTO_FILE_GATE``
+#: (0.85), and both bounds are load-bearing. At or over the gate this is the
+#: bug. Under the floor the message is DROPPED rather than queued, which is why
+#: the alternative shape — letting the refutation flip the category to
+#: ``other`` — is worse: ``other`` lands at 0.50, so the mail that corrects the
+#: board would be destroyed instead of shown to the user. Capping asks a
+#: question; flipping deletes the evidence.
+#:
+#: Not imported from ``cloud.pipeline``: that module is deliberately free of
+#: ``jobtracker`` imports and the dependency must not be created in the other
+#: direction either. ``tests/test_confidence_gate_lockstep.py`` is what keeps
+#: the numbers honest.
+_REFUTED_CONFIDENCE = 0.80
+
+
+def own_text_refutes(own: str, category: str) -> list[str]:
+    """Which of ``own``'s words argue AGAINST ``category``.
+
+    Empty when the sender wrote nothing readable against it, which is the
+    common case and the one that must stay cheap. The patterns are returned
+    rather than a bool so the caller can say WHY in ``matched_patterns``; a cap
+    nobody can trace back to a phrase is a magic number in the making.
+    """
+
+    if not own:
+        return []
+    hits = [p.pattern for p in _SEMANTIC_REFUTATIONS.get(category, ()) if p.search(own)]
+    if category in _RETRACTABLE and _RETRACTION.search(own):
+        hits.append(_RETRACTION.pattern)
+    return hits
+
+
+# =============================================================================
 # Rule-Based Classifier
 # =============================================================================
 
@@ -1398,6 +1547,13 @@ class RulesClassifier:
         """
         scores: dict[str, int] = {cat.value: 0 for cat in EmailCategory}
         matched_patterns: list[str] = []
+
+        # READ BEFORE ``asserted_text`` DESTROYS IT. When the span clears the
+        # floor it IS what gets scored and there is no second reading to do;
+        # when it does not, the quote is scored on its behalf and this is the
+        # only remaining record of what the sender actually wrote. #417.
+        own_text = own_text_span(body)
+        quote_spoke_for_it = own_text is not None and 0 < len(own_text) < _MIN_ASSERTED_CHARS
 
         # ONCE, before any pattern sees it. Every ``pattern.search(body)`` below
         # is searching what the sender ASSERTS — see :func:`asserted_text`. The
@@ -1614,6 +1770,26 @@ class RulesClassifier:
         # Boost confidence for ATS emails
         if is_ats_email and winner_name in ["applied", "rejection", "interview", "offer"]:
             confidence = min(confidence + 0.05, 0.95)
+
+        # THE QUOTE SPOKE, AND THE SENDER'S OWN WORDS CONTRADICT IT. #417.
+        #
+        # Only reachable when the floor refused to strip, so a message whose
+        # own words WERE scored can never land here — that verdict already came
+        # from the sender and there is nothing to distrust. And only when those
+        # words refute this particular winner, which is what keeps "Thursday
+        # works for me" over a quoted invitation auto-filing as it should.
+        #
+        # AFTER THE ATS BONUS, not before. The bonus is +0.05 and the cap is
+        # 0.05 under the gate, so capping first hands every withdrawal from a
+        # Greenhouse relay straight back over ``AUTO_FILE_GATE`` — the exact
+        # arithmetic that made the anchored ``is_ats_sender`` check load-bearing
+        # in #252. ``min`` and not assignment, so a verdict already below the
+        # cap is not RAISED to it.
+        if quote_spoke_for_it:
+            refutations = own_text_refutes(own_text or "", winner_name)
+            if refutations:
+                confidence = min(confidence, _REFUTED_CONFIDENCE)
+                matched_patterns.extend(f"[OWN-TEXT-REFUTES] {p}" for p in refutations)
 
         return RuleClassificationResult(
             category=EmailCategory(winner_name),
