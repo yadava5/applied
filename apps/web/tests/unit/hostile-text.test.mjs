@@ -28,6 +28,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { importTsx, markup } from "./helpers/renderTsx.mjs";
+import { visibleText } from "./helpers/visibleText.mjs";
 
 const { MailText } = await importTsx("components/mail/MailText.tsx");
 const { HOSTILE_CODE_POINTS, HOSTILE_SENTINEL, hostileTextNote, inspectHostileText, safeText } =
@@ -83,24 +84,46 @@ const EXPECTED_SET = [
   0xfeff, // zero-width no-break space (BOM)
 ];
 
-/**
- * What a person actually reads: markup with the tags taken out.
- *
- * The point of every assertion here is the RENDERED text, not the source that
- * produced it, so tags go and their attributes go with them — a code point
- * hiding in a `title` is not something a reader sees on the line.
- */
-function visibleText(html) {
-  return html
-    .replace(/<[^>]*>/g, "")
-    .replaceAll("&amp;", "&")
-    .replaceAll("&lt;", "<")
-    .replaceAll("&gt;", ">")
-    .replaceAll("&quot;", '"')
-    .replaceAll("&#x27;", "'");
-}
-
 const render = (value) => markup(MailText({ value }));
+
+// ---------------------------------------------------------------------------
+// 0. The reading instrument itself.
+//
+// Every assertion below is a measurement of "what does a person see", taken
+// with `visibleText`. An instrument that misreports makes each of them check
+// something other than what it says, silently — so it is asserted first, and
+// against inputs chosen to break the hand-rolled version it replaced (#424,
+// CodeQL js/double-escaping and js/incomplete-multi-character-sanitization).
+// ---------------------------------------------------------------------------
+
+test("an escaped entity is reported as the reader sees it, not as a tag", () => {
+  // React renders the LITERAL text `&lt;script&gt;` as `&amp;lt;script&amp;gt;`,
+  // so what is on the line is `&lt;script&gt;` — punctuation and the letters
+  // `lt`, not markup.
+  //
+  // The helper this replaced unescaped `&amp;` first and `&lt;` second, so
+  // `&amp;lt;` collapsed to `&lt;` and then to `<`, and it reported `<script>`
+  // — a string no reader ever saw. Any assertion about visible text taken with
+  // that instrument was checking a different string than it claimed.
+  const literal = "&lt;script&gt; is the text here, not a tag";
+  assert.equal(visibleText(markup(MailText({ value: literal }))), literal);
+});
+
+test("an attribute value never leaks into the line", () => {
+  // A `>` inside a QUOTED attribute does not close the tag — the HTML
+  // tokenizer stays in the attribute-value state. `/<[^>]*>/g` cuts there
+  // anyway and spills the rest of the attribute into the text it returns:
+  // this input came back as `" see\">Payroll"`.
+  //
+  // NOT REACHABLE FROM A COMPONENT TODAY, and saying so is the point: React
+  // escapes `>` to `&gt;` in attribute values, so `renderToStaticMarkup`
+  // cannot emit this shape. It is asserted against hand-written markup because
+  // the instrument's correctness must not rest on a guarantee made by the
+  // thing it measures — and because the helper is shared now, and the next
+  // caller may not be React.
+  const html = `<p class="x" title="1 hidden character (U+202E) > see">Payroll</p>`;
+  assert.equal(visibleText(html), "Payroll");
+});
 
 // ---------------------------------------------------------------------------
 // 1. The two attacks #424 measured, rendered.
@@ -395,6 +418,7 @@ test("no file in this fix contains a literal member of the set", () => {
     "components/mail/MailText.tsx",
     "tests/unit/hostile-text.test.mjs",
     "tests/unit/mail-rows-neutralise-hostile-text.test.mjs",
+    "tests/unit/helpers/visibleText.mjs",
   ]) {
     const source = readFileSync(resolve(WEB_ROOT, rel), "utf8");
     const hits = source.match(hostile) ?? [];

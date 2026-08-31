@@ -48,6 +48,7 @@ import test from "node:test";
 import { createElement } from "react";
 
 import { importTsx, markup, stubModule } from "./helpers/renderTsx.mjs";
+import { visibleText } from "./helpers/visibleText.mjs";
 
 const WEB_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -102,10 +103,6 @@ const HOSTILE_SUBJECT = `Payroll ${RLO}gpj.exe${PDF}`;
  */
 const GENUINE_SENDER = "no-reply@harbourgate.test";
 const HOSTILE_SENDER = GENUINE_SENDER.replace("@", `${ZWSP}@`);
-
-function visibleText(html) {
-  return html.replace(/<[^>]*>/g, "");
-}
 
 /**
  * Every assertion a hostile row must satisfy, in one place so a surface cannot
