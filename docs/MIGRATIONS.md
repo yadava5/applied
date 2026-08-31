@@ -233,16 +233,48 @@ every policy on it, so a table that is `ENABLE`-only looks protected in
 `verify_rls.py` checks policies. It does **not** check privileges, and the two
 are different gates: a table can be perfectly policied and still be unreadable
 because the runtime role was never granted anything on it. `e2b6f0a4d517` is
-the first revision to create a table since the cutover to `jobtracker_app`, so
-there is no precedent and no evidence that `ALTER DEFAULT PRIVILEGES` is set
-for that role. Issue the grant in the revision:
+the first revision to create a table since the cutover to `jobtracker_app`.
+Issue the grant in the revision:
 
 ```sql
 GRANT SELECT, INSERT, DELETE ON <new_table> TO jobtracker_app;
 ```
 
-Narrow it to the verbs the code actually uses — withholding `UPDATE` on a table
-nothing updates is free. And note the failure mode if you forget: the runtime
+Narrow it to the verbs the code actually uses. **But the narrowing does not
+take effect on its own, and an earlier version of this document said it was
+free.** `ALTER DEFAULT PRIVILEGES` **is** set on `public` for role `postgres`,
+and every `public` table is owned by `postgres`, so a new table is created with
+these grants already in place before your `GRANT` runs (read from production
+2026-08-31 via `pg_default_acl`):
+
+```
+postgres | public | r | {postgres=arwdDxtm/postgres,
+                         anon=arwdDxtm/postgres,
+                         authenticated=arwdDxtm/postgres,
+                         service_role=arwdDxtm/postgres,
+                         jobtracker_app=arwd/postgres}
+```
+
+Two consequences, both load-bearing:
+
+- **`jobtracker_app` gets `arwd` regardless of what your revision grants.** This
+  is not theory — `e2b6f0a4d517` withheld `UPDATE` on `gmail_sync_enrollment`
+  deliberately and said so in prose, and production holds `UPDATE` on it anyway.
+  That divergence was filed as issue #660 as an unexplained grant; this is where
+  it came from. A narrower `GRANT` adds nothing and removes nothing. To actually
+  withhold a verb you must `REVOKE` it explicitly after creating the table.
+- **`anon` and `authenticated` get every privilege**, including on a table that
+  has just been created and may not yet have a policy. The existing tables do
+  not show these grants because they were revoked by hand afterwards — SQL that
+  is recorded in no revision in this chain, which `docs/casa/README.md` already
+  carries as an open item. A new table starts wide and stays wide unless
+  somebody remembers.
+
+`scripts/verify_rls.py` will not tell you: it checks `ENABLE`, `FORCE`, and that
+a policy exists, and it reads no privileges at all. RLS is what actually holds
+the line today — every policy is `USING (user_id = (SELECT auth.uid()))` with
+`WITH CHECK` the same on `INSERT`, and `auth.uid()` is `NULL` for `anon`, so no
+row qualifies. That is a backstop, not the grant being correct. And note the failure mode if you forget: the runtime
 error surfaces wherever the first write is, which for `gmail_sync_enrollment`
 would have been inside `save_gmail_credentials`, whose `except` turns it into
 `False` and fails the **OAuth callback**. Linking Gmail breaks for every user,
