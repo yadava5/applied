@@ -103,13 +103,17 @@ Fernet-construction site**: `_require_fernet()` at
 of a stored credential goes through that function, and no `Fernet` object is
 built anywhere else.
 
-The *variable* `settings.secret_encryption_key` is read at **three** lines, not
-one: `credentials/cloud.py:116` inside `_require_fernet()`, and
-`cloud/gmail_oauth.py:566` and `:594`, which sign and verify the OAuth `state`
-JWT with the same material (§3.4). The distinction matters to the
-access-logging argument in
-[`SECRET-ACCESS-POLICY.md`](SECRET-ACCESS-POLICY.md) §3.2, so both numbers are
-stated there too: one construction site, three reads.
+The *variable* is read at **four** lines, not one: `credentials/cloud.py:116`
+inside `_require_fernet()`; `cloud/gmail_oauth.py:693` and `:721`, which sign
+and verify the OAuth `state` JWT with the same material (§3.4); and
+`getattr(self, name)` inside `gmail_oauth_missing_fields`
+(`backend/jobtracker/config.py:629`), which reaches it by name out of
+`_GMAIL_OAUTH_REQUIRED_FIELDS` to answer "is Gmail OAuth configured" and never
+uses the value it gets. That fourth site cannot be found by grepping for
+`settings.secret_encryption_key`, and that limitation is stated where the grep
+is published — [`SECRET-ACCESS-POLICY.md`](SECRET-ACCESS-POLICY.md) §2.3. The
+distinction matters to the access-logging argument in that document's §3.2, so
+both numbers are stated there too: one construction site, four reads.
 
 If the key is absent or malformed, `_require_fernet()` raises
 `CredentialEncryptionError` with a message naming the variable and **not** its
@@ -130,10 +134,12 @@ otherwise.** The specifics:
 `JOBTRACKER_SECRET_ENCRYPTION_KEY` today invalidates every stored ciphertext at
 once. The failure is not a crash: `get_gmail_credentials` catches
 `InvalidToken`, emits the standard `secret_access` record at **`logger.error`**
-with ` error=InvalidToken` appended, and returns `None` (`cloud.py:344-365`);
-the iCloud path is identical (`cloud.py:471-481`). `ERROR` rather than
+with ` error=InvalidToken` appended, and returns `None` (`cloud.py:390-413`);
+`get_icloud_credentials` is identical (`cloud.py:527-539`). `ERROR` rather than
 `WARNING` is deliberate — a failed decrypt of a live credential is an incident
-— and it is pinned: `backend/tests/test_secret_access_logging.py:300` asserts
+— and it is pinned:
+`test_a_failed_decrypt_is_logged_at_error_without_the_token`
+(`backend/tests/test_secret_access_logging.py:301`) asserts
 `record.levelno == logging.ERROR` on that record. So the observable effect of a
 rotation is that **every user silently appears to have no Gmail connection**
 and must reconnect. Because
@@ -166,7 +172,8 @@ jobs:
 
 1. the Fernet envelope over stored credentials (§3.2), and
 2. signing the Gmail OAuth `state` parameter, which is a JWT signed **HS256**
-   (`backend/jobtracker/cloud/gmail_oauth.py:566`) and verified at `:594`.
+   in `_sign_state` (`backend/jobtracker/cloud/gmail_oauth.py:693`) and
+   verified in `_verify_state` at `:721`.
 
 Reusing one key across two constructions is not a break here — Fernet derives
 distinct AES and HMAC halves from its 32 bytes, and PyJWT's HS256 takes the
@@ -222,9 +229,11 @@ matter for assessment:
   `algorithm="none"` and asserts a 401.
 - If an ES256 token arrives and `JOBTRACKER_SUPABASE_JWKS_URL` is not
   configured, verification **fails closed** with an explicit error rather than
-  falling back to the symmetric path (`:134-141`).
+  falling back to the symmetric path — `_decode_token`,
+  `backend/jobtracker/auth/supabase_jwt.py:134-141`.
 
-JWKS keys are cached for 3600 seconds (`:96`).
+JWKS keys are cached for 3600 seconds — `_get_jwks_client`,
+`backend/jobtracker/auth/supabase_jwt.py:96`.
 
 ---
 

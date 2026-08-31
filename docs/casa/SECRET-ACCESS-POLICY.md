@@ -25,14 +25,17 @@ it was written to prevent.
 
 `JOBTRACKER_GOOGLE_OAUTH_CLIENT_ID`, `NEXT_PUBLIC_SUPABASE_URL` and
 `NEXT_PUBLIC_SUPABASE_ANON_KEY` are **not** secrets. The anon key is
-publishable by design and reaches no data. `anon` holds no grants on nine of
-the ten tables in `public`; it retains the default grant on
-`gmail_sync_enrollment`, which was created after the 2026-08-03 revocation, and
-that grant is inert because every policy on that table is scoped `TO
-jobtracker_app` under forced RLS. The exception is set out in full — with the
-query that finds it — in
+publishable by design and reaches no data. Measured against production on
+**2026-08-31**: `anon` holds **no grant on any of the ten tables in `public`**,
+`gmail_sync_enrollment` included, so it cannot reach them at all — and it is
+additionally not a member of `jobtracker_app`, so it cannot match that role's
+policies either. The queries are reproduced in full in
 [`ARCHITECTURE-AND-TENANT-ISOLATION.md`](ARCHITECTURE-AND-TENANT-ISOLATION.md)
-§4.1, and it is an open item there.
+§4.1, **together with the condition this argument depends on**: those grants
+were revoked by hand and no Alembic revision performs them, so a database
+rebuilt from `backend/alembic/versions/` alone would carry Supabase's default
+`anon` grants and none of the above would be true of it. That is an open item
+there.
 
 ### 1.2 User secrets (one per user, per kind)
 
@@ -103,25 +106,52 @@ are no other developers on this project.
 1. The Fernet key has exactly **one construction site** in the codebase —
    `_require_fernet()` at `backend/jobtracker/credentials/cloud.py:107`. Every
    encrypt and every decrypt of a stored credential goes through it, so no
-   `Fernet` is built anywhere else. The *variable* it reads,
-   `settings.secret_encryption_key`, has **three** read sites, and the pack
-   names all three rather than rounding to one:
+   `Fernet` is built anywhere else. The *variable* it reads has **four** read
+   sites across three modules. Three of them name
+   `settings.secret_encryption_key` literally, and a grep finds those three:
 
    ```
    $ grep -rn 'settings\.secret_encryption_key' backend/jobtracker/ \
-       | grep -v __pycache__ | grep -vE ':\s*(#|``)'
-   backend/jobtracker/cloud/gmail_oauth.py:566:    return jwt.encode(payload, settings.secret_encryption_key, algorithm="HS256")
-   backend/jobtracker/cloud/gmail_oauth.py:594:            settings.secret_encryption_key,
+       | grep -v __pycache__ | grep -v '``'
+   backend/jobtracker/cloud/gmail_oauth.py:693:    return jwt.encode(payload, settings.secret_encryption_key, algorithm="HS256")
+   backend/jobtracker/cloud/gmail_oauth.py:721:            settings.secret_encryption_key,
    backend/jobtracker/credentials/cloud.py:116:    key = settings.secret_encryption_key
    ```
 
-   The two extra reads are the OAuth `state` HMAC — sign at `:566`, verify at
-   `:594` — which reuses this key for a second purpose. That dual use is
-   disclosed in [`CRYPTOGRAPHY.md`](CRYPTOGRAPHY.md) §3.4. What still holds is
-   the property the control needs: the whole access surface is three named
-   lines in two modules, so "who reads the key" is answerable by citation
-   rather than by a grep across the tree, and a fourth reader arrives as a
-   diff.
+   That transcript is what the command prints on this tree, checked by running
+   it. The final filter drops two docstring mentions — `gmail_oauth.py:644` and
+   `credentials/cloud.py:108` — which name the setting in reST prose rather
+   than reading it.
+
+   Two of the three are the OAuth `state` HMAC — signed in `_sign_state`
+   (`gmail_oauth.py:693`), verified in `_verify_state` (`:721`) — which reuses
+   this key for a second purpose. That dual use is disclosed in
+   [`CRYPTOGRAPHY.md`](CRYPTOGRAPHY.md) §3.4.
+
+   **The fourth read is in a third module, and the grep above structurally
+   cannot see it.** `backend/jobtracker/config.py` carries
+   `"secret_encryption_key"` as a *string* in `_GMAIL_OAUTH_REQUIRED_FIELDS`
+   (`:608-613`, the entry itself at `:612`) and dereferences it reflectively in
+   `gmail_oauth_missing_fields` — `getattr(self, name)` at `:629` — which backs
+   the `gmail_oauth_configured` computed field (`:632-644`). Several request
+   paths reach it: `_require_configured()` (`gmail_oauth.py:990`), the status
+   endpoint (`:1196`) and the OAuth callback (`:1339`). A grep for the literal
+   `settings.secret_encryption_key` cannot match a `getattr` by name, so
+   "these are all the readers" is **not** falsifiable by the command this
+   document publishes. It is falsifiable by reading that tuple, which is why
+   the tuple is cited here rather than the grep being presented as complete.
+
+   **The fourth read never touches the value.** `getattr(self, name)` is
+   evaluated for truthiness alone; nothing is returned, logged or surfaced.
+   `gmail_oauth_missing_fields` yields field *names*, and says so in its own
+   docstring (`config.py:621-623`) precisely so that the 503 it feeds is safe
+   to emit. So the surface that handles the key *material* is still the three
+   lines in the transcript.
+
+   What the control needs still holds, restated accurately: the access surface
+   is four named sites in three modules, "who reads the key" is answerable by
+   citation, and a fifth reader arrives as a diff — provided the reviewer reads
+   `_GMAIL_OAUTH_REQUIRED_FIELDS` as well as running the grep.
 
 2. Decrypted plaintext is never logged, never returned to an HTTP caller, and
    never leaves the request that decrypted it. Tokens are excluded from all API
@@ -184,13 +214,16 @@ Two exactness notes, because a compliance table that overstates its own
 vocabulary is the thing an assessor checks first:
 
 - **`logger.info` is the level for every outcome except the two decrypt
-  failures**, which are `logger.error` at `cloud.py:357` (Gmail) and `:473`
-  (iCloud). That is deliberate — a failed decrypt of a live credential is an
-  incident, not a routine outcome — and it is pinned:
-  `backend/tests/test_secret_access_logging.py:300` asserts
+  failures**, which are `logger.error` in `get_gmail_credentials`
+  (`cloud.py:405`) and in `get_icloud_credentials` (`:531`). That is
+  deliberate — a failed decrypt of a live credential is an incident, not a
+  routine outcome — and it is pinned:
+  `test_a_failed_decrypt_is_logged_at_error_without_the_token`
+  (`backend/tests/test_secret_access_logging.py:301`) asserts
   `record.levelno == logging.ERROR` on that record.
 - **There is no `absent` outcome.** Both delete paths issue the `DELETE` and
-  log `deleted` unconditionally (`cloud.py:393-395`, `:501-503`); neither
+  log `deleted` unconditionally — `delete_gmail_credentials`
+  (`cloud.py:432-443`) and `delete_icloud_credentials` (`:551-561`); neither
   checks whether a row existed. The log therefore **cannot** distinguish
   removing a credential from removing nothing. An earlier draft of this table
   listed `absent`; it was never emitted, and it is removed rather than left
@@ -264,15 +297,21 @@ dependency this project has decided against.
 
 **The compensating controls, each verifiable:**
 
-1. **One construction site, three reads, all named.** `_require_fernet()`
+1. **One construction site, four reads, all named.** `_require_fernet()`
    (`backend/jobtracker/credentials/cloud.py:107`) is the only place a `Fernet`
    is built, so every credential encrypt and decrypt passes through one
-   function. The key *variable* is read at three lines in two modules —
-   `credentials/cloud.py:116` and, for the OAuth `state` HMAC,
-   `cloud/gmail_oauth.py:566` and `:594` (§2.3 rule 1). A reviewer can confirm
-   the whole access surface by reading two functions rather than one, and any
-   new reader appears as a diff. The surface is small and enumerable; it is not
-   singular, and this document does not claim it is.
+   function. The key *variable* is read at four lines in three modules —
+   `credentials/cloud.py:116`; for the OAuth `state` HMAC,
+   `cloud/gmail_oauth.py:693` and `:721`; and, as a truthiness check that never
+   touches the value, `getattr(self, name)` in `gmail_oauth_missing_fields`
+   (`backend/jobtracker/config.py:629`), driven by
+   `_GMAIL_OAUTH_REQUIRED_FIELDS` (§2.3 rule 1). The fourth site cannot be
+   found by a literal grep for `settings.secret_encryption_key`; that
+   limitation of the search is stated in §2.3 rather than left for a reviewer
+   to discover by finding a reader the pack did not name. A reviewer can
+   confirm the whole access surface by reading three functions rather than one,
+   and any new reader appears as a diff. The surface is small and enumerable;
+   it is not singular, and this document does not claim it is.
 2. **The key never leaves the process.** It is not logged, not returned, not
    written to disk, and not included in error messages — §2.3 rule 3 covers
    the mechanism that keeps it out of error output.
@@ -341,8 +380,17 @@ dependency this project has decided against.
    than a workflow's reads of them. So the CI limb of this control has no
    platform log behind it. What constrains it instead is scope: `DIRECT_URL` is
    injected only into the `migrate` job, which is pinned to the `production`
-   environment (`.github/workflows/db-migrate.yml:170-172`) and reads the
-   secret at one place (`:187`).
+   environment (`.github/workflows/db-migrate.yml:170-172`). Inside that job it
+   is read **six** times, once in each step that uses it: *Check the
+   credential is present* (`:187`), *Confirm the database is reachable*
+   (`:207`), *Record the revision before* (`:279`), *alembic upgrade head*
+   (`:286`), *Verify the database reached the revision the code expects*
+   (`:292`) and *Verify row-level security survived the migration* (`:327`).
+   `grep -n 'secrets\.DIRECT_URL' .github/workflows/db-migrate.yml` returns
+   exactly those six lines and nothing else, and all six sit inside the
+   `migrate` job, which begins at `:166`. The scope is what the compensating
+   argument rests on and it holds; the earlier "reads the secret at one place"
+   did not, and the count is corrected here rather than the sentence dropped.
 5. **Use of the key is logged even though reads of it are not** (§3.1). Every
    *effect* the key has — every credential decrypt — produces a record. That is
    the closer proxy to "was this secret used, and for whom".
@@ -380,5 +428,9 @@ dependency this project has decided against.
 ---
 
 *Prepared 2026-08-15; §3.2 corrected 2026-08-16 against the platform's own
-records. No secret value is reproduced. Where a secret is
+records; §1.1, §2.3, §3.1 and §3.2 corrected 2026-08-31 — the `anon` grant
+figure re-read from production, the fourth read site of the encryption key
+named along with the limitation of the grep that cannot see it, the published
+transcript reproduced from a real run of the command, and the `DIRECT_URL` read
+count corrected. No secret value is reproduced. Where a secret is
 referenced it is named by environment variable only.*
