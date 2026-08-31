@@ -5,6 +5,19 @@ on:
     paths:
       - "apps/web/**"
       - ".github/workflows/frontend-ci.yml"
+      # `booklet/` is not this app, but the unit suite below GATES it.
+      # `apps/web/tests/unit/no-real-employer-in-shipped-fixtures.test.mjs`
+      # declares five scan roots and two of them — `booklet/src/` and the built
+      # card it produces — are outside `apps/web/**`. Without this line a PR
+      # that edited only `booklet/src/content.ts` would never run the gate that
+      # exists to check it, which is the same shape as the two entries
+      # `backend-ci.yml` carries for its own out-of-tree gate scripts and the
+      # `scripts/generate_api_schema.sh` line in `e2e-ci.yml`: a job that cannot
+      # trigger is indistinguishable from a job that does not exist.
+      #
+      # `apps/web/public/system-card/**` needs no line — it is already under
+      # `apps/web/**`. Edit BOTH blocks below if you touch this one.
+      - "booklet/**"
   push:
     branches:
       - main
@@ -12,6 +25,7 @@ on:
     paths:
       - "apps/web/**"
       - ".github/workflows/frontend-ci.yml"
+      - "booklet/**"
   workflow_dispatch:
 
 permissions:

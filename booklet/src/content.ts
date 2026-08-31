@@ -470,12 +470,16 @@ export const PROOF = {
       "The signature Applied visual: each email’s path through the three layers and the gate. The layer that fired lights in its own hue; earlier layers passed it on, later layers were never needed. Confidence is drawn against the 0.85 gate.",
     // Illustrative traces — demonstrate the mechanism (mirrors the app's
     // DEMO_REVIEW_QUEUE fixture); confidences illustrate behavior, not a benchmark.
+    // Senders name the CHANNEL (`greenhouse.io` is the real relay) or an
+    // INVENTED employer, never a real one: three rows named real companies on
+    // invented subjects and confidences until #638 swapped them.
+    // See apps/web/tests/unit/no-real-employer-in-shipped-fixtures.test.mjs.
     illustrativeNote: "Illustrative traces — the mechanism, not measured metrics.",
     rows: [
       { subject: "Unfortunately, we won’t be moving forward", from: "no-reply@greenhouse.io", fired: 0, category: "rejection", confidence: 0.97, needsReview: false },
-      { subject: "Your Stripe application was received", from: "jobs@stripe.com", fired: 0, category: "applied", confidence: 0.95, needsReview: false },
-      { subject: "Next steps for your candidacy", from: "recruiting@datadog.com", fired: 1, category: "interview", confidence: 0.88, needsReview: false },
-      { subject: "A quick update on your process", from: "talent@notion.so", fired: 2, category: "follow_up", confidence: 0.79, needsReview: true },
+      { subject: "Your Juniper Cloud application was received", from: "jobs@junipercloud.io", fired: 0, category: "applied", confidence: 0.95, needsReview: false },
+      { subject: "Next steps for your candidacy", from: "recruiting@kestreldynamics.com", fired: 1, category: "interview", confidence: 0.88, needsReview: false },
+      { subject: "A quick update on your process", from: "talent@harboranalytics.com", fired: 2, category: "follow_up", confidence: 0.79, needsReview: true },
       { subject: "Re: your profile", from: "hiring@earlystage.xyz", fired: 2, category: "assessment", confidence: 0.66, needsReview: true },
     ],
     legendGate: "below 0.85 → human",
