@@ -72,6 +72,31 @@ const ATS_DOMAINS = JSON.parse(
 ).ats_domains;
 
 /**
+ * The same list as a Set, and the reason is a static-analysis one.
+ *
+ * Every membership assertion below asks whether a string IS one of the listed
+ * domains. That is exact membership and never substring containment — the
+ * distinction this whole file exists to hold. Written as
+ * `ATS_DOMAINS.includes("rippling.com")` it is `Array.prototype.includes`, but
+ * the list arrives from `JSON.parse` with no type attached, and CodeQL's
+ * `js/incomplete-url-substring-sanitization` cannot tell that call from
+ * `String.prototype.includes`. It read the assertion as the very defect the
+ * fix removed and raised a high-severity alert on it.
+ *
+ * `Set.prototype.has` cannot be misread, so the assertion keeps its meaning
+ * with nothing suppressed. That choice is deliberate: an inline dismissal on
+ * THIS file is what a future reader would most reasonably trust, and it would
+ * also hide a real reintroduction of the substring bug behind a comment that
+ * says the alert was already considered. Do not "simplify" this back to
+ * `.includes(...)`.
+ *
+ * `backend/tests/test_ingestion_hole_166.py` resolves the identical Python
+ * false positive the same way — a set-subset assertion rather than `in` — and
+ * for the same reason. The two are worth reading together.
+ */
+const LISTED = new Set(ATS_DOMAINS);
+
+/**
  * `pipeline.AUTO_FILE_GATE`. The threshold the bonus is measured against.
  *
  * Compared with `>=` and `<` rather than `===`, because the sum really is
@@ -194,7 +219,7 @@ test("the two entries anchoring makes load-bearing are both still in rules.json"
   // The Python side pins the same pair in
   // `test_two_list_entries_became_load_bearing_under_anchoring`.
   for (const entry of ["myworkday.com", "workday.com", "greenhouse-mail.io", "greenhouse.io"]) {
-    assert.ok(ATS_DOMAINS.includes(entry), `rules.json lost the \`${entry}\` entry`);
+    assert.ok(LISTED.has(entry), `rules.json lost the \`${entry}\` entry`);
   }
 });
 
@@ -204,7 +229,7 @@ test("bare rippling.com is still not an ATS sender — it is payroll mail", () =
   // because the docstring calls the narrow entry deliberate: a bare
   // `rippling.com` would sweep in payroll mail that is not about an application.
   assert.equal(confidenceFrom("payroll@rippling.com"), 0.8);
-  assert.ok(!ATS_DOMAINS.includes("rippling.com"));
+  assert.ok(!LISTED.has("rippling.com"));
 });
 
 test("a sender with no domain does not throw and is not an ATS relay", () => {
@@ -228,7 +253,7 @@ test("a sender with no domain does not throw and is not an ATS relay", () => {
   // to `""`, and `"".endsWith(".greenhouse.io")` is false — but `ATS_DOMAINS`
   // must never gain an empty entry, because `"" === ""` would then match every
   // sender that has an `@` in it.
-  assert.ok(!ATS_DOMAINS.includes(""), "an empty list entry would match every sender");
+  assert.ok(!LISTED.has(""), "an empty list entry would match every sender");
 });
 
 test("an address with an empty local part still HAS a domain, and both engines match it", () => {
