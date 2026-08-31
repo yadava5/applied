@@ -94,7 +94,7 @@ def test_a_real_run_with_no_docker_names_the_rls_suite() -> None:
     out = _run(["tests/test_rls_postgres.py"], {"DOCKER_HOST": NO_DOCKER})
     assert "tests that did not run" in out, out[-3000:]
     assert "tests/test_rls_postgres.py" in out
-    assert "21 skipped" in out
+    assert "22 skipped" in out
     assert "UNVERIFIED" in out, "the module's own reason should reach the reader"
 
 
