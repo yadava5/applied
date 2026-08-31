@@ -507,6 +507,18 @@ async def test_an_unconfirmed_anonymous_row_holds_the_mint_back(test_session) ->
     rule 4 returns ``rows[0]``, the OLDEST live row, which is the identified one
     below and not the unconfirmed row the refusal was about. It is exactly as
     imprecise as the anonymous board's fold, whose target is also ``rows[0]``.
+
+    AND THE IMPRECISION HAS A COST THAT WAS MEASURED. Swap the two
+    ``created_day`` values so the unconfirmed row is the oldest live one and it
+    becomes the fold target: it is rejected, the arriving confirmation is newer
+    than its stored rejection, and ``_reopening_evidence`` reopens it — two
+    rows, status ``applied``. That is the same corruption
+    ``test_the_fold_does_not_un_reject_a_settled_application`` closes, surviving
+    in the one shape this arm deliberately refuses to mint for. It is NOT fixed
+    here: fixing it means steering rule 4, which serves review-classify and
+    orphan-reconcile as well as the sync. Recorded as the boundary of the fix,
+    and deliberately not asserted — a test pinning that reopen would read as a
+    decision that it is acceptable, and that decision has not been made.
     """
 
     named = await _row(test_session, role_token="platform engineer", created_day=1)
