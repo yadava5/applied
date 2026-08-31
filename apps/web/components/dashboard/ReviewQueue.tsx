@@ -4,6 +4,7 @@ import { ExternalLink, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
+import { MailText } from "@/components/mail/MailText";
 import { ApplicationPicker } from "@/components/review/ApplicationPicker";
 import { GateMeter } from "@/components/viz/GateMeter";
 import { shortDate } from "@/lib/dashboard/dates";
@@ -24,6 +25,7 @@ import {
   type CandidateApplication,
   type ReviewAssignment,
 } from "@/lib/dashboard/review";
+import { safeText } from "@/lib/security/hostileText";
 import type { Application } from "@/lib/dashboard/summary";
 
 /** One uncertain verdict awaiting a human decision (from GET /applications/review). */
@@ -206,7 +208,9 @@ function ReviewRow({
     <li className="rounded-lg border border-line-soft bg-surface-2 p-3">
       <div className="flex items-start justify-between gap-2">
         <p className="min-w-0 text-sm font-medium text-strong">
-          <span className="truncate">{item.subject || "(no subject)"}</span>
+          <span className="truncate">
+            <MailText value={item.subject || "(no subject)"} />
+          </span>
         </p>
         {/* No receipt time at all → render nothing (not the "—" placeholder),
             which is what this row has always shown for a dateless item. */}
@@ -215,8 +219,13 @@ function ReviewRow({
         </span>
       </div>
       <p className="truncate text-xs text-muted">
-        {sender}
-        {item.role ? <span className="text-dim"> · {item.role}</span> : null}
+        <MailText value={sender} />
+        {item.role ? (
+          <span className="text-dim">
+            {" · "}
+            <MailText value={item.role} />
+          </span>
+        ) : null}
       </p>
       {/* WHY this email is here: its confidence drawn against the auto-file
           gate, then the hold reason THE BACKEND REPORTED — not one inferred
@@ -236,11 +245,13 @@ function ReviewRow({
           >
             {Math.round(item.confidence * 100)}%
           </span>
-          {holdReasonSentence(item.hold_reason, AUTO_FILE_GATE, item.suggested_employer)}
+          {holdReasonSentence(item.hold_reason, AUTO_FILE_GATE, safeText(item.suggested_employer))}
         </p>
       ) : null}
       {item.snippet ? (
-        <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-dim">{item.snippet}</p>
+        <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-dim">
+          <MailText value={item.snippet} />
+        </p>
       ) : null}
 
       <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -253,8 +264,9 @@ function ReviewRow({
             to Verkada" from one no-reply address — and without the role the
             accessible names collide again. */}
         <label className="sr-only" htmlFor={`cat-${item.message_id}`}>
-          Classify &ldquo;{truncate(item.subject || "(no subject)")}&rdquo; from {sender}
-          {item.role ? `, ${item.role}` : ""}
+          Classify &ldquo;{truncate(safeText(item.subject) || "(no subject)")}&rdquo; from{" "}
+          {safeText(sender)}
+          {item.role ? `, ${safeText(item.role)}` : ""}
         </label>
         <select
           id={`cat-${item.message_id}`}
