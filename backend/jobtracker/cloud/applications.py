@@ -3386,6 +3386,7 @@ async def _persist_review_items_additive(session, user_id: uuid.UUID, review) ->
             ) in rows
             if thread_id
         }
+        offered = len(refs)
         refs = [
             r
             for r in refs
@@ -3400,6 +3401,27 @@ async def _persist_review_items_additive(session, user_id: uuid.UUID, review) ->
             )
             not in settled_applications
         ]
+        # THE ONLY PLACE THE REFUSAL IS OBSERVABLE (#630). A refused ref is
+        # dropped before :func:`_persist_message_refs`, so it gets no row, no
+        # queue entry and no counter — the event's signature is ABSENCE, and
+        # absence is not a thing a later query can find. The read-only count
+        # against the owner's real mail on 2026-09-02 could only ever measure
+        # the PRECONDITION for that reason, and returned 0 pairs written in a
+        # later sync than a settled row they share a thread with; a corpus can
+        # show the class is reachable and can never report a rate. So the count
+        # is emitted here or it does not exist anywhere.
+        #
+        # Ids and counts only, never a subject or a snippet — same rule as
+        # :func:`_warn_if_capped`.
+        refused = offered - len(refs)
+        if refused:
+            logger.info(
+                "Settled filter refused %s of %s arriving review ref(s) for "
+                "user_id=%s (#630: a refused ref is never stored)",
+                refused,
+                offered,
+                user_id,
+            )
 
     await _persist_message_refs(session, user_id, None, refs)
     return sum(1 for r in refs if r.received_at is not None)
