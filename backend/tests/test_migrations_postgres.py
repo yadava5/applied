@@ -14,7 +14,9 @@ The specific bug this was written for: SQLModel/SQLAlchemy persist an enum's
 valid DDL and then failed every write with ``invalid input value for enum
 applicationstatus: "ASSESSMENT"``. Nothing on SQLite can tell those two apart.
 
-So this module asserts, on Postgres 16:
+So this module asserts, on Postgres 17 under CI (`rls-postgres` runs this
+file against `image: postgres:17`) and on Postgres 16 locally (the
+testcontainers default below, deliberately unchanged):
 
 1. the whole chain applies to a bare database in ONE ``upgrade head``
    invocation — the way a fresh environment is built, and the case

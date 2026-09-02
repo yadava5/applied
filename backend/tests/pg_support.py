@@ -9,17 +9,31 @@ local full-suite run to four simultaneous containers, and the run went red with
 failure that LOOKS like one, and worse, the modules then skipped. A skip is
 green.
 
-So the two modules added here share a single container, memoised for the
-process. The existing two are deliberately left alone: rewriting their
-resolution is unrelated to this change set, and three containers is inside what
-a laptop and a CI runner handle.
+So the modules that call :func:`resolve_admin_url` share a single container,
+memoised for the process. The two that own their own are deliberately left
+alone: rewriting their resolution was unrelated to the change set this helper
+arrived in, and three containers is inside what a laptop and a CI runner
+handle.
+
+THE COUNTS BELOW ARE GATED, not maintained by hand. This docstring said "the
+two modules added here" and "all four Postgres modules" while six modules
+imported this file and four of them shared the container (#695) — a count that
+drifts every time a suite is added, and prose nobody re-derives. The split is
+now asserted by ``tests/test_pg_support_census.py``, which reads the imports
+and reds when it stops matching:
+
+* four modules SHARE the memoised container, via :func:`resolve_admin_url`;
+* two own theirs and register it here only for cleanup, via
+  :func:`register_owned_container`;
+* so six Postgres modules, three simultaneous containers when
+  ``JOBTRACKER_TEST_PG_ADMIN_URL`` is unset.
 
 WHERE THIS ACTUALLY RUNS, checked rather than assumed. ``backend-ci.yml``'s
 whole-suite ``test`` job sets only ``JOBTRACKER_ENVIRONMENT`` and
 ``PYTHON_KEYRING_BACKEND`` — it does NOT set
 ``JOBTRACKER_TEST_PG_ADMIN_URL`` — so on CI every Postgres module resolves its
-own throwaway container via testcontainers, and the two modules sharing this
-helper share one. The jobs that DO export that variable (``rls-postgres``,
+own throwaway container via testcontainers, and the modules sharing this helper
+share one. The jobs that DO export that variable (``rls-postgres``,
 ``migrations``) each run a single module against it, so nothing is shared there
 either.
 
@@ -34,7 +48,7 @@ costume of a broken migration.
 
 That per-module reset is NOT sufficient for the one configuration nothing in CI
 uses: exporting ``JOBTRACKER_TEST_PG_ADMIN_URL`` and running the WHOLE suite,
-which points all four Postgres modules at one database. ``test_rls_postgres``
+which points every Postgres module at one database. ``test_rls_postgres``
 builds its schema once per process behind a module-level ``_SCHEMA_READY`` flag
 and ``test_migrations_postgres`` rebuilds per test, so a reset here can land
 between another module's build and its use; the observed symptom is
@@ -42,7 +56,7 @@ between another module's build and its use; the observed symptom is
 ``upgrade head``. Measured, not theorised — and measured only there: with the
 variable unset (CI's arrangement, one container per module) the same suite runs
 clean under ``--cov``. If you want a single local Postgres for everything, run
-the four Postgres modules in separate pytest invocations.
+the Postgres modules in separate pytest invocations.
 """
 
 from __future__ import annotations
