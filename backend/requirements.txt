@@ -9,8 +9,8 @@
 # -----------------------------------------------------------------------------
 fastapi>=0.141.1              # Modern async web framework
 uvicorn[standard]>=0.27.0     # ASGI server with uvloop
-pydantic>=2.13.4               # Data validation using Python type hints
-pydantic-settings>=2.14.2     # Settings management with env var support (>=2.14.2: GHSA-4xgf-cpjx-pc3j)
+pydantic>=2.13.5               # Data validation using Python type hints
+pydantic-settings>=2.15.0     # Settings management with env var support (>=2.14.2: GHSA-4xgf-cpjx-pc3j)
 email-validator>=2.3.0        # Email validation for Pydantic EmailStr
 websockets>=17.1              # WebSocket support for real-time sync updates
 
@@ -26,7 +26,7 @@ alembic>=1.13.0               # DB migrations (owns schema on Postgres)
 # -----------------------------------------------------------------------------
 # Email Integration
 # -----------------------------------------------------------------------------
-google-api-python-client>=2.198.0   # Gmail API client
+google-api-python-client>=2.199.0   # Gmail API client
 google-auth-httplib2>=0.1.1         # Google auth HTTP transport
 google-auth-oauthlib>=1.2.4         # OAuth2 flow for Gmail (>=1.2.4: explicit PKCE kwargs in from_client_config)
 aioimaplib>=2.0.1                   # Async IMAP client for iCloud Mail
@@ -68,7 +68,7 @@ numpy>=1.24.0                 # Numerical operations, embedding serialization
 # Email Parsing
 # -----------------------------------------------------------------------------
 beautifulsoup4>=4.15.0        # HTML email parsing
-lxml>=6.1.1                   # Fast HTML/XML parser (bs4 backend) (>=6.1.0: PYSEC-2026-87)
+lxml>=6.1.2                   # Fast HTML/XML parser (bs4 backend) (>=6.1.0: PYSEC-2026-87)
 python-dateutil>=2.9.0.post0        # Date parsing utilities
 
 # -----------------------------------------------------------------------------
