@@ -3181,9 +3181,35 @@ def _role_from_trailing_segment(subject: str) -> str | None:
     The lead employer is re-derived through :func:`_lead_segment_candidates`,
     which is the reading the employer half of this subject is filed under, so
     the two halves cannot disagree about who sent the mail. An echo that names a
-    DIFFERENT company, or no echo at all, refuses — the message goes to the
-    review queue, where a person decides. Fails closed, the direction this
-    module takes everywhere.
+    DIFFERENT company, or no echo at all, refuses and this reader returns None.
+
+    IT DOES NOT "FAIL CLOSED", AND THE SENTENCE THAT SAID SO WAS FALSE (#657).
+    It read "the message goes to the review queue, where a person decides.
+    Fails closed, the direction this module takes everywhere." Nothing routes a
+    message to the queue for naming no role. :func:`collect_review_items` skips
+    anything :func:`_qualifies_for_hard_row` accepts, and that function asks
+    only about confidence and an employer — never whether a title was read. So
+    a refusal here at or above :data:`AUTO_FILE_GATE` files a card with a BLANK
+    role and asks nobody. Measured on the shape #657 reports: confidence 0.95,
+    ``_qualifies_for_hard_row`` true, ``collect_review_items`` returns zero.
+
+    THE ONE CARVE-OUT DOES NOT CARRY THIS CASE, which is what makes the false
+    sentence wider than it looks. ``unplaceable_message_ids`` re-admits
+    role-less mail at an employer already holding SEVERAL applications, because
+    there is no single row to pick — but it promotes what cannot be PLACED, and
+    since #641 an identity-less CONFIRMATION at such an employer is placeable:
+    it mints its own card. So a confirmation whose role this reader refused is
+    silent at a one-application employer AND at a multi-card one. Only an
+    UPDATE — a rejection, interview or assessment — reaches a person that way,
+    and the mail this reader exists for is a confirmation.
+
+    This reader is a title reader that declines rather than guesses, which is
+    right — #553 measured what a guess costs. Calling that "fails closed"
+    described a safety net that does not exist, and a future reader would have
+    relied on it. Whether a blank role SHOULD gate a review is #657's open
+    half and a product decision; it is pinned as it stands in
+    ``test_the_trailing_segment_names_the_role.py`` so the answer cannot drift
+    without a test going red.
 
     The candidate then passes the three guards :func:`_role_from_lead_segment`
     uses (:func:`_clean_role`, :data:`_TITLE_SHAPED`, a title head noun) plus
