@@ -184,17 +184,34 @@ def migrated_engine():
     )
 
     with engine.begin() as conn:
-        conn.execute(
-            text(
-                "DO $$ BEGIN "
-                "IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN "
-                "CREATE ROLE anon NOLOGIN; "
-                "END IF; END $$"
-            )
-        )
+        # Whether THIS fixture created it, so the teardown below drops only what
+        # it made. A role somebody else's suite created is theirs to remove.
+        ours = not conn.execute(
+            text("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon')")
+        ).scalar()
+        if ours:
+            conn.execute(text("CREATE ROLE anon NOLOGIN"))
 
-    yield engine
-    engine.dispose()
+    try:
+        yield engine
+    finally:
+        # A ROLE IS CLUSTER-SCOPED, so ``reset_public_schema`` cannot remove it
+        # and nothing else will (#695). Leaving it behind made this module's
+        # green depend on running LAST — it happens to, in the ``rls-postgres``
+        # job and alphabetically under ``pytest tests``, and neither of those is
+        # a property anyone chose. A later suite that asserts `anon` does not
+        # exist would fail for a reason that has nothing to do with it.
+        #
+        # DROP OWNED first: the role holds no grants by the time the cases here
+        # have run their teardowns, but a case that dies between GRANT and
+        # REVOKE would otherwise leave a dependency that makes DROP ROLE raise,
+        # and the fixture would then report its own cleanup as this module's
+        # failure.
+        if ours:
+            with engine.begin() as conn:
+                conn.execute(text("DROP OWNED BY anon"))
+                conn.execute(text("DROP ROLE anon"))
+        engine.dispose()
 
 
 @contextlib.contextmanager
@@ -414,8 +431,17 @@ def test_the_exempt_table_is_still_exempt_against_a_real_catalog(
     The exemption is applied in ``collect_failures`` instead, deliberately — a
     filter written in both places is unreachable in the second. That makes this
     the paired half of the ``anon`` case above: the identical grant, on the
-    identical catalog, red on ``applications`` and green here. If the SQL ever
-    grew its own exemption the two would stop being the same measurement.
+    identical catalog, red on ``applications`` and green here.
+
+    THIS TEST CANNOT SEE WHERE THE EXEMPTION LIVES, and the sentence that used
+    to end this docstring said it could (#695): "if the SQL ever grew its own
+    exemption the two would stop being the same measurement". Measured — add
+    ``AND c.relname <> 'alembic_version'`` to ``GRANTS_QUERY`` and all five
+    tests here stayed green. Green is this test's answer either way, because a
+    row the SQL filtered out and a row the Python filter dropped produce the
+    same verdict. The claim moved to
+    :func:`test_the_exemption_lives_in_python_and_the_sql_reaches_the_row`,
+    which asserts it directly instead of describing it.
     """
 
     with temporarily(
@@ -427,3 +453,59 @@ def test_the_exempt_table_is_still_exempt_against_a_real_catalog(
 
     assert _errors(printed) == []
     assert code == 0
+
+
+def test_the_exemption_lives_in_python_and_the_sql_reaches_the_row(
+    migrated_engine,
+) -> None:
+    """WHERE the exemption is applied, asserted rather than described (#695).
+
+    ``collect_failures``'s docstring calls the single-site exemption a design
+    choice: ``GRANTS_QUERY`` is the one query not narrowed by ``exempt`` in
+    SQL, so that the Python filter is reachable and a test can exercise it. A
+    duplicate filter in the SQL would make that filter unreachable and land
+    with the whole suite green — this repository's named defect, in the place
+    that exists to catch it.
+
+    The gate's own exit code cannot tell the two apart, which is why the test
+    above could not carry this claim. What can is the composition, in three
+    assertions that are only jointly satisfiable:
+
+    1. the raw query, executed as the script executes it, RETURNS the exempt
+       table's forbidden grant — so the SQL reaches the row;
+    2. ``collect_failures`` with the real exemption drops it — so the Python
+       filter is what makes the gate green;
+    3. ``collect_failures`` with ``exempt=()`` NAMES it — which is the one that
+       does the work. Without it, a row the SQL had already filtered out would
+       satisfy (2) exactly as well as a row the Python filter dropped, and this
+       test would be the same blind measurement as the one above.
+
+    MUTATION: add ``AND c.relname <> 'alembic_version'`` to ``GRANTS_QUERY``.
+    Assertions 1 and 3 both red. That is the mutation that left all five other
+    tests in this module green.
+    """
+
+    with temporarily(
+        migrated_engine,
+        setup=["GRANT SELECT ON alembic_version TO anon"],
+        teardown=["REVOKE SELECT ON alembic_version FROM anon"],
+    ):
+        with migrated_engine.connect() as conn:
+            grants = [tuple(row) for row in conn.execute(text(verifier.GRANTS_QUERY))]
+
+    assert ("alembic_version", "anon", "SELECT") in grants, (
+        "GRANTS_QUERY no longer returns the exempt table's grant, so the "
+        "exemption in collect_failures is unreachable and the test that "
+        "exercises it proves nothing"
+    )
+
+    # role=(False,) — no BYPASSRLS, so the only failures either call can produce
+    # come from the grants themselves.
+    exempted = verifier.collect_failures([], [], (False,), grants, verifier.EXEMPT_TABLES)
+    assert exempted == [], f"the Python exemption did not drop it: {exempted}"
+
+    unexempted = verifier.collect_failures([], [], (False,), grants, ())
+    assert any("alembic_version" in line for line in unexempted), (
+        "with the exemption removed the row vanished too, so it was never "
+        f"reaching the Python filter: {unexempted}"
+    )
