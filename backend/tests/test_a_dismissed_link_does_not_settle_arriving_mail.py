@@ -140,6 +140,7 @@ prose comes from a real mailbox (#593).
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -756,3 +757,143 @@ async def test_one_sync_carrying_all_six_cases_stores_exactly_three(
 
     assert await _sync(*CASES) == EXPECTED_SURFACED_BY_FULL_SYNC
     assert await _stored_message_ids(client, headers) == EXPECTED_STORED_AFTER_FULL_SYNC
+
+
+# =============================================================================
+# The refusal is COUNTED — the only place the drop is observable (#630)
+# =============================================================================
+#
+# A ref this filter refuses is dropped before ``_persist_message_refs``, so it
+# gets no row, no queue entry and no counter. Every test above asserts the
+# refusal by its ABSENCE — a message id missing from the audit surface — which
+# is the only evidence there was. Absence is not evidence a later query can
+# find, so the rate of #630's class in a running mailbox was unobservable by
+# construction, and the read-only count against the owner's real mail on
+# 2026-09-02 could only ever measure the PRECONDITION for a drop (0 pairs
+# written in a later sync than a settled row sharing their thread).
+#
+# The log line is therefore the ONLY production instrument. These two tests are
+# directional on purpose: one proves it fires with the right numbers, the other
+# proves it stays silent when nothing was refused. A counter that always logs
+# and a counter that never logs both pass a one-sided test.
+
+
+def _every_arriving_ref_is_dated(cases) -> None:
+    """The precondition that makes ``len(batch) - surfaced`` an exact refusal count.
+
+    Both persist functions return a count of DATED refs, so an UNDATED ref would
+    survive the filter and still not be counted as surfaced — and the test above
+    would then read a refusal that did not happen. Every case here is dated
+    (``ARRIVED_AT`` in :func:`_arriving`), so the two coincide, but that is a
+    property of the fixture and not of the code. ``_every_message_is_dated`` in
+    ``test_settled_filter_drops_an_uncertain_update.py`` exists for the same
+    reason; this is its local twin rather than a shared import, because the two
+    modules build their arriving refs differently.
+    """
+
+    undated = [c.key for c in cases if _arriving(c).received_at is None]
+    assert undated == [], f"an undated ref would be miscounted as refused: {undated}"
+
+
+def _refusals(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """The refusal lines this run emitted, from the sync module's logger only."""
+
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "jobtracker.cloud.applications"
+        and "Settled filter refused" in record.getMessage()
+    ]
+
+
+async def test_the_refusals_are_counted_and_the_count_is_the_real_one(
+    client, headers, seeded, caplog: pytest.LogCaptureFixture
+):
+    """Six cases in, three surfaced, and the line must say three of six.
+
+    Both numbers are asserted, not just the first. ``refused`` alone is
+    satisfiable by a line that reports the batch size, and ``offered`` alone by
+    one that reports the surfaced count; only the pair pins which is which.
+
+    The user id is asserted because a log line naming no account cannot be
+    read against a mailbox, and this repository has shipped an aggregate with
+    no user predicate before.
+
+    MUTATION (deletion, proves the line is PRESENT): drop the ``logger.info``
+    block from ``_persist_review_items_additive`` and this reds.
+
+    MUTATION (operand swap, proves the RIGHT VALUE): report ``len(refs)``
+    instead of ``refused`` — same type, same scope — and this reds while
+    :func:`test_a_batch_that_refuses_nothing_logs_nothing` stays green, which
+    is what makes the pair worth having.
+
+    ``UNSEEN`` IS IN THE BATCH TO BREAK A SYMMETRY, and it is load-bearing for
+    EXACTLY ONE of those mutations — the ``len(refs)``-as-``refused`` swap. The
+    other three red with ``CASES`` alone; this is not a claim that the whole
+    table needs it. ``CASES`` alone is six refs of which three survive, so
+    ``refused`` and ``len(refs)`` are BOTH 3 and that one swap is an equivalent
+    mutant: it changes nothing, the test stays green, and the docstring above
+    would be claiming a detection property the test does not have. Seven
+    offered, four surfaced and three refused are three distinct numbers.
+
+    THE DISTINCTNESS GUARD IS THE POINT, not the specific batch. It fails if a
+    future edit makes any two of the three coincide again, which is the state
+    that silently disarms the swap.
+    """
+
+    batch = (*CASES, UNSEEN)
+    _every_arriving_ref_is_dated(batch)
+    with caplog.at_level(logging.INFO, logger="jobtracker.cloud.applications"):
+        surfaced = await _sync(*batch)
+
+    # UNSEEN names a thread this database has never held, so it is kept and the
+    # surfaced count is one above the six-case constant.
+    assert surfaced == EXPECTED_SURFACED_BY_FULL_SYNC + 1
+    refused = len(batch) - surfaced
+    assert len({refused, surfaced, len(batch)}) == 3, (
+        "the batch went symmetric, so the operand swap this test documents "
+        "would no longer red it"
+    )
+    lines = _refusals(caplog)
+    assert len(lines) == 1, f"expected exactly one refusal line, got {lines}"
+    # `refused` and `offered` in one substring, `surfaced` by the assertion
+    # above: two assertions for three numbers, which is what pins each of them
+    # exactly once.
+    assert f"refused {refused} of {len(batch)}" in lines[0], lines[0]
+    # `user_id=` and not a bare substring. Without the key, a line that moved
+    # the account id anywhere else — into a message id, a table name — would
+    # satisfy this, and the only consumer of this line is a person grepping it.
+    assert f"user_id={OWNER}" in lines[0], (
+        f"the line does not name the account under `user_id=`: {lines[0]}"
+    )
+
+
+async def test_a_batch_that_refuses_nothing_logs_nothing(
+    client, headers, seeded, caplog: pytest.LogCaptureFixture
+):
+    """The directional control, and it is the half that decides the other one.
+
+    Three arriving refs the filter must KEEP — the unlinked row, the card the
+    rebuild dismissed, and a stranger's link — plus a thread this database has
+    never seen. Nothing is refused, so nothing may be logged: a line here would
+    mean the count is reporting the batch rather than the refusals, and every
+    assertion in the test above would then be satisfied by a counter that is
+    always wrong in the same direction.
+
+    Asserted as "surfaced == 4" as well, so a run where the filter refused
+    everything and the logger was simply broken cannot pass it silently.
+    """
+
+    keeps = (
+        BY_KEY["unlinked"],
+        BY_KEY["resync-dismissed-card"],
+        BY_KEY["another-users-card"],
+        UNSEEN,
+    )
+    with caplog.at_level(logging.INFO, logger="jobtracker.cloud.applications"):
+        surfaced = await _sync(*keeps)
+
+    assert surfaced == len(keeps), "a case this test assumes is kept was refused"
+    assert _refusals(caplog) == [], (
+        "the settled filter refused nothing and logged a refusal anyway"
+    )
