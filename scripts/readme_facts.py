@@ -2287,14 +2287,6 @@ def substitute_at_group(text: str, match: "re.Match[str]", want: str) -> str:
 _CONFLICT_MARKER = re.compile(r"^(<{7}|={7}|>{7}|\|{7})(?:\s|$)", re.MULTILINE)
 
 
-#: A number that sits inside a claim site and is deliberately captured by
-#: nothing. One entry, and it needs a reason rather than a name.
-#:
-#: The 464 is a HISTORICAL before-value — "wrong verdicts stated as fact went
-#: 464 to 0" — and the corpus gate records only the after. There is no
-#: ``RECORDED`` key it could be checked against, so capturing it would mean
-#: inventing a source of truth for a sentence about the morning of 2026-08-22.
-#: Listed rather than left silent, which is the whole point of #608.
 #: Numbers that sit inside a claim site and are captured by NOTHING, each with
 #: the reason it is not checked. Keyed ``(file, the number, an anchor from its
 #: line)``. This list is the point of #608: the defect was not that a number was
@@ -2319,9 +2311,6 @@ UNCAPTURED_BY_DESIGN: dict[tuple[str, str, str], str] = {
     ("booklet/src/content.ts", "1", "cosine 1-NN"): (
         "the 1 of 1-NN names the algorithm"
     ),
-    ("booklet/src/content.ts", "1", "cosine 1-NN · ≥ 0.85"): (
-        "the 1 of 1-NN names the algorithm"
-    ),
     ("docs/DEPLOYMENT.md", "3.11", "E2E CI"): (
         "a Python minor in a workflow table row, not a corpus or suite figure"
     ),
@@ -2332,6 +2321,14 @@ UNCAPTURED_BY_DESIGN: dict[tuple[str, str, str], str] = {
         "of them: cards, splits, noise_on_card. `merges` and `misrouted "
         "review` have no RECORDED key, so these two zeros are prose. Capturing "
         "them needs a counter in the gate first — see #700"
+    ),
+    ("booklet/src/content.ts", "0", "9,908 cards, 0 merges"): (
+        "the `merges` figure again, on the booklet's copy of the board "
+        "sentence. Same reason as README.md:221 — the corpus gate has no "
+        "`merges` key — and it is worth saying that this entry originally "
+        "claimed to be the skipped count, which was simply not what the "
+        "number is. A waiver with a plausible wrong reason is the failure "
+        "this list is supposed to prevent; see #700"
     ),
     ("README.md", "464", "Wrong verdicts stated as fact"): (
         "464 is the value BEFORE the fix and the gate records only the after; "
@@ -2344,10 +2341,6 @@ UNCAPTURED_BY_DESIGN: dict[tuple[str, str, str], str] = {
     ),
 
     # ── tracked: should be captured, is not yet (#700) ───────────────────
-    ("README.md", "10,", "Node.js 22 and pnpm 10"): (
-        "ciPnpmMajor is checked at three other sites and captures node rather "
-        "than pnpm at this one; #700"
-    ),
     ("apps/web/components/landing/Cascade.tsx", "384", "384-d · cosine"): (
         "the embedding dimension is stated in three files and no fact reads "
         "it anywhere; #700"
@@ -2360,17 +2353,21 @@ UNCAPTURED_BY_DESIGN: dict[tuple[str, str, str], str] = {
         "corpusSize is checked elsewhere and this site captures the test count "
         "instead; #700"
     ),
-    ("booklet/src/content.ts", "0", "backend suite runs 1,783 tests"): (
-        "the skipped count on the booklet's copy of the suite line; "
-        "testsSkipped reads the README's copy and not this one; #700"
-    ),
 }
 
 #: A number in PROSE, which is narrower than "a number". The negative
-#: look-behind keeps the ``1`` of ``macro-F1`` and the ``3`` of ``v3`` out;
-#: without it this check reports five false positives on `README.md` alone,
-#: and a check with false positives is one the next reader learns to skip.
-_PROSE_NUMBER = re.compile(r"(?<![\w.%])\d[\d,]*(?:\.\d+)?(?![\w])")
+#: look-behind keeps digits that belong to an identifier out. Measured:
+#: dropping ``\w`` from it produces **17** extra reports on `README.md` alone,
+#: and only three of those are the ``1`` of ``macro-F1`` — the rest are
+#: ``Out4``, the ``32`` of ``float32``, the ``8`` of ``int8``, the ``6`` and
+#: ``2`` of ``MiniLM-L6-v2``, ``v3`` and ``min-macro-f1``. A check wrong that
+#: often is one the next reader learns to skip.
+#:
+#: The token may not END in a comma either. ``pnpm 10,`` was reported purely
+#: because ``[\d,]*`` swallowed the trailing comma, putting the token outside
+#: the two-character capture span that does read it — a false positive that had
+#: been waived with a reason that was not true.
+_PROSE_NUMBER = re.compile(r"(?<![\w.%])\d(?:[\d,]*\d)?(?:\.\d+)?(?![\w])")
 
 #: URLs are excluded wholesale. A badge link carries percent-encoding and path
 #: segments that are numbers by shape and claims by nothing — the shields.io
@@ -2404,14 +2401,29 @@ def uncaptured_numbers() -> list[str]:
     THE RULE IS ACROSS FACTS, NOT WITHIN ONE, and that distinction is the whole
     design. Several sites legitimately match a number a DIFFERENT fact captures
     — ``corpusSize`` reads ``[\d,]+ of ([\d,]+)`` on the row where
-    ``corpusCorrect`` reads ``([\d,]+) of [\d,]+``. A per-fact rule would
-    report 59 violations on this table, of which 57 are that pattern, and a
-    check with a 97% false-positive rate is one nobody reads. So the union of
-    every fact's capture groups is what a number has to fall inside.
+    ``corpusCorrect`` reads ``([\d,]+) of [\d,]+``. A per-fact rule reports
+    **58** distinct violations on this table of which **44** are that pattern,
+    a 76% false-positive rate; a check that wrong three times in four is one
+    nobody reads. So the union of every fact's capture groups is what a number
+    has to fall inside.
 
-    Measured when this landed: 163 numbers sit inside a claim site, and exactly
-    two were captured by nothing — the dropped figure (now ``corpusDropped``)
-    and the historical 464 in ``UNCAPTURED_BY_DESIGN``.
+    Measured when this landed: **218** numbers sit inside a claim site, 204 are
+    captured by some fact, and **14** by nothing — all fourteen listed in
+    ``UNCAPTURED_BY_DESIGN`` with a reason.
+
+    WHAT IT DOES NOT SEE, and these are limits rather than bugs to fix quietly:
+
+    * **A number with a unit suffix is invisible.** ``64GB`` inside a claim
+      site, captured by nothing, is not reported — ``(?![\w])`` ends the token
+      at the ``G``. Any figure written with its unit attached is unaudited.
+    * **It reads only the files some site names** — twenty of them. ``by_file``
+      is built from ``FACTS``, so a wrong number in a file no site mentions
+      cannot be reported however loudly a fact asserts that file.
+    * **A number inside a code fence or a markdown link title is reported** if
+      it falls in a site span. Neither is prose, and neither is filtered.
+
+    Each of those was found by attacking this function rather than by reading
+    it, which is the only way the list is worth anything.
     """
 
     by_file: dict[str, list] = {}

@@ -547,23 +547,56 @@ for (const port of PORTS) {
  * MUTATION: delete any one of the three explicit lines from either block and
  * this reds, naming the path and the block.
  */
+/**
+ * The `paths:` LIST belonging to one trigger, sliced by indentation.
+ *
+ * Not a YAML parse — a dependency here is one more thing that can start
+ * answering about a different file — but not a substring search either, which
+ * is what the first version of this test did and what a blind verifier broke
+ * four ways: a path deleted from the list and left in a COMMENT below `push:`
+ * still passed, and so did renaming `paths:` to `paths-ignore:`, which inverts
+ * the trigger while leaving every string in place.
+ *
+ * So: find the key, take the lines under it that are more deeply indented, and
+ * read only the `- "..."` items. Returns null when the key is absent, which the
+ * caller reports rather than treating as an empty list — a missing `paths:`
+ * means the workflow runs on EVERYTHING, and silently passing there would be a
+ * check that cannot fail.
+ */
+function pathsList(block, key) {
+  const lines = block.split("\n");
+  const at = lines.findIndex((l) => new RegExp(`^\\s*${key}:\\s*$`).test(l));
+  if (at === -1) return null;
+  const indent = lines[at].match(/^\s*/)[0].length;
+  const items = [];
+  for (const line of lines.slice(at + 1)) {
+    if (line.trim() === "" || line.trim().startsWith("#")) continue;
+    if (line.match(/^\s*/)[0].length <= indent) break;   // next key at this level
+    const item = line.match(/^\s*-\s*"?([^"\s]+)"?\s*$/);
+    if (item) items.push(item[1]);
+  }
+  return items;
+}
+
 test("census: every port this file reads is in frontend-ci.yml's trigger", () => {
   const workflow = readFileSync(
     join(REPO_ROOT, ".github", "workflows", "frontend-ci.yml"),
     "utf8",
   );
 
-  // The two `paths:` blocks, split on the `push:` key at the `on:` mapping's
-  // own indentation. Deliberately not a YAML parse: a dependency here would be
-  // one more thing that can silently start answering about a different file.
+  // The two trigger blocks, split on the `push:` key at the `on:` mapping's own
+  // indentation.
   const split = workflow.indexOf("\n  push:\n");
   assert.ok(split > 0, "frontend-ci.yml has no `push:` trigger block any more");
   const blocks = {
     pull_request: workflow.slice(0, split),
-    push: workflow.slice(split),
+    // Bounded at the next top-level key rather than run to EOF: without the
+    // bound this block swallowed `permissions:`, `jobs:` and every step, so a
+    // path merely MENTIONED anywhere later in the file read as a trigger entry.
+    push: workflow.slice(split).split(/\n(?=\w)/)[0],
   };
-  // The control: the split really did separate them, rather than putting
-  // everything on one side where every assertion below would pass twice.
+  // The split really separated them, rather than putting everything on one side
+  // where every assertion below would pass twice.
   assert.ok(
     blocks.pull_request.includes("pull_request:"),
     "the split put `pull_request:` on the wrong side",
@@ -573,14 +606,34 @@ test("census: every port this file reads is in frontend-ci.yml's trigger", () =>
     "the split did not separate the two trigger blocks",
   );
 
-  for (const port of PORTS) {
-    if (port.path.startsWith("apps/web/")) continue; // covered by `apps/web/**`
-    for (const [name, block] of Object.entries(blocks)) {
+  // A `paths-ignore:` inverts the trigger while leaving every path string in
+  // place, so its ABSENCE is asserted rather than inferred.
+  for (const [name, block] of Object.entries(blocks)) {
+    assert.ok(
+      !/^\s*paths-ignore:/m.test(block),
+      `frontend-ci.yml's ${name} trigger uses paths-ignore, which inverts it: ` +
+        `every path below is now a path that does NOT run this census`,
+    );
+  }
+
+  // The push trigger has to be on `main`, or the census runs on a branch
+  // nothing merges to.
+  const branches = pathsList(blocks.push, "branches");
+  assert.ok(
+    branches && branches.includes("main"),
+    `frontend-ci.yml's push trigger does not name main: ${JSON.stringify(branches)}`,
+  );
+
+  for (const [name, block] of Object.entries(blocks)) {
+    const paths = pathsList(block, "paths");
+    assert.ok(paths, `frontend-ci.yml's ${name} trigger has no \`paths:\` list`);
+    for (const port of PORTS) {
+      if (port.path.startsWith("apps/web/")) continue; // covered by `apps/web/**`
       assert.ok(
-        block.includes(`- "${port.path}"`),
-        `${port.path} is read by this census but is not in frontend-ci.yml's ` +
-          `${name} trigger, so the pull request most likely to regress it is ` +
-          `the one that would not run this file`,
+        paths.includes(port.path),
+        `${port.path} is read by this census but is not an item of ` +
+          `frontend-ci.yml's ${name} \`paths:\` list, so the pull request most ` +
+          `likely to regress it is the one that would not run this file`,
       );
     }
   }

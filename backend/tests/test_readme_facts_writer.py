@@ -713,9 +713,9 @@ def test_a_second_fact_capturing_it_is_enough(tmp_path) -> None:
     The rule is across facts, not within one. Plenty of sites match a number a
     DIFFERENT fact captures — `corpusSize` reads `[\\d,]+ of ([\\d,]+)` on the
     row where `corpusCorrect` reads `([\\d,]+) of [\\d,]+`. Without this
-    behaviour the audit reports 59 violations on the real table of which 57 are
-    that pattern, and a check with a 97% false-positive rate is one nobody
-    reads.
+    behaviour the audit reports 58 distinct violations on the real table of
+    which 44 are that pattern — a 76% false-positive rate, and a check wrong
+    three times in four is one nobody reads.
     """
 
     module = _load()
@@ -755,8 +755,11 @@ def test_a_number_outside_every_site_is_not_this_check_s_business(tmp_path) -> N
 def test_digits_inside_an_identifier_are_not_numbers(tmp_path) -> None:
     """`macro-F1` and `v3` are names, and reporting them trains people to skip.
 
-    Measured before the look-behind existed: five false positives on README.md
-    alone, every one of them the `1` of `macro-F1`.
+    Measured: dropping `\\w` from the look-behind produces 17 extra reports on
+    README.md alone, of which three are `macro-F1`. The rest are `Out4`, the
+    `32` of `float32`, the `8` of `int8`, the `6` and `2` of `MiniLM-L6-v2`,
+    `v3` and `min-macro-f1` — which is why the rule is about identifiers and
+    not about one filename that happens to end in a digit.
     """
 
     module = _load()
@@ -834,3 +837,38 @@ def test_every_waiver_carries_a_reason() -> None:
     module = _load()
     for key, why in module.UNCAPTURED_BY_DESIGN.items():
         assert why and len(why.strip()) > 20, f"{key} has no real reason: {why!r}"
+
+
+def test_no_waiver_is_dead() -> None:
+    """EVERY waiver must be load-bearing, and one was not.
+
+    A blind verifier found ``("booklet/src/content.ts", "1", "cosine 1-NN · ≥
+    0.85")`` shadowed by ``("booklet/src/content.ts", "1", "cosine 1-NN")``:
+    the anchor is matched as a SUBSTRING of the line, so the shorter key
+    already covered both booklet sites and deleting the longer one left
+    ``--check`` green. A dead entry on a list whose whole purpose is "somebody
+    looked at this line" is worse than no entry — it reads as a second review
+    that never happened.
+
+    The mutation row in the PR that found this said "drop one entry and
+    --check reds", and it was true of 12 of 13. This asserts it of all of them,
+    which is the difference between a spot check and a rule.
+
+    MUTATION: re-add the shadowed key and this reds, naming it.
+    """
+
+    module = _load()
+    all_waivers = dict(module.UNCAPTURED_BY_DESIGN)
+    dead = []
+    for key in all_waivers:
+        reduced = {k: v for k, v in all_waivers.items() if k != key}
+        module.UNCAPTURED_BY_DESIGN = reduced
+        try:
+            if not module.uncaptured_numbers():
+                dead.append(key)
+        finally:
+            module.UNCAPTURED_BY_DESIGN = all_waivers
+    assert dead == [], (
+        f"these waivers silence nothing — another entry already covers their "
+        f"line, so they record a review that has no effect: {dead}"
+    )
