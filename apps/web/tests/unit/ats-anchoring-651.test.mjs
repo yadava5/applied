@@ -345,14 +345,28 @@ test("a raw From header is refused by both engines, and neither /import nor the 
  * checkouts, so a basename search for `app.js` or `rules.py` returns dozens of
  * copies that read perfectly and answer for the wrong tree.
  *
- * WHEN THIS RUNS, WHICH IS NARROWER THAN WHAT IT READS.
- * `.github/workflows/frontend-ci.yml` triggers on `apps/web/**`, `booklet/**`
- * and its own file. Three of the four files read below sit outside that
- * filter, so a pull request touching only `ml/` or only `backend/` does not
- * fire this census. Widening the filter is not free — it would run typecheck,
- * lint, the unit suite and `next build` on every backend-only PR — so it is
- * left as a decision rather than made here, and written down rather than left
- * implied.
+ * WHEN THIS RUNS. IT NOW COVERS WHAT IT READS, and the paragraph that stood
+ * here said the opposite for as long as that was true. It read: "Three of the
+ * four files read below sit outside that filter, so a pull request touching
+ * only `ml/` or only `backend/` does not fire this census... left as a
+ * decision rather than made here." The decision was taken with #667, which
+ * added all three outside paths to BOTH trigger blocks of
+ * `.github/workflows/frontend-ci.yml` — `ml/browser/site/app.js`,
+ * `ml/demo/space/jobtracker/classifier/rules.py` and
+ * `backend/jobtracker/classifier/rules.py`, at lines 33-35 and 56-58 — so a
+ * pull request touching any file this census reads now fires it.
+ *
+ * The cost that paragraph weighed is real and was accepted: those three paths
+ * pull the whole `Frontend CI` job — typecheck, lint, the unit suite and
+ * `next build` — onto a backend-only or `ml/`-only pull request. That is the
+ * price of a census that cannot be edited out of range of its own trigger.
+ *
+ * THE PROSE IS THE PART THAT ROTTED, which is the reason this correction is
+ * worth more than two sentences of tidying. A census whose own docstring
+ * understates its reach teaches the next reader that `ml/` edits go unchecked,
+ * and the obvious response to that belief is to stop relying on the census —
+ * which is how a gate that works becomes a gate nobody trusts. If the trigger
+ * list and this paragraph disagree again, the trigger list is the truth.
  */
 
 /** `apps/web/tests/unit/` → the repository root. Four segments, fixed. */
@@ -513,3 +527,61 @@ for (const port of PORTS) {
     );
   });
 }
+
+/**
+ * THE CENSUS RUNS ON EVERY FILE IT READS — asserted, not described.
+ *
+ * The paragraph in this file's header used to say the opposite, correctly, and
+ * then went on saying it after #667 widened the trigger. That is the failure
+ * mode this whole file exists to catch, occurring in the file itself: a claim
+ * about coverage that nobody re-derived. So the correspondence between `PORTS`
+ * and `frontend-ci.yml`'s trigger is read out of both, rather than asserted in
+ * prose that the next reader has to take on trust.
+ *
+ * A path is covered when it is under `apps/web/**` — already in both blocks —
+ * or named explicitly in BOTH the `pull_request` and the `push` block. Both,
+ * because a census that fires on the PR and not on the merge cannot see a port
+ * that regresses in a direct push to `main`, and one that fires on the merge
+ * and not the PR reports the regression after it has landed.
+ *
+ * MUTATION: delete any one of the three explicit lines from either block and
+ * this reds, naming the path and the block.
+ */
+test("census: every port this file reads is in frontend-ci.yml's trigger", () => {
+  const workflow = readFileSync(
+    join(REPO_ROOT, ".github", "workflows", "frontend-ci.yml"),
+    "utf8",
+  );
+
+  // The two `paths:` blocks, split on the `push:` key at the `on:` mapping's
+  // own indentation. Deliberately not a YAML parse: a dependency here would be
+  // one more thing that can silently start answering about a different file.
+  const split = workflow.indexOf("\n  push:\n");
+  assert.ok(split > 0, "frontend-ci.yml has no `push:` trigger block any more");
+  const blocks = {
+    pull_request: workflow.slice(0, split),
+    push: workflow.slice(split),
+  };
+  // The control: the split really did separate them, rather than putting
+  // everything on one side where every assertion below would pass twice.
+  assert.ok(
+    blocks.pull_request.includes("pull_request:"),
+    "the split put `pull_request:` on the wrong side",
+  );
+  assert.ok(
+    !blocks.push.includes("pull_request:"),
+    "the split did not separate the two trigger blocks",
+  );
+
+  for (const port of PORTS) {
+    if (port.path.startsWith("apps/web/")) continue; // covered by `apps/web/**`
+    for (const [name, block] of Object.entries(blocks)) {
+      assert.ok(
+        block.includes(`- "${port.path}"`),
+        `${port.path} is read by this census but is not in frontend-ci.yml's ` +
+          `${name} trigger, so the pull request most likely to regress it is ` +
+          `the one that would not run this file`,
+      );
+    }
+  }
+});
