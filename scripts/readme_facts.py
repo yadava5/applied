@@ -1062,6 +1062,21 @@ FACTS: dict[str, dict] = {
             {"re": r"than [\d,]+ with ([\d,]+) auto-filed", "file": BOOKLET_CONTENT},
         ],
     },
+    "corpusDropped": {
+        # #608. This row carried TWO figures and only the first was captured:
+        # `[\d,]+ dropped` was matched and discarded, so the dropped number had
+        # never been read by anything. `--check` reported "68 facts, asserted at
+        # 213 sites, all agree" with one of those sites holding a number it did
+        # not look at — the repository's own recurring defect, inside the tool
+        # built to prevent it. Reproduction, one line: change the dropped figure
+        # to any value and `--check` stayed green.
+        "kind": "static",
+        "describe": f"RECORDED['dropped'] in {CORPUS_GATE}",
+        "compute": lambda: corpus_recorded("dropped"),
+        "sites": [
+            r"\| \*\*[\d,]+ lost\*\*, ([\d,]+) dropped \|",
+        ],
+    },
     "corpusLost": {
         "kind": "static",
         "describe": f"RECORDED['lost'] in {CORPUS_GATE}",
@@ -2272,9 +2287,184 @@ def substitute_at_group(text: str, match: "re.Match[str]", want: str) -> str:
 _CONFLICT_MARKER = re.compile(r"^(<{7}|={7}|>{7}|\|{7})(?:\s|$)", re.MULTILINE)
 
 
+#: A number that sits inside a claim site and is deliberately captured by
+#: nothing. One entry, and it needs a reason rather than a name.
+#:
+#: The 464 is a HISTORICAL before-value — "wrong verdicts stated as fact went
+#: 464 to 0" — and the corpus gate records only the after. There is no
+#: ``RECORDED`` key it could be checked against, so capturing it would mean
+#: inventing a source of truth for a sentence about the morning of 2026-08-22.
+#: Listed rather than left silent, which is the whole point of #608.
+#: Numbers that sit inside a claim site and are captured by NOTHING, each with
+#: the reason it is not checked. Keyed ``(file, the number, an anchor from its
+#: line)``. This list is the point of #608: the defect was not that a number was
+#: unchecked, it was that nothing said so.
+#:
+#: An entry here is a promise that somebody looked. Adding one to silence the
+#: gate without reading the line is the same defect wearing a different hat.
+#: Three shapes appear below and only the third is a gap:
+#:
+#:   * NOT A MEASUREMENT — an ordinal, an algorithm's name, a runtime version.
+#:   * NO SOURCE EXISTS — the number is real and nothing records it, so
+#:     capturing it would mean inventing a source of truth.
+#:   * TRACKED — it should be captured and is not yet. #700.
+UNCAPTURED_BY_DESIGN: dict[tuple[str, str, str], str] = {
+    # ── not a measurement ────────────────────────────────────────────────
+    ("README.md", "1", "rules<br/>220 regex patterns"): (
+        "the stage ORDINAL in the mermaid cascade diagram, not a count"
+    ),
+    ("apps/web/components/landing/Cascade.tsx", "1", "cosine 1-NN"): (
+        "the 1 of 1-NN names the algorithm"
+    ),
+    ("booklet/src/content.ts", "1", "cosine 1-NN"): (
+        "the 1 of 1-NN names the algorithm"
+    ),
+    ("booklet/src/content.ts", "1", "cosine 1-NN · ≥ 0.85"): (
+        "the 1 of 1-NN names the algorithm"
+    ),
+    ("docs/DEPLOYMENT.md", "3.11", "E2E CI"): (
+        "a Python minor in a workflow table row, not a corpus or suite figure"
+    ),
+
+    # ── no source exists, and that is the finding ────────────────────────
+    ("README.md", "0", "cards / splits / merges / noise"): (
+        "the board row prints FIVE figures and the corpus gate records three "
+        "of them: cards, splits, noise_on_card. `merges` and `misrouted "
+        "review` have no RECORDED key, so these two zeros are prose. Capturing "
+        "them needs a counter in the gate first — see #700"
+    ),
+    ("README.md", "464", "Wrong verdicts stated as fact"): (
+        "464 is the value BEFORE the fix and the gate records only the after; "
+        "capturing it would mean inventing a source for a sentence about the "
+        "morning of 2026-08-22"
+    ),
+    ("README.md", "0", "1,010 statements at 0%"): (
+        "the coverage of test-import statements, a sub-figure of the coverage "
+        "paragraph that the artifact does not break out"
+    ),
+
+    # ── tracked: should be captured, is not yet (#700) ───────────────────
+    ("README.md", "10,", "Node.js 22 and pnpm 10"): (
+        "ciPnpmMajor is checked at three other sites and captures node rather "
+        "than pnpm at this one; #700"
+    ),
+    ("apps/web/components/landing/Cascade.tsx", "384", "384-d · cosine"): (
+        "the embedding dimension is stated in three files and no fact reads "
+        "it anywhere; #700"
+    ),
+    ("booklet/src/content.ts", "384", "384-dim"): (
+        "the embedding dimension is stated in three files and no fact reads "
+        "it anywhere; #700"
+    ),
+    ("booklet/src/content.ts", "14,540", "1,783 tests, and 14,540 messages"): (
+        "corpusSize is checked elsewhere and this site captures the test count "
+        "instead; #700"
+    ),
+    ("booklet/src/content.ts", "0", "backend suite runs 1,783 tests"): (
+        "the skipped count on the booklet's copy of the suite line; "
+        "testsSkipped reads the README's copy and not this one; #700"
+    ),
+}
+
+#: A number in PROSE, which is narrower than "a number". The negative
+#: look-behind keeps the ``1`` of ``macro-F1`` and the ``3`` of ``v3`` out;
+#: without it this check reports five false positives on `README.md` alone,
+#: and a check with false positives is one the next reader learns to skip.
+_PROSE_NUMBER = re.compile(r"(?<![\w.%])\d[\d,]*(?:\.\d+)?(?![\w])")
+
+#: URLs are excluded wholesale. A badge link carries percent-encoding and path
+#: segments that are numbers by shape and claims by nothing — the shields.io
+#: line alone contributes ``%20``, ``%C2%B7`` and a colour. The NUMBER the badge
+#: displays is checked, because it is also stated in the prose the badge is
+#: about; the URL that renders it is not a claim site.
+_URL = re.compile(r"https?://\S+")
+
+
+def _capture_spans(pattern: str, match: "re.Match") -> list[tuple[int, int]]:
+    """Absolute spans of every capturing group this match actually filled."""
+
+    spans = []
+    for group in range(1, (match.re.groups or 0) + 1):
+        span = match.span(group)
+        if span != (-1, -1):
+            spans.append(span)
+    return spans
+
+
+def uncaptured_numbers() -> list[str]:
+    """Numbers inside a claim site that NO fact captures — issue #608.
+
+    THE DEFECT THIS EXISTS FOR, in the tool that exists to prevent it.
+    ``corpusLost``'s site read ``([\d,]+) lost, [\d,]+ dropped`` — one capture
+    group over a row carrying two figures. The dropped number was matched and
+    thrown away, so nothing had ever read it, while ``--check`` printed "68
+    facts, asserted at 213 sites, all agree with the code". A checker reporting
+    agreement about a figure it never captured is a check that cannot fail.
+
+    THE RULE IS ACROSS FACTS, NOT WITHIN ONE, and that distinction is the whole
+    design. Several sites legitimately match a number a DIFFERENT fact captures
+    — ``corpusSize`` reads ``[\d,]+ of ([\d,]+)`` on the row where
+    ``corpusCorrect`` reads ``([\d,]+) of [\d,]+``. A per-fact rule would
+    report 59 violations on this table, of which 57 are that pattern, and a
+    check with a 97% false-positive rate is one nobody reads. So the union of
+    every fact's capture groups is what a number has to fall inside.
+
+    Measured when this landed: 163 numbers sit inside a claim site, and exactly
+    two were captured by nothing — the dropped figure (now ``corpusDropped``)
+    and the historical 464 in ``UNCAPTURED_BY_DESIGN``.
+    """
+
+    by_file: dict[str, list] = {}
+    for fact in FACTS.values():
+        for raw in fact["sites"]:
+            site = {"re": raw} if isinstance(raw, str) else raw
+            by_file.setdefault(site.get("file", "README.md"), []).append(site["re"])
+
+    problems = []
+    for rel, patterns in sorted(by_file.items()):
+        text = (REPO / rel).read_text(encoding="utf-8")
+        url_spans = [m.span() for m in _URL.finditer(text)]
+        site_spans, capture_spans = [], []
+        for pattern in patterns:
+            for match in re.finditer(pattern, text):
+                site_spans.append(match.span())
+                capture_spans.extend(_capture_spans(pattern, match))
+        for number in _PROSE_NUMBER.finditer(text):
+            start, end = number.span()
+            if any(a <= start and end <= b for a, b in url_spans):
+                continue                      # a URL is not a claim
+            if not any(a <= start and end <= b for a, b in site_spans):
+                continue                      # not claimed, so not this check's business
+            if any(a <= start and end <= b for a, b in capture_spans):
+                continue                      # some fact reads it
+            line = text.count("\n", 0, start) + 1
+            excerpt = text[text.rfind("\n", 0, start) + 1 : text.find("\n", end)].strip()
+            waived = next(
+                (
+                    why
+                    for (wfile, wnum, anchor), why in UNCAPTURED_BY_DESIGN.items()
+                    if wfile == rel and wnum == number.group() and anchor in excerpt
+                ),
+                None,
+            )
+            if waived:
+                continue
+            problems.append(
+                f"{rel}:{line} states {number.group()} inside a claim site and no "
+                f"fact captures it, so nothing checks it (#608).\n"
+                f"      line     {excerpt[:110]}\n"
+                f"      Give it a capture group in some fact's site, or add it to "
+                f"UNCAPTURED_BY_DESIGN with the reason it cannot be checked."
+            )
+    return problems
+
+
 def run(mode: str) -> None:
     values, artifact = resolve_facts()
-    problems: list[str] = []
+    # #608, and it runs FIRST because it is about whether the rest of this
+    # function is measuring anything. A site that matches a number it does not
+    # capture makes every "all agree" line below overstate its own coverage.
+    problems: list[str] = uncaptured_numbers()
     rewrites = 0
 
     files: dict[str, dict] = {}
