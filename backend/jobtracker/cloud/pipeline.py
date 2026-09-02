@@ -3199,9 +3199,18 @@ def _role_from_trailing_segment(subject: str) -> str | None:
     there is no single row to pick — but it promotes what cannot be PLACED, and
     since #641 an identity-less CONFIRMATION at such an employer is placeable:
     it mints its own card. So a confirmation whose role this reader refused is
-    silent at a one-application employer AND at a multi-card one. Only an
-    UPDATE — a rejection, interview or assessment — reaches a person that way,
-    and the mail this reader exists for is a confirmation.
+    silent at a one-application employer AND at a multi-card one.
+
+    What DOES reach a person that way is an update, and the set is all five
+    non-``applied`` lifecycle categories: ``rejection``, ``interview``,
+    ``assessment``, ``offer`` and ``pending_application``. This sentence said
+    "a rejection, interview or assessment" and the word before it was "only" —
+    an enumeration that named three of five while claiming to be exhaustive,
+    which is the same defect as the one this paragraph exists to correct.
+    ``follow_up`` and ``other`` are a third state again: outside
+    ``JOB_LIFECYCLE_CATEGORIES``, so they neither file nor queue, and the
+    pipeline logs them as dropped. The mail this reader exists for is a
+    confirmation, so none of that reaches it.
 
     This reader is a title reader that declines rather than guesses, which is
     right — #553 measured what a guess costs. Calling that "fails closed"
