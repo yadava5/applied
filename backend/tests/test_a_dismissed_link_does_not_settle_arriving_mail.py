@@ -778,6 +778,23 @@ async def test_one_sync_carrying_all_six_cases_stores_exactly_three(
 # and a counter that never logs both pass a one-sided test.
 
 
+def _every_arriving_ref_is_dated(cases) -> None:
+    """The precondition that makes ``len(batch) - surfaced`` an exact refusal count.
+
+    Both persist functions return a count of DATED refs, so an UNDATED ref would
+    survive the filter and still not be counted as surfaced — and the test above
+    would then read a refusal that did not happen. Every case here is dated
+    (``ARRIVED_AT`` in :func:`_arriving`), so the two coincide, but that is a
+    property of the fixture and not of the code. ``_every_message_is_dated`` in
+    ``test_settled_filter_drops_an_uncertain_update.py`` exists for the same
+    reason; this is its local twin rather than a shared import, because the two
+    modules build their arriving refs differently.
+    """
+
+    undated = [c.key for c in cases if _arriving(c).received_at is None]
+    assert undated == [], f"an undated ref would be miscounted as refused: {undated}"
+
+
 def _refusals(caplog: pytest.LogCaptureFixture) -> list[str]:
     """The refusal lines this run emitted, from the sync module's logger only."""
 
@@ -810,16 +827,22 @@ async def test_the_refusals_are_counted_and_the_count_is_the_real_one(
     :func:`test_a_batch_that_refuses_nothing_logs_nothing` stays green, which
     is what makes the pair worth having.
 
-    ``UNSEEN`` IS IN THE BATCH TO BREAK A SYMMETRY, and without it this test
-    could not make that second claim. ``CASES`` alone is six refs of which
-    three survive, so ``refused`` and ``len(refs)`` are BOTH 3 and the operand
-    swap is an equivalent mutant — it changes nothing, the test stays green,
-    and the docstring above would be claiming a detection property the test
-    does not have. Seven offered, four surfaced and three refused are three
-    distinct numbers, so every one of them is pinned by a different assertion.
+    ``UNSEEN`` IS IN THE BATCH TO BREAK A SYMMETRY, and it is load-bearing for
+    EXACTLY ONE of those mutations — the ``len(refs)``-as-``refused`` swap. The
+    other three red with ``CASES`` alone; this is not a claim that the whole
+    table needs it. ``CASES`` alone is six refs of which three survive, so
+    ``refused`` and ``len(refs)`` are BOTH 3 and that one swap is an equivalent
+    mutant: it changes nothing, the test stays green, and the docstring above
+    would be claiming a detection property the test does not have. Seven
+    offered, four surfaced and three refused are three distinct numbers.
+
+    THE DISTINCTNESS GUARD IS THE POINT, not the specific batch. It fails if a
+    future edit makes any two of the three coincide again, which is the state
+    that silently disarms the swap.
     """
 
     batch = (*CASES, UNSEEN)
+    _every_arriving_ref_is_dated(batch)
     with caplog.at_level(logging.INFO, logger="jobtracker.cloud.applications"):
         surfaced = await _sync(*batch)
 
@@ -833,8 +856,16 @@ async def test_the_refusals_are_counted_and_the_count_is_the_real_one(
     )
     lines = _refusals(caplog)
     assert len(lines) == 1, f"expected exactly one refusal line, got {lines}"
+    # `refused` and `offered` in one substring, `surfaced` by the assertion
+    # above: two assertions for three numbers, which is what pins each of them
+    # exactly once.
     assert f"refused {refused} of {len(batch)}" in lines[0], lines[0]
-    assert OWNER in lines[0], "the line names no account, so it cannot be read"
+    # `user_id=` and not a bare substring. Without the key, a line that moved
+    # the account id anywhere else — into a message id, a table name — would
+    # satisfy this, and the only consumer of this line is a person grepping it.
+    assert f"user_id={OWNER}" in lines[0], (
+        f"the line does not name the account under `user_id=`: {lines[0]}"
+    )
 
 
 async def test_a_batch_that_refuses_nothing_logs_nothing(
