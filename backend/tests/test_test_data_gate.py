@@ -776,3 +776,67 @@ def test_swapping_a_templates_literal_suffix_reds(tree: Path) -> None:
     assert findings[PROBE].count == before["count"] == 1
     assert findings[PROBE].digest != before["digest"]
     assert _check(gate, tree) == 1
+
+
+# ---------------------------------------------------------------------------
+# A `@` inside a URL is not a sender (#647)
+# ---------------------------------------------------------------------------
+
+#: Both halves of what the guard removes, and they are the same shape.
+#: The DSN pair is a connection string, where the "local part" is a PASSWORD.
+#: The userinfo pair is the open-redirect fixture `config.py` exists to refuse,
+#: where a trusted host sits in front of the `@` to make `evil.com` look
+#: approved. Counting either as published test data was wrong in opposite
+#: directions: one leaked a credential shape into the address count, the other
+#: made a security fixture look like a real employer.
+URLS_THAT_ARE_NOT_ADDRESSES = [
+    pytest.param(
+        'gate._assert_safe_target("postgresql://u:p@db.abcdefg.supabase.co:5432/postgres")',
+        id="dsn-with-password",
+    ),
+    pytest.param(
+        '"postgresql://someuser:secret@aws-1-us-east-2.pooler.supabase.com:5432/postgres"',
+        id="dsn-routable-host",
+    ),
+    pytest.param('"https://getapplied.vercel.app@evil.com"', id="userinfo-no-password"),
+    pytest.param('"https://getapplied.vercel.app:pass@evil.com"', id="userinfo-with-password"),
+]
+
+
+@pytest.mark.parametrize("source", URLS_THAT_ARE_NOT_ADDRESSES)
+def test_a_url_credential_is_not_counted_as_a_sender(source: str) -> None:
+    """`scheme://user:pass@host` is not mail, and it used to be counted as mail.
+
+    Six matches in this tree were of this shape. They inflated the number the
+    baseline grandfathers, which is the only signal this gate produces, and one
+    of them made `evil.com` — a deliberate attack fixture — read as a real
+    employer domain sitting in a public repository.
+    """
+
+    assert _load().matches_in(source) == []
+
+
+#: The guard walks BACK from the local part only as far as the nearest quote,
+#: whitespace or bracket. These are the cases that would break if it walked
+#: further, and each one MUST still be counted.
+URLS_THAT_MUST_NOT_EXCUSE_A_REAL_ADDRESS = [
+    pytest.param("see https://example.com/x and mail ADDRESS", id="url-earlier-same-line"),
+    pytest.param('url = "https://greenhouse.io/x"\nsender = "ADDRESS"', id="url-on-the-line-above"),
+    pytest.param('href="mailto:ADDRESS"', id="mailto-has-no-scheme-slashes"),
+    pytest.param('{"url": "https://x.io", "from": "ADDRESS"}', id="url-in-the-same-dict"),
+]
+
+
+@pytest.mark.parametrize("source", URLS_THAT_MUST_NOT_EXCUSE_A_REAL_ADDRESS)
+def test_a_nearby_url_does_not_hide_a_real_address(source: str) -> None:
+    """The guard has to be narrow, or it becomes the hole it was closing.
+
+    A scan that looked backwards without stopping at a quote or a space would
+    let any file containing a URL smuggle addresses past this gate for the rest
+    of the file. That is a strictly worse defect than the one being fixed, so
+    each of these asserts the address is STILL found.
+    """
+
+    gate = _load()
+    address = _routable()
+    assert gate.matches_in(source.replace("ADDRESS", address)) == [gate.Match(address, False)]

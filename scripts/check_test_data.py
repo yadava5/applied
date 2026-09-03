@@ -329,6 +329,44 @@ def _read_concatenation(text: str, head: re.Match[str]) -> tuple[str, str, int] 
     return local, domain, position
 
 
+#: A DSN is not a sender. `postgresql://user:pass@host:5432/db` puts a `@`
+#: between credentials and a host, which is exactly the shape `EMAIL` reads, so
+#: every connection string in the tree counted as an address — and the "local
+#: part" it counted was a password.
+#:
+#: The same `@` appears in a URL's userinfo, and that half of the tree is
+#: security fixtures: `https://getapplied.vercel.app@evil.com` is the
+#: open-redirect shape `config.py` and `test_gmail_oauth_return_host.py` exist
+#: to refuse. Counting `vercel.app@evil.com` as a sender address made an
+#: attack fixture look like published test data.
+#:
+#: MEASURED, not hypothetical: six matches in this tree, and both halves are
+#: `scheme://...@host`, which is why one guard covers them —
+#:
+#:     backend/tests/test_expand_only_gate.py        2   postgresql:// DSN
+#:     backend/tests/test_migration_url.py           1   postgresql:// DSN
+#:     backend/tests/test_gmail_oauth_return_host.py 2   https:// userinfo
+#:     backend/jobtracker/config.py                  1   https:// userinfo
+#:
+#: They inflated the number the baseline grandfathers and diluted the only
+#: signal this gate has.
+#:
+#: The scan walks BACK from the local part to the nearest quote, whitespace or
+#: line start, and asks whether a scheme sits in between. Bounded that way on
+#: purpose: a URL earlier on the same line, or on the line above, must not
+#: excuse a real address that follows it.
+_URL_BOUNDARY = " \t\r\n'\"`(),[]{}"
+
+
+def _inside_url(text: str, start: int) -> bool:
+    """Is the match at `start` the credential half of a `scheme://user@host`?"""
+
+    i = start
+    while i > 0 and text[i - 1] not in _URL_BOUNDARY:
+        i -= 1
+    return "://" in text[i:start]
+
+
 def matches_in(text: str) -> list[Match]:
     """Every address-shaped run in `text` that is not provably un-routable.
 
@@ -368,6 +406,9 @@ def matches_in(text: str) -> list[Match]:
 
     for match in EMAIL.finditer(text):
         if any(start <= match.start() and match.end() <= end for start, end in spans):
+            continue
+        # A connection string's `user:pass@host` is not a sender address.
+        if _inside_url(text, match.start()):
             continue
         if not is_allowed(match.group(0).rsplit("@", 1)[1]):
             found.append(Match(match.group(0), False))
