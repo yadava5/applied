@@ -2349,7 +2349,13 @@ UNCAPTURED_BY_DESIGN: dict[tuple[str, str, str], str] = {
         "the embedding dimension is stated in three files and no fact reads "
         "it anywhere; #700"
     ),
-    ("booklet/src/content.ts", "14,540", "1,783 tests, and 14,540 messages"): (
+    # ANCHORED ON THE STABLE HALF OF THE LINE, DELIBERATELY. This waiver used to
+    # read "1,783 tests, and 14,540 messages", which embedded the test count —
+    # a number `--write` rewrites on every `--record`. The 2026-09-03 recording
+    # moved it to 2,939, the anchor stopped matching the excerpt, the waiver
+    # silently expired, and this check failed on a line nobody had edited. An
+    # anchor may name the number it waives and nothing else that moves.
+    ("booklet/src/content.ts", "14,540", "14,540 messages written to break the classifier"): (
         "corpusSize is checked elsewhere and this site captures the test count "
         "instead; #700"
     ),
