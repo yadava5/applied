@@ -56,6 +56,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Budgets live on the STEPS, not the job (#702, #712). A job-level
+  # `timeout-minutes` ends the job `conclusion: cancelled` — the same
+  # conclusion a supersede or a manual cancel produces — so a hang would
+  # hide among routine traffic; a step budget fails red. Measured in run
+  # 33704966798; the full note is in backend-ci.yml.
   booklet-drift:
     runs-on: ubuntu-latest
     steps:
@@ -70,10 +75,12 @@ jobs:
           cache-dependency-path: booklet/package-lock.json
 
       - name: Install booklet dependencies
+        timeout-minutes: 5
         working-directory: booklet
         run: npm ci
 
       - name: Rebuild the committed System Card
+        timeout-minutes: 5
         working-directory: booklet
         run: npm run build:system-card
 

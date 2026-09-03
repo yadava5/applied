@@ -66,6 +66,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Budgets live on the STEPS, not the job (#702, #712). A job-level
+  # `timeout-minutes` ends the job `conclusion: cancelled` — the same
+  # conclusion a supersede or a manual cancel produces — so a hang would
+  # hide among routine traffic; a step budget fails red. Measured in run
+  # 33704966798; the full note is in backend-ci.yml.
   build:
     runs-on: ubuntu-latest
     defaults:
@@ -97,9 +102,11 @@ jobs:
           cache-dependency-path: apps/web/pnpm-lock.yaml
 
       - name: Install dependencies
+        timeout-minutes: 5
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck
+        timeout-minutes: 5
         run: pnpm typecheck
 
       # The `--max-warnings 0` that makes this step able to fail lives on the
@@ -111,6 +118,7 @@ jobs:
       # eslint exits 0 on warnings, an `<img>` with no `alt` reported two
       # violations and the job still went green.
       - name: Lint
+        timeout-minutes: 5
         run: pnpm lint
 
       # Node 22+ is required, not incidental: these tests import `.ts` helpers
@@ -119,7 +127,9 @@ jobs:
       # failed with ERR_UNKNOWN_FILE_EXTENSION, so the tests existed while no
       # job ran them — a check that could not fail.
       - name: Unit tests
+        timeout-minutes: 5
         run: pnpm test:unit
 
       - name: Build
+        timeout-minutes: 5
         run: pnpm build

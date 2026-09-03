@@ -60,10 +60,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Budgets live on the STEPS, not the job (#702, #712). A job-level
+  # `timeout-minutes` ends the job `conclusion: cancelled` — the same
+  # conclusion a supersede or a manual cancel produces — so a hang would
+  # hide among routine traffic; a step budget fails red. Measured in run
+  # 33704966798; the full note is in backend-ci.yml.
   guard:
     name: The deploy guard answers correctly, and the suite can fail
     runs-on: ubuntu-latest
-    timeout-minutes: 10
 
     steps:
       - name: Checkout with full history
@@ -88,6 +92,7 @@ jobs:
           node-version: 22
 
       - name: The guard answers correctly
+        timeout-minutes: 5
         # `shell: bash` is load-bearing, not tidiness. The implicit shell for a
         # `run:` block is `bash -e {0}`, which does NOT set pipefail, so
         # `node --test ... | tee` would report the exit status of `tee` — always
@@ -158,6 +163,7 @@ jobs:
           PY
 
       - name: Prove the suite can fail
+        timeout-minutes: 5
         # Breaks the guard and its two call sites every way listed in that
         # file's own MUTATIONS array and requires the suite to go red for each.
         # Without this the suite is exactly the thing it was written to fix: a

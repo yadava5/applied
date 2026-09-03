@@ -42,6 +42,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Budgets live on the STEPS, not the job (#702, #712). A job-level
+  # `timeout-minutes` ends the job `conclusion: cancelled` — the same
+  # conclusion a supersede or a manual cancel produces — so a hang would
+  # hide among routine traffic; a step budget fails red. Measured in run
+  # 33704966798; the full note is in backend-ci.yml.
   cascade:
     runs-on: ubuntu-latest
 
@@ -59,6 +64,7 @@ jobs:
             backend/requirements-dev.txt
 
       - name: Install dependencies
+        timeout-minutes: 8
         working-directory: backend
         env:
           PIP_DISABLE_PIP_VERSION_CHECK: "1"
@@ -84,7 +90,13 @@ jobs:
           print(f'contents: {sorted(p.name for p in models_dir.iterdir())}')
           "
 
+      # UNMEASURED: this workflow has never had a run of any kind, so there is
+      # no observed max to size against. 20 is borrowed from backend-ci.yml's
+      # hybrid benchmark gate, which scores the same v3 dataset. It bounds the
+      # self-hosted dispatch path; on a hosted runner this step fails fast and
+      # on purpose ("no SetFit checkpoint found"), as the header explains.
       - name: Run cascade gate (rules vs full cascade on v3)
+        timeout-minutes: 20
         env:
           JOBTRACKER_ENVIRONMENT: test
           PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring

@@ -25,18 +25,34 @@ permissions:
   contents: read
 
 jobs:
+  # Budgets live on the STEPS, not the job (#702, #712). A job-level
+  # `timeout-minutes` ends the job `conclusion: cancelled` — the same
+  # conclusion a supersede or a manual cancel produces — so a hang would
+  # hide among routine traffic; a step budget fails red. Measured in run
+  # 33704966798; the full note is in backend-ci.yml.
   scan:
     name: Scan for secrets
     runs-on: ubuntu-latest
     steps:
+      # Bounded, unlike the other checkouts in this tree, for three reasons
+      # that only coincide here: `fetch-depth: 0` is a real network fetch of the
+      # whole history, this job is a REQUIRED check, and this workflow has no
+      # concurrency block, so nothing supersedes a hung run. A stall would park
+      # the PR at `pending` for six hours.
       - name: Checkout
+        timeout-minutes: 5
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Full history. The default shallow clone would scan one commit and
           # report clean, which is the failure mode this job exists to avoid.
           fetch-depth: 0
 
+      # Measured max is 0.07 min, but every run in that sample was a push or
+      # pull_request -- i.e. the PUSHED-COMMITS path. The schedule /
+      # workflow_dispatch path scans the WHOLE history and is not represented,
+      # so 10 is deliberately conservative for the path we have not timed.
       - name: Run gitleaks
         uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        timeout-minutes: 10
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

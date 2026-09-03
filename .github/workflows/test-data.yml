@@ -44,6 +44,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Budgets live on the STEPS, not the job (#702, #712). A job-level
+  # `timeout-minutes` ends the job `conclusion: cancelled` — the same
+  # conclusion a supersede or a manual cancel produces — so a hang would
+  # hide among routine traffic; a step budget fails red. Measured in run
+  # 33704966798; the full note is in backend-ci.yml.
   gate:
     # Refuses any change to the set of real sender addresses published in
     # tracked files under backend/tests/, backend/jobtracker/, apps/web/tests/
@@ -57,7 +62,6 @@ jobs:
     # is no honest reason for it to be continue-on-error.
     name: Test data baseline agrees with the tree
     runs-on: ubuntu-latest
-    timeout-minutes: 5
 
     steps:
       - name: Checkout
@@ -73,4 +77,5 @@ jobs:
           python-version: "3.11"
 
       - name: Refuse a change to the published sender addresses
+        timeout-minutes: 5
         run: python3 scripts/check_test_data.py

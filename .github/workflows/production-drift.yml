@@ -59,10 +59,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Budgets live on the STEPS, not the job (#702, #712). A job-level
+  # `timeout-minutes` ends the job `conclusion: cancelled` — the same
+  # conclusion a supersede or a manual cancel produces — so a hang would
+  # hide among routine traffic; a step budget fails red. Measured in run
+  # 33704966798; the full note is in backend-ci.yml.
   fixtures:
     name: The detector goes red for commits that really did not deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 5
     steps:
       - name: Checkout with full history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -77,6 +81,7 @@ jobs:
       # No pip install, no venv. Stdlib only, like scripts/readme_facts.py: a
       # check with dependencies is a check somebody eventually makes optional.
       - name: Aim the detector at history and require it to go red
+        timeout-minutes: 5
         # The suite enforces its own case count, so deleting a case fails here
         # instead of quietly shrinking the evidence.
         run: python3 scripts/test_production_drift.py
@@ -86,7 +91,6 @@ jobs:
     needs: fixtures
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -95,6 +99,7 @@ jobs:
           fetch-depth: 0
 
       - name: Compare both Vercel projects against main's tip
+        timeout-minutes: 5
         env:
           # THIS SECRET DOES NOT EXIST YET. Checked on 2026-08-14: the only
           # secrets on this repository are DIRECT_URL (production environment)

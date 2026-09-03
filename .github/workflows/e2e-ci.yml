@@ -38,9 +38,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Budgets live on the STEPS, not the job (#702, #712). A job-level
+  # `timeout-minutes` ends the job `conclusion: cancelled` — the same
+  # conclusion a supersede or a manual cancel produces — so a hang would
+  # hide among routine traffic; a step budget fails red. Measured in run
+  # 33704966798; the full note is in backend-ci.yml.
   playwright:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
 
     # Placeholder env so both `next build` and `next dev`'s initial route
     # compilation succeed without a real Supabase project. The test only
@@ -75,6 +79,7 @@ jobs:
             backend/requirements-dev.txt
 
       - name: Install backend dependencies
+        timeout-minutes: 8
         working-directory: backend
         env:
           PIP_DISABLE_PIP_VERSION_CHECK: "1"
@@ -96,6 +101,7 @@ jobs:
           cache-dependency-path: apps/web/pnpm-lock.yaml
 
       - name: Install frontend dependencies
+        timeout-minutes: 5
         working-directory: apps/web
         run: pnpm install --frozen-lockfile
 
@@ -124,6 +130,7 @@ jobs:
       # red. Regenerate and commit the result; do not suppress it.
       # -----------------------------------------------------------------------
       - name: Regenerate the web API schema from the cloud app
+        timeout-minutes: 5
         run: ./scripts/generate_api_schema.sh
 
       - name: Fail if the committed API schema drifted
@@ -145,8 +152,11 @@ jobs:
       # `timeout-minutes: 8` here is only a cap above that worst case, and
       # whether GitHub enforces it on a step that `uses:` a COMPOSITE action is
       # not something we have seen fire; do not rely on it, and do not raise it.
-      # A cap kill would report `cancelled`, i.e. UNSTABLE rather than red —
-      # which is precisely why the script's own timeout must be the one to fire.
+      # What conclusion it would report is UNMEASURED for the composite case:
+      # run 33704966798 measured a step-level cap on a plain `run:` step and it
+      # reported `failure`, and this step is not that shape. Either way the
+      # script's own timeout should be the one to fire, because it is the one
+      # we have actually watched go red.
       - name: Install Playwright browsers
         uses: ./.github/actions/playwright-browsers
         timeout-minutes: 8
@@ -188,10 +198,18 @@ jobs:
           nohup pnpm dev --port 3000 > ../../frontend.log 2>&1 &
           echo "FRONTEND_PID=$!" >> "$GITHUB_ENV"
 
+      # `--max-time 5` is load bearing, not tidiness. The loop bounds
+      # ITERATIONS, not time: without it a server that accepts the socket and
+      # never answers parks curl indefinitely on attempt 1, and an unbounded
+      # step falls through to GitHub's 360-minute JOB default, which reports
+      # `cancelled` -- the exact signature #712 exists to delete, in the file
+      # that produced it. Worst case is now 90 x (5 + 1) = 9 min, so the 10
+      # here lets the loop's own diagnostic tail the log before the cap fires.
       - name: Wait for frontend
+        timeout-minutes: 10
         run: |
           for i in $(seq 1 90); do
-            if curl -fsS http://127.0.0.1:3000/login >/dev/null 2>&1; then
+            if curl -fsS --max-time 5 http://127.0.0.1:3000/login >/dev/null 2>&1; then
               echo "frontend up after $i attempts"
               exit 0
             fi
@@ -210,7 +228,12 @@ jobs:
       # cannot go red there whatever the code does. Naming `--project=chromium`
       # here would skip both and restore exactly that; see the long note above
       # `projects` in that file, including what these projects do NOT cover.
+      # 14 = ~1.5x the observed max. Over the last 8 successful runs on main
+      # this step peaked at 9.3 min (median 8.8). The job used to carry 25
+      # minutes and both 2026-08-19 stalls burned all of it in the browser
+      # install above while reporting `cancelled`; this fails red instead.
       - name: Run Playwright tests
+        timeout-minutes: 14
         working-directory: apps/web
         run: pnpm exec playwright test
 
@@ -243,6 +266,11 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
+        # Bounded because it runs `if: always()`. An unbounded network upload
+        # after a RED step converts a genuine test failure into a 360-minute
+        # `cancelled` -- a red downgraded to an ambiguous conclusion, which is
+        # the same defect #712 fixes, arriving by the back door.
+        timeout-minutes: 5
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-report
@@ -252,6 +280,11 @@ jobs:
 
       - name: Upload Playwright test-results (videos + traces)
         if: always()
+        # Bounded because it runs `if: always()`. An unbounded network upload
+        # after a RED step converts a genuine test failure into a 360-minute
+        # `cancelled` -- a red downgraded to an ambiguous conclusion, which is
+        # the same defect #712 fixes, arriving by the back door.
+        timeout-minutes: 5
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-test-results
@@ -261,6 +294,11 @@ jobs:
 
       - name: Upload server log
         if: always()
+        # Bounded because it runs `if: always()`. An unbounded network upload
+        # after a RED step converts a genuine test failure into a 360-minute
+        # `cancelled` -- a red downgraded to an ambiguous conclusion, which is
+        # the same defect #712 fixes, arriving by the back door.
+        timeout-minutes: 5
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: server-logs
@@ -294,7 +332,6 @@ jobs:
   playwright-production:
     name: playwright (production build)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
 
     env:
       NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
@@ -327,6 +364,7 @@ jobs:
           cache-dependency-path: apps/web/pnpm-lock.yaml
 
       - name: Install frontend dependencies
+        timeout-minutes: 5
         working-directory: apps/web
         run: pnpm install --frozen-lockfile
 
@@ -340,6 +378,7 @@ jobs:
           working-directory: apps/web
 
       - name: Build (production)
+        timeout-minutes: 5
         working-directory: apps/web
         run: pnpm build
 
@@ -349,10 +388,18 @@ jobs:
           nohup pnpm start --port 3000 > ../../frontend-prod.log 2>&1 &
           echo "FRONTEND_PID=$!" >> "$GITHUB_ENV"
 
+      # `--max-time 5` is load bearing, not tidiness. The loop bounds
+      # ITERATIONS, not time: without it a server that accepts the socket and
+      # never answers parks curl indefinitely on attempt 1, and an unbounded
+      # step falls through to GitHub's 360-minute JOB default, which reports
+      # `cancelled` -- the exact signature #712 exists to delete, in the file
+      # that produced it. Worst case is now 90 x (5 + 1) = 9 min, so the 10
+      # here lets the loop's own diagnostic tail the log before the cap fires.
       - name: Wait for frontend
+        timeout-minutes: 10
         run: |
           for i in $(seq 1 90); do
-            if curl -fsS http://127.0.0.1:3000/login >/dev/null 2>&1; then
+            if curl -fsS --max-time 5 http://127.0.0.1:3000/login >/dev/null 2>&1; then
               echo "production server up after $i attempts"
               exit 0
             fi
@@ -367,7 +414,9 @@ jobs:
       # defect, and only this job hydrates a real static prerender; the dev
       # server re-renders every route per request. Same reasoning as the note
       # in the job above.
+      # 15 = ~1.5x the observed max of 9.7 min over the last 8 successful runs.
       - name: Run Playwright against the production build
+        timeout-minutes: 15
         working-directory: apps/web
         run: pnpm exec playwright test
 
@@ -395,6 +444,11 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
+        # Bounded because it runs `if: always()`. An unbounded network upload
+        # after a RED step converts a genuine test failure into a 360-minute
+        # `cancelled` -- a red downgraded to an ambiguous conclusion, which is
+        # the same defect #712 fixes, arriving by the back door.
+        timeout-minutes: 5
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-report-production
@@ -404,6 +458,11 @@ jobs:
 
       - name: Upload production server log
         if: always()
+        # Bounded because it runs `if: always()`. An unbounded network upload
+        # after a RED step converts a genuine test failure into a 360-minute
+        # `cancelled` -- a red downgraded to an ambiguous conclusion, which is
+        # the same defect #712 fixes, arriving by the back door.
+        timeout-minutes: 5
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: server-logs-production
