@@ -97,6 +97,15 @@ permissions:
   contents: read
 
 jobs:
+  # Budgets live on the STEPS, not the job (#702, #712). A job-level
+  # `timeout-minutes` ends the job `conclusion: cancelled` — the same
+  # conclusion a supersede or a manual cancel produces — so a hang would
+  # hide among routine traffic; a step budget fails red. Measured in run
+  # 33704966798; the full note is in backend-ci.yml.
+  #
+  # `alembic upgrade head` gets the loosest budget in this file on purpose:
+  # a migration killed mid-flight is the worst outcome here.
+
   # ---------------------------------------------------------------------------
   # On a PR: render the SQL, touch nothing. No secret, no database.
   # ---------------------------------------------------------------------------
@@ -104,7 +113,6 @@ jobs:
     name: Preview the SQL this PR would run
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -117,9 +125,11 @@ jobs:
           python-version: '3.11'
 
       - name: Install migration dependencies
+        timeout-minutes: 8
         run: pip install -r requirements.txt -r backend/requirements-migrate.txt
 
       - name: Render the upgrade as SQL
+        timeout-minutes: 5
         working-directory: backend
         run: |
           # The base is main's EXPECTED_REVISION, not `base`: rendering the whole
@@ -170,7 +180,6 @@ jobs:
     # Scopes DIRECT_URL to an environment so the credential is auditable and
     # can carry required reviewers later without touching this file.
     environment: production
-    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -180,6 +189,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install migration dependencies
+        timeout-minutes: 8
         run: pip install -r requirements.txt -r backend/requirements-migrate.txt
 
       - name: Check the credential is present
@@ -203,6 +213,7 @@ jobs:
           esac
 
       - name: Confirm the database is reachable
+        timeout-minutes: 5
         env:
           DIRECT_URL: ${{ secrets.DIRECT_URL }}
         working-directory: backend
@@ -274,6 +285,7 @@ jobs:
           PY
 
       - name: Record the revision before
+        timeout-minutes: 5
         id: before
         env:
           DIRECT_URL: ${{ secrets.DIRECT_URL }}
@@ -282,12 +294,14 @@ jobs:
           echo "rev=$(python -m alembic current 2>/dev/null | tail -1)" >> "$GITHUB_OUTPUT"
 
       - name: alembic upgrade head
+        timeout-minutes: 10
         env:
           DIRECT_URL: ${{ secrets.DIRECT_URL }}
         working-directory: backend
         run: python -m alembic upgrade head
 
       - name: Verify the database reached the revision the code expects
+        timeout-minutes: 5
         env:
           DIRECT_URL: ${{ secrets.DIRECT_URL }}
         working-directory: backend
@@ -323,6 +337,7 @@ jobs:
           PY
 
       - name: Verify row-level security survived the migration
+        timeout-minutes: 5
         env:
           DIRECT_URL: ${{ secrets.DIRECT_URL }}
         # A real script rather than an inline heredoc, so it can be run by hand

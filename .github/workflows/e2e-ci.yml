@@ -38,9 +38,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Budgets live on the STEPS, not the job (#702, #712). A job-level
+  # `timeout-minutes` ends the job `conclusion: cancelled` — the same
+  # conclusion a supersede or a manual cancel produces — so a hang would
+  # hide among routine traffic; a step budget fails red. Measured in run
+  # 33704966798; the full note is in backend-ci.yml.
   playwright:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
 
     # Placeholder env so both `next build` and `next dev`'s initial route
     # compilation succeed without a real Supabase project. The test only
@@ -75,6 +79,7 @@ jobs:
             backend/requirements-dev.txt
 
       - name: Install backend dependencies
+        timeout-minutes: 8
         working-directory: backend
         env:
           PIP_DISABLE_PIP_VERSION_CHECK: "1"
@@ -96,6 +101,7 @@ jobs:
           cache-dependency-path: apps/web/pnpm-lock.yaml
 
       - name: Install frontend dependencies
+        timeout-minutes: 5
         working-directory: apps/web
         run: pnpm install --frozen-lockfile
 
@@ -124,6 +130,7 @@ jobs:
       # red. Regenerate and commit the result; do not suppress it.
       # -----------------------------------------------------------------------
       - name: Regenerate the web API schema from the cloud app
+        timeout-minutes: 5
         run: ./scripts/generate_api_schema.sh
 
       - name: Fail if the committed API schema drifted
@@ -210,7 +217,12 @@ jobs:
       # cannot go red there whatever the code does. Naming `--project=chromium`
       # here would skip both and restore exactly that; see the long note above
       # `projects` in that file, including what these projects do NOT cover.
+      # 14 = ~1.5x the observed max. Over the last 8 successful runs on main
+      # this step peaked at 9.3 min (median 8.8). The job used to carry 25
+      # minutes and both 2026-08-19 stalls burned all of it in the browser
+      # install above while reporting `cancelled`; this fails red instead.
       - name: Run Playwright tests
+        timeout-minutes: 14
         working-directory: apps/web
         run: pnpm exec playwright test
 
@@ -294,7 +306,6 @@ jobs:
   playwright-production:
     name: playwright (production build)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
 
     env:
       NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
@@ -327,6 +338,7 @@ jobs:
           cache-dependency-path: apps/web/pnpm-lock.yaml
 
       - name: Install frontend dependencies
+        timeout-minutes: 5
         working-directory: apps/web
         run: pnpm install --frozen-lockfile
 
@@ -340,6 +352,7 @@ jobs:
           working-directory: apps/web
 
       - name: Build (production)
+        timeout-minutes: 5
         working-directory: apps/web
         run: pnpm build
 
@@ -367,7 +380,9 @@ jobs:
       # defect, and only this job hydrates a real static prerender; the dev
       # server re-renders every route per request. Same reasoning as the note
       # in the job above.
+      # 15 = ~1.5x the observed max of 9.7 min over the last 8 successful runs.
       - name: Run Playwright against the production build
+        timeout-minutes: 15
         working-directory: apps/web
         run: pnpm exec playwright test
 

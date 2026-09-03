@@ -21,6 +21,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Budgets live on the STEPS, not the job (#702, #712). A job-level
+  # `timeout-minutes` ends the job `conclusion: cancelled` — the same
+  # conclusion a supersede or a manual cancel produces — so a hang would
+  # hide among routine traffic; a step budget fails red. Measured in run
+  # 33704966798; the full note is in backend-ci.yml.
   monitor:
     runs-on: ubuntu-latest
     defaults:
@@ -41,6 +46,7 @@ jobs:
             backend/requirements-dev.txt
 
       - name: Install dependencies
+        timeout-minutes: 8
         env:
           PIP_DISABLE_PIP_VERSION_CHECK: "1"
         run: |
@@ -49,6 +55,7 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Generate monitoring artifacts
+        timeout-minutes: 5
         env:
           JOBTRACKER_ENVIRONMENT: test
           PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
@@ -63,6 +70,7 @@ jobs:
             --emit-github-step-summary
 
       - name: Prepare monitoring alert issue payload
+        timeout-minutes: 5
         id: prepare_alert_issue
         env:
           JOBTRACKER_ENVIRONMENT: test
@@ -75,6 +83,7 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
 
       - name: Create monitoring triage issue
+        timeout-minutes: 5
         if: ${{ steps.prepare_alert_issue.outputs.has_alerts == 'true' && (github.event_name == 'schedule' || inputs.create_issue_on_alert == true) }}
         env:
           GH_TOKEN: ${{ github.token }}
