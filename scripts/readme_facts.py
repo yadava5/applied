@@ -2302,7 +2302,7 @@ _CONFLICT_MARKER = re.compile(r"^(<{7}|={7}|>{7}|\|{7})(?:\s|$)", re.MULTILINE)
 #:   * TRACKED — it should be captured and is not yet. #700.
 UNCAPTURED_BY_DESIGN: dict[tuple[str, str, str], str] = {
     # ── not a measurement ────────────────────────────────────────────────
-    ("README.md", "1", "rules<br/>220 regex patterns"): (
+    ("README.md", "1", "rules<br/>218 regex patterns"): (
         "the stage ORDINAL in the mermaid cascade diagram, not a count"
     ),
     ("apps/web/components/landing/Cascade.tsx", "1", "cosine 1-NN"): (
