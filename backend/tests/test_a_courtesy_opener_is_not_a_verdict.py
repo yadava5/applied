@@ -186,12 +186,26 @@ def test_the_variant_that_auto_filed_is_no_longer_an_acknowledgement() -> None:
         "We have decided not to move forward with your application."
     )
 
-    # The verdict, which is what the fix moved.
+    # THE INVARIANT. This one must hold forever: the harm was a rejection
+    # filing itself as an acknowledgement, and the category alone closes it.
     assert result.category == EmailCategory.REJECTION
-    # It no longer files itself as an acknowledgement behind the user's back.
-    assert result.confidence < pipeline.AUTO_FILE_GATE
-    # And it is not destroyed either: the relay keeps it in the queue.
-    assert result.confidence < pipeline.REVIEW_FLOOR
+
+    # CHARACTERISATION BELOW, AND IT IS ALLOWED TO MOVE UPWARD.
+    #
+    # If either assertion reds because confidence ROSE while the category above
+    # is still REJECTION, that is the remaining half described in the docstring
+    # landing, and the correct response is to UPDATE THESE TWO LINES -- never to
+    # revert the change that raised it. A confident, correct rejection is a
+    # better outcome than a queued one; only a confident WRONG verdict was ever
+    # the defect. Greening a characterisation test by reverting an improvement
+    # is a defect this repository has shipped before.
+    _WHY = (
+        "confidence moved. If category is still REJECTION and this number went "
+        "UP, update this assertion -- the fix improved and the test is stale."
+    )
+    assert result.confidence < pipeline.AUTO_FILE_GATE, _WHY
+    # Not destroyed either: the relay keeps sub-floor mail in the review queue.
+    assert result.confidence < pipeline.REVIEW_FLOOR, _WHY
     assert pipeline.is_ats_sender(SENDER)
 
 
