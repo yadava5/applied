@@ -34,7 +34,13 @@ jobs:
     name: Scan for secrets
     runs-on: ubuntu-latest
     steps:
+      # Bounded, unlike the other checkouts in this tree, for three reasons
+      # that only coincide here: `fetch-depth: 0` is a real network fetch of the
+      # whole history, this job is a REQUIRED check, and this workflow has no
+      # concurrency block, so nothing supersedes a hung run. A stall would park
+      # the PR at `pending` for six hours.
       - name: Checkout
+        timeout-minutes: 5
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Full history. The default shallow clone would scan one commit and

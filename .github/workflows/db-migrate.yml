@@ -177,6 +177,16 @@ jobs:
     name: alembic upgrade head (production)
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    # THE ONE DELIBERATE JOB-LEVEL BUDGET IN THIS REPOSITORY, and the exception
+    # proves the rule. #712 removes job budgets because `cancelled` is also what
+    # a supersede produces -- but this workflow sets `cancel-in-progress: false`
+    # at the top, so no supersede can ever cancel this job and `cancelled` here
+    # is unambiguous. It is also the only job holding a production credential
+    # and a migration queue, where unbounded setup steps could wedge both for
+    # six hours. Bounded steps sum to 38, so this can only fire through 22+
+    # minutes of pathological checkout or install; it cannot clip a live
+    # `alembic upgrade`.
+    timeout-minutes: 60
     # Scopes DIRECT_URL to an environment so the credential is auditable and
     # can carry required reviewers later without touching this file.
     environment: production
