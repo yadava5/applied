@@ -872,3 +872,60 @@ def test_no_waiver_is_dead() -> None:
         f"these waivers silence nothing — another entry already covers their "
         f"line, so they record a review that has no effect: {dead}"
     )
+
+
+# ---------------------------------------------------------------------------
+# A waiver may not anchor on a number it does not waive (#725)
+# ---------------------------------------------------------------------------
+
+
+def test_no_committed_waiver_anchors_on_a_foreign_number() -> None:
+    """The state the import-time gate exists to hold.
+
+    `UNCAPTURED_BY_DESIGN` matches with `anchor in excerpt`, so an anchor is a
+    literal substring of today's line. An anchor carrying a number the script
+    itself regenerates dies the moment `--write` moves that number, and
+    `--check` then fails on a line nobody edited. It happened: the `14,540`
+    waiver was anchored on `"1,783 tests, and 14,540 messages"` and expired
+    when the recording refreshed the test count to 2,939.
+
+    Importing the module is what enforces this — the gate raises at import —
+    so this test is really asserting the tree is in a state the gate permits,
+    and naming the reason so a future re-anchor does not undo it.
+    """
+
+    facts = _load()
+    for path, number, anchor in facts.UNCAPTURED_BY_DESIGN:
+        others = [n for n in facts._ANCHOR_NUMBER.findall(anchor) if n != number]
+        assert not others, (
+            f"{path} waives {number!r} but anchors on {anchor!r}, which embeds "
+            f"{others}. Re-anchor on text from the same line holding no other number."
+        )
+
+
+#: The boundary the gate turns on. A false NEGATIVE here is the dangerous
+#: direction: it lets a fragile anchor through silently, which is the whole
+#: defect. A false positive merely blocks a commit loudly.
+ANCHOR_NUMBER_CASES = [
+    pytest.param("E2E CI", [], id="digit-inside-a-word-is-not-a-number"),
+    pytest.param("rules<br/>218 regex patterns", ["218"], id="plain-run"),
+    pytest.param("9,908 cards, 0 merges", ["9,908", "0"], id="comma-grouped-and-bare"),
+    pytest.param("384-d · cosine", ["384"], id="trailing-hyphen-letter"),
+    pytest.param("statements at 0%", ["0"], id="trailing-percent"),
+    pytest.param("no numbers here at all", [], id="none"),
+    pytest.param("v2ray and h3", [], id="two-digits-inside-words"),
+]
+
+
+@pytest.mark.parametrize("anchor,expected", ANCHOR_NUMBER_CASES)
+def test_the_anchor_scan_reads_standalone_numbers_only(
+    anchor: str, expected: list[str]
+) -> None:
+    """`E2E CI` must not read as containing the number 2.
+
+    The lookarounds are the whole rule. Without them the gate would reject
+    every anchor whose text happens to contain a digit inside a word, and the
+    first person to hit that would widen the rule rather than fix their anchor.
+    """
+
+    assert _load()._ANCHOR_NUMBER.findall(anchor) == expected
