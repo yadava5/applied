@@ -36,12 +36,14 @@ this repository — ``POST /applications/{id}/split`` exists and nothing pairs
 with it — so the failure directions are not symmetrical: a spare card can be
 taken off the board, and an application that never appears cannot be recovered.
 
-SECTION (k) IS NOT ABOUT #641. It is #699's finding (c) item 2: two of the SQL
-predicates this path leans on spell tenant scoping, and no fixture that reaches
-them built a cross-user ``Email -> application`` link, so both conjuncts could
-be deleted with every one of those tests still green. They live here because
-they are variants of the fixtures above — same employer, same helpers, one
-second account — and a sibling module would have had to copy all of it.
+SECTIONS (k) AND (l) ARE NOT ABOUT #641. They are #699's finding (c) item 2:
+four of the SQL predicates this path leans on spell tenant scoping, and no
+fixture that reaches them built a cross-user ``Email -> application`` link, so
+any of the four could be deleted with every one of those tests still green.
+Section (k) closed two; section (l) closes the remaining two, so each of the
+four now reds on its own deletion and on no other. They live here because they
+are variants of the fixtures above — same employer, same helpers, one second
+account — and a sibling module would have had to copy all of it.
 
 Every employer, sender and body here is invented. ``.test`` throughout.
 """
@@ -227,6 +229,7 @@ async def _file(
     day: int,
     *,
     user: uuid.UUID = USER,
+    thread_id: str | None = None,
 ) -> None:
     """Mail already filed against a stored card, with a committed verdict.
 
@@ -241,6 +244,7 @@ async def _file(
             application_id=row.id,
             source_account=EmailSource.GMAIL,
             message_id=message_id,
+            thread_id=thread_id,
             subject=f"Mail for {DISPLAY}",
             sender_email=SENDER,
             received_at=datetime.datetime(2026, 5, day, 9, 0),
@@ -745,6 +749,8 @@ async def test_a_delta_and_a_rebuild_reach_the_same_board(test_session) -> None:
 # were measured as still unfalsifiable when these cases were written, and
 # neither is named in #699's finding. Written down rather than widened into, so
 # that the next reader knows section (k) covers two of the four and not the set.
+# CLOSED 2026-09-02 by section (l) below, which controls the other two. The
+# note is kept because it is the record of how the gap was found.
 
 
 @pytest.mark.asyncio
@@ -912,3 +918,141 @@ async def test_only_this_accounts_mail_confirms_an_anonymous_row(
         assert links["a1"] not in {named.id, unconfirmed.id}, (
             "the card was minted but the confirmation was filed on an older row"
         )
+
+
+# --- (l) the other two conjuncts (#699 finding (c), the half (k) left open) ----
+#
+# Section (k) closed two of the four ``Email.user_id == user_id`` clauses on this
+# path and recorded, in its own header, that it was closing two and not the set.
+# These are the other two: the entirely-anonymous arm of
+# ``_is_a_further_application`` and ``_application_in_conversation``. Both were
+# still unfalsifiable — deleting either left the suite green — for the same
+# reason as before: no fixture built a cross-user ``Email -> application`` link.
+#
+# WHY THAT LINK IS THE ONLY FIXTURE THAT WORKS, and why the existing OTHER_USER
+# cases do not reach these clauses. Both queries already narrow by
+# ``application_id``, to ids taken from THIS user's rows. A second account
+# holding its own rows and its own mail is therefore excluded by the
+# application_id filter before the tenant clause is consulted, so those fixtures
+# cannot tell a scoped query from an unscoped one. The state that separates them
+# is a foreign account's Email pointing at OUR application — which the schema
+# permits, because ``Email.application_id`` is a plain foreign key to
+# ``applications.id`` with no composite constraint tying it to ``user_id``.
+#
+# WHAT THIS DOES NOT CLAIM. Not that any writer in this repository produces such
+# a row, and not that RLS is on. Only that if the row exists, the answer stays on
+# its own side of the fence — which is the whole content of a defence-in-depth
+# clause, and is exactly what nothing asserted.
+
+
+@pytest.mark.asyncio
+async def test_a_foreign_link_does_not_make_our_anonymous_row_confirmed(
+    test_session,
+) -> None:
+    """The quantifier asks "does this row already hold a confirmation?"
+
+    On an entirely anonymous board the answer decides whether an arriving
+    confirmation MINTS a card or folds into an existing one. Our row holds no
+    applied-signal mail of its own; the only such mail pointing at it belongs to
+    somebody else. The honest answer is therefore no.
+
+    Read the failure as a user would: with the conjunct deleted the gate says
+    "already confirmed", the mint is held back, and this account's third
+    application never appears — caused by a row in an account it cannot see.
+    """
+
+    ours = await _row(test_session, created_day=1)
+    # The foreign account's mail, filed against OUR application id.
+    await _file(test_session, ours, "x1", EmailCategory.APPLIED, 1, user=OTHER_USER)
+    await test_session.commit()
+
+    rolled = p.RolledApplication(
+        company_token=TOKEN,
+        company_display=DISPLAY,
+        role=None,
+        status="applied",
+        applied_at=None,
+        last_activity=None,
+        messages=(
+            p.MessageRef(
+                message_id="n1",
+                thread_id=None,
+                subject="Application received",
+                sender_email=SENDER,
+                sender_name=None,
+                received_at=datetime.datetime(2026, 5, 2, 9, 0),
+                category="applied",
+                confidence=0.9,
+            ),
+        ),
+    )
+
+    asked_as_us = await apps._is_a_further_application(test_session, USER, rolled, [ours])
+    # DIRECTIONAL. A gate that had simply stopped finding anything would satisfy
+    # the assertion above and fail this one: asked as the account that actually
+    # owns that mail, the very same row IS confirmed.
+    asked_as_them = await apps._is_a_further_application(
+        test_session, OTHER_USER, rolled, [ours]
+    )
+
+    assert asked_as_us is False, (
+        "another account's mail answered the question 'does OUR anonymous row "
+        "already hold a confirmation?' — the mint would be held back by a row "
+        "this user cannot see"
+    )
+    assert asked_as_them is True, "the owner's own confirmation stopped counting"
+
+
+@pytest.mark.asyncio
+async def test_a_foreign_link_does_not_name_our_conversation(test_session) -> None:
+    """Thread routing is the else-arm: where mail carries no key at all.
+
+    ``_application_in_conversation`` answers "which of this employer's cards does
+    this Gmail thread already sit on?" and, finding exactly one, files the
+    arriving update there. Our mailbox holds nothing on this thread. The only
+    row that does belongs to another account and merely points at our card.
+
+    Cost of the leak: an update lands on a card whose thread this user never
+    participated in, and — because a filed update can carry a status — moves it.
+    """
+
+    ours = await _row(test_session, created_day=1)
+    await _file(
+        test_session, ours, "t1", EmailCategory.APPLIED, 1, user=OTHER_USER, thread_id="thr-1"
+    )
+    await test_session.commit()
+
+    rolled = p.RolledApplication(
+        company_token=TOKEN,
+        company_display=DISPLAY,
+        role=None,
+        status="applied",
+        applied_at=None,
+        last_activity=None,
+        messages=(
+            p.MessageRef(
+                message_id="u1",
+                thread_id="thr-1",
+                subject="Re: your application",
+                sender_email=SENDER,
+                sender_name=None,
+                received_at=datetime.datetime(2026, 5, 3, 9, 0),
+                category="other",
+                confidence=0.9,
+            ),
+        ),
+    )
+
+    asked_as_us = await apps._application_in_conversation(test_session, USER, rolled, [ours])
+    asked_as_them = await apps._application_in_conversation(
+        test_session, OTHER_USER, rolled, [ours]
+    )
+
+    assert asked_as_us is None, (
+        "another account's mail on this thread named a card on OUR board — the "
+        "update would file onto an application whose conversation this user "
+        "was never part of"
+    )
+    # DIRECTIONAL, same argument as above: the query still works, and it is the
+    # tenant clause and nothing else that changed the answer.
+    assert asked_as_them is ours, "the owner's own thread stopped resolving"

@@ -1,81 +1,60 @@
-# JobTracker Backend Dependencies
-# ================================
-# Install with: pip install -r requirements.txt
-# Note: Install PyTorch CPU-only first:
-#   pip install torch --index-url https://download.pytorch.org/whl/cpu
-
-# -----------------------------------------------------------------------------
-# Web Framework (Async)
-# -----------------------------------------------------------------------------
-fastapi>=0.141.1              # Modern async web framework
-uvicorn[standard]>=0.27.0     # ASGI server with uvloop
-pydantic>=2.13.5               # Data validation using Python type hints
-pydantic-settings>=2.15.0     # Settings management with env var support (>=2.14.2: GHSA-4xgf-cpjx-pc3j)
-email-validator>=2.3.0        # Email validation for Pydantic EmailStr
-websockets>=17.1              # WebSocket support for real-time sync updates
-
-# -----------------------------------------------------------------------------
-# Database (Async SQLite + Postgres)
-# -----------------------------------------------------------------------------
-aiosqlite>=0.22.1             # Async SQLite driver (desktop/tests)
-asyncpg>=0.31.0               # Async Postgres driver (Supabase/cloud)
-sqlmodel>=0.0.14              # SQLAlchemy + Pydantic ORM (by FastAPI creator)
-sqlalchemy[asyncio]>=2.0.25   # Async SQLAlchemy core
-alembic>=1.13.0               # DB migrations (owns schema on Postgres)
-
-# -----------------------------------------------------------------------------
-# Email Integration
-# -----------------------------------------------------------------------------
-google-api-python-client>=2.199.0   # Gmail API client
-google-auth-httplib2>=0.1.1         # Google auth HTTP transport
-google-auth-oauthlib>=1.2.4         # OAuth2 flow for Gmail (>=1.2.4: explicit PKCE kwargs in from_client_config)
-aioimaplib>=2.0.1                   # Async IMAP client for iCloud Mail
-
-# -----------------------------------------------------------------------------
-# Security & Credentials
-# -----------------------------------------------------------------------------
-keyring>=25.7.0               # Secure credential storage (macOS Keychain)
-pyjwt[crypto]>=2.13.0         # Supabase JWT validation (>=2.13.0: PYSEC-2026-175..179)
-cryptography>=50.0.0,<51      # Pulled via pyjwt[crypto]; PYSEC-2026-35 / PYSEC-2026-2141 / GHSA-537c-gmf6-5ccf (upper bound keeps mlflow<49 happy)
-
-# -----------------------------------------------------------------------------
-# ML & NLP
-# -----------------------------------------------------------------------------
-sentence-transformers>=5.7.0  # Sentence embeddings (loads e5-small-v2)
-# The <5 cap is load-bearing and cannot be lifted from here. Note that neither
-# dependency's metadata says so: setfit 1.1.3 declares `transformers>=4.41.0` with
-# no upper bound and sentence-transformers 5.2.2 allows `<6.0.0`, so a resolver
-# will happily install transformers 5.x. Tested 2026-08-02 -- it breaks:
-#     ImportError: cannot import name 'default_logdir'
-#                  from 'transformers.training_args'   (setfit/training_args.py:13)
-# HybridClassifier catches that ImportError and degrades to the rules layer, so the
-# failure is silent: the API keeps answering and the benchmark keeps printing 0.9791.
-# See tests/test_evaluate_classifier_layer_guard.py for the guard that makes it loud.
+# JobTracker backend dependencies
+# ===============================
 #
-# Cost of the cap, recorded rather than hidden: it holds open PYSEC-2026-2288
-# (fix 5.0.0), PYSEC-2026-2289 (fix 5.3.0) and PYSEC-2026-2290 (fix 5.5.0).
-# PYSEC-2025-217 has no fixed version in any release. All four are remote-code-
-# execution paths through model/checkpoint loading from an untrusted repository;
-# this app loads exactly one model, from a local path it wrote itself
-# (backend/checkpoints, appdata/models/setfit), and never from a user-supplied
-# repo id. Unblocking needs a setfit release that supports transformers 5.
+# THE SHARED FLOOR LIVES IN ONE FILE, AND IT IS NOT THIS ONE (#704).
+# `-r ../requirements.txt` pulls in the manifest Vercel actually installs for
+# `api/index.py`. Everything below it is what the backend needs ON TOP: the
+# desktop and ML stack that deliberately never ships to the cloud.
+#
+# Why the include rather than two hand-synced lists. The old arrangement had
+# the same packages declared twice with no mechanism keeping them equal, and
+# the root file said so in its own comment: "Nothing checks this mechanically."
+# It drifted anyway — five shared packages by 2026-08-15, and THREE still
+# disagreed after the 2026-09-02 sync (#705):
+#
+#     sqlmodel            root >=0.0.39   here >=0.0.14   (25 releases apart)
+#     sqlalchemy[asyncio] root >=2.0.52   here >=2.0.25
+#     cryptography        root >=50.0.0   here >=50.0.0,<51
+#
+# A pip dry-run resolved production to sqlmodel 0.0.42 and the suite to 0.0.32,
+# so the suite could go green against a version production never runs. A gate
+# asserting the two files' floor STRINGS match would not have caught that: the
+# floors can be identical while a transitive cap in the dev stack still pulls
+# the resolved version down. The include makes the conflict physical instead —
+# there is one floor, and if the dev stack cannot satisfy it the install fails
+# loudly rather than resolving quietly to something else.
+#
+# So: a shared package's floor is raised in ../requirements.txt and nowhere
+# else. Only genuinely backend-only packages belong below.
+-r ../requirements.txt
+
+# -----------------------------------------------------------------------------
+# Backend-only: server and desktop runtime
+# -----------------------------------------------------------------------------
+# Excluded from the cloud manifest on purpose — see its "DO NOT add" list.
+# websockets and aiosqlite are not needed on Vercel; keyring is macOS Keychain
+# only and is replaced there by Fernet encryption.
+uvicorn[standard]>=0.27.0     # ASGI server with uvloop
+websockets>=17.1              # WebSocket support for real-time sync updates
+aiosqlite>=0.22.1             # Async SQLite driver (desktop/tests)
+alembic>=1.13.0               # DB migrations (owns schema on Postgres)
+keyring>=25.7.0               # Secure credential storage (macOS Keychain)
+
+# -----------------------------------------------------------------------------
+# Backend-only: the heavy ML stack
+# -----------------------------------------------------------------------------
+# ~800 MB with torch. This is the whole reason the two manifests differ: it
+# blows Vercel's Python Function size budget many times over.
+sentence-transformers>=5.7.0  # Sentence embeddings (loads e5-small-v2)
 transformers>=4.40,<5         # HuggingFace transformers (see the note above)
 setfit>=1.1.3                 # Few-shot text classification
 scikit-learn>=1.3.0           # ML utilities (cosine similarity, etc.)
 numpy>=1.24.0                 # Numerical operations, embedding serialization
 
 # -----------------------------------------------------------------------------
-# Email Parsing
+# Upper bounds retained here, on packages whose FLOOR comes from the root file
 # -----------------------------------------------------------------------------
-beautifulsoup4>=4.15.0        # HTML email parsing
-lxml>=6.1.2                   # Fast HTML/XML parser (bs4 backend) (>=6.1.0: PYSEC-2026-87)
-python-dateutil>=2.9.0.post0        # Date parsing utilities
-
-# -----------------------------------------------------------------------------
-# Development (install with: pip install -r requirements-dev.txt)
-# -----------------------------------------------------------------------------
-# pytest>=7.4.0               # Testing framework
-# pytest-asyncio>=0.23.0      # Async test support
-# httpx>=0.26.0               # Async HTTP client for testing
-# ruff>=0.1.0                 # Fast Python linter
-# mypy>=1.8.0                 # Static type checker
+# pip intersects a constraint given in an included file with one given here, so
+# this narrows the inherited `cryptography>=50.0.0` without restating the floor.
+# Verified: the pair resolves to cryptography 50.0.1.
+cryptography<51               # keeps mlflow<49 happy; floor is in ../requirements.txt

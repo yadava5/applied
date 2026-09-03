@@ -27,8 +27,17 @@
 # patched releases anyway; that is luck, not a floor, and it stops being true
 # the day a transitive cap pulls one of them back down.
 #
-# Nothing checks this mechanically. When you raise a floor in
-# backend/requirements.txt for a shared package, raise it here too.
+# THIS FILE IS NOW THE ONLY PLACE A SHARED FLOOR IS DECLARED (#704).
+# backend/requirements.txt no longer restates these packages; it starts with
+# `-r ../requirements.txt` and adds only what the cloud deliberately excludes.
+# So raise a shared floor HERE, and the suite inherits it. The old instruction
+# ("raise it in both") is what drifted: five shared packages by 2026-08-15 and
+# three more after the 2026-09-02 sync, at which point the suite resolved
+# sqlmodel 0.0.32 against production's 0.0.42.
+#
+# backend/tests/test_one_source_for_a_shared_floor.py fails if any package
+# declares a `>=` floor in both files again. A bare upper bound in the backend
+# file is still fine — pip intersects it with the floor inherited from here.
 
 # -----------------------------------------------------------------------------
 # Web Framework
