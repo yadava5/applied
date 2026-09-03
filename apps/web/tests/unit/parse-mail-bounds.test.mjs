@@ -35,8 +35,70 @@ import test from "node:test";
 
 import { parseFrom, parseMailFile } from "../../lib/import/parseMail.ts";
 
-/** The shape that made it quadratic: `<` that never closes, then filler. */
-const hostileFrom = (n) => "<".repeat(n) + "a".repeat(n);
+/**
+ * The shape that made it quadratic: `<` that never closes, then filler.
+ *
+ * THE 1,024 LEADING `a`s ARE THE MEASUREMENT, AND THEY ARE NEW (#721).
+ *
+ * Everything here is capped at MAX_FROM_CHARS before it reaches a matcher, so
+ * both sizes below do the same 1,024 characters of work and the ratio is meant
+ * to be ~1. The question is whether those 1,024 characters cost anything worth
+ * timing. With a leading run of `<`, they do not: `<` is excluded from the
+ * fallback's character class, so all 1,024 start positions fail on their first
+ * character and the whole call costs 0.005 ms. That is noise, not a
+ * measurement, and `Math.max(..., 0.05)` then clamped it to the floor on 199
+ * of 200 rounds — which is what turned this assertion into an absolute 0.2 ms
+ * deadline rather than a ratio.
+ *
+ * Address-legal characters inside the cap make the capped work real: the
+ * fallback starts a match at every one of the 1,024 positions and backtracks
+ * looking for an `@` that is not there. Measured, min of nine:
+ *
+ *     leading `<`   0.0041 ms      leading `a`   1.6478 ms
+ *
+ * A 400x larger numerator, which is what puts the measurement above the floor
+ * and keeps this a ratio.
+ */
+const hostileFrom = (n) => "a".repeat(1024) + "<".repeat(n) + "a".repeat(n);
+
+/**
+ * Timing noise is additive and one-signed — a scheduler slice or a GC pause can
+ * only make a measurement bigger — so the minimum across trials is the
+ * estimator it cannot inflate.
+ *
+ * NINE IS NOT DECORATION, IT IS THE FIX (#721). A bigger numerator alone is not
+ * enough. Measured on this machine under ten competing CPU-bound processes,
+ * 150 rounds each, which is closer to a shared CI runner than an idle laptop:
+ *
+ *     fixture       estimator     ratio p99   max     red at 4
+ *     leading `<`   single shot   2.92        5.33    1 / 150
+ *     leading `a`   single shot   7.24        11.17   2 / 150
+ *     leading `a`   min of nine   1.02        1.73    0 / 150
+ *
+ * The middle row is the one to keep in mind: on a contended machine the better
+ * fixture ALONE is worse than what it replaced, because a single large sample
+ * can still catch a stall and there is nothing to discard it against.
+ *
+ * ABSURD_MS IS WHAT KEEPS A RED FAST. A capped call costs about 1.7 ms, so
+ * anything past 100 ms is not a slow machine, it is the cap gone. Without the
+ * early return, raising MAX_FROM_CHARS runs the restored quadratic nine times
+ * per size: measured, 61.7 s and 61.2 s for the two assertions below, about two
+ * minutes to reach a verdict available on the first trial.
+ */
+const ABSURD_MS = 100;
+
+function bestOf(input, trials) {
+  let min = Infinity;
+  for (let i = 0; i < trials; i++) {
+    const started = performance.now();
+    parseFrom(input);
+    const elapsed = performance.now() - started;
+    // A quadratic is slow every time. Stop rather than measure it nine times.
+    if (elapsed > ABSURD_MS) return elapsed;
+    if (elapsed < min) min = elapsed;
+  }
+  return min;
+}
 
 /**
  * The shape that reaches the OTHER quadratic — `parseFrom`'s bare-address
@@ -58,19 +120,15 @@ test("a hostile From header cannot freeze the tab", () => {
 });
 
 test("the cost does not grow with the header, so the bound is the cap and not the clock", () => {
-  const time = (n) => {
-    const input = hostileFrom(n);
-    const started = performance.now();
-    parseFrom(input);
-    return performance.now() - started;
-  };
   // Quadratic would make this sixteen times the cost of the smaller one.
-  // Capped, the two are the same work and the ratio is noise.
-  const small = Math.max(time(16000), 0.05);
-  const large = time(64000);
+  // Capped, the two are the same 1,024 characters of work and the ratio is ~1.
+  // No floor: the fixture now measures enough that one is not needed, and a
+  // floor is what hid this test's real behaviour before (#721).
+  const small = bestOf(hostileFrom(16000), 9);
+  const large = bestOf(hostileFrom(64000), 9);
   assert.ok(
     large / small < 4,
-    `a 4x longer header cost ${(large / small).toFixed(1)}x more to parse (${small.toFixed(2)}ms then ${large.toFixed(2)}ms). Quadratic growth is back: the header is reaching the matcher unbounded.`,
+    `a 4x longer header cost ${(large / small).toFixed(1)}x more to parse (${small.toFixed(4)}ms then ${large.toFixed(4)}ms). Quadratic growth is back: the header is reaching the matcher unbounded.`,
   );
 });
 
@@ -143,20 +201,21 @@ test("ordinary From headers are untouched by the cap", () => {
  * is the branch, named.
  */
 test("the bare-address fallback is bounded by the cap, not by the clock", () => {
-  const time = (n) => {
-    const input = bareFrom(n);
-    const started = performance.now();
-    parseFrom(input);
-    return performance.now() - started;
-  };
   // Uncapped this ratio is ~16 (four times per doubling, twice over). Capped,
-  // both calls do the same 1,024 characters of work and the ratio is noise.
-  const small = Math.max(time(16000), 0.05);
-  const large = time(64000);
+  // both calls do the same 1,024 characters of work and the ratio is ~1.
+  //
+  // THIS FIXTURE WAS ALWAYS FINE; THE ESTIMATOR WAS NOT. `bareFrom` is all
+  // address-legal characters, so its capped 1,024 already cost 1.7 ms and the
+  // 0.05 floor never engaged — which is why #721 first graded this site
+  // healthy and left it alone. That grade came from an idle machine. Under ten
+  // competing CPU-bound processes, 150 rounds, it reds 1 in 150 with a worst
+  // ratio of 6.77; min-of-nine takes that to 0 in 150 with a worst of 1.75.
+  const small = bestOf(bareFrom(16000), 9);
+  const large = bestOf(bareFrom(64000), 9);
   assert.ok(
     large / small < 4,
     `a 4x longer bare From header cost ${(large / small).toFixed(1)}x more to parse ` +
-      `(${small.toFixed(2)}ms then ${large.toFixed(2)}ms). parseFrom's bare-address ` +
+      `(${small.toFixed(4)}ms then ${large.toFixed(4)}ms). parseFrom's bare-address ` +
       "fallback is quadratic and is reaching it unbounded: MAX_FROM_CHARS in " +
       "lib/import/parseMail.ts is what holds it.",
   );
