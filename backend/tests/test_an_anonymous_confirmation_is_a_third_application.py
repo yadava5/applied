@@ -190,6 +190,7 @@ async def _row(
     *,
     user: uuid.UUID = USER,
     role_token: str | None = None,
+    req_id: str | None = None,
     status: ApplicationStatus = ApplicationStatus.APPLIED,
     source: str = apps.SOURCE_GMAIL_AUTO,
     created_day: int = 1,
@@ -202,6 +203,11 @@ async def _row(
     is always explicit: ``_company_rows`` breaks its live-first ordering on it,
     and rule 4's fold target is the row that sorts first, so leaving it to the
     default would make the assertion depend on insertion order.
+
+    ``req_id`` is here for section (m). A row keyed by a requisition number and
+    nothing else is IDENTIFIED even though it names no role, and no other
+    fixture in this file builds one — which is precisely why the two
+    ``req_id is None`` conjuncts had no control.
     """
 
     row = Application(
@@ -212,6 +218,7 @@ async def _row(
         applied_date=datetime.date(2026, 5, created_day),
         source=source,
         role_token=role_token,
+        req_id=req_id,
         created_at=datetime.datetime(2026, 5, created_day, 8, 0),
         dismissed_at=(None if dismissed_reason is None else datetime.datetime(2026, 5, 15, 8, 0)),
         dismissed_reason=dismissed_reason,
@@ -1056,3 +1063,168 @@ async def test_a_foreign_link_does_not_name_our_conversation(test_session) -> No
     # DIRECTIONAL, same argument as above: the query still works, and it is the
     # tenant clause and nothing else that changed the answer.
     assert asked_as_them is ours, "the owner's own thread stopped resolving"
+
+
+# --- (m) the route itself, and the two `req_id` conjuncts (#699) --------------
+#
+# Sections (k) and (l) closed all four tenant predicates on this path. What the
+# same mutation matrix left standing was the ROUTE and the two `req_id is None`
+# conjuncts inside `_is_a_further_application` — three mutants that changed no
+# answer any test in this file, or in the three thread-routing modules, could
+# read.
+#
+# NEUTERING THREAD ROUTING OUTRIGHT LEFT EVERYTHING GREEN. Replace the line in
+# `_resolve_application` where `_application_in_conversation`'s answer is
+# consumed with `conversation = None`, so a thread can never name a card, and
+# nothing goes red. Two separate reasons, and both are worth writing down
+# because each is a shape this repository keeps re-acquiring:
+#
+#   * Section (l)'s `test_a_foreign_link_does_not_name_our_conversation` asserts
+#     at the FUNCTION. A mutation at the CALL SITE is invisible to it. A control
+#     on a function is not a control on its being called.
+#   * `test_an_update_that_does_reach_the_resolver_lands_on_a_card` above does
+#     reach the call site, and still cannot discriminate: its thread sits on
+#     `IDENT_A`, `created_day=1`, which is ALSO rule 4's oldest-live fold
+#     target. The conversation route and the fallback land on the SAME row, so
+#     the assertion holds whichever one ran.
+#
+# THE SEPARATION IS ONE MESSAGE ON THE OTHER THREAD, and it costs no fixture
+# edit: `IDENT_B` already carries `thread_id="t-data"` and is the younger row.
+# That matters more than it looks. Rewriting the case above to use the younger
+# row would have closed this gap and simultaneously stopped that test passing
+# for the reason it currently passes for; a NEW case leaves it measuring what it
+# was written to measure.
+
+
+@pytest.mark.asyncio
+async def test_a_threaded_update_lands_on_the_younger_card_not_the_oldest(
+    test_session,
+) -> None:
+    """The conversation route and rule 4's fallback, finally told apart.
+
+    REDS UNDER `conversation = None` at the call site in `_resolve_application`,
+    and reds under nothing else in this file — every other update here is
+    threaded to the row rule 4 would have picked anyway, which is the whole
+    reason the route was uncontrolled.
+
+    The two routes are separated by putting the thread on the YOUNGER card.
+    `_company_rows` sorts live-first, then `created_at` ascending, so rule 4's
+    `rows[0]` is the Backend Engineer row; only the conversation can explain the
+    update arriving on the Data Engineer one. That ordering is the precondition
+    the discrimination rests on, so it is ASSERTED rather than assumed — the day
+    it changes, this test stops being a control, and the first assertion below
+    is what says so out loud instead of going quietly green.
+    """
+
+    await _sync(test_session, [IDENT_A, IDENT_B])
+    rows = await _rows(test_session)
+    assert [r.role_token for r in rows] == ["backend engineer", "data engineer"], (
+        "rule 4 folds onto rows[0], and this test only discriminates while that "
+        "is the Backend Engineer row rather than the threaded one; the board "
+        f"now reads {[r.role_token for r in rows]}"
+    )
+    data = rows[1]
+
+    update = anonymous("u2", 24, category="rejection", thread_id="t-data")
+    await _sync(
+        test_session,
+        [update],
+        known_multi=MULTI,
+        known_threads=frozenset({"t-data"}),
+    )
+
+    after = await _rows(test_session)
+    assert len(after) == 2, f"an anonymous update opened a card ({len(after)} rows)"
+    assert (await _links(test_session))["u2"] == data.id, (
+        "the update's conversation names the Data Engineer card and it landed "
+        "somewhere else. Rule 4's oldest-live fold target is the Backend "
+        "Engineer row, so this is exactly what a neutered thread route looks "
+        "like: the mail still lands, on the wrong application, silently"
+    )
+
+
+# THE TWO `req_id is None` CONJUNCTS. Nothing anywhere in this file carried a
+# `req_id`, so both could be deleted with every test green.
+#
+# THE STATE IS REACHABLE, and that was checked BEFORE these were written —
+# had the readers been unable to produce it, the conjuncts would have been
+# equivalent mutants and calling them a coverage gap would have been the wrong
+# ruling. `pipeline.identity_parts` reads the requisition number and the title
+# INDEPENDENTLY, so an acknowledgement quoting a requisition and naming no job
+# returns `(role=None, req_id=...)`. A row keyed by a requisition alone is a
+# board shape the product can actually reach.
+
+
+@pytest.mark.asyncio
+async def test_a_requisition_only_row_does_not_make_the_board_anonymous(
+    test_session,
+) -> None:
+    """A row with a requisition and no title is IDENTIFIED, so this board is MIXED.
+
+    REDS UNDER deleting `row.req_id is None` from the `anonymous` filter in
+    `_is_a_further_application`, and under nothing else.
+
+    Delete it and the requisition-keyed row reads as anonymous, the board reads
+    as entirely anonymous, and the SOME quantifier of that arm is asked instead
+    of the EVERY quantifier of the mixed one. The keyed row holds a confirmation,
+    so SOME is satisfied and the gate mints — where the mixed board, seeing an
+    unconfirmed anonymous row beside it, correctly declines and folds. One
+    deleted conjunct silently swaps which of the two boards' rules apply.
+    """
+
+    keyed = await _row(test_session, req_id="R-40881", created_day=1)
+    await _file(test_session, keyed, "keyed-ack", EmailCategory.APPLIED, 1)
+    plain = await _row(test_session, status=ApplicationStatus.REJECTED, created_day=6)
+    await _file(test_session, plain, "plain-rej", EmailCategory.REJECTION, 6)
+    await test_session.commit()
+
+    await _sync(test_session, [ANON], known_multi=MULTI)
+
+    rows = await _rows(test_session)
+    assert len(rows) == 2, (
+        f"the board minted a third card ({len(rows)} rows). A requisition-keyed "
+        "row was counted as anonymous, so the entirely-anonymous arm answered "
+        "instead of the mixed one, and its SOME quantifier was satisfied by the "
+        "keyed row's own confirmation"
+    )
+    assert (await _links(test_session))["a1"] == keyed.id, (
+        "the fold lands on rows[0], the oldest live row"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_requisition_only_row_does_not_hold_the_mint_back(
+    test_session,
+) -> None:
+    """The same row on the other side of the gate: it is not an UNCONFIRMED one.
+
+    REDS UNDER deleting `row.req_id is None` from the `unconfirmed` filter in
+    `_is_a_further_application`, and under nothing else.
+
+    The quantifier exists to protect a row that is plausibly THIS
+    acknowledgement's own application — an anonymous auto row the sync minted
+    from an update, holding no confirmation yet. A requisition-keyed row is not
+    that: it names an identity, so it is a different application and it has no
+    standing to hold the mint back. Delete the conjunct and it acquires that
+    standing, the gate declines, and application #3 folds onto the oldest live
+    card and never appears — which is #641's original defect, reinstated
+    through a side door with every other gate still green.
+    """
+
+    named = await _row(test_session, role_token="platform engineer", created_day=1)
+    await _file(test_session, named, "named-ack", EmailCategory.APPLIED, 1)
+    keyed = await _row(test_session, req_id="R-40882", created_day=6)
+    await test_session.commit()
+
+    await _sync(test_session, [ANON], known_multi=MULTI)
+
+    rows = await _rows(test_session)
+    assert len(rows) == 3, (
+        f"the third application ended on {len(rows)} cards. A requisition-keyed "
+        f"row (id={keyed.id}) was counted as an unconfirmed ANONYMOUS row and "
+        "held the mint back, so the confirmation folded onto an existing card"
+    )
+    minted = [r for r in rows if r.id not in {named.id, keyed.id}]
+    assert len(minted) == 1
+    assert minted[0].req_id is None and minted[0].role_token is None
+    assert (await _links(test_session))["a1"] == minted[0].id
