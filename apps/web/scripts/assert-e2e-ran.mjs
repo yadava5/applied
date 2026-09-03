@@ -108,6 +108,17 @@ console.log(
   `assert-e2e-ran: ${ran} executed (${counts.unexpected} failed, ${counts.flaky} flaky), ` +
     `${counts.skipped} skipped. ${verdict}`,
 );
+// WHY THE SKIPS ARE ITEMISED (#599). A bare "29 skipped" sitting next to "OK"
+// reads as a passing suite, and 29 of these are the entire signed-in half —
+// they skip for want of credentials and have never run in CI. The count alone
+// has already been misread as coverage. Naming the reason costs one line and
+// makes the green say what it actually covers.
+if (counts.skipped > 0) {
+  const byReason = skipReasons();
+  for (const [reason, n] of byReason) {
+    console.log(`  skipped: ${n} — ${reason}`);
+  }
+}
 process.exit(child.status ?? 0);
 
 /** True when every skip in the report carries the prod-build reason. */
@@ -126,4 +137,27 @@ function needsProdBuild(report) {
   };
   for (const suite of report.suites ?? []) collect(suite);
   return reasons.length > 0 && reasons.every((r) => r.includes("PLAYWRIGHT_PROD_BUILD"));
+}
+
+/** Skip counts grouped by their annotation reason, most common first. */
+function skipReasons() {
+  const tally = new Map();
+  const note = (reason) => tally.set(reason, (tally.get(reason) ?? 0) + 1);
+  const collect = (suite) => {
+    for (const spec of suite.specs ?? []) {
+      for (const test of spec.tests ?? []) {
+        if ((test.status ?? "skipped") !== "skipped") continue;
+        const described = (test.annotations ?? [])
+          .map((a) => String(a.description ?? "").trim())
+          .filter(Boolean);
+        // An unannotated skip is the one worth surfacing loudest: nothing says
+        // why it did not run, so it cannot be told from a test that was quietly
+        // disabled.
+        note(described.length > 0 ? described.join("; ") : "no reason recorded");
+      }
+    }
+    for (const child of suite.suites ?? []) collect(child);
+  };
+  for (const suite of report.suites ?? []) collect(suite);
+  return [...tally.entries()].sort((a, b) => b[1] - a[1]);
 }
