@@ -41,36 +41,118 @@ function oldAngleAddress(value) {
   return m ? { name: m[1], email: m[2] } : null;
 }
 
+/**
+ * THE INPUT #406 FILED EXITS ON THE FIRST CHARACTER THE SCAN LOOKS AT.
+ *
+ * `"<"×N + "a"×N` does not end in `>`, and `parseAngleAddress` tests the anchor
+ * before it does anything else, so it returns after inspecting one character.
+ * Measured here, min of nine, on an idle M-series laptop:
+ *
+ *     N =    16,000   0.0002 ms        N =   250,000   0.0002 ms
+ *     N =    62,500   0.0002 ms        N = 1,000,000   0.0002 ms
+ *
+ * Flat to four decimals across a 64x range. There is no growth in it to find.
+ *
+ * The input stays, because it is the shape the issue was filed about and it
+ * still reds a reverted `parseAngleAddress` — the REGEX is quadratic on it,
+ * which is the entire reason #406 exists. What it is not is a measurement of
+ * the scan, and the growth test below used to treat it as one.
+ *
+ * `hostileDeep` is the shape that makes the scan work for its answer. It ends
+ * in `>`, so the anchor passes and both interior walks run: `lastIndexOf(">",
+ * gt - 1)` back across the middle run, then `indexOf("<", prevGt + 1)` forward
+ * across the tail, finding nothing and returning null. Both implementations
+ * answer null on it, so the equivalence half of this file is untouched.
+ *
+ *     scan   N =    62,500   0.0404 ms      regex   N = 1,000     4.4 ms
+ *            N =   250,000   0.1608 ms              N = 2,000    17.2 ms
+ *            N = 1,000,000   0.6423 ms              N = 4,000    68.1 ms
+ *                                                   N = 8,000   272.7 ms
+ *
+ * 4x per 4x of input on the left, 4x per 2x on the right. Linear against
+ * quadratic, on an input that reaches the code being defended.
+ */
 const hostile = (n) => "<".repeat(n) + "a".repeat(n);
+const hostileDeep = (n) => "<".repeat(n) + "a".repeat(n) + ">" + "a".repeat(n) + ">";
 
 test("the scan is not quadratic in the length of the header", () => {
-  // 64000 is the size at which the regex takes 18 seconds.
-  const input = hostile(64000);
-  const started = performance.now();
-  parseAngleAddress(input);
-  const elapsed = performance.now() - started;
-
-  assert.ok(
-    elapsed < 500,
-    `parseAngleAddress took ${elapsed.toFixed(0)}ms on a 128KB value. The backtracking matcher is back: MAX_FROM_CHARS hides it from parseFrom, but every other caller pays O(n²) again.`,
-  );
-});
-
-test("the cost does not grow with the input, so it is the algorithm and not the machine", () => {
-  const time = (n) => {
-    const input = hostile(n);
+  // 64000 is the size at which the regex takes 18 seconds on either shape.
+  for (const [shape, input] of [
+    ["the shape #406 filed", hostile(64000)],
+    ["the shape that reaches the interior walks", hostileDeep(64000)],
+  ]) {
     const started = performance.now();
     parseAngleAddress(input);
-    return performance.now() - started;
-  };
-  // Quadratic makes this sixteen times the smaller measurement. Linear makes
-  // the two indistinguishable, so the floor is what keeps the ratio finite.
-  const small = Math.max(time(16000), 0.05);
-  const large = time(64000);
+    const elapsed = performance.now() - started;
+
+    assert.ok(
+      elapsed < 500,
+      `parseAngleAddress took ${elapsed.toFixed(0)}ms on ${shape} at ${input.length} characters. The backtracking matcher is back: MAX_FROM_CHARS hides it from parseFrom, but every other caller pays O(n²) again.`,
+    );
+  }
+});
+
+/**
+ * A quadratic is slow on every trial, so there is nothing to learn from the
+ * eight after the first. Without this, a restored regex costs nine trials at
+ * 1.1 s plus nine at 17.4 s — three minutes of a runner to reach a verdict that
+ * was available immediately. With it, measured: 18.5 s to red.
+ */
+const ABSURD_MS = 100;
+
+/**
+ * Timing noise is additive and one-signed — a scheduler slice or a GC pause can
+ * only make a measurement larger — so the minimum of several trials is the
+ * estimator it cannot inflate. The string is built outside the clock, and after
+ * the first trial it is flat, so the later trials time the walk rather than
+ * V8's rope.
+ */
+function bestOf(input, trials) {
+  let min = Infinity;
+  for (let i = 0; i < trials; i++) {
+    const started = performance.now();
+    parseAngleAddress(input);
+    const elapsed = performance.now() - started;
+    if (elapsed > ABSURD_MS) return elapsed;
+    if (elapsed < min) min = elapsed;
+  }
+  return min;
+}
+
+/**
+ * WHAT THIS REPLACES, AND WHY THE OLD FORM COULD NOT DO ITS JOB.
+ *
+ * It was `Math.max(time(16000), 0.05)` against a single `time(64000)`, bounded
+ * at 4. On the flat input both sides measure 0.0002 ms, so 199 of 200 rounds
+ * put the smaller measurement on the 0.05 floor: the assertion was never a
+ * ratio, it was an absolute 0.2 ms deadline on a shared CI runner. Measured
+ * noise on an idle laptop reached 0.524 ms — 2 of 200 rounds red — and it took
+ * the #716 + #717 train red on a diff that does not touch this file. One of the
+ * last forty Frontend CI runs died on it.
+ *
+ * The bound was the second half of the problem. 4x the input is 4x the walk, so
+ * 4 sat exactly on the linear expectation with no room either side of it.
+ * Quadratic is 16. 8 is the midpoint on the only scale that matters, a clear
+ * factor of two from both.
+ *
+ * Min-of-nine over 100 rounds on the deep input: ratio p50 3.95, p99 3.98, max
+ * 3.98, zero reds. Single-shot on the same input reaches 5.08.
+ *
+ * The flat input above is this test's control for the worry that an unused
+ * return value gets optimised away: an eliminated call is what 0.0002 ms flat
+ * across a 64x range looks like, and these measurements do not look like that.
+ */
+test("the cost does not grow with the input, so it is the algorithm and not the machine", () => {
+  // If this ever stops being null the walk is exiting early and the numbers
+  // below stop meaning anything.
+  assert.equal(parseAngleAddress(hostileDeep(64)), null);
+
+  const small = bestOf(hostileDeep(16000), 9);
+  const large = bestOf(hostileDeep(64000), 9);
 
   assert.ok(
-    large / small < 4,
-    `a 4x longer value cost ${(large / small).toFixed(1)}x more (${small.toFixed(2)}ms then ${large.toFixed(2)}ms), which is the quadratic's growth rate rather than a scan's.`,
+    large / small < 8,
+    `a 4x longer value cost ${(large / small).toFixed(1)}x more (${small.toFixed(4)}ms then ${large.toFixed(4)}ms). A linear scan is 4x here and the backtracking regex is 16x; 8 is the line between them.`,
   );
 });
 

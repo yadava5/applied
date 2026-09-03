@@ -252,8 +252,59 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"offer (letter|of employment)",
             r"(pleased|delighted|happy|excited|glad|would like) to offer",
             r"looking forward to speaking",
-            r"thank you for applying",
-            r"application.{0,20}received",
+            # TWO NEGATIVES WERE REMOVED HERE (#658), and the argument is the
+            # one EmailCategory.INTERVIEW already records above for the seven
+            # it removed in #348: they were EmailCategory.APPLIED's own
+            # positives, copied in to stop an acknowledgement reading as a
+            # rejection, and a real rejection OPENS with them.
+            #
+            #   thank you for applying · application.{0,20}received
+            #
+            # The second is `APPLIED.strong[0]` verbatim; the first is its
+            # sibling `thank(s| you) for applying` less the alternation.
+            #
+            # "Thank you for applying for the <Role> role at <Company>. We have
+            # decided not to move forward with your application." is the
+            # standard ATS rejection and it scored `applied`. The verdict
+            # sentence matched BOTH of the infinitive twins above — +6, the
+            # most a body can earn — and then this one courtesy line took -5
+            # off it, leaving rejection 1 against applied 3. The whole verdict
+            # turned on the word "careful": `after careful (consideration|
+            # review).{0,30}(not|decided|unfortunately)` was the only thing
+            # that could pay the -5 back, so "After thoughtful consideration",
+            # "After much consideration" and the bare "We have decided not to
+            # move forward with your application" all came out `applied` while
+            # "After careful consideration" came out `rejection`.
+            #
+            # WHY DELETION AND NOT A SOFTER WEIGHT, which is #348's reasoning
+            # transposed one category over. Note where the -5 could ever
+            # matter: only on a message that ALREADY had positive rejection
+            # evidence, because a category at 0 is not competing for the win
+            # either way. So the subtraction was reachable exactly in the case
+            # where it was wrong — a rejection that says thank you.
+            #
+            # ADDING THE ADJECTIVE WOULD NOT HAVE BEEN THE FIX. Widening the
+            # "consideration" pattern past `careful` buys back the -5 for the
+            # wordings somebody thought of and leaves every other one paying
+            # it. The courtesy opener is not evidence against the verdict that
+            # follows it; that is the general statement, and it is what makes
+            # the bare form work without naming a single adjective.
+            #
+            # THE EXPOSURE WAS WORSE THAN THE REVIEW QUEUE. Add the other
+            # standard opener — "We have received your application." — and
+            # `applied` gains its own +3 (`we (have |'ve )received your
+            # application`) for 6 against rejection's 1: 0.90, +0.05 for the
+            # ATS relay, 0.95. That is over ``pipeline.AUTO_FILE_GATE`` (0.85),
+            # so that rejection did not wait in the queue under a wrong label —
+            # it auto-filed as an acknowledgement.
+            #
+            # The five negatives left above are kept deliberately: each names a
+            # DIFFERENT STAGE ("schedule an interview", "pleased to offer"),
+            # which is a real argument that this message is not a rejection. An
+            # acknowledgement opener is not — it is what job mail of every
+            # stage begins with.
+            #
+            # `tests/test_a_courtesy_opener_is_not_a_verdict.py` is the gate.
             r"\b(unsubscribe|manage preferences|newsletter|digest)\b",
             r"\b(discount|promo(?:tion)?|coupon|sale|limited time offer)\b",
             r"\b(order|purchase|shipment|tracking number)\b",

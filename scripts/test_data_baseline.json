@@ -102,6 +102,10 @@
       "count": 6,
       "digest": "ed01baa05cc73082"
     },
+    "backend/tests/test_a_courtesy_opener_is_not_a_verdict.py": {
+      "count": 1,
+      "digest": "bbdb2b9420736b4b"
+    },
     "backend/tests/test_a_lifecycle_word_does_not_hide_the_employer.py": {
       "count": 3,
       "digest": "e5835ed309d61404"
