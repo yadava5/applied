@@ -903,3 +903,80 @@ def test_the_invitation_pattern_is_linear() -> None:
         "defect this test was rewritten to fix."
     )
     assert bounded_ms < budget_ms, f"{bounded_ms:.2f} ms, budget {budget_ms} ms"
+
+
+# ---------------------------------------------------------------------------
+# The set has to hold the domain the vendor actually SENDS from
+# ---------------------------------------------------------------------------
+
+#: Vendors whose real candidate-mail domain yields a brand that the set did not
+#: contain. Each was verified against the vendor's own documentation and DNS,
+#: not inferred from the product name — which is the whole point, because the
+#: product name is what made the wrong entry look right.
+#:
+#: `.example` on the end keeps these un-routable for the test-data gate while
+#: leaving the brand intact: `_domain_brand` reads the second-from-last label,
+#: so `woventeams.example` yields `woventeams` exactly as `woventeams.com` does.
+VENDOR_SENDING_BRANDS = [
+    pytest.param(
+        "woventeams",
+        "Woven sends candidate mail from woventeams.com, evidenced by Greenhouse's "
+        "own Woven integration doc and by live MX/SPF/DMARC. `woven.com` is a "
+        "different entity and `woven.io` is parked, so the plain `woven` entry "
+        "never matched a real message and nothing existed to notice it.",
+        id="woven-sends-as-woventeams",
+    ),
+    pytest.param(
+        "skillpanel",
+        "DevSkiller renamed to SkillPanel in September 2025; devskiller.com 301s "
+        "to skillpanel.com. Both remain live senders on different stacks, which "
+        "is why the old brand stays too.",
+        id="devskiller-is-skillpanel-now",
+    ),
+    pytest.param(
+        "mercermettl",
+        "Mettl's EU region sends from mercermettl.eu, which publishes an SPF "
+        "including amazonses.com.",
+        id="mettl-sends-as-mercermettl",
+    ),
+]
+
+
+@pytest.mark.parametrize("brand,why", VENDOR_SENDING_BRANDS)
+def test_the_vendors_real_sending_brand_reads_the_employer(brand: str, why: str) -> None:
+    """A vendor absent from the set files a card at the vendor — #687, still live.
+
+    Measured on the base commit, each of these resolved to the VENDOR:
+    `('woventeams', 'Woventeams')`, `('skillpanel', 'Skillpanel')`,
+    `('mercermettl', 'Mercermettl')`. That is the defect #687 was filed for,
+    surviving for three vendors because the set was populated from product
+    names rather than from sending domains.
+    """
+
+    assert brand in p.ASSESSMENT_RELAY_DOMAINS, why
+    assert p.resolve_employer(
+        f"noreply@{brand}.example",
+        "Netic AI invites you to take an assessment",
+        None,
+    ) == ("netic", "Netic AI"), why
+
+
+def test_mercer_is_not_in_the_relay_vocabulary() -> None:
+    """The correction this audit REFUSED to make, pinned so nobody makes it.
+
+    Mettl's Indian region sends from `admin.mettl@mercer.com`, so the brand that
+    would catch it is `mercer`. Mercer is a large real employer that sends its
+    own recruiting mail, and putting it in a relay set would push every genuine
+    Mercer application onto the display-name and subject fallbacks — the
+    person-as-employer class this module exists to fight.
+
+    So that address is unreachable by a brand-keyed set, on purpose. Catching it
+    needs a full-address exception, which is a product decision.
+    """
+
+    assert "mercer" not in p.ASSESSMENT_RELAY_DOMAINS
+    assert "mercer" not in p.RELAY_DOMAINS
+    assert p.resolve_employer("careers@mercer.example", "Thanks for applying", "Mercer") == (
+        "mercer",
+        "Mercer",
+    )
