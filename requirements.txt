@@ -34,8 +34,8 @@
 # Web Framework
 # -----------------------------------------------------------------------------
 fastapi>=0.141.1
-pydantic>=2.13.4
-pydantic-settings>=2.14.2     # GHSA-4xgf-cpjx-pc3j
+pydantic>=2.13.5
+pydantic-settings>=2.15.0     # GHSA-4xgf-cpjx-pc3j
 email-validator>=2.3.0
 
 # -----------------------------------------------------------------------------
@@ -54,7 +54,7 @@ cryptography>=50.0.0
 # -----------------------------------------------------------------------------
 # Email Integration (cloud Gmail OAuth wired in C5, IMAP stays)
 # -----------------------------------------------------------------------------
-google-api-python-client>=2.198.0
+google-api-python-client>=2.199.0
 google-auth-httplib2>=0.1.1
 # >=1.2.4: Flow.from_client_config must accept + forward the explicit
 # code_verifier / autogenerate_code_verifier kwargs the stateless PKCE
@@ -69,7 +69,7 @@ aioimaplib>=2.0.1
 # Email Parsing
 # -----------------------------------------------------------------------------
 beautifulsoup4>=4.15.0
-lxml>=6.1.1                   # PYSEC-2026-87 (fixed in 6.1.0)
+lxml>=6.1.2                   # PYSEC-2026-87 (fixed in 6.1.0)
 python-dateutil>=2.9.0.post0
 
 # -----------------------------------------------------------------------------
@@ -81,4 +81,4 @@ python-dateutil>=2.9.0.post0
 # patched releases without any major-version change.
 requests>=2.34.2        # PYSEC-2026-2275
 urllib3>=2.7.0          # PYSEC-2026-141, PYSEC-2026-142
-python-dotenv>=1.2.2    # PYSEC-2026-2270
+python-dotenv>=1.2.3    # PYSEC-2026-2270
