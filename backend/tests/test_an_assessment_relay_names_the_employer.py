@@ -964,7 +964,7 @@ def test_the_vendors_real_sending_brand_reads_the_employer(brand: str, why: str)
 def test_mercer_is_not_in_the_relay_vocabulary() -> None:
     """The correction this audit REFUSED to make, pinned so nobody makes it.
 
-    Mettl's Indian region sends from `admin.mettl@mercer.com`, so the brand that
+    Mettl's Indian region sends from an `admin.mettl` mailbox on Mercer's own domain, so the brand that
     would catch it is `mercer`. Mercer is a large real employer that sends its
     own recruiting mail, and putting it in a relay set would push every genuine
     Mercer application onto the display-name and subject fallbacks — the

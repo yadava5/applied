@@ -210,7 +210,7 @@ ASSESSMENT_RELAY_DOMAINS: frozenset[str] = frozenset(
         # reader knows which half to doubt.
         #
         # `mercer` IS DELIBERATELY ABSENT AND MUST STAY ABSENT. Mettl's Indian
-        # region sends from `admin.mettl@mercer.com`, so the brand that would
+        # region sends from an `admin.mettl` mailbox on Mercer's own domain, so the brand that would
         # match is `mercer` — and Mercer is a large real employer that sends its
         # own recruiting mail. Adding it would push every genuine Mercer
         # application onto the display-name and subject fallbacks, which is the
@@ -229,7 +229,7 @@ ASSESSMENT_RELAY_DOMAINS: frozenset[str] = frozenset(
         # plain `woven` entry above never matched a real Woven message and an
         # invite would have filed a card at the vendor, which is #687's defect
         # still live for one vendor. Evidenced by Greenhouse's own Woven
-        # integration doc naming `candidates+greenhouse_errors@woventeams.com`,
+        # integration doc naming a `candidates+greenhouse_errors` mailbox at that domain,
         # and by DNS: live Google MX, SPF, and its own DMARC record.
         #
         # `woven` stays. `woven.com` is a different entity and `woven.io` is
