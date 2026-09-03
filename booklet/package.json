@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "Applied System Card — a printed 8.5×11 booklet exported to PDF via Puppeteer.",
+  "description": "Applied System Card \u2014 a printed 8.5\u00d711 booklet exported to PDF via Puppeteer.",
   "scripts": {
     "dev": "vite --port 5182",
     "build": "tsc --noEmit && vite build",
@@ -21,9 +21,9 @@
   "devDependencies": {
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "@vitejs/plugin-react": "^4.3.4",
-    "puppeteer": "^23.10.4",
-    "typescript": "^5.7.2",
-    "vite": "^6.0.7"
+    "@vitejs/plugin-react": "^6.1.1",
+    "puppeteer": "^25.9.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2"
   }
 }
