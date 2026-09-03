@@ -2389,7 +2389,7 @@ def _capture_spans(pattern: str, match: "re.Match") -> list[tuple[int, int]]:
 
 
 def uncaptured_numbers() -> list[str]:
-    """Numbers inside a claim site that NO fact captures — issue #608.
+    r"""Numbers inside a claim site that NO fact captures — issue #608.
 
     THE DEFECT THIS EXISTS FOR, in the tool that exists to prevent it.
     ``corpusLost``'s site read ``([\d,]+) lost, [\d,]+ dropped`` — one capture
