@@ -62,9 +62,15 @@ no real mailbox content appears in this file, in the reader, or in the commit.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 from jobtracker.cloud import pipeline
+
+#: Any instant. The readers under test are pure text; the timestamp only
+#: has to exist so a PipelineItem is well-formed and countable.
+WHEN = datetime(2026, 9, 1, tzinfo=UTC)
 
 EMPLOYER = "Brackenhill"
 BOILER = "Thank you for applying!"
@@ -625,3 +631,261 @@ def test_the_lead_segment_reader_keeps_its_answers() -> None:
     subject = "Northwind Follow-Up for Backend Engineer | <CANDIDATE>"
     assert pipeline._role_from_lead_segment(subject) == "Backend Engineer"
     assert pipeline.role_from_message(subject, "") == "Backend Engineer"
+
+
+# =============================================================================
+# A refusal reaches nobody — issue #657
+# =============================================================================
+#
+# This reader's docstring said a refusal sends "the message… to the review
+# queue, where a person decides. Fails closed, the direction this module takes
+# everywhere." It does not — but the first version of THIS COMMENT got the
+# reason wrong in the same way the docstring did, so both are stated carefully
+# now. It read: "Nothing in the pipeline routes a message to the queue for
+# naming no role: `collect_review_items` skips whatever
+# `_qualifies_for_hard_row` accepts, and that asks about confidence and an
+# employer only." Two false claims in one sentence.
+#
+# `unplaceable_message_ids` DOES route on naming no role — that is precisely
+# what it is for. And the guard is not `_qualifies_for_hard_row` alone; it is
+# `message_id not in unplaceable AND _qualifies_for_hard_row(item)`, so the
+# carve-out is checked first. `_qualifies_for_hard_row` also gates on category,
+# not only on confidence and an employer.
+#
+# What is true, and is the whole finding: the carve-out is reached only when a
+# message cannot be PLACED, and the mail this reader exists for — a
+# confirmation — is placeable. So its refusal is silent.
+#
+# WHAT THESE TESTS ARE. They pin what the product DOES, not what it should do.
+# Whether a blank role ought to gate a review is #657's open half and a product
+# decision nobody has made. Pinning it means the answer cannot change silently:
+# if a later change makes a blank role a review trigger, these go red and are
+# the place to record that decision — they are not a defence of today's
+# behaviour, and the docstrings say so out loud rather than leaving the next
+# reader to infer it from a green test.
+#
+# The employer half is deliberately NOT touched. Fixing the unobtainable
+# licence means teaching `_lead_segment_candidates` to read a company out of an
+# ATS boilerplate sentence, which is a change to the EMPLOYER reader and needs
+# the #512/#525 measurements re-run — dropping the delimiter requirement there
+# previously minted "Senior Software Engineer" as an employer.
+
+#: The reported shape — issue #657's row A. The leading segment is a SENTENCE
+#: and the tail names a LEVEL rather than the employer, so it carries TWO
+#: independent blockers. Naming that is the difference between this fixture and
+#: a diagnosis of it.
+SENTENCE_LEAD = (
+    "Thank you for applying to Brackenhill | "
+    "Firmware/Cloud Validation Engineer - New Grad (December 2026)"
+)
+#: #657's row B, and THE control that isolates the lead reader: a sentence lead
+#: with the employer echoed in the tail. One variable away from the row above.
+#: Refused today, and resolves the moment `_lead_segment_candidates` learns to
+#: read a company out of a sentence — which `SENTENCE_LEAD` does not.
+SENTENCE_LEAD_WITH_ECHO = (
+    "Thank you for applying to Brackenhill | "
+    "Firmware/Cloud Validation Engineer - Brackenhill (December 2026)"
+)
+#: The other single-variable control: a bare-company lead with the reported
+#: row's own tail. Refused, which is what proves the tail is a second blocker
+#: rather than a detail.
+BARE_COMPANY_LEAD_LEVEL_TAIL = (
+    "Brackenhill | Thank you for applying! | "
+    "Firmware/Cloud Validation Engineer - New Grad (December 2026)"
+)
+#: Both blockers removed. The only one of the four that resolves.
+BARE_COMPANY_LEAD = (
+    "Brackenhill | Thank you for applying! | "
+    "Firmware/Cloud Validation Engineer - Brackenhill (Remote)"
+)
+
+
+def test_the_reported_subject_carries_two_independent_blockers(monkeypatch) -> None:
+    """A four-row table, because the first version of this test was a two-variable comparison.
+
+    It asserted `SENTENCE_LEAD` against `BARE_COMPANY_LEAD` and concluded "the
+    blocker is upstream of the echo test, and one segment differs". **Two
+    segments differ** — the lead AND the tail — and each blocks on its own:
+
+    ======================================  ====================  ========
+    subject                                 `_lead_segment_...`   role
+    ======================================  ====================  ========
+    sentence lead, "New Grad" tail (row A)  ``[]``                None
+    sentence lead, EMPLOYER tail (row B)    ``[]``                None
+    bare lead, "New Grad" tail              ``['Brackenhill']``   None
+    bare lead, EMPLOYER tail                ``['Brackenhill']``   the title
+    ======================================  ====================  ========
+
+    Row three is what the old comparison could not see: a lead the reader CAN
+    read still refuses, because the tail names a level instead of the employer
+    and the echo genuinely fails.
+
+    THE DECISIVE MEASUREMENT is the monkeypatched half, and it is why the
+    correction matters rather than being a tidier table. With
+    ``_lead_segment_candidates`` doing exactly what #657 proposes — reading a
+    company out of an ATS boilerplate sentence — **row B resolves and row A
+    still does not**. So closing #657's big half does not fix the subject #657
+    was reported for, and the docstring that said "the blocker is upstream of
+    the echo" was describing row B while pointing at row A.
+    """
+
+    table = {
+        SENTENCE_LEAD: ([], None),
+        SENTENCE_LEAD_WITH_ECHO: ([], None),
+        BARE_COMPANY_LEAD_LEVEL_TAIL: (["Brackenhill"], None),
+        BARE_COMPANY_LEAD: (["Brackenhill"], "Firmware/Cloud Validation Engineer"),
+    }
+    for subject, (lead, role) in table.items():
+        assert pipeline._lead_segment_candidates(subject) == lead, subject
+        assert pipeline.role_from_message(subject, "") == role, subject
+
+    # #657's proposed fix to the EMPLOYER reader, simulated at its seam.
+    monkeypatch.setattr(pipeline, "_lead_segment_candidates", lambda _s: ["Brackenhill"])
+    assert (
+        pipeline.role_from_message(SENTENCE_LEAD_WITH_ECHO, "")
+        == "Firmware/Cloud Validation Engineer"
+    ), "row B should resolve once the lead reader can read a sentence"
+    assert pipeline.role_from_message(SENTENCE_LEAD, "") is None, (
+        "row A resolving here would mean the reported subject is fixed by the "
+        "lead-reader change alone, and it is not — its tail is a second blocker"
+    )
+
+
+def test_a_refused_role_files_a_card_and_asks_nobody() -> None:
+    """TODAY'S BEHAVIOUR, pinned as a fact rather than endorsed.
+
+    The message the reader refused clears ``AUTO_FILE_GATE``, so
+    ``_qualifies_for_hard_row`` accepts it and ``collect_review_items`` skips
+    it. A card is filed with a blank role and no question is asked. That is the
+    sentence "fails closed" described and the opposite of what it claimed.
+
+    Asserted three ways, because any one alone is satisfiable for the wrong
+    reason: the reader really refuses, the row really qualifies, and the queue
+    really produces nothing. A test asserting only the empty queue would pass
+    just as well on a message that never reached the pipeline.
+    """
+
+    item = pipeline.PipelineItem(
+        message_id="m-657",
+        category="applied",
+        sender_email="no-reply@ats.example.test",
+        subject=SENTENCE_LEAD,
+        sender_name="Brackenhill Careers",
+        received_at=WHEN,
+        confidence=0.95,
+    )
+
+    assert pipeline.item_identity_parts(item) == (None, None), (
+        "the premise moved: this subject now yields a role, so the rest of "
+        "this test is measuring something else"
+    )
+    assert item.confidence >= pipeline.AUTO_FILE_GATE
+    assert pipeline._qualifies_for_hard_row(item) is not None
+    assert pipeline.collect_review_items([item]) == [], (
+        "a blank role now reaches the review queue — that is #657's open half "
+        "being decided, and this test is where the decision gets recorded"
+    )
+
+
+def _refused_role_item(message_id: str, category: str) -> "pipeline.PipelineItem":
+    """The reported shape, at a confidence that clears the auto-file gate."""
+
+    return pipeline.PipelineItem(
+        message_id=message_id,
+        category=category,
+        sender_email="no-reply@ats.example.test",
+        subject=SENTENCE_LEAD,
+        sender_name="Brackenhill Careers",
+        received_at=WHEN,
+        confidence=0.95,
+    )
+
+
+@pytest.mark.parametrize(
+    "category, at_a_multi_card_employer, outcome",
+    [
+        # FILED. A confirmation ASSERTS an application, and #641 gives an
+        # identity-less one its own card at a multi-card employer rather than
+        # folding it — so it is placed on either board and nobody is asked on
+        # either board. This is the reported shape.
+        ("applied", False, "filed"),
+        ("applied", True, "filed"),
+        # QUEUED, but only at a multi-card employer. An update REPORTS on an
+        # application that already exists, so where the board holds several
+        # there is no single row to pick and asking is the only honest move.
+        #
+        # ALL FIVE non-`applied` lifecycle categories are listed, because the
+        # first version of this table listed three while the docstring beside
+        # it said "only an update — a rejection, interview or assessment".
+        # `offer` and `pending_application` queue too, and a table that
+        # enumerates a set incompletely is how a false "only" survives review.
+        ("rejection", False, "filed"),
+        ("rejection", True, "queued"),
+        ("interview", True, "queued"),
+        ("assessment", True, "queued"),
+        ("offer", True, "queued"),
+        ("pending_application", True, "queued"),
+        # DROPPED, and it is a THIRD state rather than a second control. These
+        # two sit outside `JOB_LIFECYCLE_CATEGORIES`, so they neither file nor
+        # queue: `_qualifies_for_hard_row` returns None and the carve-out never
+        # applies. Written as a boolean first, and the assertion that
+        # `_qualifies_for_hard_row` accepts EVERY row is what caught it — these
+        # are not "the carve-out declining", they are the pipeline dropping a
+        # confident verdict, which it says in a log line.
+        ("follow_up", True, "dropped"),
+        ("other", True, "dropped"),
+    ],
+)
+def test_where_a_refused_role_does_and_does_not_reach_a_person(
+    category: str, at_a_multi_card_employer: bool, outcome: str
+) -> None:
+    """The whole partition, because "asks nobody" is true of more of it than I first wrote.
+
+    My first version asserted that a multi-card employer rescues the reported
+    message. It does not, and the reason is the interesting part:
+    ``unplaceable_message_ids`` promotes mail that cannot be PLACED, and since
+    #641 an identity-less CONFIRMATION at a multi-card employer is placeable —
+    it mints its own card. So the shape #657 reports is silent at a
+    single-application employer AND at a multi-card one.
+
+    That makes the false docstring wider than it looked: "fails closed" was not
+    merely optimistic about one case; the one route to a person does not carry
+    the case the sentence was written under.
+
+    THREE OUTCOMES RATHER THAN A BOOLEAN, and the third was a correction rather
+    than a design. Rows varying only the category move the outcome twice, on
+    two axes, so no row here is a copy of another.
+    """
+
+    item = _refused_role_item(f"m-657-{category}-{at_a_multi_card_employer}", category)
+
+    # The employer token is `example`, and asserting it is half the point. The
+    # FIRST version of this comment said it came "from the RELAY DOMAIN"
+    # because the lead reader failed. Both halves were wrong, and the
+    # correction is worth more than the sentence it replaces:
+    # `_domain_brand("ats.example.test")` is `example`, `resolve_employer`
+    # returns it at its FIRST step, and `example` is not in `RELAY_DOMAINS` at
+    # all. Neither the subject nor the sender name is consulted there, so
+    # `_lead_segment_candidates` is on neither path and its failure has nothing
+    # to do with this token. Had the sender been a real relay, the token would
+    # have been `brackenhill`, out of `_company_from_name`.
+    #
+    # Asserted rather than assumed, because a test that guessed `brackenhill`
+    # would hand `known_multi` a token the pipeline never produces and then
+    # read an empty queue as the carve-out declining. Mine did, first run.
+    token = pipeline.company_key(item.sender_email, item.subject, item.sender_name)
+    assert token == "example"
+
+    assert pipeline.item_identity_parts(item) == (None, None), (
+        "the premise moved: this subject now yields a role"
+    )
+
+    known_multi = frozenset({token}) if at_a_multi_card_employer else frozenset()
+    files = pipeline._qualifies_for_hard_row(item) is not None
+    queued = [r.message_id for r in pipeline.collect_review_items([item], known_multi=known_multi)]
+    got = "queued" if queued else ("filed" if files else "dropped")
+
+    assert got == outcome, (
+        f"{category} at a {'multi' if at_a_multi_card_employer else 'single'}-card "
+        f"employer: expected {outcome}, got {got} (files={files}, queued={queued})"
+    )

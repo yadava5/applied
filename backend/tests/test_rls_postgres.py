@@ -949,6 +949,11 @@ async def test_sync_state_cross_tenant_overwrite_is_refused(
     #
     # Two policies refuse this write independently, which is worth knowing
     # before anyone tries to prove this line can fail. Measured on postgres:16,
+    # which is what a LOCAL run still starts (`PostgresContainer("postgres:16")`
+    # below) but no longer what CI runs — `rls-postgres` moved to postgres:17 to
+    # match production's 17.6, and this module's 22 tests pass there. The table
+    # below has not been re-derived row by row on 17; the behaviour it explains
+    # is asserted by the test itself, on whichever major the run resolved.
     # for `UPDATE ... SET user_id = <B> WHERE id = 1` run as A:
     #
     #   update WITH CHECK | select USING | result
@@ -1438,7 +1443,10 @@ async def test_the_identity_guc_does_not_survive_a_commit_on_a_reused_connection
        session-level ``SET`` along with its transaction, so the ``await
        conn.rollback()`` those tests use discards the leak too. Measured on
        postgres:16: ``set_config(..., false)`` then ROLLBACK leaves the GUC
-       empty; then COMMIT leaves it set. **COMMIT is the moment that
+       empty; then COMMIT leaves it set. RE-MEASURED on postgres:17.11 on
+       2026-09-02, since `rls-postgres` runs 17 now and a claim about
+       transactional GUC behaviour is exactly the kind that a major could move:
+       identical, ``[]`` after ROLLBACK and ``[y]`` after COMMIT. **COMMIT is the moment that
        discriminates**, and it is also the production shape — a request commits
        and the pooler takes the connection back.
 

@@ -36,6 +36,13 @@ this repository — ``POST /applications/{id}/split`` exists and nothing pairs
 with it — so the failure directions are not symmetrical: a spare card can be
 taken off the board, and an application that never appears cannot be recovered.
 
+SECTION (k) IS NOT ABOUT #641. It is #699's finding (c) item 2: two of the SQL
+predicates this path leans on spell tenant scoping, and no fixture that reaches
+them built a cross-user ``Email -> application`` link, so both conjuncts could
+be deleted with every one of those tests still green. They live here because
+they are variants of the fixtures above — same employer, same helpers, one
+second account — and a sibling module would have had to copy all of it.
+
 Every employer, sender and body here is invented. ``.test`` throughout.
 """
 
@@ -63,6 +70,10 @@ USER = uuid.UUID("00000000-0000-0000-0000-000000000641")
 #: session is two independent boards — every read here is scoped to a user id —
 #: which is cheaper and more direct than two engines.
 REBUILD_USER = uuid.UUID("00000000-0000-0000-0000-00000000064b")
+#: A SECOND ACCOUNT, for section (k). Not another board of the same user's —
+#: another person's, whose mail must never answer a question asked about this
+#: one. Numbered for the issue that found the gap rather than for #641.
+OTHER_USER = uuid.UUID("00000000-0000-0000-0000-000000000699")
 
 DISPLAY = "Alderfield"
 TOKEN = "alderfield"
@@ -708,3 +719,196 @@ async def test_a_delta_and_a_rebuild_reach_the_same_board(test_session) -> None:
     assert [r.role_token for r in delta].count(None) == 1, (
         "exactly one anonymous card, on both routes"
     )
+
+
+# --- (k) the tenant predicate (#699) ------------------------------------------
+#
+# TWO CONJUNCTS SPELL TENANT SCOPING ON THIS PATH: ``Email.user_id == user_id``
+# in ``_linked_applications_by_message``, which is how rule 0 finds a message's
+# stored home, and the same clause in the mixed arm of
+# ``_is_a_further_application``, which is how the quantifier decides whether an
+# anonymous row already holds a confirmation. #699 measured both as
+# unfalsifiable: no fixture in the modules that reach this code built a
+# cross-user ``Email -> application`` link, so DELETING EITHER ONE LEFT EVERY
+# ONE OF THOSE TESTS GREEN. A tenant-isolation clause that can be dropped in a
+# refactor with the suite still green is this repository's named recurring
+# shape, and the three cases below are its control.
+#
+# WHAT SECTION (k) DOES NOT COVER. These are controls over two SQL predicates,
+# not an isolation audit. Nothing here asserts that RLS is enabled, that any API
+# route scopes its reads, or that a writer in this repository can actually
+# produce the rows the fixtures seed. Each asserts one thing — that the conjunct
+# changes the answer — which is exactly what nothing asserted before.
+#
+# AND TWO IS NOT ALL OF THEM. The same clause guards the entirely-anonymous arm
+# of ``_is_a_further_application`` and ``_application_in_conversation``; both
+# were measured as still unfalsifiable when these cases were written, and
+# neither is named in #699's finding. Written down rather than widened into, so
+# that the next reader knows section (k) covers two of the four and not the set.
+
+
+@pytest.mark.asyncio
+async def test_another_accounts_copy_of_a_message_is_not_this_ones_link(
+    test_session,
+) -> None:
+    """Rule 0's lookup answers for ONE owner, asserted at the function itself.
+
+    ``(user_id, message_id)`` is the emails table's unique key and ``message_id``
+    alone is NOT: migration ``485296d24828`` removed the global UNIQUE precisely
+    because the second user to receive the same Gmail message id would otherwise
+    hit a unique violation and 500 their whole sync. Two accounts holding one
+    message id is therefore a state the schema is designed for, and the conjunct
+    is the only thing keeping this account's rule-0 lookup off the other
+    account's card.
+
+    ASSERTED HERE AND NOT THROUGH A SYNC because this is the order-independent
+    half. ``_linked_applications_by_message`` folds its rows into a dict keyed by
+    message id, so with the conjunct deleted the leak only reaches the board when
+    the foreign row happens to be the LAST writer — see the sibling below, which
+    depends on that and says so. This user's mailbox holds nothing at all for
+    ``a1``, so the answer is empty or it is wrong, whatever order the database
+    returns.
+
+    IT DOES NOT COVER how a message id comes to be shared, and it is not
+    evidence that one ever is here — only that if one is, the lookup stays on
+    its own side.
+    """
+
+    theirs = await _row(test_session, user=OTHER_USER, created_day=1)
+    await _file(test_session, theirs, "a1", EmailCategory.APPLIED, 1, user=OTHER_USER)
+    await test_session.commit()
+
+    asked_as_this_user = await apps._linked_applications_by_message(test_session, USER, ["a1"])
+    asked_as_the_owner = await apps._linked_applications_by_message(
+        test_session, OTHER_USER, ["a1"]
+    )
+
+    assert asked_as_this_user == {}, (
+        "another account's copy of this Gmail message id answered rule 0's "
+        "lookup — the application it names is not on this user's board at all"
+    )
+    # DIRECTIONAL. A lookup that had simply stopped finding anything would pass
+    # the assertion above and fail this one.
+    assert asked_as_the_owner == {"a1": theirs.id}, "the owner's own link went missing"
+
+
+@pytest.mark.asyncio
+async def test_a_second_account_holding_the_message_id_keeps_the_resync_idempotent(
+    test_session,
+) -> None:
+    """The same predicate seen from the board: what a leak would actually cost.
+
+    ``test_re_reading_the_same_confirmation_mints_nothing_more`` shows that the
+    stored ``message -> application`` link is the ONLY thing stopping the next
+    sync filing another anonymous card. This is that property with a second
+    account holding the same Gmail message id beside it — the state migration
+    ``485296d24828`` exists to permit — and the assertion is that it changes
+    nothing.
+
+    WITHOUT THE CONJUNCT it changes two things at once: rule 0 reads the other
+    account's application id, finds it is not one of this employer's rows, and
+    returns no home; the anonymous-board arm then sees this user's single row
+    already holding a confirmation, calls the arriving message a second
+    application, and mints. The user gets a duplicate card AND the confirmation
+    walks off the card it opened.
+
+    THE KILL HERE IS ORDER-DEPENDENT AND THE CONTROL IS THE TEST ABOVE.
+    ``_linked_applications_by_message`` writes ``found[message_id] =
+    application_id``, so with the conjunct deleted the answer is whichever row
+    the database returned last. The foreign copy is stored AFTER this user's on
+    purpose — under SQLite's ascending walk of ``ix_emails_message_id`` that
+    makes it the last writer, which is measured and is why this case reds. A
+    planner that returned them the other way would leave the leak real and this
+    test quiet, which is the whole reason the order-independent assertion exists
+    next to it rather than instead of it.
+    """
+
+    await _sync(test_session, [ANON])
+    mine = (await _rows(test_session))[0]
+    home = (await _links(test_session))["a1"]
+    assert home == mine.id
+
+    # The other account receives the same message id and files it against its
+    # own card. Stored second: see the docstring.
+    theirs = await _row(test_session, user=OTHER_USER, created_day=1)
+    await _file(test_session, theirs, "a1", EmailCategory.APPLIED, 1, user=OTHER_USER)
+    await test_session.commit()
+
+    await _sync(test_session, [ANON], known_multi=MULTI)
+
+    rows = await _rows(test_session)
+    assert len(rows) == 1, (
+        f"a re-read of one confirmation left {len(rows)} cards because another "
+        "account holds the same Gmail message id; rule 0 lost this user's own link"
+    )
+    assert (await _links(test_session))["a1"] == home, (
+        "the confirmation walked off the card it opened"
+    )
+    # DIRECTIONAL, and the cheapest half: the other board is untouched, so a
+    # lookup that refused every message id would not pass here either.
+    assert [r.id for r in await _rows(test_session, OTHER_USER)] == [theirs.id]
+
+
+@pytest.mark.parametrize(
+    ("owner", "cards"),
+    [(USER, 3), (OTHER_USER, 2)],
+    ids=["this-account", "another-account"],
+)
+@pytest.mark.asyncio
+async def test_only_this_accounts_mail_confirms_an_anonymous_row(
+    test_session, owner, cards
+) -> None:
+    """The mixed arm's quantifier counts THIS user's mail, as a mutation of the owner.
+
+    Byte-identical board and byte-identical confirmation across the two runs —
+    same subject, sender, date, category, and the same application id it is
+    filed against. The ONLY difference is ``Email.user_id``. A fixture that
+    varied anything else would be grading that something else.
+
+    ``[this-account]`` is the direction. The confirmation lands on the board's
+    one unconfirmed anonymous auto row, "every live anonymous auto row already
+    holds a confirmation" becomes true, and the arriving acknowledgement mints
+    application #3. ``[another-account]`` is the same board with that row still
+    unconfirmed as far as THIS user is concerned, so the gate declines and the
+    mail folds by rule 4 — which is
+    ``test_an_unconfirmed_anonymous_row_holds_the_mint_back`` reached by a
+    different route, and the reason the pair is directional: a gate that had
+    started refusing everything would fail the first case.
+
+    A ROW LIKE THIS SHOULD NOT EXIST, AND THE SCHEMA DOES NOT FORBID IT.
+    ``emails.application_id`` carries a plain foreign key to ``applications.id``
+    and nothing ties ``emails.user_id`` to ``applications.user_id`` — no
+    composite key, no check constraint. So the conjunct is what keeps the gate
+    correct if one ever appears: a mis-scoped write, a restored backup, a future
+    writer that forgets the scope.
+
+    IT DOES NOT COVER whether any code path here can write such a row, and it
+    says nothing about RLS or about the API's own scoping. It asserts that
+    deleting the conjunct changes the board, which is the claim that had no test.
+    """
+
+    named = await _row(test_session, role_token="platform engineer", created_day=1)
+    await _file(test_session, named, "named-ack", EmailCategory.APPLIED, 1)
+    unconfirmed = await _row(test_session, status=ApplicationStatus.REJECTED, created_day=6)
+    await _file(test_session, unconfirmed, "rej", EmailCategory.REJECTION, 6)
+    # THE ONE VARIABLE. Filed against THIS user's row either way; only the owner
+    # of the Email row moves.
+    await _file(test_session, unconfirmed, "ack", EmailCategory.APPLIED, 6, user=owner)
+    await test_session.commit()
+
+    await _sync(test_session, [ANON], known_multi=MULTI)
+
+    rows = await _rows(test_session)
+    assert len(rows) == cards, (
+        f"a confirmation held by {owner} left {len(rows)} cards where {cards} "
+        "was the answer; the quantifier must read only this account's mail"
+    )
+    links = await _links(test_session)
+    if cards == 2:
+        assert links["a1"] == named.id, (
+            "the gate declined, so the fold target is rule 4's oldest live row"
+        )
+    else:
+        assert links["a1"] not in {named.id, unconfirmed.id}, (
+            "the card was minted but the confirmation was filed on an older row"
+        )

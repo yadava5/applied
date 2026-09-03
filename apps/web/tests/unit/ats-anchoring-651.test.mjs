@@ -61,6 +61,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { importApp } from "./helpers/appModule.mjs";
 
@@ -279,4 +281,360 @@ test("a raw From header is refused by both engines, and neither /import nor the 
   // (only `sender_domain` does), so a `.trim()` added here would re-diverge the
   // two engines while looking like a tidy-up.
   assert.equal(confidenceFrom("no-reply@greenhouse.io "), 0.8);
+});
+
+// ===========================================================================
+// THE CENSUS. The same rule, read as SOURCE, in all three ports.
+// ===========================================================================
+/**
+ * TWO OF THREE HAND-WRITTEN PORTS IS WHAT A PER-FILE FIX PRODUCES.
+ *
+ * The engine was anchored first, in `dcbdc8f` ("match ATS relay domains as
+ * domains, not substrings", #267, for issue #260). `lib/demo/rulesLayer.ts`
+ * followed months later in `4fc748f`, which is what the behavioural tests
+ * above pin. A THIRD port of the same predicate existed the whole time —
+ * `ml/browser/site/app.js`, the in-browser demo classifier — and kept
+ * `rules.ats.some((a) => dom.includes(a))` until the commit that added this
+ * section. Nothing in the tree compared them, so nothing could say that one
+ * had been left behind.
+ *
+ * WHAT IS IN `PORTS`: FOUR FILES, NOT FOUR PORTS. Three of them are
+ * independent ports of `is_ats_sender` — the engine, the demo/`/import` layer,
+ * the browser demo. The fourth, `ml/demo/space/jobtracker/classifier/rules.py`,
+ * is not a port at all: it is a copy of the engine that `ml/demo/package_space
+ * .py` generates for the Hugging Face Space. It is read here anyway, for the
+ * reason `backend/tests/test_test_data_gate.py` records — that file has been
+ * hand-edited out of step with its source before — and because
+ * `backend/tests/test_a_reference_does_not_outrank_a_report.py`, the same kind
+ * of census for the #451 fix, already lists it for the same reason. Where it
+ * agrees with the engine this entry is redundant; the hand edit is the case
+ * where it is not.
+ *
+ * WHY THIS IS A SOURCE CHECK AND NOT A BEHAVIOURAL ONE, said plainly.
+ * `ml/browser/site/app.js` is a browser module. Its first statement is
+ * `import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/...'` — an
+ * HTTPS specifier `node --test` will not resolve — it reads `document` at
+ * module scope, and it exports nothing. There is no node-importable surface,
+ * so there is no runtime to exercise under the unit runner and none of the
+ * lookalike senders above can be sent through it here. This section reads a
+ * regular expression over text. It proves the SHAPE of one line and it does
+ * not prove what that line does. Do not present it as coverage of the browser
+ * engine's behaviour, because it is not.
+ *
+ * WHERE THE BEHAVIOURAL COVERAGE ACTUALLY LIVES. For `rulesLayer.ts`, in the
+ * tests ABOVE in this file — real lookalikes and real relays through
+ * `classifyWithRules`, which is the evidence that the defect was real. For
+ * `rules.py`, in `backend/tests/test_ingestion_hole_166.py`, the table those
+ * tests were ported from. For `app.js` there is none, here or anywhere, and
+ * saying so is the honest position: the browser demo's classification is
+ * exercised by a person opening the page.
+ *
+ * WHAT THIS SECTION IS FOR. Catching a NEW port that lands unanchored, and
+ * catching any of these quietly regressing. Its limit is explicit: `PORTS` is
+ * a written list and cannot discover a file that is not in it. Another port or
+ * another vendored copy of `is_ats_sender` means another entry here, and this
+ * paragraph is the instruction to add one. The way to find them is a search
+ * for `ATS_DOMAINS`/`ats_domains` across the tree, excluding
+ * `.claude/worktrees/`; that is how this fourth entry was found.
+ *
+ * HOW THE PATHS ARE RESOLVED, and why it matters more than it looks. The repo
+ * root comes from this file's own location with a FIXED four `..` segments,
+ * and each port is a literal relative path joined to it. Never a glob, never a
+ * search by basename, and never a walk upwards looking for `.git`:
+ * `.claude/worktrees/` in this repository holds around fifty stale agent
+ * checkouts, so a basename search for `app.js` or `rules.py` returns dozens of
+ * copies that read perfectly and answer for the wrong tree.
+ *
+ * WHEN THIS RUNS. IT NOW COVERS WHAT IT READS, and the paragraph that stood
+ * here said the opposite for as long as that was true. It read: "Three of the
+ * four files read below sit outside that filter, so a pull request touching
+ * only `ml/` or only `backend/` does not fire this census... left as a
+ * decision rather than made here." The decision was taken with #667, which
+ * added all three outside paths to BOTH trigger blocks of
+ * `.github/workflows/frontend-ci.yml` — `ml/browser/site/app.js`,
+ * `ml/demo/space/jobtracker/classifier/rules.py` and
+ * `backend/jobtracker/classifier/rules.py`, at lines 33-35 and 56-58 — so a
+ * pull request touching any file this census reads now fires it.
+ *
+ * The cost that paragraph weighed is real and was accepted: those three paths
+ * pull the whole `Frontend CI` job — typecheck, lint, the unit suite and
+ * `next build` — onto a backend-only or `ml/`-only pull request. That is the
+ * price of a census that cannot be edited out of range of its own trigger.
+ *
+ * THE PROSE IS THE PART THAT ROTTED, which is the reason this correction is
+ * worth more than two sentences of tidying. A census whose own docstring
+ * understates its reach teaches the next reader that `ml/` edits go unchecked,
+ * and the obvious response to that belief is to stop relying on the census —
+ * which is how a gate that works becomes a gate nobody trusts. If the trigger
+ * list and this paragraph disagree again, the trigger list is the truth.
+ */
+
+/** `apps/web/tests/unit/` → the repository root. Four segments, fixed. */
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
+
+/**
+ * The JavaScript ports share a predicate shape, so they share its patterns.
+ *
+ * The back-references are the point. `\1` ties the compared value to the
+ * `some` callback's own parameter and `\2` ties both sides of the `||` to the
+ * same domain variable, so a line that compares one name and suffixes another
+ * cannot pass by looking approximately right. Neither pattern names `a` or
+ * `domain`: `rulesLayer.ts` calls the host `domain` and `app.js` calls it
+ * `dom`, and one regex has to read both.
+ */
+const ANCHORED_JS = /\((\w+)\) => (\w+) === \1 \|\| \2\.endsWith\(`\.\$\{\1\}`\)/;
+const UNANCHORED_JS = /\((\w+)\) => (\w+)\.includes\(\1\)/;
+
+/** The Python copies share a predicate shape too, so they share its patterns. */
+const LOCATOR_PY = /for \w+ in ATS_DOMAINS/;
+const ANCHORED_PY = /\b(\w+) == (\w+) or \1\.endswith\(f"\.\{\2\}"\)/;
+const UNANCHORED_PY = /\b(\w+) in (\w+) for \1 in ATS_DOMAINS/;
+
+/** What both Python copies carried before anchoring, byte for byte. */
+const CONTAINMENT_PY = "    return any(ats in domain for ats in ATS_DOMAINS)";
+
+/**
+ * The four files, and for each one the line it carried BEFORE it was anchored.
+ *
+ * Those `before` lines are quoted from git, not reconstructed: the engine's is
+ * the `-` side of `dcbdc8f`; the vendored copy's is the `+` side of `8afd5b1`,
+ * which is the commit that first vendored it and shows the identical text; the
+ * `rulesLayer.ts` one is the `-` side of `4fc748f`; and the `app.js` one is
+ * what stood at line 54 of that file until the commit adding this section
+ * removed it. They are the directional control — see the second loop below —
+ * and a census whose "absent" pattern matches nothing is indistinguishable
+ * from one whose pattern is simply wrong.
+ */
+const PORTS = [
+  {
+    path: "backend/jobtracker/classifier/rules.py",
+    what: "the engine, `is_ats_sender`",
+    locator: LOCATOR_PY,
+    anchored: ANCHORED_PY,
+    unanchored: UNANCHORED_PY,
+    before: CONTAINMENT_PY,
+  },
+  {
+    // Generated from the file above by `ml/demo/package_space.py`, so this
+    // entry is normally redundant with it. It is not redundant when the copy
+    // is edited by hand, which is the case it is here to catch.
+    path: "ml/demo/space/jobtracker/classifier/rules.py",
+    what: "the vendored Hugging Face Space copy of the engine",
+    locator: LOCATOR_PY,
+    anchored: ANCHORED_PY,
+    unanchored: UNANCHORED_PY,
+    before: CONTAINMENT_PY,
+  },
+  {
+    path: "apps/web/lib/demo/rulesLayer.ts",
+    what: "the demo and the public `/import` page",
+    locator: /ATS_DOMAINS\.some\(/,
+    anchored: ANCHORED_JS,
+    unanchored: UNANCHORED_JS,
+    before: "    isAts = ATS_DOMAINS.some((a) => domain.includes(a));",
+  },
+  {
+    path: "ml/browser/site/app.js",
+    what: "the in-browser demo classifier",
+    locator: /rules\.ats\.some\(/,
+    anchored: ANCHORED_JS,
+    unanchored: UNANCHORED_JS,
+    before: "    isAts = rules.ats.some((a) => dom.includes(a));",
+  },
+];
+
+/**
+ * Read a port, and fail with a sentence rather than an `ENOENT` stack.
+ *
+ * A deleted port must not turn into an unreadable red. Same reasoning as the
+ * `MIN_TESTS` note in `scripts/assert-unit-suite-ran.mjs`: removing something
+ * on purpose is fine, and the diff has to say so out loud.
+ */
+const readPort = ({ path }) => {
+  const absolute = join(REPO_ROOT, path);
+  try {
+    return readFileSync(absolute, "utf8");
+  } catch (err) {
+    assert.fail(
+      `${path} was not at ${absolute} (${err.code ?? err.message}). If that port was ` +
+        "moved or deleted, update or remove its entry in PORTS in the same commit, so " +
+        "the diff records that a port stopped being checked.",
+    );
+  }
+};
+
+for (const port of PORTS) {
+  test(`census: ${port.path} matches ATS senders anchored (${port.what})`, () => {
+    const lines = readPort(port)
+      .split("\n")
+      .filter((line) => port.locator.test(line));
+
+    // Exactly one line decides this in every port. Two would mean the census
+    // is reading one of them and ignoring the other; zero means the predicate
+    // moved and this file is now measuring nothing at all.
+    assert.equal(
+      lines.length,
+      1,
+      `expected exactly one ATS-matching line in ${port.path}, found ${lines.length} — ` +
+        "the predicate moved or was duplicated, and the assertions below would read the " +
+        "wrong one. Fix the locator, do not delete the entry.",
+    );
+
+    const line = lines[0].trim();
+    assert.match(
+      line,
+      port.anchored,
+      `${port.path} no longer matches ATS senders anchored. The line is:\n    ${line}\n` +
+        "It must accept a listed domain or a PROPER subdomain of one, and nothing else — " +
+        "`domain.endsWith(a)` is the repair that looks right and still accepts " +
+        "`xgreenhouse.io`.",
+    );
+    assert.doesNotMatch(
+      line,
+      port.unanchored,
+      `${port.path} matches ATS senders by unanchored containment. The line is:\n    ${line}\n` +
+        "A host that merely CONTAINS a listed name is not that ATS, and anyone with a " +
+        "registrar can put themselves on a closed list that way (#651, and #260 before it).",
+    );
+  });
+}
+
+for (const port of PORTS) {
+  test(`census control: the patterns tell the two forms apart (${port.path})`, () => {
+    // Anti-vacuity, in all three directions. Without this, a typo in
+    // `unanchored` would let the census pass on a port that had regressed, and
+    // it would look exactly like a port that was fine.
+    assert.match(
+      port.before,
+      port.unanchored,
+      `the \`unanchored\` pattern for ${port.path} does not match the containment line ` +
+        "that port really carried, so it can never catch a regression",
+    );
+    assert.doesNotMatch(
+      port.before,
+      port.anchored,
+      `the \`anchored\` pattern for ${port.path} matches the pre-fix containment line, ` +
+        "so it cannot tell the fix from the defect",
+    );
+    // The locator has to find the line when the line is WRONG, not only when
+    // it is right. If it were written against the anchored form, a real
+    // regression would surface as "found 0 candidate lines" — a red that
+    // blames the census instead of naming the defect.
+    assert.match(
+      port.before,
+      port.locator,
+      `the locator for ${port.path} only finds the ATS line once it is already fixed`,
+    );
+  });
+}
+
+/**
+ * THE CENSUS RUNS ON EVERY FILE IT READS — asserted, not described.
+ *
+ * The paragraph in this file's header used to say the opposite, correctly, and
+ * then went on saying it after #667 widened the trigger. That is the failure
+ * mode this whole file exists to catch, occurring in the file itself: a claim
+ * about coverage that nobody re-derived. So the correspondence between `PORTS`
+ * and `frontend-ci.yml`'s trigger is read out of both, rather than asserted in
+ * prose that the next reader has to take on trust.
+ *
+ * A path is covered when it is under `apps/web/**` — already in both blocks —
+ * or named explicitly in BOTH the `pull_request` and the `push` block. Both,
+ * because a census that fires on the PR and not on the merge cannot see a port
+ * that regresses in a direct push to `main`, and one that fires on the merge
+ * and not the PR reports the regression after it has landed.
+ *
+ * MUTATION: delete any one of the three explicit lines from either block and
+ * this reds, naming the path and the block.
+ */
+/**
+ * The `paths:` LIST belonging to one trigger, sliced by indentation.
+ *
+ * Not a YAML parse — a dependency here is one more thing that can start
+ * answering about a different file — but not a substring search either, which
+ * is what the first version of this test did and what a blind verifier broke
+ * four ways: a path deleted from the list and left in a COMMENT below `push:`
+ * still passed, and so did renaming `paths:` to `paths-ignore:`, which inverts
+ * the trigger while leaving every string in place.
+ *
+ * So: find the key, take the lines under it that are more deeply indented, and
+ * read only the `- "..."` items. Returns null when the key is absent, which the
+ * caller reports rather than treating as an empty list — a missing `paths:`
+ * means the workflow runs on EVERYTHING, and silently passing there would be a
+ * check that cannot fail.
+ */
+function pathsList(block, key) {
+  const lines = block.split("\n");
+  const at = lines.findIndex((l) => new RegExp(`^\\s*${key}:\\s*$`).test(l));
+  if (at === -1) return null;
+  const indent = lines[at].match(/^\s*/)[0].length;
+  const items = [];
+  for (const line of lines.slice(at + 1)) {
+    if (line.trim() === "" || line.trim().startsWith("#")) continue;
+    if (line.match(/^\s*/)[0].length <= indent) break;   // next key at this level
+    const item = line.match(/^\s*-\s*"?([^"\s]+)"?\s*$/);
+    if (item) items.push(item[1]);
+  }
+  return items;
+}
+
+test("census: every port this file reads is in frontend-ci.yml's trigger", () => {
+  const workflow = readFileSync(
+    join(REPO_ROOT, ".github", "workflows", "frontend-ci.yml"),
+    "utf8",
+  );
+
+  // The two trigger blocks, split on the `push:` key at the `on:` mapping's own
+  // indentation.
+  const split = workflow.indexOf("\n  push:\n");
+  assert.ok(split > 0, "frontend-ci.yml has no `push:` trigger block any more");
+  const blocks = {
+    pull_request: workflow.slice(0, split),
+    // Bounded at the next top-level key rather than run to EOF: without the
+    // bound this block swallowed `permissions:`, `jobs:` and every step, so a
+    // path merely MENTIONED anywhere later in the file read as a trigger entry.
+    push: workflow.slice(split).split(/\n(?=\w)/)[0],
+  };
+  // The split really separated them, rather than putting everything on one side
+  // where every assertion below would pass twice.
+  assert.ok(
+    blocks.pull_request.includes("pull_request:"),
+    "the split put `pull_request:` on the wrong side",
+  );
+  assert.ok(
+    !blocks.push.includes("pull_request:"),
+    "the split did not separate the two trigger blocks",
+  );
+
+  // A `paths-ignore:` inverts the trigger while leaving every path string in
+  // place, so its ABSENCE is asserted rather than inferred.
+  for (const [name, block] of Object.entries(blocks)) {
+    assert.ok(
+      !/^\s*paths-ignore:/m.test(block),
+      `frontend-ci.yml's ${name} trigger uses paths-ignore, which inverts it: ` +
+        `every path below is now a path that does NOT run this census`,
+    );
+  }
+
+  // The push trigger has to be on `main`, or the census runs on a branch
+  // nothing merges to.
+  const branches = pathsList(blocks.push, "branches");
+  assert.ok(
+    branches && branches.includes("main"),
+    `frontend-ci.yml's push trigger does not name main: ${JSON.stringify(branches)}`,
+  );
+
+  for (const [name, block] of Object.entries(blocks)) {
+    const paths = pathsList(block, "paths");
+    assert.ok(paths, `frontend-ci.yml's ${name} trigger has no \`paths:\` list`);
+    for (const port of PORTS) {
+      if (port.path.startsWith("apps/web/")) continue; // covered by `apps/web/**`
+      assert.ok(
+        paths.includes(port.path),
+        `${port.path} is read by this census but is not an item of ` +
+          `frontend-ci.yml's ${name} \`paths:\` list, so the pull request most ` +
+          `likely to regress it is the one that would not run this file`,
+      );
+    }
+  }
 });

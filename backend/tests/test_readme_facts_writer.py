@@ -650,3 +650,225 @@ def test_the_recorded_machine_names_the_interpreter_that_ran_the_suite(tmp_path)
         "the version is being read from the running script rather than from "
         "the interpreter it was handed"
     )
+
+
+# =============================================================================
+# A number the checker MATCHES but never CAPTURES — issue #608
+# =============================================================================
+#
+# `corpusLost`'s site read `([\d,]+) lost, [\d,]+ dropped` — one capture group
+# over a row carrying two figures. The dropped number was matched and discarded,
+# so nothing had ever read it, while `--check` printed "68 facts, asserted at
+# 213 sites, all agree with the code". A checker that reports agreement about a
+# figure it never captured is a check that cannot fail, and it was inside the
+# tool built to prevent exactly that.
+#
+# These tests are about the GATE that now finds them, not about the one figure.
+# The figure is pinned by `--check` itself (`corpusDropped`); a test asserting
+# it here would only restate what CI already runs.
+
+
+def _uncaptured(module, tmp_path, text: str, sites: list[str]) -> list[str]:
+    """Run the audit against a synthetic file and a synthetic site list.
+
+    Points the module's REPO at `tmp_path` and swaps FACTS for one fact whose
+    sites are `sites`, so a case is a few lines of text rather than an edit to
+    the real README. Restores both, because the module is imported once per
+    session and the next test would otherwise audit a temporary directory.
+    """
+
+    (tmp_path / "F.md").write_text(text, encoding="utf-8")
+    repo, facts = module.REPO, module.FACTS
+    try:
+        module.REPO = tmp_path
+        module.FACTS = {
+            "synthetic": {"sites": [{"re": s, "file": "F.md"} for s in sites]}
+        }
+        return module.uncaptured_numbers()
+    finally:
+        module.REPO, module.FACTS = repo, facts
+
+
+def test_a_number_matched_but_not_captured_is_reported(tmp_path) -> None:
+    """#608's own shape: two figures on a row, one capture group.
+
+    MUTATION: give the second figure its own group and this stops reporting,
+    which is the fix rather than a way to silence it.
+    """
+
+    module = _load()
+    found = _uncaptured(
+        module,
+        tmp_path,
+        "| reached nothing | **0 lost**, 7 dropped |\n",
+        [r"\| \*\*([\d,]+) lost\*\*, [\d,]+ dropped \|"],
+    )
+    assert len(found) == 1, found
+    assert "states 7" in found[0], found[0]
+
+
+def test_a_second_fact_capturing_it_is_enough(tmp_path) -> None:
+    """THE CONTROL, and it is what makes the rule usable rather than noisy.
+
+    The rule is across facts, not within one. Plenty of sites match a number a
+    DIFFERENT fact captures — `corpusSize` reads `[\\d,]+ of ([\\d,]+)` on the
+    row where `corpusCorrect` reads `([\\d,]+) of [\\d,]+`. Without this
+    behaviour the audit reports 58 distinct violations on the real table of
+    which 44 are that pattern — a 76% false-positive rate, and a check wrong
+    three times in four is one nobody reads.
+    """
+
+    module = _load()
+    assert (
+        _uncaptured(
+            module,
+            tmp_path,
+            "| reached nothing | **0 lost**, 7 dropped |\n",
+            [
+                r"\| \*\*([\d,]+) lost\*\*, [\d,]+ dropped \|",
+                r"\| \*\*[\d,]+ lost\*\*, ([\d,]+) dropped \|",
+            ],
+        )
+        == []
+    )
+
+
+def test_a_number_outside_every_site_is_not_this_check_s_business(tmp_path) -> None:
+    """Anti-vacuity in the other direction: it must not report the whole file.
+
+    An audit that flagged every number in the README would be indistinguishable
+    from one that works, until somebody tried to act on it.
+    """
+
+    module = _load()
+    assert (
+        _uncaptured(
+            module,
+            tmp_path,
+            "| reached nothing | **0 lost** |\n\nUnrelated prose with 42 in it.\n",
+            [r"\| \*\*([\d,]+) lost\*\* \|"],
+        )
+        == []
+    )
+
+
+def test_digits_inside_an_identifier_are_not_numbers(tmp_path) -> None:
+    """`macro-F1` and `v3` are names, and reporting them trains people to skip.
+
+    Measured: dropping `\\w` from the look-behind produces 17 extra reports on
+    README.md alone, of which three are `macro-F1`. The rest are `Out4`, the
+    `32` of `float32`, the `8` of `int8`, the `6` and `2` of `MiniLM-L6-v2`,
+    `v3` and `min-macro-f1` — which is why the rule is about identifiers and
+    not about one filename that happens to end in a digit.
+    """
+
+    module = _load()
+    assert (
+        _uncaptured(
+            module,
+            tmp_path,
+            "scores **0.9791 macro-F1** on the v3 set\n",
+            [r"scores \*\*([\d.]+) macro-F1\*\* on the v3 set"],
+        )
+        == []
+    )
+
+
+def test_a_bare_number_in_a_url_is_not_a_claim(tmp_path) -> None:
+    """The URL exclusion, exercised — it is not reachable through the real files.
+
+    Percent-encoding is handled by the look-behind, so on the tree as it stands
+    disabling `_URL` entirely changes nothing and the exclusion would be a
+    safeguard with no case: this repository's named defect, in the code added to
+    catch it. What `_URL` actually guards is a bare numeric PATH SEGMENT, which
+    no badge in this repo currently has. Constructed here so the guard has a
+    case, and asserted directionally below.
+    """
+
+    module = _load()
+    text = "See https://example.test/v2/9999/report and **7 dropped** here.\n"
+    sites = [r"See \S+ and \*\*([\d,]+) dropped\*\* here\."]
+    assert _uncaptured(module, tmp_path, text, sites) == []
+
+    # Directional: with the exclusion disabled the path segment IS reported, so
+    # the assertion above is about `_URL` and not about the text happening to
+    # contain no number.
+    saved = module._URL
+    try:
+        module._URL = re.compile(r"(?!x)x")
+        disabled = _uncaptured(module, tmp_path, text, sites)
+    finally:
+        module._URL = saved
+    assert len(disabled) == 1 and "states 9999" in disabled[0], disabled
+
+
+def test_the_waiver_list_needs_the_right_file_number_and_line(tmp_path) -> None:
+    """A waiver is keyed on all three, so it cannot silence a different site.
+
+    The failure mode this closes is a waiver added for one line quietly
+    suppressing the same number somewhere else — which would make the list
+    grow into a blanket rather than a record of things somebody looked at.
+    """
+
+    module = _load()
+    text = "| reached nothing | **0 lost**, 7 dropped |\n"
+    sites = [r"\| \*\*([\d,]+) lost\*\*, [\d,]+ dropped \|"]
+    saved = module.UNCAPTURED_BY_DESIGN
+    try:
+        module.UNCAPTURED_BY_DESIGN = {("F.md", "7", "reached nothing"): "because"}
+        assert _uncaptured(module, tmp_path, text, sites) == []
+        module.UNCAPTURED_BY_DESIGN = {("OTHER.md", "7", "reached nothing"): "because"}
+        assert len(_uncaptured(module, tmp_path, text, sites)) == 1
+        module.UNCAPTURED_BY_DESIGN = {("F.md", "8", "reached nothing"): "because"}
+        assert len(_uncaptured(module, tmp_path, text, sites)) == 1
+        module.UNCAPTURED_BY_DESIGN = {("F.md", "7", "a line that is not there"): "because"}
+        assert len(_uncaptured(module, tmp_path, text, sites)) == 1
+    finally:
+        module.UNCAPTURED_BY_DESIGN = saved
+
+
+def test_every_waiver_carries_a_reason() -> None:
+    """An entry is a promise that somebody looked at the line.
+
+    A blank reason is how the list turns from a record into a way of silencing
+    the gate, so the emptiest possible version of that is refused here.
+    """
+
+    module = _load()
+    for key, why in module.UNCAPTURED_BY_DESIGN.items():
+        assert why and len(why.strip()) > 20, f"{key} has no real reason: {why!r}"
+
+
+def test_no_waiver_is_dead() -> None:
+    """EVERY waiver must be load-bearing, and one was not.
+
+    A blind verifier found ``("booklet/src/content.ts", "1", "cosine 1-NN · ≥
+    0.85")`` shadowed by ``("booklet/src/content.ts", "1", "cosine 1-NN")``:
+    the anchor is matched as a SUBSTRING of the line, so the shorter key
+    already covered both booklet sites and deleting the longer one left
+    ``--check`` green. A dead entry on a list whose whole purpose is "somebody
+    looked at this line" is worse than no entry — it reads as a second review
+    that never happened.
+
+    The mutation row in the PR that found this said "drop one entry and
+    --check reds", and it was true of 12 of 13. This asserts it of all of them,
+    which is the difference between a spot check and a rule.
+
+    MUTATION: re-add the shadowed key and this reds, naming it.
+    """
+
+    module = _load()
+    all_waivers = dict(module.UNCAPTURED_BY_DESIGN)
+    dead = []
+    for key in all_waivers:
+        reduced = {k: v for k, v in all_waivers.items() if k != key}
+        module.UNCAPTURED_BY_DESIGN = reduced
+        try:
+            if not module.uncaptured_numbers():
+                dead.append(key)
+        finally:
+            module.UNCAPTURED_BY_DESIGN = all_waivers
+    assert dead == [], (
+        f"these waivers silence nothing — another entry already covers their "
+        f"line, so they record a review that has no effect: {dead}"
+    )
