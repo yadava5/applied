@@ -2311,7 +2311,7 @@ _CONFLICT_MARKER = re.compile(r"^(<{7}|={7}|>{7}|\|{7})(?:\s|$)", re.MULTILINE)
 #:   * TRACKED — it should be captured and is not yet. #700.
 UNCAPTURED_BY_DESIGN: dict[tuple[str, str, str], str] = {
     # ── not a measurement ────────────────────────────────────────────────
-    ("README.md", "1", "rules<br/>218 regex patterns"): (
+    ("README.md", "1", "hand-written · classifier/rules.py"): (
         "the stage ORDINAL in the mermaid cascade diagram, not a count"
     ),
     ("apps/web/components/landing/Cascade.tsx", "1", "cosine 1-NN"): (
@@ -2331,7 +2331,7 @@ UNCAPTURED_BY_DESIGN: dict[tuple[str, str, str], str] = {
         "review` have no RECORDED key, so these two zeros are prose. Capturing "
         "them needs a counter in the gate first — see #700"
     ),
-    ("booklet/src/content.ts", "0", "9,908 cards, 0 merges"): (
+    ("booklet/src/content.ts", "0", "No message lands on another application's card"): (
         "the `merges` figure again, on the booklet's copy of the board "
         "sentence. Same reason as README.md:221 — the corpus gate has no "
         "`merges` key — and it is worth saying that this entry originally "
@@ -2344,7 +2344,7 @@ UNCAPTURED_BY_DESIGN: dict[tuple[str, str, str], str] = {
         "capturing it would mean inventing a source for a sentence about the "
         "morning of 2026-08-22"
     ),
-    ("README.md", "0", "1,010 statements at 0%"): (
+    ("README.md", "0", "statements at 0%"): (
         "the coverage of test-import statements, a sub-figure of the coverage "
         "paragraph that the artifact does not break out"
     ),
@@ -2369,6 +2369,47 @@ UNCAPTURED_BY_DESIGN: dict[tuple[str, str, str], str] = {
         "instead; #700"
     ),
 }
+
+
+#: A WAIVER MAY NOT ANCHOR ON A NUMBER IT DOES NOT WAIVE (#725).
+#:
+#: The key is `(file, number, anchor)` and the match is `anchor in excerpt`, so
+#: an anchor is a literal substring of the line AS IT STANDS TODAY. Put another
+#: number in it and the waiver quietly dies the moment `--write` rewrites that
+#: number — `--check` then fails on a line nobody edited, naming a figure nobody
+#: changed, on whichever PR happens to be open.
+#:
+#: NOT HYPOTHETICAL. On 2026-09-03 the waiver for `14,540` was anchored on
+#: `"1,783 tests, and 14,540 messages"`. Refreshing the recording moved the test
+#: count to 2,939 and the waiver expired silently. An audit then found three
+#: more of the same shape, and all three embedded a number this script
+#: regenerates: `218` (rulesPatterns), `9,908` (corpus cards) and `1,010`
+#: (a coverage sub-figure).
+#:
+#: Checked at import so a fragile anchor cannot be committed and discovered
+#: later. `(?<![A-Za-z0-9])` and `(?![A-Za-z0-9])` are what keep the `2` in
+#: `E2E CI` from reading as a number.
+_ANCHOR_NUMBER = re.compile(r"(?<![A-Za-z0-9])\d[\d,]*(?![A-Za-z0-9])")
+
+_fragile = [
+    (path, number, anchor, other)
+    for (path, number, anchor) in UNCAPTURED_BY_DESIGN
+    for other in [[n for n in _ANCHOR_NUMBER.findall(anchor) if n != number]]
+    if other
+]
+if _fragile:
+    raise AssertionError(
+        "UNCAPTURED_BY_DESIGN anchors must not contain a number they do not "
+        "waive — the waiver expires silently when that number is regenerated "
+        "(#725):\n"
+        + "\n".join(
+            f"  {path} waives {number!r} but anchors on {anchor!r}, which "
+            f"embeds {other}"
+            for path, number, anchor, other in _fragile
+        )
+        + "\n\nRe-anchor on text from the same line that holds no other "
+        "number. The anchor only has to identify the line."
+    )
 
 #: A number in PROSE, which is narrower than "a number". The negative
 #: look-behind keeps digits that belong to an identifier out. Measured:
