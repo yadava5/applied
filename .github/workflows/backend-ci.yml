@@ -107,6 +107,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # TIMEOUTS ARE ON THE STEPS, NOT THE JOB, AND THAT IS THE WHOLE POINT (#702).
+  # A job-level `timeout-minutes` ends the job `conclusion: cancelled` — the
+  # SAME conclusion `cancel-in-progress` produces every time a newer push
+  # supersedes a run, which happens routinely here under strict up-to-date
+  # protection. A job budget would therefore have made a hang LESS legible, not
+  # more, by hiding it among ordinary supersedes.
+  #
+  # Measured on this repository's own CI rather than assumed (run 33704966798,
+  # two jobs differing in one variable):
+  #     job-level  timeout-minutes -> conclusion=cancelled
+  #     step-level timeout-minutes -> conclusion=failure
+  # So a step budget is a red, gated, unambiguous failure, and a supersede stays
+  # `cancelled`. Two conclusions, two meanings.
+  #
+  # Budgets are ~1.5x the observed max for the long step and deliberately loose
+  # for the network-bound installs; over eight runs on main, `Run tests` peaked
+  # at 30.4 min and every install at 1.2 min. They bound a HANG, they do not
+  # police normal variance. When one fires, profile the step — do not raise the
+  # budget, which only lets the stall eat more.
   test:
     runs-on: ubuntu-latest
     defaults:
@@ -127,6 +146,7 @@ jobs:
             backend/requirements-dev.txt
 
       - name: Install dependencies
+        timeout-minutes: 8
         env:
           PIP_DISABLE_PIP_VERSION_CHECK: "1"
         run: |
@@ -144,6 +164,7 @@ jobs:
       # loosen pyproject to force it green. Placed before "Run tests" so the
       # advisory numbers still appear on builds where a later blocking step fails.
       - name: Run ruff lint (advisory until clean)
+        timeout-minutes: 10
         continue-on-error: true
         run: ruff check .
 
@@ -155,6 +176,7 @@ jobs:
       # Reports the count each run; flip to blocking when it hits zero. Do NOT
       # add blanket `# type: ignore` or relax the config to pass.
       - name: Run mypy strict (advisory until clean)
+        timeout-minutes: 10
         continue-on-error: true
         run: mypy .
 
@@ -168,10 +190,12 @@ jobs:
       # is installed out-of-band from the CPU index and is not in
       # requirements.txt, so this audit does not cover it.
       - name: Run pip-audit on deployment surface (advisory)
+        timeout-minutes: 10
         continue-on-error: true
         run: pip-audit -r requirements.txt
 
       - name: Run tests
+        timeout-minutes: 45
         env:
           JOBTRACKER_ENVIRONMENT: test
           PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
@@ -183,6 +207,7 @@ jobs:
         run: pytest tests -q --cov=jobtracker --cov-report=term
 
       - name: Run classifier non-regression gate (rules v3)
+        timeout-minutes: 15
         env:
           JOBTRACKER_ENVIRONMENT: test
           PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
@@ -195,6 +220,7 @@ jobs:
             --min-macro-f1 0.95
 
       - name: Run hybrid benchmark gate (v3 deterministic)
+        timeout-minutes: 20
         env:
           JOBTRACKER_ENVIRONMENT: test
           PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
@@ -265,6 +291,7 @@ jobs:
             backend/requirements-dev.txt
 
       - name: Install dependencies
+        timeout-minutes: 8
         env:
           PIP_DISABLE_PIP_VERSION_CHECK: "1"
         run: |
@@ -273,6 +300,7 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Run RLS enforcement suite
+        timeout-minutes: 20
         env:
           JOBTRACKER_ENVIRONMENT: test
           PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
@@ -308,6 +336,7 @@ jobs:
           PY
 
       - name: Run migration suite (real Postgres)
+        timeout-minutes: 20
         # tests/test_migrations_postgres.py applies the WHOLE Alembic chain to a
         # bare database and checks what the SQLite suites structurally cannot:
         # enum labels. `sa.Enum` renders as VARCHAR on SQLite, so a migration
@@ -348,6 +377,7 @@ jobs:
           PY
 
       - name: Run the RLS gate's own SQL against a real Postgres
+        timeout-minutes: 20
         # tests/test_verify_rls_gate_postgres.py runs scripts/verify_rls.py —
         # the post-migration gate — against a database the real Alembic chain
         # built. Until issue #691 that script's queries had exactly ONE
@@ -452,6 +482,7 @@ jobs:
             backend/requirements-migrate.txt
 
       - name: Install migration dependencies
+        timeout-minutes: 8
         env:
           PIP_DISABLE_PIP_VERSION_CHECK: "1"
         run: |
@@ -459,6 +490,7 @@ jobs:
           pip install -r requirements.txt -r backend/requirements-migrate.txt
 
       - name: Walk the chain, one revision at a time
+        timeout-minutes: 20
         env:
           JOBTRACKER_ENVIRONMENT: test
           # Plain `postgresql://` — the script normalises it to
@@ -497,6 +529,7 @@ jobs:
             backend/requirements-dev.txt
 
       - name: Install dependencies
+        timeout-minutes: 8
         env:
           PIP_DISABLE_PIP_VERSION_CHECK: "1"
         run: |
@@ -505,6 +538,7 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Import cloud app under cloud deployment
+        timeout-minutes: 10
         env:
           JOBTRACKER_DEPLOYMENT: cloud
           JOBTRACKER_CORS_ALLOWED_HOSTS: jobtracker.app
@@ -529,6 +563,7 @@ jobs:
           "
 
       - name: Run cloud pytest suite
+        timeout-minutes: 15
         env:
           JOBTRACKER_ENVIRONMENT: test
           PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
