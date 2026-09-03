@@ -78,10 +78,6 @@
       "count": 5,
       "digest": "7d8977d743f13978"
     },
-    "backend/jobtracker/config.py": {
-      "count": 1,
-      "digest": "aff56cfd2a41e1c8"
-    },
     "backend/jobtracker/email_clients/parser.py": {
       "count": 1,
       "digest": "01f4506118947fc6"
@@ -182,10 +178,6 @@
       "count": 17,
       "digest": "b8eab5003a3c373e"
     },
-    "backend/tests/test_expand_only_gate.py": {
-      "count": 2,
-      "digest": "fbd3343e388a6696"
-    },
     "backend/tests/test_extraction_rejects_boilerplate.py": {
       "count": 2,
       "digest": "22239cb24d768528"
@@ -201,10 +193,6 @@
     "backend/tests/test_gmail_oauth_cloud.py": {
       "count": 57,
       "digest": "892ae0abd60ef025"
-    },
-    "backend/tests/test_gmail_oauth_return_host.py": {
-      "count": 2,
-      "digest": "778bf911853af1de"
     },
     "backend/tests/test_gmail_sync_says_what_it_looked_at.py": {
       "count": 2,
@@ -249,10 +237,6 @@
     "backend/tests/test_main_cloud.py": {
       "count": 1,
       "digest": "1f3e659ebe0fdf1e"
-    },
-    "backend/tests/test_migration_url.py": {
-      "count": 1,
-      "digest": "bcd916a9417a0dd0"
     },
     "backend/tests/test_none_of_these_opens_a_row.py": {
       "count": 1,
