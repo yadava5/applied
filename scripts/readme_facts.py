@@ -1777,12 +1777,21 @@ FACTS: dict[str, dict] = {
             #
             # WHY THE COLLECTED COUNT MAY CARRY A CLAIM ABOUT PASSING. The
             # card's prose says the suite "runs N tests, all passing", which
-            # reads like a `passed` figure rather than a `collected` one. They
-            # are the same number for any artifact that exists: `refuse_reason`
-            # rejects a recording that skipped, that failed, or that ran
-            # without Docker, and `write_artifact` applies it before touching
-            # the disk. So no artifact can carry collected != passed, and a
-            # second `testsPassed` fact would be a second name for this one.
+            # reads like a `passed` figure rather than a `collected` one.
+            #
+            # THEY WERE THE SAME NUMBER UNTIL THEY WERE NOT (#726). This
+            # comment used to assert that no artifact could carry
+            # `collected != passed`, reasoning that `refuse_reason` rejects a
+            # recording that skipped, that failed, or that ran without Docker.
+            # That was true only while the suite had no xfails. It has two
+            # now — both `strict=True`, ten parametrised cases — and
+            # `refuse_reason` has no opinion about them, correctly: a strict
+            # xfail that starts passing becomes a FAILURE, so the suite polices
+            # its own stale markers.
+            #
+            # So the invariant is narrower than it read: collected equals
+            # passed plus xfailed plus xpassed, and `suiteOutcome` now records
+            # all three so the arithmetic can be checked rather than assumed.
             #
             # WHY THE CARD'S COMMAND CHANGED. The provenance line used to name
             # `pytest tests -q --ignore=tests/test_setfit_model.py
@@ -2846,6 +2855,21 @@ def record() -> None:
             "failed": counts.get("failed", 0),
             "skipped": counts.get("skipped", 0),
             "errors": counts.get("error", 0),
+            # RECORDED SO THE TOTAL RECONCILES WITH ITS PARTS (#726).
+            #
+            # `collected` is the SUM of passed, failed, skipped, xfailed and
+            # xpassed, and the last two used to be read from pytest, folded
+            # into that sum, and then dropped. The 2026-09-03 recording is the
+            # first where the gap is non-zero: 2,939 collected against 2,929
+            # passed with failed, skipped and errors all zero, and nothing in
+            # the file accounting for the ten. They are `xfailed`, all in
+            # `test_the_trailing_segments_right_edge_is_structural.py`.
+            #
+            # A reader reconciling those numbers had no way to find that out
+            # from the artifact, and the comment on `testsCollected` actively
+            # misled them by asserting the gap could not exist.
+            "xfailed": counts.get("xfailed", 0),
+            "xpassed": counts.get("xpassed", 0),
             "exitCode": proc.returncode,
             "allGreen": proc.returncode == 0 and counts.get("failed", 0) == 0,
             "dockerAvailable": subprocess.run(

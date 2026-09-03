@@ -929,3 +929,96 @@ def test_the_anchor_scan_reads_standalone_numbers_only(
     """
 
     assert _load()._ANCHOR_NUMBER.findall(anchor) == expected
+
+
+# ---------------------------------------------------------------------------
+# xfail is part of the collected total, and the artifact has to say so (#726)
+# ---------------------------------------------------------------------------
+
+#: Real pytest tail lines. The xfail rows are what the 2026-09-03 recording
+#: actually produced and what nothing in the artifact could express.
+PYTEST_TAILS = [
+    pytest.param("295 passed, 10 skipped in 31.02s", 305, {"xfailed": 0, "xpassed": 0}, id="skips-only"),
+    pytest.param("2 failed, 303 passed in 33.10s", 305, {"xfailed": 0, "xpassed": 0}, id="failures-only"),
+    pytest.param("641 passed, 10 xfailed in 0.32s", 651, {"xfailed": 10, "xpassed": 0}, id="the-module-that-has-them"),
+    pytest.param("2929 passed, 10 xfailed in 900.00s", 2939, {"xfailed": 10, "xpassed": 0}, id="the-2026-09-03-recording"),
+    pytest.param("100 passed, 3 xpassed in 1.00s", 103, {"xfailed": 0, "xpassed": 3}, id="a-stale-marker-that-started-passing"),
+]
+
+
+@pytest.mark.parametrize("tail,collected,extra", PYTEST_TAILS)
+def test_collected_is_the_sum_of_every_outcome_including_xfail(
+    tail: str, collected: int, extra: dict
+) -> None:
+    """`collected` must reconcile with its parts, or the artifact lies by omission.
+
+    The 2026-09-03 recording published `testsCollected: 2939` beside
+    `passed: 2929` with failed, skipped and errors all zero, and nothing in the
+    file accounted for the other ten. They were `xfailed` — read from pytest,
+    folded into the total, then dropped on the way to disk.
+    """
+
+    counts = _load().parse_pytest(tail)
+    assert counts["collected"] == collected
+    for key, value in extra.items():
+        assert counts.get(key, 0) == value
+
+
+def test_the_outcome_block_carries_the_xfail_counts() -> None:
+    """The recorded shape, not just the parse.
+
+    Reading them and then not writing them is exactly what happened before, so
+    the parse alone is not the thing worth asserting.
+    """
+
+    facts = _load()
+    source = Path(facts.__file__).read_text()
+    block = source[source.index('"suiteOutcome": {') :]
+    block = block[: block.index("},")]
+    for key in ("passed", "failed", "skipped", "errors", "xfailed", "xpassed"):
+        assert f'"{key}"' in block, f"suiteOutcome dropped {key!r}"
+
+
+# ---------------------------------------------------------------------------
+# A non-strict xfail is a test whose result nothing asserts (#726)
+# ---------------------------------------------------------------------------
+
+
+def test_every_xfail_in_the_suite_is_strict() -> None:
+    """Non-strict xfail is the skip problem wearing a different hat.
+
+    Under `strict=True` a test that starts passing becomes a FAILURE, so a
+    stale marker cannot survive the fix it was documenting — the suite polices
+    itself and `refuse_reason` needs no opinion. Without `strict`, a test that
+    quietly starts passing, or quietly keeps failing, moves a number in
+    `collected` that nothing explains and nothing rejects.
+
+    That is the same shape as #351, where a skipped test was still collected so
+    a green count meant nothing. This is the gate that keeps the xfail version
+    of it from ever arriving.
+    """
+
+    offenders = []
+    for path in sorted(Path(__file__).parent.glob("test_*.py")):
+        text = path.read_text()
+        for match in re.finditer(r"@pytest\.mark\.xfail\b", text):
+            # The marker's argument list, which may wrap across lines.
+            depth, i = 0, match.end()
+            while i < len(text) and (depth or text[i] not in "\n"):
+                if text[i] == "(":
+                    depth += 1
+                elif text[i] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        i += 1
+                        break
+                i += 1
+            if "strict=True" not in text[match.end() : i]:
+                line = text.count("\n", 0, match.start()) + 1
+                offenders.append(f"{path.name}:{line}")
+
+    assert not offenders, (
+        "these xfail markers are not strict=True, so a test that starts "
+        "passing will not red and the stale marker will survive its own fix: "
+        + ", ".join(offenders)
+    )
