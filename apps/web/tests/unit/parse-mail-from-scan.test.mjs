@@ -42,21 +42,32 @@ function oldAngleAddress(value) {
 }
 
 /**
- * THE INPUT #406 FILED EXITS ON THE FIRST CHARACTER THE SCAN LOOKS AT.
+ * THE INPUT #406 FILED COSTS ALMOST NOTHING, AND THE FLOOR THEN DID THE WORK.
  *
- * `"<"×N + "a"×N` does not end in `>`, and `parseAngleAddress` tests the anchor
- * before it does anything else, so it returns after inspecting one character.
- * Measured here, min of nine, on an idle M-series laptop:
+ * `"<"×N + "a"×N` does not end in `>`, so `parseAngleAddress` fails the anchor
+ * test and returns without running either interior walk. What is left is the
+ * one indexed read of the last character, which forces V8 to flatten the rope
+ * that `repeat` and `+` built — genuinely O(n), and genuinely tiny. A fresh
+ * string per call, min of nine, idle M-series laptop:
  *
- *     N =    16,000   0.0002 ms        N =   250,000   0.0002 ms
- *     N =    62,500   0.0002 ms        N = 1,000,000   0.0002 ms
+ *     N =    16,000   0.0049 ms
+ *     N =   250,000   0.0855 ms
+ *     N = 1,000,000   0.2308 ms
  *
- * Flat to four decimals across a 64x range. There is no growth in it to find.
+ * CORRECTED. An earlier version of this comment said the cost was "flat across
+ * a 64x range, there is no growth in it to find", and printed 0.0002 ms at
+ * every size. That was an artefact of the measurement, not a property of the
+ * input: those numbers came from timing ONE string repeatedly, and after the
+ * first read it is already flat, so every later trial measured a walk that had
+ * nothing left to do. It also called 16,000 -> 1,000,000 a 64x range; it is
+ * 62.5x. The growth is real. It is simply far below the 0.05 ms floor the old
+ * assertion clamped to, which is the actual reason that assertion stopped being
+ * a ratio. Reported by a blind cross-check of the commit that wrote it.
  *
  * The input stays, because it is the shape the issue was filed about and it
  * still reds a reverted `parseAngleAddress` — the REGEX is quadratic on it,
  * which is the entire reason #406 exists. What it is not is a measurement of
- * the scan, and the growth test below used to treat it as one.
+ * the scan's own walks, and the growth test below used to treat it as one.
  *
  * `hostileDeep` is the shape that makes the scan work for its answer. It ends
  * in `>`, so the anchor passes and both interior walks run: `lastIndexOf(">",
@@ -143,9 +154,25 @@ function bestOf(input, trials) {
  * across a 64x range looks like, and these measurements do not look like that.
  */
 test("the cost does not grow with the input, so it is the algorithm and not the machine", () => {
-  // If this ever stops being null the walk is exiting early and the numbers
-  // below stop meaning anything.
-  assert.equal(parseAngleAddress(hostileDeep(64)), null);
+  // THE CONTROL, AND IT HAS TO EXPECT A NON-NULL ANSWER.
+  //
+  // This was `assert.equal(parseAngleAddress(hostileDeep(64)), null)`, with a
+  // comment claiming it caught an early exit. It cannot, and the reason is
+  // structural: `null` is the correct answer on that input, so every early
+  // return that ALSO answers `null` is indistinguishable from success. A blind
+  // cross-check of the commit that wrote it put `if (value.length > 4096)
+  // return null;` at the top of `parseAngleAddress` and all 789 unit tests
+  // passed, this assertion included. The timings above it would then have been
+  // measuring a length check.
+  //
+  // A long header with a REAL answer is what discriminates: under that cap
+  // `a@b.test` becomes `null` and this line fails.
+  const answered = parseAngleAddress("x".repeat(64000) + "<a@b.test>");
+  assert.deepEqual(
+    answered,
+    { name: "x".repeat(64000), email: "a@b.test" },
+    "parseAngleAddress stopped answering on a 64KB header. Something is refusing long input rather than scanning it, and every timing below is then measuring that refusal instead of the walk.",
+  );
 
   const small = bestOf(hostileDeep(16000), 9);
   const large = bestOf(hostileDeep(64000), 9);
