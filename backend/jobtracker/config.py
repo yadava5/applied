@@ -520,17 +520,22 @@ class Settings(BaseSettings):
         ),
     )
     gmail_fetch_page_size: int = Field(
-        default=500,
+        default=200,
         description=(
             "Messages fetched + classified in ONE serverless invocation of "
             "`GET /gmail/inbox`. The endpoint is server-paginated: it returns "
             "at most this many verdicts plus a `next_page_token`, and the web "
-            "client loops until it reaches the user's chosen count. Kept at "
-            "the Gmail `messages.list` page ceiling (500) so one list call "
-            "feeds one page, and small enough that a page's batched metadata "
-            "fetch + rules classification stays well inside the Vercel 60 s "
-            "function budget. Clamped to [1, 500]. Env: "
-            "JOBTRACKER_GMAIL_FETCH_PAGE_SIZE."
+            "client loops until it reaches the user's chosen count. "
+            "WAS 500 — the Gmail `messages.list` page ceiling — until "
+            "2026-09-04, when that stopped being achievable. The binding "
+            "constraint is quota, not the list API: a page costs "
+            "`20 * messages + 5` units against 6,000 per minute per user, so "
+            "300 messages is an entire minute's budget and a 500-message page "
+            "(10,005 units) cannot complete against a full bucket no matter "
+            "how often it is retried. 200 is 4,005 units, about two thirds of "
+            "a bucket, leaving headroom for the scheduled sync's own reads. "
+            "Clamped to [1, 250] in the handler so this env var cannot re-arm "
+            "an impossible page. Env: JOBTRACKER_GMAIL_FETCH_PAGE_SIZE."
         ),
     )
     gmail_batch_size: int = Field(

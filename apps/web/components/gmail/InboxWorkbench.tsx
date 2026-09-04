@@ -81,6 +81,14 @@ type Phase = "loading" | "deferred" | "ready" | "not_connected" | "auth" | "erro
  */
 const MAX_DEFERRALS = 6;
 
+/**
+ * How many consecutive all-unreadable pages the mine will page past before it
+ * stops. Bounded because every page costs quota whether or not it yields a
+ * verdict, and an unbounded walk of an unreadable mailbox would spend the
+ * user's whole minute finding nothing.
+ */
+const MAX_BARREN_PAGES = 3;
+
 /** `setTimeout` that resolves early and false when the mine is superseded. */
 function waitOrAbort(ms: number, signal: AbortSignal): Promise<boolean> {
   if (signal.aborted) return Promise.resolve(false);
@@ -454,6 +462,10 @@ export function InboxWorkbench({
       const acc: InboxVerdict[] = [];
       let token: string | null | undefined;
       let deferrals = 0;
+      // Consecutive pages that listed mail but yielded no verdict. Bounded so
+      // a mailbox full of unreadable ids cannot page forever at 20 quota units
+      // a message, but not zero — see the break condition below.
+      let barrenPages = 0;
       // Summed across pages, not per page: the user asked one question ("scan
       // my mail") and is owed one answer about what it cost.
       let unreadable = 0;
@@ -536,7 +548,21 @@ export function InboxWorkbench({
           setVerdicts([...acc]);
           setState({ phase: "loading", fetched: acc.length, target, unreadable });
           token = page.next_page_token;
-          if (!token || page.verdicts.length === 0) break;
+          if (!token) break;
+          // A page with no verdicts used to end the mine as SUCCESS. That is
+          // right when the mailbox is exhausted and wrong when the page listed
+          // messages and could not read any of them — verdicts 0, unreadable
+          // 200, cursor still good — which reads to the user as "that is all
+          // your mail" over a window nothing was read from. Distinguish the
+          // two by whether anything was actually lost, and keep going in the
+          // second case rather than declaring the scan complete.
+          if (page.verdicts.length === 0) {
+            if ((page.unreadable ?? 0) === 0) break;
+            barrenPages += 1;
+            if (barrenPages >= MAX_BARREN_PAGES) break;
+            continue;
+          }
+          barrenPages = 0;
         }
 
         const pipelineItems = toPipelineItems(acc);

@@ -297,6 +297,11 @@ export function stopKind(stoppedBy: string | null | undefined): StopKind {
   const reason = typeof stoppedBy === "string" ? stoppedBy.trim().toLowerCase() : "";
   if (reason === "" || reason === "complete") return "complete";
   if (reason === "disconnected" || reason === "relay") return "broken";
+  // `rate_limited` falls through to "partial" deliberately, and NOT to
+  // "broken": the mailbox is healthy and the connection is intact — Gmail
+  // simply asked for less for a minute, so the window is under-covered rather
+  // than the sync being faulty. Calling it broken would send a user to
+  // reconnect an account that has nothing wrong with it.
   return "partial";
 }
 
@@ -317,6 +322,10 @@ export function stopReasonPhrase(stoppedBy: string | null | undefined): string {
       return "lost its Gmail connection partway";
     case "relay":
       return "answered in an unexpected mode";
+    case "rate_limited":
+      // Number-free, like its neighbours: "waited 60 seconds" would rot the
+      // day the backend tunes Retry-After.
+      return "paused because Gmail asked for fewer requests";
     default:
       return "stopped before finishing";
   }

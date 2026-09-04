@@ -24,6 +24,7 @@ which is the real behaviour being defended against, not a hypothetical.
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from datetime import UTC, datetime
 from typing import Any
 
@@ -470,6 +471,7 @@ async def test_every_stop_reason_the_backend_can_emit_is_a_known_constant(
         gmail_module.STOPPED_PAGE_LIMIT,
         gmail_module.STOPPED_DISCONNECTED,
         gmail_module.STOPPED_RELAY,
+        gmail_module.STOPPED_RATE_LIMITED,
     }
     declared = {
         value
@@ -481,3 +483,32 @@ async def test_every_stop_reason_the_backend_can_emit_is_a_known_constant(
         f"read: {sorted(declared - known)}. Add it to lib/gmail/sync-plan.ts "
         f"(stopKind + stopReasonPhrase) before adding it here."
     )
+
+    # AND CHECK THAT THE UI ACTUALLY LEARNED IT.
+    #
+    # The set above is a hand-maintained mirror, so on its own it only proves
+    # somebody edited this file — the instruction to teach `sync-plan.ts` first
+    # was pure honour system, and honour systems are the estate's recurring
+    # defect. Adding `STOPPED_RATE_LIMITED` here while forgetting the UI would
+    # have passed, and the frontend's unknown-value fallback is "complete", so
+    # the failure mode is a partial scan reported to the user as a finished one.
+    #
+    # A literal substring search, not a parse: it cannot be fooled by a value
+    # the UI merely mentions in a comment, but it also cannot be defeated by a
+    # formatter, and the alternative (running the TS) does not belong in a
+    # pytest run.
+    plan = (
+        Path(__file__).resolve().parents[2]
+        / "apps"
+        / "web"
+        / "lib"
+        / "gmail"
+        / "sync-plan.ts"
+    )
+    if plan.exists():
+        source = plan.read_text(encoding="utf-8")
+        unread = sorted(v for v in declared if f'"{v}"' not in source)
+        assert not unread, (
+            f"sync-plan.ts never names {unread}, so the UI falls back to "
+            f"'complete' and will report a partial scan as a finished one."
+        )

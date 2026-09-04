@@ -39,7 +39,11 @@ import pytest
 from googleapiclient.errors import HttpError
 
 import jobtracker.cloud.gmail_client as gc
-from jobtracker.cloud.gmail_client import _collect_page, is_retryable_gmail_error
+from jobtracker.cloud.gmail_client import (
+    _collect_page,
+    is_rate_limited_gmail_error,
+    is_retryable_gmail_error,
+)
 
 # Bound at import, BEFORE the autouse fixture below replaces the module
 # attribute with a zero-delay stub. Without this the backoff test reads the
@@ -88,10 +92,18 @@ def _refusal(status: int, reason: str) -> HttpError:
     return HttpError(_Resp(status), body)
 
 
-# `rateLimitExceeded` is Gmail saying "later". `authError` is a 403 too — the
-# grant is insufficient and no amount of waiting fixes it. Same status, same
-# exception class; only the reason separates them, which is the whole point.
-_DEFER = _refusal(403, "rateLimitExceeded")
+# THREE KINDS, and the design turns on telling them apart.
+#
+# `_QUOTA` — Gmail's bucket is dry. Transient, but on a MINUTE's scale, so it
+#   is never retried in place; it aborts the page and becomes a 429.
+# `_FLAKE` — Gmail itself wobbled. Curable by seconds of backoff, so it IS
+#   retried in place, under the page's sleep budget.
+# `_REFUSE` — a 403 as well, but the grant is insufficient and no amount of
+#   waiting fixes it. Same status and same exception class as `_QUOTA`; only
+#   the reason separates them.
+# `_GONE` — the message is not there. Dropped, counted, never retried.
+_QUOTA = _refusal(403, "rateLimitExceeded")
+_FLAKE = _refusal(503, "backendError")
 _REFUSE = _refusal(403, "authError")
 _GONE = _refusal(404, "notFound")
 
@@ -202,40 +214,82 @@ class FakeService:
 
 
 @pytest.fixture(autouse=True)
-def _instant(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No real sleeping. The DELAY is asserted separately, on the pure function.
+def slept(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Record every sleep instead of taking it, and hand back the ledger.
 
-    Patching the clock rather than the delay function would leave every test
-    here waiting out a real backoff; patching `_retry_delay` to 0 keeps the
-    retry LOGIC under test while the backoff SHAPE is pinned separately by
-    `test_the_first_retry_never_lands_inside_a_second`, which calls
-    `_REAL_RETRY_DELAY` — the reference captured at import, above, precisely
-    because this fixture is autouse and would otherwise reach it too.
+    `_retry_delay` is deliberately NOT stubbed. The page budget is a bound on
+    total sleep, so a test of that bound has to see the real delays — stubbing
+    them to zero makes any budget look sufficient, which is the shape of a
+    check that cannot fail. Recording `time.sleep` keeps the suite instant
+    while leaving the arithmetic real.
     """
 
-    monkeypatch.setattr(gc, "_retry_delay", lambda attempt: 0.0)
+    ledger: list[float] = []
+    monkeypatch.setattr(gc.time, "sleep", lambda d: ledger.append(d))
     monkeypatch.setattr(gc.settings, "gmail_batch_pause_seconds", 0.0)
     monkeypatch.setattr(gc.settings, "gmail_batch_size", 25)
+    return ledger
 
 
 # --- the discriminator ------------------------------------------------------
 
 
-def test_a_deferred_read_and_a_refused_one_are_told_apart() -> None:
-    """Both are 403 ``HttpError``. Only the reason separates them.
+def test_quota_flake_and_refusal_are_three_different_answers() -> None:
+    """The truth table the whole design rests on.
 
-    MUST RED ON: `is_retryable_gmail_error` keying on `_error_status` alone,
-    or on `403 in _RETRYABLE_STATUSES`.
+    A rate limit is transient but NOT retryable-in-place; a flake is both; a
+    bad grant is neither. Collapsing the first two — which is what a single
+    `is_retryable` predicate does — is what puts minutes of sleeping inside a
+    60 s function.
+
+    MUST RED ON: `is_retryable_gmail_error` dropping its
+    `is_rate_limited_gmail_error` early return; either predicate keying on
+    status alone; adding 403 to `_RETRYABLE_STATUSES`.
     """
 
-    assert is_retryable_gmail_error(_DEFER) is True
+    # quota: defer to the client, never retry here
+    assert is_rate_limited_gmail_error(_QUOTA) is True
+    assert is_retryable_gmail_error(_QUOTA) is False
+
+    # flake: retry here
+    assert is_rate_limited_gmail_error(_FLAKE) is False
+    assert is_retryable_gmail_error(_FLAKE) is True
+
+    # a 403 we cannot wait out
+    assert is_rate_limited_gmail_error(_REFUSE) is False
     assert is_retryable_gmail_error(_REFUSE) is False
 
-    # And the status-only cases still work, so the reason check did not
-    # replace the status check.
-    assert is_retryable_gmail_error(_refusal(429, "unknownToUs")) is True
-    assert is_retryable_gmail_error(_refusal(503, "unknownToUs")) is True
+    # a message that is simply gone
+    assert is_rate_limited_gmail_error(_GONE) is False
     assert is_retryable_gmail_error(_GONE) is False
+
+    # 429 is a rate limit by status alone, whatever reason rides with it.
+    assert is_rate_limited_gmail_error(_refusal(429, "unknownToUs")) is True
+    # and a bare 503 is still a flake, so the reason check did not replace the
+    # status check.
+    assert is_retryable_gmail_error(_refusal(503, "unknownToUs")) is True
+
+
+def test_the_newer_error_envelope_is_still_read_as_quota() -> None:
+    """Gmail's google.rpc-shaped errors say `RESOURCE_EXHAUSTED`, not a reason.
+
+    `HttpError` folds `error.errors[]` into `error_details` when it is present;
+    when it is not, only `error.status` carries the meaning. Without
+    `RESOURCE_EXHAUSTED` in `_RATE_LIMIT_REASONS` that envelope classifies as
+    permanent and a quota refusal becomes a 500 again — the original defect,
+    reintroduced by an envelope change nobody here controls.
+
+    MUST RED ON: dropping `RESOURCE_EXHAUSTED`; dropping the `error.status`
+    harvest in `_error_reasons`.
+    """
+
+    body = json.dumps(
+        {"error": {"code": 429, "message": "Quota exceeded.", "status": "RESOURCE_EXHAUSTED"}}
+    ).encode()
+    modern = HttpError(_Resp(403, "Forbidden"), body)
+
+    assert is_rate_limited_gmail_error(modern) is True
+    assert is_retryable_gmail_error(modern) is False
 
 
 def test_an_unreadable_403_is_treated_as_permanent() -> None:
@@ -278,45 +332,78 @@ def test_the_first_retry_never_lands_inside_a_second() -> None:
 # --- the list call: the one that raised in production -----------------------
 
 
-def test_a_deferred_list_call_is_retried_and_the_page_arrives_whole() -> None:
-    """MUST RED ON: reverting `_collect_page`'s list call to a bare `.execute()`."""
+def test_a_rate_limited_list_call_raises_at_once_without_sleeping(
+    slept: list[float],
+) -> None:
+    """Quota is never waited out inside the request. This is the core rule.
 
-    service = FakeService(["a", "b", "c"], list_errors=[_DEFER])
+    A per-minute bucket does not refill in the seconds a bounded backoff
+    affords, so retrying here spends the function's budget to arrive at the
+    same refusal — and on a paged read the sleeps compound past the 60 s
+    ceiling and time the whole thing out. The refusal must surface at once so
+    the router can answer 429 and the CLIENT can wait.
+
+    MUST RED ON: `is_retryable_gmail_error` losing its rate-limit early return
+    (the error then retries and `slept` fills).
+    """
+
+    service = FakeService(["a"], list_errors=[_QUOTA] * 20)
+
+    with pytest.raises(HttpError):
+        _collect_page(service, query="in:inbox", page_size=50, page_token=None)
+
+    assert service.list_calls == 1, "quota must cost exactly one call"
+    assert slept == [], "quota must never be slept on inside the request"
+
+
+def test_a_flaky_list_call_is_retried_and_the_page_arrives_whole(
+    slept: list[float],
+) -> None:
+    """A 5xx IS worth a short wait — that half of Google's guidance stands.
+
+    MUST RED ON: reverting `_collect_page`'s list call to a bare `.execute()`.
+    """
+
+    service = FakeService(["a", "b", "c"], list_errors=[_FLAKE])
 
     page = _collect_page(service, query="in:inbox", page_size=50, page_token=None)
 
-    assert service.list_calls == 2, "the refusal should have been retried once"
+    assert service.list_calls == 2
     assert [m.message_id for m in page.messages] == ["a", "b", "c"]
     assert page.unreadable == 0
+    assert len(slept) == 1 and 1.0 <= slept[0] <= 2.0
 
 
-def test_a_refused_list_call_is_not_retried() -> None:
-    """The directional half: proves the retry DISCRIMINATES.
+def test_a_refused_list_call_is_not_retried(slept: list[float]) -> None:
+    """The directional control: proves the retry DISCRIMINATES.
 
-    Without this, a retry-everything implementation passes the test above and
-    quietly burns three extra calls of a dead grant's quota on every request.
+    Without it, a retry-everything implementation passes the flake test above
+    and quietly burns three extra calls of a dead grant's quota per request.
 
     MUST RED ON: `_execute_with_retry` retrying without consulting
     `is_retryable_gmail_error`.
     """
 
-    service = FakeService(["a"], list_errors=[_REFUSE, _REFUSE, _REFUSE, _REFUSE])
+    service = FakeService(["a"], list_errors=[_REFUSE] * 4)
 
     with pytest.raises(HttpError):
         _collect_page(service, query="in:inbox", page_size=50, page_token=None)
 
-    assert service.list_calls == 1, "a permanent refusal must cost exactly one call"
+    assert service.list_calls == 1
+    assert slept == []
 
 
-def test_retries_are_bounded_and_the_refusal_still_surfaces() -> None:
-    """Exhausted retries must RAISE, so the router can answer 429 rather than
-    inventing an empty page that reads as "your mailbox is empty".
+def test_flake_retries_are_bounded_and_the_error_still_surfaces() -> None:
+    """Exhausted retries must RAISE, not invent an empty page.
 
-    MUST RED ON: `while True` with no attempt ceiling; or swallowing the final
-    error and returning an empty `MessagePage`.
+    An empty `MessagePage` would read to the user as "your mailbox is empty",
+    which is a worse lie than an error.
+
+    MUST RED ON: `while True` with no attempt ceiling; swallowing the final
+    error and returning an empty page.
     """
 
-    service = FakeService(["a"], list_errors=[_DEFER] * 20)
+    service = FakeService(["a"], list_errors=[_FLAKE] * 20)
 
     with pytest.raises(HttpError):
         _collect_page(service, query="in:inbox", page_size=50, page_token=None)
@@ -327,34 +414,53 @@ def test_retries_are_bounded_and_the_refusal_still_surfaces() -> None:
 # --- the batch path: the 146 silently-dropped messages ----------------------
 
 
-def test_a_deferred_sub_request_is_retried_and_the_message_is_not_lost() -> None:
-    """The quiet exit. This is the 146-of-200 case, in miniature.
+def test_a_rate_limited_sub_request_abandons_the_page(slept: list[float]) -> None:
+    """The quiet exit, closed. This is the 146-of-200 case.
 
-    MUST RED ON: `_send` reduced to a single `batch.execute()` with no re-send
-    (i.e. the code as it stood on 2026-09-04).
+    A rate-limited sub-request means the bucket is dry, so the remaining
+    windows of this page would be refused too. Grinding through them spends
+    more of a budget Gmail has just said is gone; raising lets the router
+    answer 429 and the client refetch this page from the cursor it still holds.
+    Nothing is lost — the page is refetched, not skipped.
+
+    MUST RED ON: removing the `is_rate_limited_gmail_error` raise from `_send`
+    (the ids are then silently dropped and the page returns 200 with a
+    shrunken, unexplained count — exactly the production behaviour).
     """
 
-    service = FakeService(["a", "b", "c"], sub_errors={"b": [_DEFER]})
+    service = FakeService(["a", "b", "c"], sub_errors={"b": [_QUOTA]})
+
+    with pytest.raises(HttpError):
+        _collect_page(service, query="in:inbox", page_size=50, page_token=None)
+
+    assert len(service.batch_rounds) == 1, "no grinding on through the page"
+    assert slept == []
+
+
+def test_a_flaky_sub_request_is_retried_and_the_message_is_not_lost() -> None:
+    """MUST RED ON: `_send` reduced to a single `batch.execute()`."""
+
+    service = FakeService(["a", "b", "c"], sub_errors={"b": [_FLAKE]})
 
     page = _collect_page(service, query="in:inbox", page_size=50, page_token=None)
 
     assert [m.message_id for m in page.messages] == ["a", "b", "c"]
-    assert page.unreadable == 0, "a deferred message must not be counted as lost"
+    assert page.unreadable == 0
     assert len(service.batch_rounds) == 2
 
 
-def test_only_the_deferred_ids_are_resent() -> None:
+def test_only_the_flaky_ids_are_resent() -> None:
     """The re-send is per SUB-REQUEST, not per batch.
 
-    This is load-bearing for the thing that caused the bug: re-sending a whole
-    25-id window to recover one deferred message costs 500 quota units to
-    rescue 20, against the very bucket that just refused.
+    Load-bearing for the thing that caused the bug: re-sending a whole 25-id
+    window to recover one message costs 500 quota units to rescue 20, against
+    the very bucket under pressure.
 
-    MUST RED ON: `pending = window` (re-send everything) instead of
+    MUST RED ON: `pending = pending` (re-send everything) instead of
     `pending = deferred`.
     """
 
-    service = FakeService(["a", "b", "c", "d"], sub_errors={"c": [_DEFER]})
+    service = FakeService(["a", "b", "c", "d"], sub_errors={"c": [_FLAKE]})
 
     _collect_page(service, query="in:inbox", page_size=50, page_token=None)
 
@@ -362,7 +468,7 @@ def test_only_the_deferred_ids_are_resent() -> None:
 
 
 def test_a_permanently_refused_sub_request_is_dropped_not_retried() -> None:
-    """One bad message must not sink the page, and must not be retried either.
+    """One dead message must not sink the page, and must not be retried either.
 
     MUST RED ON: retrying every failed sub-request regardless of reason.
     """
@@ -373,25 +479,90 @@ def test_a_permanently_refused_sub_request_is_dropped_not_retried() -> None:
 
     assert [m.message_id for m in page.messages] == ["a", "c"]
     assert page.unreadable == 1, "the loss must still be counted and reported"
-    assert service.batch_rounds == [["a", "b", "c"]], "no re-send for a dead id"
+    assert service.batch_rounds == [["a", "b", "c"]]
 
 
 def test_sub_request_retries_are_bounded_and_the_loss_is_reported() -> None:
-    """A sub-request Gmail keeps deferring is eventually counted as lost.
+    """An id that keeps flaking is eventually counted as lost.
 
-    The count is what the UI needs to stop reporting a shrunken scan as a
-    whole one, so it must survive the retry path rather than being reset by it.
+    The count is what stops the UI reporting a shrunken scan as a whole one, so
+    it must survive the retry path rather than be reset by it.
 
-    MUST RED ON: an unbounded `while pending:`; or `unreadable` computed before
+    MUST RED ON: an unbounded `while pending:`; `unreadable` computed before
     the re-sends rather than after.
     """
 
-    service = FakeService(["a", "b"], sub_errors={"b": [_DEFER] * 20})
+    service = FakeService(["a", "b"], sub_errors={"b": [_FLAKE] * 20})
 
     page = _collect_page(service, query="in:inbox", page_size=50, page_token=None)
 
     assert [m.message_id for m in page.messages] == ["a"]
     assert page.unreadable == 1
     assert len(service.batch_rounds) == gc._RETRY_ATTEMPTS + 1
-    # Every round after the first carries only the deferred id.
     assert service.batch_rounds[1:] == [["b"]] * gc._RETRY_ATTEMPTS
+
+
+# --- the bound that keeps a page inside its function ------------------------
+
+
+def test_one_page_cannot_sleep_past_its_budget(
+    slept: list[float], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A PER-CALL retry count does not bound a PAGE. This is that bound.
+
+    Twelve ids at a batch size of three is four windows. Each holds an id that
+    flakes forever, so each window would retry `_RETRY_ATTEMPTS` times and
+    sleep the full `1+2+4`-ish ramp — roughly 7 to 10 s per window, 28 to 40 s
+    across the page, inside a **60 s** function that also has to classify
+    everything it fetched. A 500-id page is twenty windows and lands near
+    200 s. That is how a fix for a fast failure becomes a timeout.
+
+    MUST RED ON: deleting the `budget.spend` guard from `_send` (total sleep
+    then runs to ~4x the budget); raising `_PAGE_RETRY_BUDGET_SECONDS` without
+    the arithmetic to justify it.
+    """
+
+    monkeypatch.setattr(gc.settings, "gmail_batch_size", 3)
+    ids = [f"m{i}" for i in range(12)]
+    flaky = {mid: [_FLAKE] * 50 for mid in ("m0", "m3", "m6", "m9")}
+    service = FakeService(ids, sub_errors=flaky)
+
+    page = _collect_page(service, query="in:inbox", page_size=50, page_token=None)
+
+    total = sum(slept)
+    assert total <= gc._PAGE_RETRY_BUDGET_SECONDS, (
+        f"one page slept {total:.1f}s against a "
+        f"{gc._PAGE_RETRY_BUDGET_SECONDS}s budget"
+    )
+    # And the page still came back with everything that WAS readable, rather
+    # than failing outright because some ids never answered.
+    assert [m.message_id for m in page.messages] == [
+        i for i in ids if i not in flaky
+    ]
+    assert page.unreadable == 4
+
+
+def test_the_budget_is_shared_by_the_list_call_and_the_batches(
+    slept: list[float], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One page, one allowance — not one allowance per call site.
+
+    A budget created per call would let the list call spend its own ramp and
+    then every window spend a fresh one, which is the per-call bound this test
+    exists to distinguish from a page bound.
+
+    MUST RED ON: `_execute_with_retry` or `_batch_fetch_metadata` constructing
+    its own `_RetryBudget()` instead of receiving `_collect_page`'s.
+    """
+
+    monkeypatch.setattr(gc.settings, "gmail_batch_size", 3)
+    ids = [f"m{i}" for i in range(12)]
+    service = FakeService(
+        ids,
+        list_errors=[_FLAKE] * 3,
+        sub_errors={mid: [_FLAKE] * 50 for mid in ("m0", "m3", "m6", "m9")},
+    )
+
+    _collect_page(service, query="in:inbox", page_size=50, page_token=None)
+
+    assert sum(slept) <= gc._PAGE_RETRY_BUDGET_SECONDS

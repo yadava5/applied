@@ -317,8 +317,11 @@ def test_batch_fetch_metadata_reports_its_own_drops(
     }
     service = FakeService(pages=[(["a", "b"], None)], metadata=metadata)
 
+    # `budget` is required, not defaulted: a per-call default would let a new
+    # caller silently get its own sleep allowance, which is exactly the
+    # per-call bound that does not bound a page.
     fetched = gc._batch_fetch_metadata(
-        service, ["a", "b"], batch_size=100, pause_seconds=0.0
+        service, ["a", "b"], batch_size=100, pause_seconds=0.0, budget=gc._RetryBudget()
     )
     assert set(fetched.messages) == {"a"}
     assert fetched.dropped == 1

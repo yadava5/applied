@@ -169,6 +169,12 @@ export const PAGE_SIZE = 100;
  * rate near the 300 messages/minute the quota actually affords. Smaller pages
  * also make a deferral cheap to recover: the retry re-costs one page, not
  * five, against the very budget that just refused.
+ *
+ * The server has its own two bounds and this sits under both, deliberately:
+ * `gmail_fetch_page_size` defaults to 200 and the handler clamps to 250. The
+ * client picks lower than the ceiling it is allowed because it is the party
+ * that loops — it pays for granularity in progress reporting and in cheap
+ * retries, neither of which the server can choose on its behalf.
  */
 
 // --- Category presentation --------------------------------------------------

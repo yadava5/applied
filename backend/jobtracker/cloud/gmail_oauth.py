@@ -1691,7 +1691,7 @@ async def gmail_inbox(
     from jobtracker.cloud.gmail_client import (
         build_gmail_query,
         fetch_message_page,
-        is_retryable_gmail_error,
+        is_rate_limited_gmail_error,
     )
 
     range_months = _parse_range_months(range)
@@ -1700,7 +1700,14 @@ async def gmail_inbox(
 
     # How many this page pulls: the configured per-invocation ceiling, further
     # clamped by an explicit page_size, the total count target, and the hard cap.
-    configured_page = max(1, min(settings.gmail_fetch_page_size, 500))
+    # 250, NOT Gmail's 500-id list ceiling. Quota, not the list API, is the
+    # binding constraint: a page costs `20 x messages + 5` units against
+    # 6,000 per minute per user, so 300 messages is the entire minute and a
+    # 500-message page (10,005 units) cannot complete against a full bucket
+    # however often it is retried. The literal is clamped here as well as
+    # defaulted in config so that setting JOBTRACKER_GMAIL_FETCH_PAGE_SIZE=500
+    # cannot silently re-arm a page size that is arithmetically impossible.
+    configured_page = max(1, min(settings.gmail_fetch_page_size, 250))
     requested = page_size if page_size is not None else (count or configured_page)
     effective_page = max(
         1, min(requested, configured_page, settings.gmail_fetch_hard_cap)
@@ -1724,12 +1731,16 @@ async def gmail_inbox(
             user_id, query=query, page_size=effective_page, page_token=page_token
         )
     except Exception as exc:  # noqa: BLE001 — re-raised unless Gmail deferred
-        # `fetch_message_page` has already retried this internally
-        # (`_RETRY_ATTEMPTS`, Google's backoff). Reaching here means the
-        # refusal outlived a bounded retry, which a 60 s function cannot wait
-        # out — so hand it back as something the CLIENT can wait out, holding
-        # the cursor it already has.
-        if not is_retryable_gmail_error(exc):
+        # ONLY quota becomes a 429. A rate limit is not retried in place at
+        # all (see `_RATE_LIMIT_REASONS`): a per-minute bucket does not refill
+        # inside a 60 s function, so the wait belongs to the client, which has
+        # no such budget and still holds the cursor.
+        #
+        # Everything else — a Gmail outage, a 5xx that outlived its bounded
+        # retry — is left to raise and render as SCAN FAILED, because for those
+        # that banner is the honest reading. Folding them into 429 would tell a
+        # user to wait for something waiting cannot fix.
+        if not is_rate_limited_gmail_error(exc):
             raise
         logger.warning(
             "Gmail deferred an inbox page for user_id=%s beyond retry; "
@@ -1890,7 +1901,21 @@ _SYNC_DEFAULT_RANGE_MONTHS = 12
 # to this many MESSAGES. Fixed so every routine run covers the same ground
 # (durability no longer depends on which messages a single 500-cap page
 # happened to catch) while staying inside the serverless time budget.
-_SYNC_DEFAULT_SCAN_TARGET = 750
+# 300, NOT 750. The old value was almost certainly derived from the OLD quota:
+# 15,000 units per minute per user divided by 5 units per `messages.get` is
+# exactly 750. Both halves of that arithmetic changed on 2026-05-01 — the
+# ceiling fell to 6,000 and the cost rose to 20 — so the same derivation now
+# yields 6000/20 = 300, and 750 became 15,005 units: two and a half minutes of
+# a bucket, in a scan that has one invocation to spend.
+#
+# That mattered beyond a slow sync. A first-connect backfill has no
+# continuation memory, so it re-read the same newest messages and stalled at
+# the same wall on every attempt, which made `cron.py`'s stated rationale —
+# that the path completing a first sync is the user's own Sync-now button —
+# false. The deep-backfill path that DOES work is the workbench mine (paced by
+# the client against 429s) followed by "File N into Applications", because the
+# relay persist makes no Gmail calls at all.
+_SYNC_DEFAULT_SCAN_TARGET = 300
 
 # The scan used to stop after a fixed number of PAGES, which is the wrong bound
 # when page sizes vary — and Gmail's do. ``maxResults`` is an upper bound, not a
@@ -2096,7 +2121,7 @@ async def _full_scan(
 
     from jobtracker.cloud.gmail_client import (
         fetch_message_page,
-        is_retryable_gmail_error,
+        is_rate_limited_gmail_error,
     )
 
     if deadline is None:
@@ -2138,7 +2163,7 @@ async def _full_scan(
             # same treatment `STOPPED_DEADLINE` and `STOPPED_DISCONNECTED`
             # already get. Raising here would instead discard every page
             # collected so far and 500 the sync.
-            if not is_retryable_gmail_error(exc):
+            if not is_rate_limited_gmail_error(exc):
                 raise
             logger.warning(
                 "Gmail full scan for user_id=%s stopped on a rate limit after "
@@ -2681,7 +2706,24 @@ async def gmail_sync(
             # back — a real defect with a real trade-off, and a different one.
             if account_email is not None:
                 cursor_to_record = history_id
-                if incremental and history_id is not None and unreadable > 0:
+                if stopped_by == STOPPED_RATE_LIMITED and scanned == 0:
+                    # A rate-limited run that read NOTHING is the one case that
+                    # must not advance the baseline. The reasoning three
+                    # paragraphs up — "holding loses the same message anyway,
+                    # the next sync fails on the same id for the same reason" —
+                    # is true for a DEADLINE and false here: a rate limit is
+                    # transient by construction, so the next run reads exactly
+                    # what this one could not. Recording a baseline captured
+                    # before a scan that read zero messages would put every one
+                    # of them permanently beyond the cursor.
+                    cursor_to_record = None
+                    logger.warning(
+                        "Gmail sync for user_id=%s was rate-limited before it "
+                        "read anything; holding the history cursor so the next "
+                        "run covers the same window.",
+                        user_id,
+                    )
+                elif incremental and history_id is not None and unreadable > 0:
                     cursor_to_record = None
                     logger.warning(
                         "Gmail sync for user_id=%s could not read %s message(s) "
