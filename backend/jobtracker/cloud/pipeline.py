@@ -2660,6 +2660,95 @@ def _names_the_relay(token: str, relay_brand: str) -> bool:
     return len(first) >= 4 and first in relay_brand
 
 
+#: Words that are corporate BY CONSTRUCTION and are effectively never surnames.
+#:
+#: Deliberately short and deliberately boring. This is positive evidence, so the
+#: two failure directions are not symmetric: a word MISSING from here costs one
+#: queue row that a person confirms, while a word wrongly IN here mints a card
+#: named after a human being. Surname-shaped words are therefore excluded even
+#: when they are common in company names — Banks, Rivers, Woods, Fields, Stone,
+#: Marsh, Wells — because each is somebody's last name.
+_CORPORATE_WORDS = frozenset(
+    """
+    inc llc ltd limited corp corporation gmbh plc pte pty srl spa ag nv bv sarl
+    labs laboratories technologies technology systems solutions software
+    analytics robotics networks semiconductors instruments dynamics sciences
+    therapeutics biosciences pharmaceuticals diagnostics
+    ventures holdings industries enterprises logistics consulting advisory
+    associates group partners collective foundation institute university college
+    studios interactive digital cloud data platform platforms
+    """.split()
+)
+
+#: An acronym-ish token: "AI", "IBM", "NVIDIA", "3M". Two or more characters and
+#: no lowercase, which a name in ordinary Title Case never satisfies.
+_ACRONYM_TOKEN = re.compile(r"^[A-Z0-9][A-Z0-9&.\-]+$")
+
+
+def _carries_corporate_evidence(display: str, raw: str) -> bool:
+    """Does this display name give a POSITIVE reason to read it as a company?
+
+    #733. `_employer_from_sender_name` and `_employer_from_subject_segment`
+    both mint a filing-grade employer out of whatever Title-Case run they find,
+    and neither had any notion that a run of Title-Case words might be a person.
+    Measured on the shipped code, an interview invite through Greenhouse whose
+    display name was a recruiter filed a board card named after that recruiter,
+    at 0.95 — above the auto-file gate — and a second message keyed to the same
+    person GROUPED onto it.
+
+    The fix is not a lexicon of first names. It cannot separate "Path Robotics"
+    from "Sarah Chen", and every miss would be open-ended. It is the estate's
+    display-grade / filing-grade split: a bare run of Title-Case words with
+    nothing corporate about it is not evidence strong enough to name a card, so
+    it goes to the queue with the name pre-filled instead.
+
+    Evidence, any one of which is enough:
+
+    - a role or relay tail was stripped on the way here ("Crusoe Hiring Team"),
+      which only ATS-shaped company mail carries;
+    - an ``@`` — but ONLY at the subject site. At the sender-name site this
+      branch cannot fire: ``_employer_from_sender_name`` has already split on
+      the ``@`` and passes the bare tail, so by the time the guard sees it
+      there is no ``@`` left. ``Team Talent @ MotherDuck`` survives because
+      ``MotherDuck`` is ONE WORD, not because of the ``@``, and
+      ``Team Talent @ Basalt Row`` is refused. Kept because the subject site
+      can still carry one, and said out loud because the previous version of
+      this docstring credited the wrong rule for the case it named;
+    - an acronym or numeric token ("Netic AI", "IBM", "3M", "H&R");
+    - a legal or corporate-suffix word (:data:`_CORPORATE_WORDS`);
+    - a single word — "Stripe", "Northwind". A person's full name is not one
+      word, and a one-word display is the overwhelmingly common company shape.
+
+    The cost, stated rather than hidden: a two-word plain-name employer whose
+    mail also carries an employer-less subject ("Hugging Face", "Jane Street")
+    now costs one confirmation click. That is the price of never publishing a
+    person's name as a company, and it is the right way round.
+    """
+
+    if raw and _clean_sender_display_name(raw) != raw.strip():
+        return True                       # a tail was stripped: ATS company mail
+    if "@" in display or "&" in display:
+        return True
+    words = display.split()
+    if len(words) < 2:
+        return True                       # one word is a company, not a full name
+    # NO UPPER BOUND ON WORD COUNT, AND THERE USED TO BE ONE. `len(words) > 4`
+    # was here as "too long to be a name", which is false in exactly the
+    # direction that matters: `Mary Anne Van Der Berg` is five words and filed
+    # as a company through the hole. A cap on a person-shape test is an escape
+    # hatch AT the shape being tested. A long company name with no corporate
+    # word in it now costs a confirmation click, which is the same price every
+    # other bare name pays.
+    for word in words:
+        if _ACRONYM_TOKEN.match(word):
+            return True
+        if _normalize_token(word) in _CORPORATE_WORDS:
+            return True
+        if any(ch.isdigit() for ch in word):
+            return True
+    return False
+
+
 def _employer_from_sender_name(
     sender_name: str | None, relay_brand: str
 ) -> tuple[str, str] | None:
@@ -2710,6 +2799,9 @@ def _employer_from_sender_name(
             continue
         token = _normalize_token(display.split(" ")[0])
         if not _valid_company_token(token) or _names_the_relay(token, relay_brand):
+            continue
+        # #733: a bare personal name is not filing-grade evidence of an employer.
+        if not _carries_corporate_evidence(display, candidate):
             continue
         return token, display
     return None
@@ -3406,6 +3498,11 @@ def _employer_from_subject_segment(
             or tail in _COMPANY_STOPWORDS
             or _LIFECYCLE_WORD.match(last)
         ):
+            continue
+        # #733 again, and this door is why guarding the display name alone is
+        # not a fix: "Sarah Chen - quick chat?" reaches here with NO display
+        # name at all and resolved ('sarah', 'Sarah Chen') on the shipped code.
+        if not _carries_corporate_evidence(display, ""):
             continue
         return token, display
     return None
