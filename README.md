@@ -24,7 +24,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/tests-2939%20collected%20%C2%B7%200%20skipped-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/rules%20macro--F1-0.9791%20(CI%20floor%200.95)-2b9348" alt="Rules macro-F1">
-  <img src="https://img.shields.io/badge/Next.js-16.2-000000?logo=nextdotjs&logoColor=white" alt="Next.js">
+  <img src="https://img.shields.io/badge/Next.js-16.3-000000?logo=nextdotjs&logoColor=white" alt="Next.js">
   <img src="https://img.shields.io/badge/React-19.2-61dafb?logo=react&logoColor=black" alt="React">
   <img src="https://img.shields.io/badge/Python-3.11-3776ab?logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/Postgres-RLS%20forced-336791?logo=postgresql&logoColor=white" alt="Postgres RLS">
