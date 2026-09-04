@@ -174,7 +174,7 @@ export function rangeLabel(range: ScanRange): string {
 
 /**
  * What a running windowed scan restates about itself:
- * `up to 750 messages · last 12 months · all mail`. Identical on both
+ * `up to 200 messages · last 12 months · all mail`. Identical on both
  * dispositions, because the scan itself is: `all mail` is forced by the server
  * on the rebuild path and asked for by {@link scanRequestBody} on the additive
  * one (see the module comment). It is stated rather than offered either way —

@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 
 import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./helpers";
+import { SCAN_DEFAULT_DEPTH, scanScopeLine } from "../../lib/gmail/sync-plan";
 
 /**
  * E2E for the auth-free product demo (`/demo`).
@@ -654,8 +655,34 @@ test.describe("live demo (/demo)", () => {
     await dialog.getByRole("button", { name: "Rebuild from the last 12 months" }).click();
     // The running line restates the chosen window; the only number ticking is
     // the elapsed clock — never a percentage, here or on the receipt.
+    // WHAT THIS ASSERTION PINS, measured rather than asserted, because the
+    // import makes the scope easy to overstate.
+    //
+    // It pins the ECHO and the NUMBER. `SyncBar.tsx:470` builds the rendered
+    // string with `scanScopeLine(d, r)` — the same function imported here — so
+    // mutating the caller to `scanScopeLine(750, r)` reds this **6 of 6**
+    // (3 projects × 2 jobs) with a real DOM diff. That is the CI failure of
+    // 2026-09-04 reproduced in reverse: there the spec hardcoded 750 against
+    // an app rendering 200; here the spec imports 200 against an app
+    // rendering 750.
+    //
+    // It does NOT pin the WORDING. Mutating `scanScopeLine` itself — dropping
+    // `all mail`, changing the separator — leaves this **green 6 of 6**,
+    // because the app and the expectation move together. That is
+    // deliberate, not an oversight: the wording's decision site is
+    // `tests/unit/sync-plan.test.mjs:176`, which is hand-written and reds on
+    // exactly that mutation, and the depth's is `:79`
+    // (`assert.equal(SCAN_DEFAULT_DEPTH, 200)`).
+    //
+    // The green under a `scanScopeLine` mutation is still doing work: it is
+    // the pickup control. Had the server handed back a stale bundle, only the
+    // expectation would have moved and it would have reddened.
+    //
+    // Retyping the number here instead would red the whole e2e suite every
+    // time the default legitimately moves — which is what happened when
+    // Gmail's quota cut it from 750 to 200.
     await expect(syncSurface(page).locator("[data-sync-status]")).toContainText(
-      "rebuilding · up to 750 messages · last 12 months · all mail",
+      `rebuilding · ${scanScopeLine(SCAN_DEFAULT_DEPTH, "12")}`,
     );
     await expect(syncSurface(page)).not.toContainText("%");
 
@@ -697,7 +724,7 @@ test.describe("live demo (/demo)", () => {
 
     const surface = syncSurface(page);
     await expect(surface.locator("[data-sync-status]")).toContainText(
-      "scanning · up to 750 messages · last 12 months · all mail",
+      `scanning · ${scanScopeLine(SCAN_DEFAULT_DEPTH, "12")}`,
     );
     await expect(surface).not.toContainText("%");
 
