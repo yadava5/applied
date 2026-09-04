@@ -321,10 +321,6 @@ class Settings(BaseSettings):
             "the first time classification is used."
         ),
     )
-    embedding_similarity_threshold: float = Field(
-        default=0.85,
-        description="Minimum cosine similarity for embedding-based classification",
-    )
     setfit_confidence_threshold: float = Field(
         default=0.70,
         description="Minimum confidence for SetFit classification",
