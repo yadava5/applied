@@ -190,6 +190,28 @@ def tracked(*pathspecs: str) -> list[str]:
     return sorted(p for p in out.split("\0") if p)
 
 
+def untracked_test_modules() -> list[str]:
+    """`test_*.py` files on disk that git does not yet know about.
+
+    THE FALSE GREEN THIS CLOSES, observed 2026-09-04. Every count in this file
+    comes from `git ls-files`, which is right for CI — CI checks out a commit,
+    so what is committed is what exists. Locally it is a trap: a new test module
+    that has been written but not `git add`ed is invisible here, so `--check`
+    prints "all agree" while `testModules` is already one behind. Stage the
+    file and the same command reds. The author's reasonable conclusion is that
+    the checker is flaky.
+
+    Not fatal, and deliberately so: an untracked file is not yet a claim about
+    anything, and failing on one would red every work-in-progress tree. Printed,
+    because a silent disagreement between what a command sees and what CI will
+    see is the exact shape this file spends its comments warning about.
+    """
+
+    tracked = set(tracked_in_dir("backend/tests"))
+    on_disk = {p.name for p in (REPO / "backend" / "tests").glob("test_*.py")}
+    return sorted(on_disk - tracked)
+
+
 def tracked_in_dir(rel: str) -> list[str]:
     """Tracked file names DIRECTLY inside `rel` — one level, like `iterdir()`.
 
@@ -2717,6 +2739,16 @@ def run(mode: str) -> None:
         f"  ✓ {n} facts, asserted at {sites} sites across {len(files)} file(s), "
         f"all agree with the code ({len(INVARIANTS)} invariants hold)."
     )
+    strays = untracked_test_modules()
+    if strays:
+        print(
+            f"  ! {len(strays)} test module(s) on disk are UNTRACKED and were "
+            f"not counted: {', '.join(strays)}.\n"
+            f"    Every count here comes from `git ls-files`, so staging these "
+            f"will move `testModules`/`testFunctions` and CI will red on a tree "
+            f"this command just called clean. Run `git add` first, then "
+            f"`--write`."
+        )
     # Never fatal. The recorded figures legitimately describe an earlier tree —
     # that is what "recorded" means — and a gate here would be red every other
     # day and deleted within the week. Printing it is what makes the drift
