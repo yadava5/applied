@@ -71,15 +71,34 @@ import { cn } from "@/lib/utils";
 type Phase = "loading" | "deferred" | "ready" | "not_connected" | "auth" | "error";
 
 /**
- * How many times one mine will wait out a Gmail deferral before giving up.
+ * Messages one mailbox may read per minute, from Gmail's published quota.
  *
- * Bounded, but generously: a large mailbox legitimately needs several minutes
- * of quota, and a scan that abandons itself after one wait is the failure this
- * whole path exists to remove. Six waits at the backend's 60 s `Retry-After`
- * is six minutes of patience — past that, something is wrong that waiting will
- * not fix, and saying so beats an indefinite spinner.
+ * 6,000 units per minute per user, 20 units per `messages.get`. This is the
+ * rate the whole pace is derived from, and it is a *per end user* limit — it
+ * keys on the authenticated principal, and Applied holds per-user OAuth with
+ * no service account, so every connected mailbox gets its own allowance and
+ * one person's scan cannot slow another's.
  */
-const MAX_DEFERRALS = 6;
+const GMAIL_MESSAGES_PER_MINUTE = 300;
+
+/**
+ * How many 60-second deferrals one mine will wait out before giving up.
+ *
+ * DERIVED FROM THE TARGET, not a flat constant, and that distinction is the
+ * difference between working and not. A flat six was the first version, and
+ * the arithmetic condemns it: 2,000 messages is `2000/300` ≈ 6.7 minutes of
+ * quota, so a 2,000-message scan needs about six waits and would have given up
+ * within one wait of finishing — the exact scan most worth completing, failing
+ * for a reason that looks arbitrary.
+ *
+ * `+2` is slack for the co-spenders on the same bucket: the scheduled sync,
+ * the dashboard's arrival auto-sync, a second tab. Past that the wait is no
+ * longer explained by this scan's own size, and something is wrong that
+ * waiting will not fix — saying so beats an indefinite spinner.
+ */
+function maxDeferralsFor(target: number): number {
+  return Math.ceil(target / GMAIL_MESSAGES_PER_MINUTE) + 2;
+}
 
 /**
  * How many consecutive all-unreadable pages the mine will page past before it
@@ -462,6 +481,7 @@ export function InboxWorkbench({
       const acc: InboxVerdict[] = [];
       let token: string | null | undefined;
       let deferrals = 0;
+      const maxDeferrals = maxDeferralsFor(target);
       // Consecutive pages that listed mail but yielded no verdict. Bounded so
       // a mailbox full of unreadable ids cannot page forever at 20 quota units
       // a message, but not zero — see the break condition below.
@@ -489,7 +509,7 @@ export function InboxWorkbench({
           // than discarding a scan that may already hold hundreds of verdicts.
           // `continue` without touching `token` is what makes it a resume.
           if (status === 429) {
-            if (deferrals >= MAX_DEFERRALS) {
+            if (deferrals >= maxDeferrals) {
               setState({
                 phase: "error",
                 fetched: acc.length,
