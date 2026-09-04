@@ -70,34 +70,45 @@ import { cn } from "@/lib/utils";
 
 type Phase = "loading" | "deferred" | "ready" | "not_connected" | "auth" | "error";
 
-/**
- * Messages one mailbox may read per minute, from Gmail's published quota.
+/*
+ * Gmail's published quota, which is what actually paces this component.
  *
- * 6,000 units per minute per user, 20 units per `messages.get`. This is the
- * rate the whole pace is derived from, and it is a *per end user* limit — it
- * keys on the authenticated principal, and Applied holds per-user OAuth with
- * no service account, so every connected mailbox gets its own allowance and
- * one person's scan cannot slow another's.
+ * A *per end user* limit: it keys on the authenticated principal, and Applied
+ * holds per-user OAuth with no service account, so every connected mailbox has
+ * its own allowance and one person's scan cannot slow another's.
  */
-const GMAIL_MESSAGES_PER_MINUTE = 300;
+const GMAIL_UNITS_PER_MINUTE = 6000;
+const GMAIL_UNITS_PER_MESSAGE = 20; // messages.get
+const GMAIL_UNITS_PER_LIST = 5; // messages.list, once per page
 
 /**
  * How many 60-second deferrals one mine will wait out before giving up.
  *
- * DERIVED FROM THE TARGET, not a flat constant, and that distinction is the
- * difference between working and not. A flat six was the first version, and
- * the arithmetic condemns it: 2,000 messages is `2000/300` ≈ 6.7 minutes of
- * quota, so a 2,000-message scan needs about six waits and would have given up
- * within one wait of finishing — the exact scan most worth completing, failing
- * for a reason that looks arbitrary.
+ * DERIVED FROM UNITS, and it took two wrong answers to get here — both worth
+ * recording, because both looked reasonable and both would have failed the
+ * scans most worth completing.
  *
- * `+2` is slack for the co-spenders on the same bucket: the scheduled sync,
- * the dashboard's arrival auto-sync, a second tab. Past that the wait is no
- * longer explained by this scan's own size, and something is wrong that
- * waiting will not fix — saying so beats an indefinite spinner.
+ * A flat six was the first. 2,000 messages is about 6.7 minutes of quota, so
+ * that gave up within one wait of finishing.
+ *
+ * `ceil(target / 300) + 2` was the second, from the headline rate of 300
+ * messages a minute. Also wrong, because a page is not free and does not
+ * divide the budget evenly: one 100-message page costs
+ * `100 * 20 + 5 = 2,005` units, so only **two** fit in a 6,000-unit minute —
+ * a third would need 6,015. The real rate is 200 messages a minute at this
+ * page size, not 300, and 2,000 messages is ten minutes rather than seven.
+ *
+ * So: compute the units, floor the pages that fit in a minute, and count the
+ * minutes the scan genuinely needs. `+2` is slack for the co-spenders on the
+ * same bucket — the scheduled sync, the dashboard's arrival auto-sync, a
+ * second tab. Past that the wait is no longer explained by this scan's own
+ * size, and something is wrong that waiting will not fix.
  */
 function maxDeferralsFor(target: number): number {
-  return Math.ceil(target / GMAIL_MESSAGES_PER_MINUTE) + 2;
+  const unitsPerPage = PAGE_SIZE * GMAIL_UNITS_PER_MESSAGE + GMAIL_UNITS_PER_LIST;
+  const pagesPerMinute = Math.max(1, Math.floor(GMAIL_UNITS_PER_MINUTE / unitsPerPage));
+  const pagesNeeded = Math.ceil(Math.max(target, 1) / PAGE_SIZE);
+  return Math.ceil(pagesNeeded / pagesPerMinute) + 2;
 }
 
 /**
