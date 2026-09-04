@@ -192,14 +192,54 @@ ASSESSMENT_RELAY_DOMAINS: frozenset[str] = frozenset(
         "codesubmit",
         "testgorilla",
         "devskiller",
+        # DevSkiller renamed to SkillPanel in September 2025 and
+        # `devskiller.com` 301s to `skillpanel.com`. BOTH stay, because both
+        # are live senders on different stacks: `devskiller.com` publishes an
+        # SPF including Postmark with `p=reject`, `skillpanel.com` publishes
+        # its own including Zoho. A rename is not a migration.
+        "skillpanel",
         "imocha",
         "mettl",
+        # Mettl is Mercer's, and its regional senders are the reason this entry
+        # is three lines of prose rather than one string.
+        #
+        # `mercermettl` is safe: nobody applies to a company by that name. The
+        # `.eu` half is the evidenced one (SPF `include:amazonses.com`, an
+        # outbound sender); the `.com` half rests on the vendor's KB text alone
+        # and has no SPF, so it is here on weaker ground — recorded so the next
+        # reader knows which half to doubt.
+        #
+        # `mercer` IS DELIBERATELY ABSENT AND MUST STAY ABSENT. Mettl's Indian
+        # region sends from an `admin.mettl` mailbox on Mercer's own domain, so the brand that would
+        # match is `mercer` — and Mercer is a large real employer that sends its
+        # own recruiting mail. Adding it would push every genuine Mercer
+        # application onto the display-name and subject fallbacks, which is the
+        # person-as-employer class this module already fights. That address is
+        # therefore UNREACHABLE by a brand-keyed set, and catching it needs a
+        # full-address exception, which is a product decision and not a set edit.
+        "mercermettl",
         # Interview-as-a-service and recorded/one-way interview vendors. The
         # mail they send is an invitation to an employer's assessment round, so
         # the employer is named in the message and never in the domain.
         "hirevue",
         "karat",
         "woven",
+        # THE ONE THIS AUDIT WAS RUN TO FIND. Woven's candidate mail comes from
+        # `woventeams.com`, which `_domain_brand` renders `woventeams` — so the
+        # plain `woven` entry above never matched a real Woven message and an
+        # invite would have filed a card at the vendor, which is #687's defect
+        # still live for one vendor. Evidenced by Greenhouse's own Woven
+        # integration doc naming a `candidates+greenhouse_errors` mailbox at that domain,
+        # and by DNS: live Google MX, SPF, and its own DMARC record.
+        #
+        # `woven` stays. `woven.com` is a different entity and `woven.io` is
+        # parked, which is exactly why the wrong entry looked correct on
+        # inspection — there was no alternate sender to notice.
+        #
+        # Watch item, not a change: Andela acquired Woven in January 2026.
+        # `woventeams.com` is live today and there is no evidence of a mail
+        # migration, so `andela` is NOT added on speculation.
+        "woventeams",
         "sparkhire",
     }
 )
