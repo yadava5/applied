@@ -173,19 +173,24 @@ export const PAGE_SIZE = 99;
  *   N =  99 -> 1,985/page -> floor(6000/1985) = 3 pages -> 297 messages/min
  *
  * For a 2,000-message scan that is ten minutes against 6.7 — and 6.7 is the
- * physical floor (`2000 * 20 / 6000`), so 99 reaches 99.9% of what Gmail will
- * ever allow. 150 is worse than either at 150/min. The best value the server's
+ * physical floor (`2000 * 20 / 6000`), so 99 reaches 99.0% of what Gmail will
+ * ever allow — 297 of the 300 messages a minute affords. 150 is worse than either at 150/min. The best value the server's
  * clamp permits is 149 (298/min); 99 gives up 0.4% of that for 50% finer
  * progress and a deferral that re-costs a third of a minute instead of half.
  *
  * Smaller pages also make a deferral cheap: the retry re-costs one page, not
  * five, against the very budget that just refused.
  *
- * The server has its own two bounds and this sits under both, deliberately:
- * `gmail_fetch_page_size` defaults to 99 and the handler clamps to 250. The
- * client picks lower than the ceiling it is allowed because it is the party
- * that loops — it pays for granularity in progress reporting and in cheap
- * retries, neither of which the server can choose on its behalf.
+ * The server holds the same number: `gmail_fetch_page_size` defaults to 99 and
+ * the handler clamps anything larger to 250. They are EQUAL on purpose, not
+ * one under the other — an earlier version of this comment said the client
+ * "picks lower than the ceiling it is allowed", which stopped being true the
+ * moment both moved to 99.
+ *
+ * Equality is what the pin test asserts
+ * (`backend/tests/test_the_page_size_fits_gmails_minute.py`), because the
+ * client is the party that LOOPS: the server only clamps, so its careful
+ * default never applies to an interactive scan unless the client asks for it.
  */
 
 // --- Category presentation --------------------------------------------------

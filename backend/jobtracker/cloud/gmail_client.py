@@ -52,7 +52,9 @@ that is a structural property of the code rather than a promise:
   claim true rather than aspirational.
 
 Bodies are capped at ``_MAX_BODY_CHARS`` and batched more tightly than
-metadata was: ``format="full"`` costs the same 5 quota units per message but
+metadata was: ``format`` does not affect quota cost at all — a
+``messages.get`` is 20 units at any format (it was 5 until 2026-05-01, which
+is what this sentence used to say) — but
 returns a far larger payload, and ``batch.execute()`` materialises a whole
 batch before the callback drains it, inside a 50 MB serverless slot.
 """
@@ -826,9 +828,18 @@ def _batch_fetch_metadata(
     Instead of one ``messages.get`` round-trip per id (which turns a 1000-id
     page into 1000 serial HTTP calls and a serverless timeout), we group the
     gets into ``new_batch_http_request`` batches of at most ``batch_size``
-    (Gmail caps a batch at 100). Each 100-message metadata batch costs ~500
-    quota units, so we sleep ``pause_seconds`` between batches to stay under
-    the per-user ~250 units/sec limit.
+    (Gmail caps a batch at 100, and recommends no more than 50; this is
+    further clamped to ``_FULL_BATCH_SIZE`` = 25, which is the number that
+    actually applies).
+
+    THE QUOTA SENTENCE HERE WAS STALE and is corrected rather than deleted,
+    because it is the same wrong pair of numbers `config.py` already records:
+    a 100-message batch costs **2,000** units, not ~500, and there is no
+    per-second limit to stay under — the limit is 6,000 units per MINUTE per
+    user. Batching does not reduce any of it: Gmail counts n batched
+    sub-requests as n requests. ``pause_seconds`` still earns its keep by
+    spreading a burst rather than delivering it instantaneously, but the real
+    bound is the page size.
 
     Returns the ``{message_id: raw_metadata_response}`` map AND the number of
     requested ids it could not produce one for. A sub-request Gmail *deferred*
@@ -1229,6 +1240,7 @@ def _collect_history_ids(
     start_history_id: str,
     max_messages: int,
     scope: MailScope,
+    budget: _RetryBudget,
 ) -> tuple[list[str], bool, bool]:
     """Walk ``users.history.list`` and return ``(ids, expired, truncated)``.
 
@@ -1244,11 +1256,18 @@ def _collect_history_ids(
     # The incremental walk spends the SAME per-user bucket as the full scan,
     # and it is the likelier collision: the dashboard's arrival auto-sync or a
     # "Sync now" racing the user's own live scan is exactly the pair that
-    # produced the production trace. Before this it called `.execute()` bare,
-    # so a rate-limited history read raised straight out of
-    # `fetch_history_messages` and 500'd the sync.
-    budget = _RetryBudget()
-
+    # produced the production trace. Before this it called `.execute()` bare.
+    #
+    # THE BUDGET IS THE CALLER'S, not one made here. It used to be constructed
+    # in this function AND again around the metadata fetch, which gave the
+    # incremental read two independent allowances and so twice the sleep
+    # ceiling the full-scan path presents as its invariant. Two budgets is not
+    # a budget.
+    #
+    # This retry only ever helps a SERVER FLAKE. A rate limit is not retryable
+    # by construction (`is_retryable_gmail_error` returns False for it), so it
+    # raises on the first attempt — which is deliberate, and handled by the
+    # caller rather than here.
     for _ in range(_HISTORY_MAX_PAGES):
         try:
             batch = _execute_with_retry(
@@ -1304,11 +1323,17 @@ def _collect_history(
 ) -> HistoryPage:
     """Resolve the ids added since ``start_history_id`` into full messages."""
 
+    # ONE allowance for the whole incremental read — the id walk and the
+    # metadata fetch spend from the same object, exactly as `_collect_page`
+    # does for the full scan.
+    budget = _RetryBudget()
+
     ids, expired, truncated = _collect_history_ids(
         service,
         start_history_id=start_history_id,
         max_messages=max_messages,
         scope=scope,
+        budget=budget,
     )
     if expired or truncated:
         return HistoryPage(messages=[], expired=expired, truncated=truncated)
@@ -1323,7 +1348,7 @@ def _collect_history(
         ids,
         batch_size=settings.gmail_batch_size,
         pause_seconds=settings.gmail_batch_pause_seconds,
-        budget=_RetryBudget(),
+        budget=budget,
     )
     out: list[CloudGmailMessage] = []
     for message_id in ids:

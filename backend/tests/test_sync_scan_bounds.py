@@ -23,6 +23,7 @@ which is the real behaviour being defended against, not a hypothetical.
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 from datetime import UTC, datetime
@@ -515,10 +516,16 @@ async def test_every_stop_reason_the_backend_can_emit_is_a_known_constant(
     # Ns". An untaught constant makes the two paths disagree about the same
     # condition.
     #
-    # A literal substring search, not a parse: it cannot be fooled by a value
-    # the UI merely mentions in a comment, but it also cannot be defeated by a
-    # formatter, and the alternative (running the TS) does not belong in a
-    # pytest run.
+    # COMMENTS ARE STRIPPED FIRST, and the earlier version of this that did not
+    # was demonstrably foolable: a review renamed `case "rate_limited":` to a
+    # typo, added `"rate_limited"` inside a nearby comment, and the gate passed
+    # with the UI carrying no such case at all. This block's own prose then
+    # claimed it "cannot be fooled by a value the UI merely mentions in a
+    # comment" — a check asserting a property it did not have.
+    #
+    # Still a substring search over the stripped text rather than a parse: it
+    # cannot be defeated by a formatter, and running the TypeScript does not
+    # belong in a pytest run.
     plan = (
         Path(__file__).resolve().parents[2]
         / "apps"
@@ -528,9 +535,14 @@ async def test_every_stop_reason_the_backend_can_emit_is_a_known_constant(
         / "sync-plan.ts"
     )
     if plan.exists():
-        source = plan.read_text(encoding="utf-8")
-        unread = sorted(v for v in declared if f'"{v}"' not in source)
+        raw = plan.read_text(encoding="utf-8")
+        code = re.sub(r"/\*.*?\*/", " ", raw, flags=re.S)
+        code = re.sub(r"//[^\n]*", " ", code)
+        unread = sorted(v for v in declared if f'"{v}"' not in code)
         assert not unread, (
-            f"sync-plan.ts never names {unread}, so the UI falls back to "
-            f"'complete' and will report a partial scan as a finished one."
+            f"sync-plan.ts never names {unread} in CODE (comments do not "
+            f"count), so `stopReasonPhrase` falls through to the generic "
+            f"'stopped before finishing'. On the full-scan path `stopped_by` "
+            f"is the only channel to the user, so they are told the scan "
+            f"stopped early and never that waiting fixes it."
         )

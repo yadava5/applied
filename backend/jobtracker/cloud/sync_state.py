@@ -226,7 +226,8 @@ async def acquire_gmail_sync_lease(
     """Take the in-flight lease for this mailbox. ``True`` if we got it.
 
     Nothing else stopped a user hammering ``POST /gmail/sync``: each call is a
-    scan of up to 750 messages, so unlimited parallel calls burn Vercel
+    scan of up to ``_SYNC_DEFAULT_SCAN_TARGET`` messages, so unlimited
+    parallel calls burn Vercel
     function-seconds and the user's own Gmail quota while racing N copies of the
     additive merge over the same rows.
 
@@ -248,7 +249,7 @@ async def acquire_gmail_sync_lease(
     A FIRST SYNC HAS NO ROW. ``sync_state`` is written when a sync *succeeds*,
     so a brand-new user's conditional UPDATE matches nothing — and treating "no
     row" as "someone else holds it" would 409 every new user forever, on exactly
-    the 750-message path this lease exists to protect. So a miss is
+    the full-window scan path this lease exists to protect. So a miss is
     disambiguated: no row at all means the mailbox is idle and the row is
     created holding the lease. Two racers can reach that insert together; the
     loser trips ``uq_sync_state_user_account`` and retries the UPDATE, where it

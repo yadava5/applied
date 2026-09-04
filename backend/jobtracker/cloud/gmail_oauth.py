@@ -1901,11 +1901,12 @@ _SYNC_DEFAULT_RANGE_MONTHS = 12
 # to this many MESSAGES. Fixed so every routine run covers the same ground
 # (durability no longer depends on which messages a single 500-cap page
 # happened to catch) while staying inside the serverless time budget.
-# 300, NOT 750. The old value was almost certainly derived from the OLD quota:
+# 297, NOT 750. The old value was almost certainly derived from the OLD quota:
 # 15,000 units per minute per user divided by 5 units per `messages.get` is
 # exactly 750. Both halves of that arithmetic changed on 2026-05-01 — the
 # ceiling fell to 6,000 and the cost rose to 20 — so the same derivation now
-# yields 6000/20 = 300, and 750 became 15,005 units: two and a half minutes of
+# yields 6000/20 = 300 (and 297 once the per-page list call is counted, see
+# below), and 750 became 15,005 units: two and a half minutes of
 # a bucket, in a scan that has one invocation to spend.
 #
 # 297, NOT 300, AND THE THREE MATTER. A page is `20N + 5` units, so 300 is four
@@ -1937,7 +1938,7 @@ _SYNC_DEFAULT_SCAN_TARGET = 297
 # So the bound is the MESSAGE target, and these two are only safety rails on a
 # pathological mailbox (Gmail returning a handful of ids per page forever):
 #
-# - ``_SYNC_MAX_LIST_CALLS`` — enough list calls to reach a 750-message target
+# - ``_SYNC_MAX_LIST_CALLS`` — enough list calls to reach the message target
 #   even at 30 messages a page, which is well below anything observed.
 # - ``_SYNC_TIME_BUDGET_SECONDS`` — the real backstop. Checked BEFORE each page
 #   is started, against a monotonic deadline taken at scan entry, so a page can
@@ -2256,14 +2257,44 @@ async def _incremental_scan(
     estimate stays ``None`` rather than being invented.
     """
 
-    from jobtracker.cloud.gmail_client import fetch_history_messages
-
-    page = await fetch_history_messages(
-        user_id,
-        start_history_id=start_history_id,
-        max_messages=target,
-        scope=mail_scope,  # type: ignore[arg-type]
+    from jobtracker.cloud.gmail_client import (
+        fetch_history_messages,
+        is_rate_limited_gmail_error,
     )
+
+    try:
+        page = await fetch_history_messages(
+            user_id,
+            start_history_id=start_history_id,
+            max_messages=target,
+            scope=mail_scope,  # type: ignore[arg-type]
+        )
+    except Exception as exc:  # noqa: BLE001 — re-raised unless Gmail deferred
+        # A REGRESSION THIS BRANCH INTRODUCED, caught by review before release.
+        #
+        # Making a rate-limited sub-request abort the page (which is right: the
+        # bucket is dry and grinding on spends more of it) gave every caller a
+        # raised `HttpError` to handle. Two of the three handle it. This one did
+        # not, so the exception escaped `fetch_history_messages`, passed
+        # straight through here, and landed in `gmail_sync`'s catch-all — where
+        # it became a **500 plus a recorded sync failure against the mailbox**.
+        # Before the branch the same input produced a 200 with a partial page
+        # and the cursor held.
+        #
+        # `None` is the honest answer and it is this function's documented
+        # vocabulary: "the cursor could not carry this run… the caller
+        # full-scans and re-baselines; none of them is a user-facing error."
+        # The full scan then takes its own rate-limit break immediately, having
+        # read nothing, so the cursor is preserved and the user gets a partial
+        # rather than an error.
+        if not is_rate_limited_gmail_error(exc):
+            raise
+        logger.warning(
+            "Gmail rate-limited the incremental delta for user_id=%s; falling "
+            "back to a bounded full scan rather than failing the sync.",
+            user_id,
+        )
+        return None
     if page is None or not page.usable:
         return None
     items = await _classify_messages(
@@ -2503,7 +2534,7 @@ async def gmail_sync(
     account_email = stored.email if stored else None
 
     # ONE sync per mailbox at a time. Nothing used to stop an authenticated
-    # account firing unlimited parallel calls, each a 750-message scan, burning
+    # account firing unlimited parallel calls, each a full-window scan, burning
     # function-seconds and the user's own Gmail quota while racing N copies of
     # the additive merge over the same rows.
     #

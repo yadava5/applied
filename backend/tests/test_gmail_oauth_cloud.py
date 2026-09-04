@@ -961,6 +961,94 @@ async def test_inbox_forwards_filters_to_query_and_pagination(
     assert captured["page_size"] == 25, "a caller asking for less must get less"
 
 
+def _gmail_refusal(status: int, reason: str):
+    """An `HttpError` shaped like Gmail's, for the router's own handling.
+
+    The body is `error.errors[].reason`, which is what production sends and
+    what `HttpError.__init__` folds into `error_details`.
+    """
+
+    import json as _json
+
+    from googleapiclient.errors import HttpError
+
+    class _Resp:
+        def __init__(self, code: int) -> None:
+            self.status = code
+            self.reason = "Forbidden"
+
+    body = _json.dumps(
+        {
+            "error": {
+                "code": status,
+                "message": "Quota exceeded for quota metric 'Total Query Cost'.",
+                "errors": [{"domain": "usageLimits", "reason": reason}],
+            }
+        }
+    ).encode()
+    return HttpError(_Resp(status), body)
+
+
+async def test_a_rate_limited_inbox_page_is_a_429_the_client_can_resume_from(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WRITTEN BECAUSE A MUTATION WAS GREEN.
+
+    Nothing exercised the router's rate-limit handling: deleting
+    `if not is_rate_limited_gmail_error(exc): raise` from `gmail_inbox` left
+    the whole suite passing, while every Gmail failure — a revoked grant
+    included — would have rendered to the user as "429, wait 60 seconds".
+
+    429 rather than 500 because the mailbox is fine and the condition clears
+    itself; `Retry-After` because the client resumes from the cursor it already
+    holds, and a wait it has to guess is a wait that gets guessed wrong.
+    """
+
+    import jobtracker.cloud.gmail_client as gmail_client_module
+
+    async def _refuse(user_id, *, query, page_size, page_token):
+        raise _gmail_refusal(403, "rateLimitExceeded")
+
+    monkeypatch.setattr(gmail_client_module, "fetch_message_page", _refuse)
+
+    resp = await client.get(
+        "/gmail/inbox?count=25",
+        headers={"Authorization": f"Bearer {_token_for(USER_A)}"},
+    )
+
+    assert resp.status_code == 429, resp.text
+    assert resp.headers.get("Retry-After") == "60"
+
+
+async def test_a_broken_gmail_is_not_dressed_up_as_a_rate_limit(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The directional half, and the one that makes the test above mean anything.
+
+    A 403 whose reason is an insufficient grant cannot be waited out. Telling
+    the user to try again in a minute would send them round a loop that has no
+    exit — so it must NOT become a 429.
+    """
+
+    import jobtracker.cloud.gmail_client as gmail_client_module
+
+    async def _refuse(user_id, *, query, page_size, page_token):
+        raise _gmail_refusal(403, "insufficientPermissions")
+
+    monkeypatch.setattr(gmail_client_module, "fetch_message_page", _refuse)
+
+    with pytest.raises(Exception) as caught:
+        await client.get(
+            "/gmail/inbox?count=25",
+            headers={"Authorization": f"Bearer {_token_for(USER_A)}"},
+        )
+
+    # It propagates rather than being relabelled. What the deployment turns
+    # that into is Starlette's business; what matters here is that the handler
+    # did not claim it was a rate limit.
+    assert "insufficientPermissions" in str(caught.value) or "403" in str(caught.value)
+
+
 async def test_inbox_reports_unreadable_messages_and_the_size_estimate(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

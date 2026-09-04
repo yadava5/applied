@@ -39,6 +39,24 @@ import pytest
 from googleapiclient.errors import HttpError
 
 import jobtracker.cloud.gmail_client as gc
+
+# HARD-CODED, AND THAT IS THE WHOLE POINT OF THESE TWO LINES.
+#
+# The budget assertions below used to read `gc._PAGE_RETRY_BUDGET_SECONDS` —
+# the constant under test — so they compared a value against itself and passed
+# for ANY value. A review raised it to 200.0 and the suite stayed green while a
+# real-sized page slept **33 seconds inside a 60 s function**, which is exactly
+# the FUNCTION_INVOCATION_TIMEOUT this module exists to prevent. The sibling
+# file `test_the_page_size_fits_gmails_minute.py` hard-codes its constants and
+# says why; the discipline had been applied to the page size and not here, to
+# the more load-bearing of the two.
+#
+# Both numbers come from outside the module: 6 s is what a page may spend
+# sleeping, and 10 s is `cron.py`'s `_CRON_PER_USER_TIMEOUT_SECONDS`, which is
+# WHY the page budget must be smaller — a page that outsleeps the cron slot
+# gets that user's scheduled sync cancelled.
+MAX_PAGE_SLEEP_SECONDS = 6.0
+CRON_PER_USER_SLOT_SECONDS = 10.0
 from jobtracker.cloud.gmail_client import (
     _collect_page,
     is_rate_limited_gmail_error,
@@ -531,6 +549,41 @@ def test_sub_request_retries_are_bounded_and_the_loss_is_reported() -> None:
 # --- the bound that keeps a page inside its function ------------------------
 
 
+def test_the_page_budget_stays_under_the_cron_slot() -> None:
+    """The constant itself, checked against the thing that constrains it.
+
+    `cron.py` gives each user 10 s. A page whose sleeps can reach past that
+    turns one transient Gmail flake into a cancelled scheduled sync, a held
+    cursor, and the same outcome on the next tick.
+
+    MUST RED ON: `_PAGE_RETRY_BUDGET_SECONDS = 12`, its value until a review
+    measured 33 s of sleeping in a 60 s function against a green suite.
+    """
+
+    assert gc._PAGE_RETRY_BUDGET_SECONDS <= MAX_PAGE_SLEEP_SECONDS
+    assert gc._PAGE_RETRY_BUDGET_SECONDS < CRON_PER_USER_SLOT_SECONDS
+
+
+def test_the_attempt_count_fits_the_budget_that_bounds_it() -> None:
+    """Two bounds that disagree are not a bound — the smaller wins in silence.
+
+    Google's backoff is `2^n + jitter` with jitter under a second, so N retries
+    cost at most `sum(2^i + 1 for i in range(N))`. If that exceeds the page
+    budget, the attempt count is a number the runtime overrules and the reader
+    believes.
+
+    MUST RED ON: `_RETRY_ATTEMPTS = 3` against a 6 s budget (7-10 s of backoff).
+    """
+
+    worst_case = sum(2**i + 1.0 for i in range(gc._RETRY_ATTEMPTS))
+
+    assert worst_case <= MAX_PAGE_SLEEP_SECONDS, (
+        f"{gc._RETRY_ATTEMPTS} retries need up to {worst_case:.0f}s of backoff "
+        f"against a {MAX_PAGE_SLEEP_SECONDS}s page budget, so the attempt "
+        f"count is not what actually bounds the retries"
+    )
+
+
 def test_one_page_cannot_sleep_past_its_budget(
     slept: list[float], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -543,9 +596,12 @@ def test_one_page_cannot_sleep_past_its_budget(
     everything it fetched. A 500-id page is twenty windows and lands near
     200 s. That is how a fix for a fast failure becomes a timeout.
 
-    MUST RED ON: deleting the `budget.spend` guard from `_send` (total sleep
-    then runs to ~4x the budget); raising `_PAGE_RETRY_BUDGET_SECONDS` without
-    the arithmetic to justify it.
+    MUST RED ON: deleting the `budget.spend` guard from `_send`, which makes
+    total sleep run to several times the ceiling. Raising
+    `_PAGE_RETRY_BUDGET_SECONDS` is caught by
+    `test_the_page_budget_stays_under_the_cron_slot`, NOT here — this
+    assertion's bound is a literal precisely so that raising the constant
+    cannot move it.
     """
 
     monkeypatch.setattr(gc.settings, "gmail_batch_size", 3)
@@ -556,9 +612,11 @@ def test_one_page_cannot_sleep_past_its_budget(
     page = _collect_page(service, query="in:inbox", page_size=50, page_token=None)
 
     total = sum(slept)
-    assert total <= gc._PAGE_RETRY_BUDGET_SECONDS, (
-        f"one page slept {total:.1f}s against a "
-        f"{gc._PAGE_RETRY_BUDGET_SECONDS}s budget"
+    assert total <= MAX_PAGE_SLEEP_SECONDS, (
+        f"one page slept {total:.1f}s against a {MAX_PAGE_SLEEP_SECONDS}s "
+        f"ceiling; a page that can outsleep the cron's "
+        f"{CRON_PER_USER_SLOT_SECONDS}s per-user slot gets that user's "
+        f"scheduled sync cancelled"
     )
     # And the page still came back with everything that WAS readable, rather
     # than failing outright because some ids never answered.
@@ -598,4 +656,4 @@ def test_the_budget_is_shared_by_the_list_call_and_the_batches(
     # The list call alone spends roughly 1-2 s + 2-3 s. If each batch window
     # then got a FRESH budget, four windows would add four more ramps and the
     # total would run past this bound several times over.
-    assert sum(slept) <= gc._PAGE_RETRY_BUDGET_SECONDS
+    assert sum(slept) <= MAX_PAGE_SLEEP_SECONDS

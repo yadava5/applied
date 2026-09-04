@@ -83,6 +83,32 @@ def test_the_configured_page_size_does_not_waste_the_minute() -> None:
     )
 
 
+def test_the_page_is_not_so_small_that_pagination_becomes_the_cost() -> None:
+    """The MISSING half of the bound, found by a blind review.
+
+    Every assertion here used to be an upper bound, so a page size of **10**
+    passed all of them — 10 scores 297 messages/minute, identical to 99, and
+    turns a 2,000-message scan into 200 serverless invocations instead of 21.
+    Throughput alone cannot distinguish them; cost per message can.
+
+    A page pays one `messages.list` (5 units) however many messages it carries.
+    Requiring that overhead to stay under 1% of the page keeps the caller
+    paying for mail rather than for pagination, and rules out the whole
+    small-N shoulder of the curve where throughput looks fine.
+
+    MUST RED ON: a page size of 24 or below (5 / 485 = 1.03%).
+    """
+
+    overhead = UNITS_PER_LIST / units_per_page(settings.gmail_fetch_page_size)
+
+    assert overhead <= 0.01, (
+        f"the list call is {overhead:.1%} of a page at size "
+        f"{settings.gmail_fetch_page_size}; below about 25 messages a page the "
+        f"scan is paying for pagination, and the same throughput is reachable "
+        f"with a tenth of the invocations"
+    )
+
+
 def test_one_page_never_costs_more_than_half_a_minute() -> None:
     """A page must not be able to monopolise the bucket.
 
