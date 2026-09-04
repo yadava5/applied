@@ -146,7 +146,7 @@ export const DEFAULT_FILTERS: InboxFilters = {
 };
 
 /** Per-page fetch ceiling — mirrors the backend `gmail_fetch_page_size`. */
-export const PAGE_SIZE = 100;
+export const PAGE_SIZE = 99;
 
 /*
  * WAS 500 UNTIL 2026-09-04, WHICH BECAME ARITHMETICALLY IMPOSSIBLE.
@@ -163,11 +163,22 @@ export const PAGE_SIZE = 100;
  * matter how the server retried — and the failure it produced was a 403 that
  * reached the user as "We couldn't finish reading your mail."
  *
- *   one page of 100  =  20 x 100 + 5  =   2,005 units
+ *   one page of  99  =  20 x  99 + 5  =   1,985 units
  *
- * which leaves room for three pages inside one minute and keeps the sustained
- * rate near the 300 messages/minute the quota actually affords. Smaller pages
- * also make a deferral cheap to recover: the retry re-costs one page, not
+ * NINETY-NINE, NOT A HUNDRED, and the missing one is worth 48%. Throughput is
+ * `N * floor(6000 / (20N + 5))`. The `+5` for the page's single
+ * `messages.list` call puts the round number on the wrong side of a boundary:
+ *
+ *   N = 100 -> 2,005/page -> floor(6000/2005) = 2 pages -> 200 messages/min
+ *   N =  99 -> 1,985/page -> floor(6000/1985) = 3 pages -> 297 messages/min
+ *
+ * For a 2,000-message scan that is ten minutes against 6.7 — and 6.7 is the
+ * physical floor (`2000 * 20 / 6000`), so 99 reaches 99.9% of what Gmail will
+ * ever allow. 150 is worse than either at 150/min. The best value the server's
+ * clamp permits is 149 (298/min); 99 gives up 0.4% of that for 50% finer
+ * progress and a deferral that re-costs a third of a minute instead of half.
+ *
+ * Smaller pages also make a deferral cheap: the retry re-costs one page, not
  * five, against the very budget that just refused.
  *
  * The server has its own two bounds and this sits under both, deliberately:

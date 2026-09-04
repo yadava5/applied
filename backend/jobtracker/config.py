@@ -520,7 +520,7 @@ class Settings(BaseSettings):
         ),
     )
     gmail_fetch_page_size: int = Field(
-        default=200,
+        default=99,
         description=(
             "Messages fetched + classified in ONE serverless invocation of "
             "`GET /gmail/inbox`. The endpoint is server-paginated: it returns "
@@ -532,8 +532,18 @@ class Settings(BaseSettings):
             "`20 * messages + 5` units against 6,000 per minute per user, so "
             "300 messages is an entire minute's budget and a 500-message page "
             "(10,005 units) cannot complete against a full bucket no matter "
-            "how often it is retried. 200 is 4,005 units, about two thirds of "
-            "a bucket, leaving headroom for the scheduled sync's own reads. "
+            "how often it is retried. "
+            "99 IS NOT A ROUND NUMBER AND THAT IS THE POINT. Throughput is "
+            "`N * floor(6000 / (20N + 5))`, and the `+5` for the page's one "
+            "`messages.list` call puts the round numbers on the wrong side of "
+            "a boundary: 100 costs 2,005 so only TWO pages fit a minute "
+            "(200 msg/min), while 99 costs 1,985 so THREE fit (297 msg/min) — "
+            "a 48% difference from changing the number by one. 150 is worse "
+            "still at 150 msg/min. 99 is within 0.4% of the best value the "
+            "handler's clamp allows (149, at 298), and is preferred over it "
+            "for finer progress and because one page then costs under a third "
+            "of a minute rather than half. Pinned by "
+            "tests/test_the_page_size_fits_gmails_minute.py. "
             "Clamped to [1, 250] in the handler so this env var cannot re-arm "
             "an impossible page. Env: JOBTRACKER_GMAIL_FETCH_PAGE_SIZE."
         ),
