@@ -40,6 +40,12 @@ from sqlmodel import select
 
 from jobtracker.auth import current_user, require_user
 from jobtracker.cloud import pipeline
+
+# RE-EXPORTED, not re-declared. The number and its derivation live in
+# ``cloud.pipeline`` because this module imports that one and the reverse would
+# cycle. Two tests import it from here by name, and #581 asks for one number in
+# one place, so the alias stays.
+from jobtracker.cloud.pipeline import _MAX_COMPANY_LEN
 from jobtracker.database import get_session
 from jobtracker.database.models import (
     APPLICATION_STATUSES,
@@ -94,31 +100,6 @@ ROLE_FROM_USER = "user"
 # write.
 _MAX_ROLE_LEN = 200
 
-# THE ONE BOUND POSTGRES ENFORCES FOR US, AND ONLY POSTGRES. ``company`` is
-# indexed — ``ix_applications_company`` on the raw column, and
-# ``ix_applications_user_id_lower_company`` on ``lower(company)`` — and a btree
-# version 4 index row may not exceed 2704 bytes. Measured against the schema the
-# real migrations build (issue #406):
-#
-#     company len=2000  -> INSERT OK
-#     company len=2700  -> ProgramLimitExceeded: index row size 2712 exceeds
-#                          btree version 4 maximum 2704
-#     smallest rejected incompressible company: 2677 characters
-#     position len=5,000,000 -> INSERT OK      # unindexed, so this is `company`
-#
-# SQLite has no such limit, which is why the whole backend suite passes with the
-# field unbounded and this is invisible on a laptop. The API accepted a
-# 5,000,000-character company and answered 201, so the failure landed on the
-# INSERT rather than at the door.
-#
-# WHERE 300 COMES FROM. It is a character count and the ceiling is a byte count,
-# so the conversion has to assume the worst: a UTF-8 code point is up to 4
-# bytes, making 300 characters at most 1,200 bytes — well under half the 2,704
-# available, with the remainder covering the index tuple's own overhead, the
-# ``user_id`` in the composite index, and the rare code point whose ``lower()``
-# is longer than itself. A registered company name does not approach it; the
-# longest in the owner's own board is 34 characters.
-_MAX_COMPANY_LEN = 300
 
 # Notes are prose a person types, and unindexed, so no engine limit applies.
 # This is here for the same reason every string on ``PipelineItemIn`` is bounded:
@@ -915,15 +896,25 @@ class ScannedMessageIn(BaseModel):
     label was the machine's all along.
     """
 
-    sender_email: str
+    # EVERY STRING BOUNDED, matching :class:`PipelineItemIn` field for field —
+    # same rationale, and these are the same values off the same mail. They are
+    # NOT bounded at ``_MAX_COMPANY_LEN``: a sender name is what an employer is
+    # extracted FROM, not an employer, and 300 would refuse real mail. The
+    # employer bound is applied where the display is produced, not here.
+    #
+    # Unbounded, these were the second half of #581. ``company`` next door was
+    # the half the issue named, but ``sender_email`` and ``sender_name`` reach
+    # the same indexed column through :func:`pipeline.resolve_employer`, which
+    # is minted from this model at the review-classify endpoint.
+    sender_email: str = Field(max_length=512)
     received_at: datetime
-    subject: str | None = None
-    sender_name: str | None = None
-    thread_id: str | None = None
-    snippet: str | None = None
+    subject: str | None = Field(default=None, max_length=2000)
+    sender_name: str | None = Field(default=None, max_length=512)
+    thread_id: str | None = Field(default=None, max_length=256)
+    snippet: str | None = Field(default=None, max_length=2000)
     category: EmailCategory | None = None
     confidence: float | None = None
-    method: str | None = None
+    method: str | None = Field(default=None, max_length=64)
 
 
 class ReviewClassifyRequest(BaseModel):
@@ -963,7 +954,11 @@ class ReviewClassifyRequest(BaseModel):
     """
 
     category: EmailCategory
-    company: str | None = None
+    # Bounded for the same reason ``CloudApplicationCreate.company`` is, and
+    # with the same number: this field reaches the same indexed column through
+    # :func:`pipeline.employer_from_text`. A refusal at the door names the
+    # problem; the alternative is a 500 raised by the btree (#581).
+    company: str | None = Field(default=None, max_length=_MAX_COMPANY_LEN)
     application_id: int | None = None
     message: ScannedMessageIn | None = None
     # ``StrictBool`` on both, because the "only a literal true is an answer"

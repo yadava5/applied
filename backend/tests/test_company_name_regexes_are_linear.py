@@ -380,9 +380,23 @@ def test_the_sender_cleaner_is_unchanged_on_every_canonical_string() -> None:
     for raw in _corpus():
         if raw != re.sub(r"\s+", " ", raw):
             continue
-        assert p._clean_sender_display_name(raw) == _old_clean_sender_display_name(
-            raw
-        ), raw
+        cleaned = p._clean_sender_display_name(raw)
+        was = _old_clean_sender_display_name(raw)
+        if cleaned == "" and was != "":
+            # #581 gave both cleaners a length refusal, and it is the ONLY way
+            # the new implementation can empty a name the old one kept. The
+            # refusal reads the CLEANED length, so a raw string well over the
+            # bound can still clean down under it — which is why the condition
+            # below is on the raw and asserted rather than assumed. An
+            # over-stripping bug that emptied a short name fails here.
+            assert len(raw) > p._MAX_COMPANY_LEN, (
+                "the sender cleaner emptied a name the pre-rewrite implementation "
+                f"kept, and the input is only {len(raw)} characters, so #581's "
+                f"length refusal at {p._MAX_COMPANY_LEN} cannot be the reason:\n"
+                f"  input {raw!r}\n  old   {was!r}"
+            )
+            continue
+        assert cleaned == was, raw
 
 
 def test_the_company_cleaner_only_ever_keeps_MORE_than_it_used_to() -> None:
@@ -406,6 +420,19 @@ def test_the_company_cleaner_only_ever_keeps_MORE_than_it_used_to() -> None:
             continue
         new = p._clean_company_display(raw)
         old = _old_clean_company_display(raw)
+        if new == "" and old != "":
+            # See the sender-cleaner test above. #532's ratchet asks whether the
+            # new cleaner strips more WORDS than the old one; #581's refusal is
+            # not a word-stripping decision, and a 364-character sentence is not
+            # a name whose words could be over-stripped. Asserted, not skipped,
+            # so the exemption cannot become a hiding place.
+            assert len(raw) > p._MAX_COMPANY_LEN, (
+                "the display cleaner emptied a name the pre-rewrite implementation "
+                f"kept, and the input is only {len(raw)} characters, so #581's "
+                f"length refusal at {p._MAX_COMPANY_LEN} cannot be the reason:\n"
+                f"  input {raw!r}\n  old   {old!r}"
+            )
+            continue
         if new == old:
             continue
         diverged += 1

@@ -2508,6 +2508,43 @@ def _valid_company_token(token: str) -> bool:
     return re.fullmatch(r"[0-9]+", token) is None
 
 
+# THE ONE BOUND POSTGRES ENFORCES FOR US, AND ONLY POSTGRES. ``company`` is
+# indexed — ``ix_applications_company`` on the raw column, and
+# ``ix_applications_user_id_lower_company`` on ``lower(company)`` — and a btree
+# version 4 index row may not exceed 2704 bytes. Measured against the schema the
+# real migrations build (issue #406):
+#
+#     company len=2000  -> INSERT OK
+#     company len=2700  -> ProgramLimitExceeded: index row size 2712 exceeds
+#                          btree version 4 maximum 2704
+#     smallest rejected incompressible company: 2677 characters
+#     position len=5,000,000 -> INSERT OK      # unindexed, so this is `company`
+#
+# SQLite has no such limit, which is why the whole backend suite passes with the
+# field unbounded and this is invisible on a laptop. The API accepted a
+# 5,000,000-character company and answered 201, so the failure landed on the
+# INSERT rather than at the door.
+#
+# WHERE 300 COMES FROM. It is a character count and the ceiling is a byte count,
+# so the conversion has to assume the worst: a UTF-8 code point is up to 4
+# bytes, making 300 characters at most 1,200 bytes — well under half the 2,704
+# available, with the remainder covering the index tuple's own overhead, the
+# ``user_id`` in the composite index, and the rare code point whose ``lower()``
+# is longer than itself. A registered company name does not approach it; the
+# longest in the owner's own board is 34 characters.
+_MAX_COMPANY_LEN = 300
+
+# Applied as a REFUSAL, never a truncation. A 2,700-character sender display
+# name is not a company name that needs shortening; it is a string that does not
+# name an employer. Refusing sends the message to the review queue and asks,
+# which is what this module already does with every name it cannot resolve.
+# Truncating would mint a card titled with 300 characters of somebody's garbage.
+#
+# It lives HERE rather than in ``cloud.applications`` because that module
+# imports this one, so the reverse would cycle — and a second literal ``300`` is
+# exactly the drift #581 exists to prevent. ``applications`` re-exports it.
+
+
 def _clean_company_display(raw: str) -> str:
     r"""Trim a captured company string to a clean human display name.
 
@@ -2538,7 +2575,9 @@ def _clean_company_display(raw: str) -> str:
             break
         text = stripped
     text = re.sub(r"\s+", " ", text)
-    return text
+    # See :data:`_MAX_COMPANY_LEN`. Every caller already treats "" as "this does
+    # not name an employer" and falls through to the next resolution step.
+    return "" if len(text) > _MAX_COMPANY_LEN else text
 
 
 def _employer_from_subject(
@@ -2639,7 +2678,13 @@ def _clean_sender_display_name(raw: str) -> str:
         if stripped == text:
             break
         text = stripped
-    return re.sub(r"\s+", " ", text).strip(" ,.-&|")
+    cleaned = re.sub(r"\s+", " ", text).strip(" ,.-&|")
+    # SEPARATELY BOUNDED, and this is the whole point of #581. Step 3 of
+    # `resolve_employer` does not run `_clean_company_display` — the comment at
+    # the top of this module says so — so bounding that function alone leaves
+    # the sender-display-name door open. Proved by stubbing the other cleaner to
+    # refuse everything: a 1,907-character name still resolved, untouched.
+    return "" if len(cleaned) > _MAX_COMPANY_LEN else cleaned
 
 
 def _names_the_relay(token: str, relay_brand: str) -> bool:
@@ -3793,6 +3838,12 @@ def resolve_employer(
         brand
         and brand not in RELAY_DOMAINS
         and len(brand) >= 2
+        # The upper bound is not symmetry with the lower one. `_brand_display`
+        # ends `brand.replace("-", " ").title()` on a RAW domain label, with no
+        # cleaner anywhere on the path, so this conjunct is the only thing
+        # standing between an oversized address and the indexed column. A DNS
+        # label is at most 63 characters, so nothing real is refused here.
+        and len(brand) <= _MAX_COMPANY_LEN
         and tld != "edu"
         and not brand.isdigit()
     )
