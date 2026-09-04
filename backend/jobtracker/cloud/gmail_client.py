@@ -52,7 +52,9 @@ that is a structural property of the code rather than a promise:
   claim true rather than aspirational.
 
 Bodies are capped at ``_MAX_BODY_CHARS`` and batched more tightly than
-metadata was: ``format="full"`` costs the same 5 quota units per message but
+metadata was: ``format`` does not affect quota cost at all — a
+``messages.get`` is 20 units at any format (it was 5 until 2026-05-01, which
+is what this sentence used to say) — but
 returns a far larger payload, and ``batch.execute()`` materialises a whole
 batch before the callback drains it, inside a 50 MB serverless slot.
 """
@@ -61,7 +63,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
+import random
 import re
 import time
 import uuid
@@ -164,9 +168,303 @@ _MAX_BODY_CHARS = 4000
 
 # `format="full"` payloads are one to two orders of magnitude larger than
 # metadata ones, so the batch that was right for headers is not right here.
-# Quota is unchanged (messages.get is 5 units at any format); this is purely
-# about how much arrives at once.
+# This bound is about how much arrives at once, not about quota.
+#
+# THE QUOTA SENTENCE THAT USED TO SIT HERE WAS WRONG BY 2026-09-04. It read
+# "Quota is unchanged (messages.get is 5 units at any format)". The parenthesis
+# is now false and the reassurance it carried was never load-bearing:
+#
+# - `messages.get` costs **20** units, not 5. Gmail's release notes list it
+#   among the methods whose cost changed on 2026-05-01.
+# - The claim's true half stays true: cost does NOT vary by `format`. There is
+#   no `format` dimension in the quota table at all, so moving to `full` did
+#   not change the per-call price.
+#
+# What that arithmetic actually means, against a 6,000 units/minute/user
+# ceiling: a mine spends `20 x messages + 5 per list page`, so **300 messages
+# per minute is the whole per-user budget**. A 200-message page is 4,005 units
+# — two thirds of a minute's quota in one invocation, which is why two mines
+# eight seconds apart put the endpoint over the line and into a 403. See
+# `_RETRYABLE_REASONS` below for the production trace.
 _FULL_BATCH_SIZE = 25
+
+
+# =============================================================================
+# Transient refusals: telling Gmail's "later" apart from its "never"
+# =============================================================================
+#
+# Gmail answers an over-quota request with **403**, not 429 — and 403 is also
+# what it answers for a permanently insufficient grant. The two are
+# distinguishable only by the ``reason`` string inside the error body, so a
+# handler that keys on the status code alone must either retry a hopeless
+# request forever or abandon a recoverable one. These sets are that
+# discriminator, and every retry below consults them rather than the status.
+#
+# Not a hypothetical. Production, 2026-09-04, on the owner's own mailbox:
+#
+#     HttpError 403 ... "Quota exceeded for quota metric 'Total Query Cost'
+#     and limit 'Units per minute per user'" ... 'reason': 'rateLimitExceeded'
+#
+# raised from the ``messages.list`` call in :func:`_collect_page` and answered
+# to the user as a 500 "We couldn't finish reading your mail". In the same
+# minute, the batch sub-requests below lost 146 of 200 messages to what was
+# almost certainly the same refusal — the identical condition taking a quieter
+# exit, because the callback recorded only ``type(exception).__name__`` and
+# "HttpError" is what a permanent 404 is called too.
+#
+# An unrecognised reason is deliberately NOT retryable: a 403 we cannot read is
+# far more likely to be a revoked grant than a rate limit, and retrying that
+# burns the budget a real rate limit would need.
+# TWO KINDS OF TRANSIENT REFUSAL, AND THEY MUST NOT BE TREATED ALIKE.
+#
+# **Rate limits.** The per-user bucket is dry. Retrying in place is theatre: a
+# bucket that just refused a spend does not refill inside the seconds a bounded
+# backoff affords, because the limit is per MINUTE. Worse, on a paged read the
+# sleeps compound — a 500-id page is 20 windows of 25, and twenty windows each
+# backing off ~10 s is ~200 s of sleeping inside a **60 s** function budget. So
+# an in-place retry would convert the observed production failure (a fast
+# partial answer) into a FUNCTION_INVOCATION_TIMEOUT with nothing classified at
+# all, which is strictly worse than the bug it was meant to fix.
+#
+# These therefore raise IMMEDIATELY. The router turns them into 429 +
+# Retry-After and the browser waits, because the browser has no function budget
+# and can afford the minute this actually needs.
+_RATE_LIMIT_REASONS = frozenset(
+    {
+        "rateLimitExceeded",
+        "userRateLimitExceeded",
+        # google.rpc's canonical name for the same condition. Gmail's newer
+        # error envelope reports `error.status` rather than
+        # `error.errors[].reason`, and `_error_reasons` harvests it. Without
+        # this entry that shape classifies as PERMANENT and a quota refusal
+        # becomes a 500 again — the exact defect, reintroduced by an envelope
+        # change nobody here controls.
+        "RESOURCE_EXHAUSTED",
+    }
+)
+
+# **Server flakes.** Gmail itself wobbled. A short backoff is exactly Google's
+# prescription and usually clears them, so these DO retry in place — under a
+# page-wide sleep budget (:class:`_RetryBudget`), never per call alone.
+_RETRYABLE_REASONS = frozenset({"backendError", "internalError"})
+
+# Statuses retryable whatever reason came with them (or none did). 403 is
+# absent on purpose — it is decided by reason alone. 429 is absent too: it is
+# a rate limit, handled above.
+_RETRYABLE_STATUSES = frozenset({500, 502, 503, 504})
+
+# How hard to try inside ONE invocation before handing the problem back.
+#
+# Small on purpose. A per-minute quota that is genuinely exhausted is not
+# waited out inside a 60 s function budget, and pretending otherwise trades a
+# fast honest 429 for a slow timeout. The retries here exist to absorb a blip;
+# the caller's ``page_token`` is what absorbs a real outage, because the mine
+# resumes from the same cursor rather than restarting.
+# TWO, NOT THREE, AND THE TWO BOUNDS BELOW HAVE TO AGREE.
+#
+# Google's backoff is `2^n + jitter`, so three retries need 1-2 s, then 2-3 s,
+# then 4-5 s: **7 to 10 seconds**. That does not fit the 6 s page budget below,
+# which is itself set by the cron's 10 s per-user slot. An attempt count the
+# budget cannot honour is not a bound, it is two numbers disagreeing — the
+# budget wins at runtime and the constant lies to the reader.
+#
+# Two retries cost at most 1-2 s plus 2-3 s = 5 s, inside the page budget with
+# a second to spare, inside the cron slot with five. And two is enough for what
+# this path now retries: quota refusals do not come here at all (they raise
+# immediately, see `_RATE_LIMIT_REASONS`), so the only customers are 5xx and
+# `backendError` — transient server flakes, which clear on the first or second
+# attempt or are not going to.
+_RETRY_ATTEMPTS = 2
+
+# A rail on any SINGLE delay. Google's published ceiling is 32-64 s; 8 s is
+# deliberately lower, because the whole request lives inside a 60 s serverless
+# budget and a backoff that can outlast its own function trades a fast honest
+# 429 for a timeout. At `_RETRY_ATTEMPTS = 2` the largest delay is ~3 s so this
+# never binds today — it is here so that raising the attempt count cannot
+# quietly reintroduce a minute-long sleep.
+_RETRY_MAX_SECONDS = 8.0
+
+
+def _error_status(exc: BaseException) -> int | None:
+    """The HTTP status on a googleapiclient error, or ``None``.
+
+    Defensive throughout: this runs on the failure path, and an exception
+    raised while inspecting an exception would turn a recoverable condition
+    into a crash — which is the exact shape of the bug it exists to fix.
+    """
+
+    raw = getattr(getattr(exc, "resp", None), "status", None)
+    try:
+        return int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _error_reasons(exc: BaseException) -> frozenset[str]:
+    """Every ``reason`` string Gmail attached to an error.
+
+    Reads ``error_details`` first, then falls back to parsing the raw body.
+    The fallback is not belt-and-braces: ``error_details`` is a
+    googleapiclient convenience that has moved between library versions, and a
+    reason we fail to read is a reason we call permanent — so the cost of
+    missing it is a scan that gives up when it did not have to.
+    """
+
+    reasons: set[str] = set()
+
+    details = getattr(exc, "error_details", None)
+    if isinstance(details, list):
+        for item in details:
+            if isinstance(item, dict) and isinstance(item.get("reason"), str):
+                reasons.add(item["reason"])
+    if reasons:
+        return frozenset(reasons)
+
+    content = getattr(exc, "content", None)
+    if isinstance(content, (bytes, bytearray)):
+        try:
+            content = content.decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001 — a bad body must not raise here
+            content = None
+    if isinstance(content, str) and content:
+        try:
+            body = json.loads(content)
+        except (ValueError, TypeError):
+            body = None
+        if isinstance(body, dict):
+            error = body.get("error")
+            if isinstance(error, dict):
+                for item in error.get("errors") or []:
+                    if isinstance(item, dict) and isinstance(item.get("reason"), str):
+                        reasons.add(item["reason"])
+                if isinstance(error.get("status"), str):
+                    reasons.add(error["status"])
+
+    return frozenset(reasons)
+
+
+def is_rate_limited_gmail_error(exc: BaseException) -> bool:
+    """True when Gmail refused this for QUOTA — "later", on a minute's scale.
+
+    Public because the router needs exactly this verdict to answer 429 +
+    Retry-After rather than 500. A 500 tells a user whose mailbox is working
+    perfectly that the server is broken; this condition clears on its own.
+    """
+
+    if _error_reasons(exc) & _RATE_LIMIT_REASONS:
+        return True
+    return _error_status(exc) == 429
+
+
+def is_retryable_gmail_error(exc: BaseException) -> bool:
+    """True when a SHORT wait can plausibly cure it.
+
+    Deliberately excludes rate limits, which is the whole point of the split:
+    they are transient but not curable in seconds, so retrying them in place
+    spends the function's budget to arrive at the same refusal. See
+    :data:`_RATE_LIMIT_REASONS`.
+    """
+
+    if is_rate_limited_gmail_error(exc):
+        return False
+    if _error_reasons(exc) & _RETRYABLE_REASONS:
+        return True
+    return _error_status(exc) in _RETRYABLE_STATUSES
+
+
+def _retry_delay(attempt: int) -> float:
+    """``min((2^n + jitter), _RETRY_MAX_SECONDS)`` — Google's own formula.
+
+    Copied deliberately rather than improvised, because the shape matters and
+    two plausible variants are wrong here:
+
+    - **The jitter is ADDITIVE on a full ``2^n``**, not multiplicative over
+      ``[0, 2^n]``. Google's guidance is "start retry periods at least one
+      second after the error", and multiplicative jitter has no floor — it
+      routinely produces a few-millisecond first retry, which against a
+      per-minute bucket is not a retry at all, just a second miss. This is the
+      exact flaw in ``googleapiclient``'s own built-in retry
+      (``sleep_time = rand() * 2**retry_num``), and the reason this function
+      exists instead of passing ``num_retries``.
+    - **The jitter is still needed.** Everything sharing a per-user bucket is
+      refused at the same instant, so a deterministic ramp reconverges the
+      callers onto one retry moment and rebuilds the burst that caused the
+      refusal.
+
+    ``random_number_milliseconds`` is redrawn per attempt, per the spec.
+    """
+
+    return min(2**attempt + random.uniform(0, 1.0), _RETRY_MAX_SECONDS)
+
+
+# One page's entire allowance for sleeping, shared by every call it makes.
+#
+# A PER-CALL retry count does not bound a PAGE. A 500-id page is one list call
+# plus twenty batch windows; each may retry `_RETRY_ATTEMPTS` times and sleep
+# up to `_RETRY_MAX_SECONDS`, so per-call bounds permit minutes of sleep inside
+# a 60 s function. This is the bound that makes the arithmetic safe, and it is
+# why the budget is threaded through rather than created per call.
+# 6 s, NOT 12. `cron.py`'s `_CRON_PER_USER_TIMEOUT_SECONDS` is 10.0, and a
+# budget larger than that means one transient flake during a scheduled run can
+# spend the whole slot sleeping — the user's sync is then cancelled, the cursor
+# held, and the same thing happens on the next tick. Self-healing but wasteful,
+# and it converts a Gmail hiccup into a mailbox that never syncs while the
+# hiccup lasts. 6 s still affords the first two backoffs (~1-2 s and ~2-3 s),
+# which is where a flake actually clears.
+_PAGE_RETRY_BUDGET_SECONDS = 6.0
+
+
+class _RetryBudget:
+    """Sleep allowance for one page, spent down by every retry it authorises."""
+
+    __slots__ = ("remaining",)
+
+    def __init__(self, seconds: float = _PAGE_RETRY_BUDGET_SECONDS) -> None:
+        self.remaining = seconds
+
+    def spend(self, delay: float) -> bool:
+        """Sleep ``delay`` if the page can still afford it; else refuse.
+
+        Refusing rather than truncating the sleep on purpose: a backoff clipped
+        to whatever is left is a backoff that no longer implements the formula,
+        and half a wait against a busy API is a wasted request.
+        """
+
+        if delay > self.remaining:
+            return False
+        self.remaining -= delay
+        time.sleep(delay)
+        return True
+
+
+def _execute_with_retry(request: Any, *, what: str, budget: _RetryBudget) -> Any:
+    """``request.execute()``, retrying only what a short wait can cure."""
+
+    attempt = 0
+    while True:
+        try:
+            return request.execute()
+        except Exception as exc:  # noqa: BLE001 — re-raised unless retryable
+            if attempt >= _RETRY_ATTEMPTS or not is_retryable_gmail_error(exc):
+                raise
+            delay = _retry_delay(attempt)
+            if not budget.spend(delay):
+                logger.warning(
+                    "Gmail %s deferred but this page's retry budget is spent; "
+                    "surfacing the error rather than overrunning the function.",
+                    what,
+                )
+                raise
+            logger.warning(
+                "Gmail %s deferred (status=%s reason=%s); retry %s/%s after %.2fs",
+                what,
+                _error_status(exc),
+                ",".join(sorted(_error_reasons(exc))) or "-",
+                attempt + 1,
+                _RETRY_ATTEMPTS,
+                delay,
+            )
+            attempt += 1
 
 # The end tag is NOT the literal ``</script>``. HTML5 leaves the
 # script-data-end-tag-name state on whitespace, ``/`` or ``>``, so a browser
@@ -523,34 +821,129 @@ def _batch_fetch_metadata(
     *,
     batch_size: int,
     pause_seconds: float,
+    budget: _RetryBudget,
 ) -> MetadataBatch:
     """Fetch Subject/From/Date + snippet for ``ids`` via Gmail batch requests.
 
     Instead of one ``messages.get`` round-trip per id (which turns a 1000-id
     page into 1000 serial HTTP calls and a serverless timeout), we group the
     gets into ``new_batch_http_request`` batches of at most ``batch_size``
-    (Gmail caps a batch at 100). Each 100-message metadata batch costs ~500
-    quota units, so we sleep ``pause_seconds`` between batches to stay under
-    the per-user ~250 units/sec limit.
+    (Gmail caps a batch at 100, and recommends no more than 50; this is
+    further clamped to ``_FULL_BATCH_SIZE`` = 25, which is the number that
+    actually applies).
+
+    THE QUOTA SENTENCE HERE WAS STALE and is corrected rather than deleted,
+    because it is the same wrong pair of numbers `config.py` already records:
+    a 100-message batch costs **2,000** units, not ~500, and there is no
+    per-second limit to stay under — the limit is 6,000 units per MINUTE per
+    user. Batching does not reduce any of it: Gmail counts n batched
+    sub-requests as n requests. ``pause_seconds`` still earns its keep by
+    spreading a burst rather than delivering it instantaneously, but the real
+    bound is the page size.
 
     Returns the ``{message_id: raw_metadata_response}`` map AND the number of
-    requested ids it could not produce one for. Individual failed sub-requests
-    are still dropped (logged by type only) rather than raised — one bad
-    message must not sink the whole page — but they are no longer silent: the
-    count is derived from what came back, not from the callback's exception
-    argument, so an id answered with an empty body counts as lost too.
+    requested ids it could not produce one for. A sub-request Gmail *deferred*
+    is re-sent (see :func:`_send`); one it *refused* is dropped rather than
+    raised, because one bad message must not sink the whole page. The count is
+    derived from what came back, not from the callback's exception argument, so
+    an id answered with an empty body counts as lost too.
+
+    THE LOG LINE NAMES THE STATUS AND REASON, NOT JUST THE CLASS. It used to
+    read ``type(exception).__name__``, which is ``"HttpError"`` for a permanent
+    404 and for a retryable 403 ``rateLimitExceeded`` alike. On 2026-09-04 this
+    path lost 146 of 200 messages in the same minute the sibling
+    ``messages.list`` call raised 403 for exhausted quota, and the logs could
+    not be used to prove the two were the same condition — the drop was
+    recorded, but not diagnosable.
     """
 
     results: dict[str, dict] = {}
+    # What Gmail handed back per sub-request for the round IN FLIGHT. Cleared
+    # at the top of each round so an id that fails once and succeeds on the
+    # re-send does not carry its stale verdict into the retry decision.
+    failures: dict[str, BaseException] = {}
 
     def _on_result(request_id: str, response: Any, exception: Any) -> None:
         if exception is not None:
+            failures[request_id] = exception
             logger.warning(
-                "Gmail metadata sub-request failed: %s", type(exception).__name__
+                "Gmail metadata sub-request failed: %s status=%s reason=%s",
+                type(exception).__name__,
+                _error_status(exception),
+                ",".join(sorted(_error_reasons(exception))) or "-",
             )
             return
         if response is not None:
             results[request_id] = response
+
+    def _send(window: list[str]) -> None:
+        """Send one batch of gets, then re-send only what a short wait can cure.
+
+        Two rules, and the first is the important one.
+
+        **A rate-limited sub-request ABORTS THE PAGE by re-raising.** The bucket
+        is per user and per minute: if one sub-request was refused for quota,
+        the remaining windows of this page will be refused too, and grinding
+        through them spends more of a budget Gmail has just said is gone. The
+        honest move is to stop and let the router answer 429, so the client
+        re-requests this page from the cursor it still holds. Nothing is lost —
+        the page is refetched, not skipped.
+
+        **A server flake re-sends only the affected ids**, not the window. A
+        window of 25 where two ids wobbled re-sends two, so recovery costs two
+        gets rather than twenty-five — which matters precisely because the
+        thing being conserved is quota.
+        """
+
+        pending = list(window)
+        attempt = 0
+        while pending:
+            failures.clear()
+            batch = service.new_batch_http_request(callback=_on_result)
+            for message_id in pending:
+                batch.add(
+                    service.users()
+                    .messages()
+                    .get(userId="me", id=message_id, format="full"),
+                    request_id=message_id,
+                )
+            batch.execute()
+
+            for exc in failures.values():
+                if is_rate_limited_gmail_error(exc):
+                    logger.warning(
+                        "Gmail rate-limited a metadata sub-request; abandoning "
+                        "this page so the caller can retry from its cursor."
+                    )
+                    raise exc
+
+            deferred = [
+                mid for mid, exc in failures.items() if is_retryable_gmail_error(exc)
+            ]
+            if not deferred or attempt >= _RETRY_ATTEMPTS:
+                return
+            delay = _retry_delay(attempt)
+            if not budget.spend(delay):
+                # Out of page budget. Keep what came back and let the caller
+                # report the rest as `unreadable` — a smaller honest page beats
+                # overrunning the function and returning nothing.
+                logger.warning(
+                    "Gmail deferred %s sub-request(s) but this page's retry "
+                    "budget is spent; reporting them as unreadable.",
+                    len(deferred),
+                )
+                return
+            logger.warning(
+                "Gmail deferred %s of %s metadata sub-request(s); "
+                "retry %s/%s after %.2fs",
+                len(deferred),
+                len(pending),
+                attempt + 1,
+                _RETRY_ATTEMPTS,
+                delay,
+            )
+            attempt += 1
+            pending = deferred
 
     # Clamped to ``_FULL_BATCH_SIZE`` rather than Gmail's 100 ceiling: the
     # configured ``gmail_batch_size`` was chosen when this fetched metadata.
@@ -560,15 +953,7 @@ def _batch_fetch_metadata(
     bodies: dict[str, str] = {}
     for start in range(0, len(ids), chunk):
         window = ids[start : start + chunk]
-        batch = service.new_batch_http_request(callback=_on_result)
-        for message_id in window:
-            batch.add(
-                service.users()
-                .messages()
-                .get(userId="me", id=message_id, format="full"),
-                request_id=message_id,
-            )
-        batch.execute()
+        _send(window)
         # Reduce each full payload to text, then REPLACE it with a slim copy
         # carrying only what `_parse_metadata_message` reads. Without this the
         # map accumulates whole message bodies across every batch of a
@@ -641,12 +1026,18 @@ def _collect_page(
     :class:`MessagePage` for what may and may not be concluded from either.
     """
 
+    # One budget for the whole page: the list call and every batch window
+    # spend from it, so no combination of per-call retries can outlast the
+    # function.
+    budget = _RetryBudget()
+
     limit = max(1, min(page_size, _GMAIL_LIST_PAGE_MAX))
-    listing = (
+    listing = _execute_with_retry(
         service.users()
         .messages()
-        .list(userId="me", q=query, maxResults=limit, pageToken=page_token)
-        .execute()
+        .list(userId="me", q=query, maxResults=limit, pageToken=page_token),
+        what="messages.list",
+        budget=budget,
     )
     refs = listing.get("messages", []) or []
     ids = [ref["id"] for ref in refs[:limit] if ref.get("id")]
@@ -663,6 +1054,7 @@ def _collect_page(
         ids,
         batch_size=settings.gmail_batch_size,
         pause_seconds=settings.gmail_batch_pause_seconds,
+        budget=budget,
     )
 
     # Preserve Gmail's newest-first list order; drop ids whose metadata get
@@ -723,8 +1115,22 @@ async def fetch_message_page(
 
     Returns ``None`` when Gmail is not connected (so the router can answer
     409); otherwise a :class:`MessagePage` (possibly empty) with the cursor to
-    request the next page. Read-only, metadata-only: ``messages.list`` +
-    batched ``messages.get(format="metadata")`` — no bodies, no mutation.
+    request the next page. Read-only, and never a mutation: ``messages.list``
+    plus batched ``messages.get``.
+
+    THE FORMAT IS ``full``, NOT ``metadata``. This paragraph claimed
+    "metadata-only — no bodies" long after the fetch moved to ``format="full"``
+    to feed the classifier, contradicting the router that calls it
+    (``gmail_oauth.gmail_inbox``, which sets out at length that bodies ARE
+    fetched and never returned). Bodies are read, capped at
+    ``_MAX_BODY_CHARS``, carried on :attr:`MessagePage.bodies` for
+    classification, and never persisted — see
+    ``tests/test_body_is_never_persisted.py``.
+
+    Raises the underlying ``HttpError`` when Gmail refuses beyond
+    :data:`_RETRY_ATTEMPTS` retries. Callers that answer a user must ask
+    :func:`is_retryable_gmail_error` before choosing a status: a deferred read
+    is a 429 the client can resume from this page's cursor, not a 500.
     """
 
     creds = await load_valid_credentials(user_id)
@@ -741,26 +1147,6 @@ async def fetch_message_page(
         )
 
     return await loop.run_in_executor(None, _run)
-
-
-async def fetch_recent_messages(
-    user_id: uuid.UUID,
-    *,
-    max_results: Optional[int] = None,
-    query: str = DEFAULT_QUERY,
-) -> Optional[list[CloudGmailMessage]]:
-    """Fetch a single bounded page of recent messages for ``user_id``.
-
-    Backwards-compatible convenience over :func:`fetch_message_page`: returns
-    just the message list (no cursor) for callers that want one quick batch.
-    Returns ``None`` when Gmail is not connected.
-    """
-
-    limit = max_results or settings.gmail_fetch_max_results
-    page = await fetch_message_page(user_id, query=query, page_size=limit)
-    if page is None:
-        return None
-    return page.messages
 
 
 # =============================================================================
@@ -827,7 +1213,22 @@ async def fetch_mailbox_history_id(user_id: uuid.UUID) -> Optional[str]:
             service = build("gmail", "v1", credentials=creds, cache_discovery=False)
             return _mailbox_history_id(service)
         except Exception as exc:  # noqa: BLE001 — a profile read must never sink a sync
-            logger.warning("Gmail getProfile failed: %s", type(exc).__name__)
+            # Named, not just typed. Answering `None` here costs the caller a
+            # FULL scan, which is the most expensive possible response to being
+            # told to spend less — so when the cause is quota, the log has to
+            # say so rather than leaving a future reader to guess.
+            logger.warning(
+                "Gmail getProfile failed: %s status=%s reason=%s%s",
+                type(exc).__name__,
+                _error_status(exc),
+                ",".join(sorted(_error_reasons(exc))) or "-",
+                (
+                    " — RATE LIMITED, and the full scan this forces will spend"
+                    " more of the same bucket"
+                    if is_rate_limited_gmail_error(exc)
+                    else ""
+                ),
+            )
             return None
 
     return await loop.run_in_executor(None, _run)
@@ -839,6 +1240,7 @@ def _collect_history_ids(
     start_history_id: str,
     max_messages: int,
     scope: MailScope,
+    budget: _RetryBudget,
 ) -> tuple[list[str], bool, bool]:
     """Walk ``users.history.list`` and return ``(ids, expired, truncated)``.
 
@@ -851,9 +1253,24 @@ def _collect_history_ids(
     seen: set[str] = set()
     page_token: Optional[str] = None
 
+    # The incremental walk spends the SAME per-user bucket as the full scan,
+    # and it is the likelier collision: the dashboard's arrival auto-sync or a
+    # "Sync now" racing the user's own live scan is exactly the pair that
+    # produced the production trace. Before this it called `.execute()` bare.
+    #
+    # THE BUDGET IS THE CALLER'S, not one made here. It used to be constructed
+    # in this function AND again around the metadata fetch, which gave the
+    # incremental read two independent allowances and so twice the sleep
+    # ceiling the full-scan path presents as its invariant. Two budgets is not
+    # a budget.
+    #
+    # This retry only ever helps a SERVER FLAKE. A rate limit is not retryable
+    # by construction (`is_retryable_gmail_error` returns False for it), so it
+    # raises on the first attempt — which is deliberate, and handled by the
+    # caller rather than here.
     for _ in range(_HISTORY_MAX_PAGES):
         try:
-            batch = (
+            batch = _execute_with_retry(
                 service.users()
                 .history()
                 .list(
@@ -862,8 +1279,9 @@ def _collect_history_ids(
                     historyTypes=["messageAdded"],
                     maxResults=_HISTORY_PAGE_SIZE,
                     pageToken=page_token,
-                )
-                .execute()
+                ),
+                what="history.list",
+                budget=budget,
             )
         except HttpError as exc:
             if _is_history_expired(exc):
@@ -905,11 +1323,17 @@ def _collect_history(
 ) -> HistoryPage:
     """Resolve the ids added since ``start_history_id`` into full messages."""
 
+    # ONE allowance for the whole incremental read — the id walk and the
+    # metadata fetch spend from the same object, exactly as `_collect_page`
+    # does for the full scan.
+    budget = _RetryBudget()
+
     ids, expired, truncated = _collect_history_ids(
         service,
         start_history_id=start_history_id,
         max_messages=max_messages,
         scope=scope,
+        budget=budget,
     )
     if expired or truncated:
         return HistoryPage(messages=[], expired=expired, truncated=truncated)
@@ -924,6 +1348,7 @@ def _collect_history(
         ids,
         batch_size=settings.gmail_batch_size,
         pause_seconds=settings.gmail_batch_pause_seconds,
+        budget=budget,
     )
     out: list[CloudGmailMessage] = []
     for message_id in ids:

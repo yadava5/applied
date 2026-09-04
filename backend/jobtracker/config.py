@@ -481,14 +481,6 @@ class Settings(BaseSettings):
             "now, deliberately. Env: JOBTRACKER_WEB_APP_URL."
         ),
     )
-    gmail_fetch_max_results: int = Field(
-        default=25,
-        description=(
-            "Upper bound on messages fetched per cloud Gmail read. Kept small so a "
-            "single serverless invocation stays within the Vercel 60 s / memory "
-            "budget; the desktop app fetches far more."
-        ),
-    )
     gmail_oauth_state_ttl_seconds: int = Field(
         default=600,
         description=(
@@ -520,36 +512,68 @@ class Settings(BaseSettings):
         ),
     )
     gmail_fetch_page_size: int = Field(
-        default=500,
+        default=99,
         description=(
             "Messages fetched + classified in ONE serverless invocation of "
             "`GET /gmail/inbox`. The endpoint is server-paginated: it returns "
             "at most this many verdicts plus a `next_page_token`, and the web "
-            "client loops until it reaches the user's chosen count. Kept at "
-            "the Gmail `messages.list` page ceiling (500) so one list call "
-            "feeds one page, and small enough that a page's batched metadata "
-            "fetch + rules classification stays well inside the Vercel 60 s "
-            "function budget. Clamped to [1, 500]. Env: "
-            "JOBTRACKER_GMAIL_FETCH_PAGE_SIZE."
+            "client loops until it reaches the user's chosen count. "
+            "WAS 500 — the Gmail `messages.list` page ceiling — until "
+            "2026-09-04, when that stopped being achievable. The binding "
+            "constraint is quota, not the list API: a page costs "
+            "`20 * messages + 5` units against 6,000 per minute per user, so "
+            "300 messages is an entire minute's budget and a 500-message page "
+            "(10,005 units) cannot complete against a full bucket no matter "
+            "how often it is retried. "
+            "99 IS NOT A ROUND NUMBER AND THAT IS THE POINT. Throughput is "
+            "`N * floor(6000 / (20N + 5))`, and the `+5` for the page's one "
+            "`messages.list` call puts the round numbers on the wrong side of "
+            "a boundary: 100 costs 2,005 so only TWO pages fit a minute "
+            "(200 msg/min), while 99 costs 1,985 so THREE fit (297 msg/min) — "
+            "a 48% difference from changing the number by one. 150 is worse "
+            "still at 150 msg/min. 99 is within 0.4% of the best value the "
+            "handler's clamp allows (149, at 298), and is preferred over it "
+            "for finer progress and because one page then costs under a third "
+            "of a minute rather than half. Pinned by "
+            "tests/test_the_page_size_fits_gmails_minute.py. "
+            "Clamped to [1, 250] in the handler so this env var cannot re-arm "
+            "an impossible page. Env: JOBTRACKER_GMAIL_FETCH_PAGE_SIZE."
         ),
     )
     gmail_batch_size: int = Field(
         default=100,
         description=(
             "Sub-requests per Gmail batch HTTP request when fetching message "
-            "metadata (Subject/From/Date + snippet). Gmail caps a batch at "
-            "100. A 100-message metadata batch costs ~500 quota units, so the "
-            "batch pace (below) keeps the per-user ~250 units/sec quota "
-            "respected. Env: JOBTRACKER_GMAIL_BATCH_SIZE."
+            "bodies (Subject/From/Date + snippet + body text). Gmail caps a "
+            "batch at 100 and recommends no more than 50. Further clamped by "
+            "`_FULL_BATCH_SIZE` (25) in `cloud/gmail_client.py`, which is the "
+            "value that actually applies. "
+            "NOTE, corrected 2026-09-04: this text used to say a 100-message "
+            "batch costs ~500 units and that the pace below respects a "
+            "per-user ~250 units/sec quota. BOTH numbers were stale. "
+            "`messages.get` costs 20 units (changed 2026-05-01), so 100 of "
+            "them cost 2,000; and the limit is 6,000 units per MINUTE per "
+            "user, with no per-second limit published at all. Batching does "
+            "not help: Gmail counts n batched sub-requests as n requests. "
+            "Env: JOBTRACKER_GMAIL_BATCH_SIZE."
         ),
     )
     gmail_batch_pause_seconds: float = Field(
         default=0.4,
         description=(
-            "Seconds to sleep between successive Gmail metadata batches to "
-            "stay under the per-user quota (~250 units/sec; a full 100-message "
-            "batch ≈ 500 units). Set to 0 to disable pacing. Env: "
-            "JOBTRACKER_GMAIL_BATCH_PAUSE_SECONDS."
+            "Seconds to sleep between successive Gmail batches. "
+            "ITS ORIGINAL JUSTIFICATION WAS WRONG and is recorded here rather "
+            "than quietly replaced: it said this paced against a per-user "
+            "~250 units/sec limit with a 100-message batch costing ~500 units. "
+            "Gmail publishes no per-second limit; the limit is 6,000 units per "
+            "minute per user, and a 25-message batch of `messages.get` costs "
+            "500 units on its own. Pacing against a per-second figure cannot "
+            "bound a per-minute bucket, which is how a live scan came to spend "
+            "two thirds of a minute's quota in one invocation and take a 403. "
+            "This pause still earns its keep — it spreads a burst rather than "
+            "delivering it instantaneously — but the real bound is the page "
+            "size and the caller's retry, not this number. Set to 0 to "
+            "disable. Env: JOBTRACKER_GMAIL_BATCH_PAUSE_SECONDS."
         ),
     )
     gmail_followup_stale_days: int = Field(

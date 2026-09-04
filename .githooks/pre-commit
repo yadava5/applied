@@ -2,10 +2,10 @@
 # Secret scan over the STAGED diff, before the commit exists.
 #
 # Why this file is tracked instead of living in .git/hooks: it used to live
-# there, untracked, and `core.hooksPath` pointed at
-# /Users/ayush/Documents/Projects/jobtracker/.git/hooks. The jobtracker ->
-# applied rename deleted that directory, git skips a missing hooks path in
-# SILENCE, and so no local hook fired in this repo at all for weeks -- while
+# there, untracked, and `core.hooksPath` held an absolute path into the OLD
+# `jobtracker/` checkout's .git/hooks. The jobtracker -> applied rename
+# deleted that directory, git skips a missing hooks path in SILENCE, and so
+# no local hook fired in this repo at all for weeks -- while
 # CLAUDE.md went on describing the secret-scanning pre-commit hook as a
 # backstop. A hook that only exists on one machine is a hook that vanishes
 # the next time a directory moves.

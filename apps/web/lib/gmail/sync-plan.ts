@@ -34,13 +34,27 @@
 // --- The windowed scan request ------------------------------------------------
 
 /**
- * The depth choices the dialog offers. The inbox mine's `COUNT_OPTIONS`
- * vocabulary plus 750 — today's server default (`_SYNC_DEFAULT_SCAN_TARGET`) —
- * so a default-depth scan reads exactly what the old hardwired button did.
+ * The depth choices the dialog offers.
+ *
+ * 750 WAS THE SERVER DEFAULT AND IS NOT ANY MORE. `_SYNC_DEFAULT_SCAN_TARGET`
+ * is 297, because Gmail's per-user ceiling fell to 6,000 units a minute and
+ * `messages.get` rose to 20, so 297 messages (three pages at `20N + 5`) is
+ * what one invocation can actually read. The default here follows it, and a
+ * default-depth scan is now a depth the server can finish rather than one it
+ * reports as partial every time.
+ *
+ * THE LARGER OPTIONS STILL OVERPROMISE, and that is a known open gap rather
+ * than something this constant can fix: one `/gmail/sync` invocation cannot
+ * exceed a bucket, and an explicit `count` restarts from the newest message
+ * rather than resuming, so pressing 2000 repeatedly re-reads the same window.
+ * The path that does read deeply is the inbox mine — it pages, paces itself
+ * against 429s, and files what it found. Tracked separately; the options are
+ * left in place rather than silently removed, because narrowing a control is a
+ * product decision and not a bug fix.
  */
 export const SCAN_DEPTH_OPTIONS = [100, 200, 500, 750, 1000, 2000] as const;
 export type ScanDepth = (typeof SCAN_DEPTH_OPTIONS)[number];
-export const SCAN_DEFAULT_DEPTH: ScanDepth = 750;
+export const SCAN_DEFAULT_DEPTH: ScanDepth = 200;
 
 /**
  * The window choices, mirroring the inbox's `RANGE_OPTIONS` values (restated
@@ -160,7 +174,7 @@ export function rangeLabel(range: ScanRange): string {
 
 /**
  * What a running windowed scan restates about itself:
- * `up to 750 messages · last 12 months · all mail`. Identical on both
+ * `up to 200 messages · last 12 months · all mail`. Identical on both
  * dispositions, because the scan itself is: `all mail` is forced by the server
  * on the rebuild path and asked for by {@link scanRequestBody} on the additive
  * one (see the module comment). It is stated rather than offered either way —
@@ -297,6 +311,11 @@ export function stopKind(stoppedBy: string | null | undefined): StopKind {
   const reason = typeof stoppedBy === "string" ? stoppedBy.trim().toLowerCase() : "";
   if (reason === "" || reason === "complete") return "complete";
   if (reason === "disconnected" || reason === "relay") return "broken";
+  // `rate_limited` falls through to "partial" deliberately, and NOT to
+  // "broken": the mailbox is healthy and the connection is intact — Gmail
+  // simply asked for less for a minute, so the window is under-covered rather
+  // than the sync being faulty. Calling it broken would send a user to
+  // reconnect an account that has nothing wrong with it.
   return "partial";
 }
 
@@ -317,6 +336,10 @@ export function stopReasonPhrase(stoppedBy: string | null | undefined): string {
       return "lost its Gmail connection partway";
     case "relay":
       return "answered in an unexpected mode";
+    case "rate_limited":
+      // Number-free, like its neighbours: "waited 60 seconds" would rot the
+      // day the backend tunes Retry-After.
+      return "paused because Gmail asked for fewer requests";
     default:
       return "stopped before finishing";
   }

@@ -76,6 +76,25 @@ export interface InboxPage {
   scope: string;
   range_months: number | null;
   note: string;
+  /**
+   * Messages Gmail listed for this page but would not hand over.
+   *
+   * THIS FIELD WAS MISSING FROM THIS INTERFACE, and its absence is the whole
+   * mechanism of a defect. The backend has always computed it
+   * (`MessagePage.unreadable` = `len(ids) - len(out)`) and always put it on
+   * the wire; it is in the generated types at `lib/api/schema.d.ts`. This
+   * hand-written mirror dropped it, so `page.unreadable` did not type-check
+   * and no caller could ever have read it — a field cannot be forgotten in the
+   * UI if the type still offers it, but it cannot be found either if the type
+   * denies it exists.
+   *
+   * On 2026-09-04 a live scan lost 146 of 200 messages to a Gmail rate limit
+   * and reported "54 scanned" as an ordinary success.
+   *
+   * Optional because a snapshot written before this field existed hydrates
+   * without it, and `0` is the honest reading of "this page never told us".
+   */
+  unreadable?: number;
 }
 
 /** An `applied` message with no later response — a nudge to follow up. */
@@ -127,7 +146,52 @@ export const DEFAULT_FILTERS: InboxFilters = {
 };
 
 /** Per-page fetch ceiling — mirrors the backend `gmail_fetch_page_size`. */
-export const PAGE_SIZE = 500;
+export const PAGE_SIZE = 99;
+
+/*
+ * WAS 500 UNTIL 2026-09-04, WHICH BECAME ARITHMETICALLY IMPOSSIBLE.
+ *
+ * Gmail charges 20 quota units per `messages.get` (raised from 5 on
+ * 2026-05-01) against a ceiling of 6,000 units per minute per user (cut from
+ * 15,000 the same day). Both numbers were read from this project's own Cloud
+ * Console, not assumed.
+ *
+ *   one page of 500  =  20 x 500 + 5  =  10,005 units
+ *   the whole minute's budget         =   6,000 units
+ *
+ * So a single 500-message page could not succeed on a full bucket, ever, no
+ * matter how the server retried — and the failure it produced was a 403 that
+ * reached the user as "We couldn't finish reading your mail."
+ *
+ *   one page of  99  =  20 x  99 + 5  =   1,985 units
+ *
+ * NINETY-NINE, NOT A HUNDRED, and the missing one is worth 48%. Throughput is
+ * `N * floor(6000 / (20N + 5))`. The `+5` for the page's single
+ * `messages.list` call puts the round number on the wrong side of a boundary:
+ *
+ *   N = 100 -> 2,005/page -> floor(6000/2005) = 2 pages -> 200 messages/min
+ *   N =  99 -> 1,985/page -> floor(6000/1985) = 3 pages -> 297 messages/min
+ *
+ * For a 2,000-message scan that is ten minutes against 6.7 — and 6.7 is the
+ * physical floor (`2000 * 20 / 6000`), so 99 reaches 99.0% of what Gmail will
+ * ever allow — 297 of the 300 messages a minute affords. 150 is worse than either at 150/min. The best value the server's
+ * clamp permits is 149 (298/min); 99 gives up 0.4% of that for 50% finer
+ * progress and a deferral that re-costs a third of a minute instead of half.
+ *
+ * Smaller pages also make a deferral cheap: the retry re-costs one page, not
+ * five, against the very budget that just refused.
+ *
+ * The server holds the same number: `gmail_fetch_page_size` defaults to 99 and
+ * the handler clamps anything larger to 250. They are EQUAL on purpose, not
+ * one under the other — an earlier version of this comment said the client
+ * "picks lower than the ceiling it is allowed", which stopped being true the
+ * moment both moved to 99.
+ *
+ * Equality is what the pin test asserts
+ * (`backend/tests/test_the_page_size_fits_gmails_minute.py`), because the
+ * client is the party that LOOPS: the server only clamps, so its careful
+ * default never applies to an interactive scan unless the client asks for it.
+ */
 
 // --- Category presentation --------------------------------------------------
 

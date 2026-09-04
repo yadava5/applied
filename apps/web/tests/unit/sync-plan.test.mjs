@@ -61,18 +61,36 @@ import {
 } from "../../lib/gmail/sync-plan.ts";
 
 test("the dialog's defaults are the safe ones, and the window is unchanged", () => {
-  // 12 months / 750 messages was the ReSyncButton's fixed behaviour; making
-  // the scan configurable must not change what a default press reads.
+  // 12 months is unchanged: making the scan configurable must not change the
+  // window a default press reads.
   assert.equal(SCAN_DEFAULT_RANGE, "12");
-  assert.equal(SCAN_DEFAULT_DEPTH, 750);
+
+  // THE DEPTH DEFAULT MOVED, 750 -> 200, and this assertion is why the change
+  // could not be made quietly. 750 mirrored `_SYNC_DEFAULT_SCAN_TARGET` when
+  // that was the server's figure. Gmail cut the per-user ceiling to 6,000
+  // units a minute and raised `messages.get` to 20, so one invocation can read
+  // 297 messages and the server default followed. A dialog defaulting to 750
+  // against a server that stops near 297 makes the DEFAULT press a guaranteed
+  // partial — the banner every time, on the press most people make.
+  //
+  // 200 rather than 297 because this list is a vocabulary a person reads, and
+  // it is shared with the inbox mine's own count options. The deeper choices
+  // remain available and remain honest about being partial.
+  assert.equal(SCAN_DEFAULT_DEPTH, 200);
+  assert.ok(SCAN_DEPTH_OPTIONS.includes(200));
+  // The deeper options are deliberately still offered — narrowing a control is
+  // a product decision, not a bug fix — so this pins that they were not
+  // removed by accident along with the default.
   assert.ok(SCAN_DEPTH_OPTIONS.includes(750));
-  // What DID change, and is the point of #474: the default press no longer
-  // purges. `keep` must be the resting disposition — a default of "remove"
-  // here is the destructive default this work exists to delete.
+  assert.ok(SCAN_DEPTH_OPTIONS.includes(2000));
+
+  // What DID change in #474: the default press no longer purges. `keep` must
+  // be the resting disposition — a default of "remove" here is the destructive
+  // default that work exists to delete.
   assert.equal(SCAN_DEFAULT_DISPOSITION, "keep");
   assert.deepEqual(
     scanRequestBody(SCAN_DEFAULT_DEPTH, SCAN_DEFAULT_RANGE, SCAN_DEFAULT_DISPOSITION),
-    { mode: "additive", count: 750, range: "12", scope: "anywhere" },
+    { mode: "additive", count: 200, range: "12", scope: "anywhere" },
   );
 });
 

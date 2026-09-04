@@ -20,6 +20,29 @@ from jobtracker.config import settings
 from jobtracker.database import get_session, init_db
 from jobtracker.database.models import Email, EmailCategory, TrainingData
 
+#: Repository root — `backend/jobtracker/scripts/` is three levels down.
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _repo_relative(path: Path) -> Path:
+    """Render an artifact path relative to the repository root.
+
+    The summary markdown and the tracker block this script writes are both
+    committed, and the repository is public, so an absolute path writes the
+    operator's home directory into a tracked file. Nine of them reached
+    `docs/ML_EXECUTION_TRACKER.md` that way before this existed.
+
+    A path outside the repository — a pytest `tmp_path`, or an `--output-dir`
+    pointed somewhere else — has no repo-relative form, so it is returned
+    unchanged rather than mangled into a `../../..` chain.
+    """
+
+    try:
+        return path.resolve().relative_to(REPO_ROOT)
+    except ValueError:
+        return path
+
+
 JOB_LABELS = (
     "applied",
     "pending_application",
@@ -620,7 +643,7 @@ def _render_candidate_summary_markdown(
     lines.append("- It does not include subjects, snippets, or email body content.")
     lines.append("")
     lines.append("## Artifact")
-    lines.append(f"- candidates_csv: `{candidates_csv_path}`")
+    lines.append(f"- candidates_csv: `{_repo_relative(candidates_csv_path)}`")
     lines.append("")
     return "\n".join(lines)
 
@@ -852,9 +875,9 @@ def append_snapshot_to_tracker(
     )
     block_lines.append("")
     block_lines.append("Artifacts:")
-    block_lines.append(f"- `{candidates_csv_path}`")
-    block_lines.append(f"- `{summary_md_path}`")
-    block_lines.append(f"- `{summary_json_path}`")
+    block_lines.append(f"- `{_repo_relative(candidates_csv_path)}`")
+    block_lines.append(f"- `{_repo_relative(summary_md_path)}`")
+    block_lines.append(f"- `{_repo_relative(summary_json_path)}`")
     block_lines.append("")
 
     block = "\n".join(block_lines)

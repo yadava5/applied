@@ -68,13 +68,103 @@ import { cn } from "@/lib/utils";
  * board was the dashboard's full re-scan.
  */
 
-type Phase = "loading" | "ready" | "not_connected" | "auth" | "error";
+type Phase = "loading" | "deferred" | "ready" | "not_connected" | "auth" | "error";
+
+/*
+ * Gmail's published quota, which is what actually paces this component.
+ *
+ * A *per end user* limit: it keys on the authenticated principal, and Applied
+ * holds per-user OAuth with no service account, so every connected mailbox has
+ * its own allowance and one person's scan cannot slow another's.
+ */
+const GMAIL_UNITS_PER_MINUTE = 6000;
+const GMAIL_UNITS_PER_MESSAGE = 20; // messages.get
+const GMAIL_UNITS_PER_LIST = 5; // messages.list, once per page
+
+/**
+ * How many 60-second deferrals one mine will wait out before giving up.
+ *
+ * DERIVED FROM UNITS, and it took two wrong answers to get here — both worth
+ * recording, because both looked reasonable and both would have failed the
+ * scans most worth completing.
+ *
+ * A flat six was the first. 2,000 messages is about 6.7 minutes of quota, so
+ * that gave up within one wait of finishing.
+ *
+ * `ceil(target / 300) + 2` was the second, from the headline rate of 300
+ * messages a minute. Also wrong, because a page is not free and does not
+ * divide the budget evenly: one 100-message page costs
+ * `100 * 20 + 5 = 2,005` units, so only **two** fit in a 6,000-unit minute —
+ * a third would need 6,015. The real rate is 200 messages a minute at this
+ * page size, not 300, and 2,000 messages is ten minutes rather than seven.
+ *
+ * So: compute the units, floor the pages that fit in a minute, and count the
+ * minutes the scan genuinely needs. `+2` is slack for the co-spenders on the
+ * same bucket — the scheduled sync, the dashboard's arrival auto-sync, a
+ * second tab. Past that the wait is no longer explained by this scan's own
+ * size, and something is wrong that waiting will not fix.
+ */
+function maxDeferralsFor(target: number): number {
+  const unitsPerPage = PAGE_SIZE * GMAIL_UNITS_PER_MESSAGE + GMAIL_UNITS_PER_LIST;
+  const pagesPerMinute = Math.max(1, Math.floor(GMAIL_UNITS_PER_MINUTE / unitsPerPage));
+  const pagesNeeded = Math.ceil(Math.max(target, 1) / PAGE_SIZE);
+  return Math.ceil(pagesNeeded / pagesPerMinute) + 2;
+}
+
+/**
+ * How many consecutive all-unreadable pages the mine will page past before it
+ * stops. Bounded because every page costs quota whether or not it yields a
+ * verdict, and an unbounded walk of an unreadable mailbox would spend the
+ * user's whole minute finding nothing.
+ */
+const MAX_BARREN_PAGES = 3;
+
+/**
+ * Never resume sooner than this after a deferral, however much of the named
+ * wait the burst already consumed. A burst that ran the full minute would
+ * otherwise resume instantly and spend a request to be refused again.
+ */
+const MIN_DEFERRAL_WAIT_MS = 5_000;
+
+/** `setTimeout` that resolves early and false when the mine is superseded. */
+function waitOrAbort(ms: number, signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve(true);
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
 
 interface FetchState {
   phase: Phase;
   fetched: number;
   target: number;
   errorStatus?: number;
+  /**
+   * Messages Gmail listed for this scan but would not hand over — summed
+   * across every page of the mine.
+   *
+   * The backend has always sent this (`MessagePage.unreadable`, on the wire as
+   * `InboxResponse.unreadable`, in the generated types at
+   * `lib/api/schema.d.ts`), and this component has never read it. On
+   * 2026-09-04 a scan lost 146 of 200 messages to a Gmail rate limit and
+   * rendered "54 scanned" as an ordinary success — a number a person reads as
+   * "my mailbox has 54 messages in it".
+   *
+   * `/import` already got this right: `ImportMail.tsx` renders "N could not be
+   * read and were skipped". The live scan is the surface that forgot, so the
+   * wording below deliberately echoes it.
+   */
+  unreadable: number;
+  /** While `phase === "deferred"`: how long the mine is waiting out Gmail. */
+  resumesInSeconds?: number;
 }
 
 /** The "file these into my pipeline" action's own state — never the mine's. */
@@ -287,6 +377,11 @@ interface InboxSnapshot {
   analysisFailed?: boolean;
   fetched: number;
   target: number;
+  /** Summed dropped-message count for the mine this snapshot came from.
+   *  Optional: `v2` snapshots written before 2026-09-04 do not carry it, and
+   *  those hydrate as 0 rather than forcing a version bump and a re-mine for
+   *  every reader mid-session. */
+  unreadable?: number;
 }
 
 /** The fetch inputs that define a distinct mine — a snapshot is valid only for its own. */
@@ -367,6 +462,7 @@ export function InboxWorkbench({
   const [state, setState] = useState<FetchState>({
     phase: "loading",
     fetched: 0,
+    unreadable: 0,
     target: DEFAULT_FILTERS.count,
   });
   const [filing, setFiling] = useState<FileState>({
@@ -396,12 +492,24 @@ export function InboxWorkbench({
       setVerdicts([]);
       setAnalysis(null);
       setAnalysisFailed(false);
-      setState({ phase: "loading", fetched: 0, target });
+      setState({ phase: "loading", fetched: 0, target, unreadable: 0 });
       // A new mine invalidates the last filing report — it described a different set.
       setFiling({ phase: "idle", note: null });
 
       const acc: InboxVerdict[] = [];
       let token: string | null | undefined;
+      let deferrals = 0;
+      const maxDeferrals = maxDeferralsFor(target);
+      // When this run started spending the quota bucket. The wait below is
+      // measured from HERE, not from the refusal — see the deferral branch.
+      let burstStartedAt = Date.now();
+      // Consecutive pages that listed mail but yielded no verdict. Bounded so
+      // a mailbox full of unreadable ids cannot page forever at 20 quota units
+      // a message, but not zero — see the break condition below.
+      let barrenPages = 0;
+      // Summed across pages, not per page: the user asked one question ("scan
+      // my mail") and is owed one answer about what it cost.
+      let unreadable = 0;
 
       try {
         while (acc.length < target) {
@@ -411,10 +519,89 @@ export function InboxWorkbench({
             pageSize,
             pageToken: token,
           });
-          const { status, page } = await transport.fetchPage(qs, ac.signal);
+          const { status, page, retryAfterSeconds } = await transport.fetchPage(
+            qs,
+            ac.signal,
+          );
           if (runId !== runIdRef.current) return;
+          // Gmail deferred this page. NOT a failure: the mailbox is healthy,
+          // the request was valid, and the cursor is still good — so wait the
+          // time the backend named and ask for the SAME page again, rather
+          // than discarding a scan that may already hold hundreds of verdicts.
+          // `continue` without touching `token` is what makes it a resume.
+          if (status === 429) {
+            if (deferrals >= maxDeferrals) {
+              // Keep what was read. A deep scan can spend minutes and get most
+              // of the way before a co-spender exhausts its patience, and
+              // dropping the snapshot here means a remount re-mines the whole
+              // window from zero — spending the very quota that ran out. The
+              // verdicts are already on screen; this makes them survive a
+              // navigation, honestly labelled as short of the target.
+              writeSnapshot({
+                sig: filtersSig(f),
+                savedAt: Date.now(),
+                verdicts: acc,
+                analysis: null,
+                analysisFailed: true,
+                fetched: acc.length,
+                target,
+                unreadable,
+              });
+              setState({
+                phase: "error",
+                fetched: acc.length,
+                target,
+                unreadable,
+                errorStatus: 429,
+              });
+              return;
+            }
+            deferrals += 1;
+
+            // THE WAIT RUNS FROM THE START OF THE BURST, NOT FROM THE REFUSAL,
+            // and that distinction is worth about two minutes on a deep scan.
+            //
+            // The bucket is a rolling minute. When Gmail refuses us we have
+            // just spent roughly a minute's worth of units — but we spent them
+            // over the preceding ten or twenty seconds, and it is the OLDEST of
+            // those units that has to age out before we may spend again.
+            // Sleeping the backend's full `Retry-After` from the moment of
+            // refusal therefore waits the elapsed burst twice: once while
+            // spending, once again while sleeping. Each cycle becomes ~75 s per
+            // page-triple instead of 60, which is how a 2,000-message scan
+            // penciled out at nine minutes against a 6.7-minute floor.
+            //
+            // Crediting the elapsed burst against the named wait removes the
+            // double count. Floored at MIN_DEFERRAL_WAIT_MS so a burst that
+            // happened to run long cannot turn into an immediate re-request,
+            // which would spend a unit to be refused again.
+            const namedWaitMs = (retryAfterSeconds ?? 60) * 1000;
+            const spentSoFarMs = Date.now() - burstStartedAt;
+            const waitMs = Math.max(
+              namedWaitMs - spentSoFarMs,
+              MIN_DEFERRAL_WAIT_MS,
+            );
+            setState({
+              phase: "deferred",
+              fetched: acc.length,
+              target,
+              unreadable,
+              resumesInSeconds: Math.round(waitMs / 1000),
+            });
+            const resumed = await waitOrAbort(waitMs, ac.signal);
+            if (!resumed || runId !== runIdRef.current) return;
+            // A fresh window: the next refusal is measured from here.
+            burstStartedAt = Date.now();
+            setState({ phase: "loading", fetched: acc.length, target, unreadable });
+            continue;
+          }
           if (status === 409) {
-            setState({ phase: "not_connected", fetched: acc.length, target });
+            setState({
+              phase: "not_connected",
+              fetched: acc.length,
+              target,
+              unreadable,
+            });
             return;
           }
           if (status === 401) {
@@ -422,6 +609,7 @@ export function InboxWorkbench({
               phase: "auth",
               fetched: acc.length,
               target,
+              unreadable,
               errorStatus: 401,
             });
             return;
@@ -431,16 +619,40 @@ export function InboxWorkbench({
               phase: "error",
               fetched: acc.length,
               target,
+              unreadable,
               errorStatus: status,
             });
             return;
           }
           acc.push(...page.verdicts);
+          unreadable += page.unreadable ?? 0;
           if (runId !== runIdRef.current) return;
           setVerdicts([...acc]);
-          setState({ phase: "loading", fetched: acc.length, target });
+          setState({ phase: "loading", fetched: acc.length, target, unreadable });
           token = page.next_page_token;
-          if (!token || page.verdicts.length === 0) break;
+          if (!token) break;
+          // A page with no verdicts used to end the mine as SUCCESS. That is
+          // right when the mailbox is exhausted and wrong whenever the cursor
+          // is still good — which reads to the user as "that is all your mail"
+          // over a window nothing came from.
+          //
+          // THE EMPTINESS IS NOT CONDITIONED ON `unreadable`, and an earlier
+          // version of this branch got that wrong. Gmail can answer a page with
+          // no messages AND no losses while still handing back a token — a
+          // filtered window whose matches all sit further on. The server's own
+          // scan loop pages through exactly that case and calls the
+          // alternative "the same class of bug as counting pages"
+          // (`cloud/gmail_oauth.py`, the full-scan loop). This mirrors it.
+          //
+          // Bounded, because every page costs quota whether or not it yields a
+          // verdict, so an unbounded walk of a sparse window would spend the
+          // user's minute finding nothing.
+          if (page.verdicts.length === 0) {
+            barrenPages += 1;
+            if (barrenPages >= MAX_BARREN_PAGES) break;
+            continue;
+          }
+          barrenPages = 0;
         }
 
         const pipelineItems = toPipelineItems(acc);
@@ -468,7 +680,7 @@ export function InboxWorkbench({
           analysisBroke = true;
         }
         setAnalysisFailed(analysisBroke);
-        setState({ phase: "ready", fetched: acc.length, target });
+        setState({ phase: "ready", fetched: acc.length, target, unreadable });
 
         // Persist this mine so a remount with the same filters (e.g. navigating
         // Inbox → Dashboard → Inbox) hydrates instantly instead of re-hitting Gmail.
@@ -480,6 +692,7 @@ export function InboxWorkbench({
           analysisFailed: analysisBroke,
           fetched: acc.length,
           target,
+          unreadable,
         });
 
         // NOTE: the mine deliberately does NOT persist anything by itself. It
@@ -489,7 +702,7 @@ export function InboxWorkbench({
         // now the explicit action below, which says what actually happened.
       } catch {
         if (ac.signal.aborted || runId !== runIdRef.current) return;
-        setState({ phase: "error", fetched: acc.length, target });
+        setState({ phase: "error", fetched: acc.length, target, unreadable });
       }
     },
     [transport],
@@ -536,6 +749,7 @@ export function InboxWorkbench({
               phase: "ready",
               fetched: snap.fetched,
               target: snap.target,
+              unreadable: snap.unreadable ?? 0,
             });
             return;
           }
@@ -657,6 +871,10 @@ export function InboxWorkbench({
   }, [router, transport, verdicts]);
 
   const loading = state.phase === "loading";
+  /** Waiting out a Gmail deferral — still a running mine, not a failure, so it
+   *  keeps the progress block rather than falling through to the idle line. */
+  const deferred = state.phase === "deferred";
+  const running = loading || deferred;
   /** The MINE broke (Gmail/proxy). Distinct from `analysisFailed`, which is a
    *  successful mine whose whole-set analysis didn't answer. */
   const mineFailed = state.phase === "error";
@@ -755,22 +973,31 @@ export function InboxWorkbench({
           <button
             type="button"
             onClick={() => void run(filters)}
-            disabled={loading}
+            disabled={running}
             className="ml-auto inline-flex items-center gap-2 rounded-lg border border-line px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-line-strong hover:text-strong disabled:opacity-40"
           >
-            <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} aria-hidden />
-            {loading ? "Fetching…" : "Refresh"}
+            <RefreshCw className={cn("h-3.5 w-3.5", running && "animate-spin")} aria-hidden />
+            {running ? "Fetching…" : "Refresh"}
           </button>
         </div>
 
         {/* progress while paging */}
-        {loading ? (
+        {running ? (
           <div className="mt-4">
             <div className="flex items-center justify-between text-xs text-dim">
               <span className="inline-flex items-center gap-1.5">
                 <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-                mining {filters.scope === "anywhere" ? "all mail" : "inbox"}
-                {filters.range !== "all" ? ` · last ${filters.range} mo` : ""}
+                {deferred ? (
+                  <>
+                    Gmail asked us to slow down · resuming in{" "}
+                    {state.resumesInSeconds ?? 60}s
+                  </>
+                ) : (
+                  <>
+                    mining {filters.scope === "anywhere" ? "all mail" : "inbox"}
+                    {filters.range !== "all" ? ` · last ${filters.range} mo` : ""}
+                  </>
+                )}
               </span>
               <span className="tabular font-mono text-[11px]">
                 {state.fetched.toLocaleString()} / {state.target.toLocaleString()}
@@ -788,6 +1015,9 @@ export function InboxWorkbench({
             {email ? `${email} · ` : ""}
             {state.fetched.toLocaleString()} scanned · {jobRelatedTotal.toLocaleString()}{" "}
             job-related
+            {state.unreadable > 0
+              ? ` · ${state.unreadable.toLocaleString()} could not be read`
+              : ""}
           </p>
         )}
       </div>
@@ -1001,7 +1231,7 @@ export function InboxWorkbench({
         ) : null}
 
         {/* --- Verdict list ------------------------------------------------- */}
-        {loading && verdicts.length === 0 ? (
+        {running && verdicts.length === 0 ? (
           <ul className="rounded-xl border border-line-soft bg-surface px-3">
             {Array.from({ length: 6 }).map((_, i) => (
               <SkeletonRow key={i} />

@@ -23,7 +23,9 @@ which is the real behaviour being defended against, not a hypothetical.
 
 from __future__ import annotations
 
+import re
 import time
+from pathlib import Path
 from datetime import UTC, datetime
 from typing import Any
 
@@ -453,12 +455,19 @@ async def test_every_stop_reason_the_backend_can_emit_is_a_known_constant(
 ) -> None:
     """A guard on the vocabulary itself.
 
-    The frontend classifies ``stopped_by`` into complete / partial / broken and
-    falls back to "complete" for anything it does not recognise — the safest
-    default for an OLD frontend against a NEW backend, and the most dangerous
-    one for a value the backend invents later. So the set is asserted here: a
-    new constant has to be added deliberately, and whoever adds it is the
-    person who should be teaching the UI to read it.
+    The frontend classifies ``stopped_by`` into complete / partial / broken.
+
+    THIS DOCSTRING USED TO SAY IT "falls back to complete for anything it does
+    not recognise". It does not, and the difference is a safety property rather
+    than a detail: ``stopKind`` in ``apps/web/lib/gmail/sync-plan.ts`` returns
+    **"partial"** for an unknown value, on the stated grounds that an end state
+    the UI cannot vouch for must not claim the mailbox was covered. Anyone who
+    "fixed" the code to match the old wording would have deleted that property.
+    Corrected 2026-09-04 after a verification pass read the function.
+
+    The set is still asserted here, for the reason below the assertion: a new
+    constant has to be added deliberately, and whoever adds it is the person who
+    should be teaching the UI to read it.
     """
 
     import jobtracker.cloud.gmail_oauth as gmail_module
@@ -470,6 +479,7 @@ async def test_every_stop_reason_the_backend_can_emit_is_a_known_constant(
         gmail_module.STOPPED_PAGE_LIMIT,
         gmail_module.STOPPED_DISCONNECTED,
         gmail_module.STOPPED_RELAY,
+        gmail_module.STOPPED_RATE_LIMITED,
     }
     declared = {
         value
@@ -481,3 +491,58 @@ async def test_every_stop_reason_the_backend_can_emit_is_a_known_constant(
         f"read: {sorted(declared - known)}. Add it to lib/gmail/sync-plan.ts "
         f"(stopKind + stopReasonPhrase) before adding it here."
     )
+
+    # AND CHECK THAT THE UI ACTUALLY LEARNED IT.
+    #
+    # The set above is a hand-maintained mirror, so on its own it only proves
+    # somebody edited this file — the instruction to teach `sync-plan.ts` first
+    # was pure honour system, and honour systems are the estate's recurring
+    # defect. Adding `STOPPED_RATE_LIMITED` here while forgetting the UI would
+    # have passed.
+    #
+    # WHAT THE FAILURE ACTUALLY IS, corrected after a verification pass caught
+    # this comment asserting the opposite. `stopKind` (`sync-plan.ts`) returns
+    # **"partial"** for an unrecognised value, not "complete" — read the
+    # function, its own comment says the safety property is deliberate. So an
+    # untaught constant does NOT report a partial scan as finished; the docstring
+    # a few lines up in this file makes that claim and is wrong too.
+    #
+    # The real cost is quieter and worth the gate anyway: `stopReasonPhrase`
+    # falls through to the generic "stopped before finishing". For a rate limit
+    # that is a bad answer, because the full-scan path has no 429 and no
+    # `Retry-After` — `stopped_by` is its ONLY channel to the user — so the
+    # person is told the scan stopped early and never that waiting fixes it,
+    # while the interactive scan gets "Gmail asked us to slow down, resuming in
+    # Ns". An untaught constant makes the two paths disagree about the same
+    # condition.
+    #
+    # COMMENTS ARE STRIPPED FIRST, and the earlier version of this that did not
+    # was demonstrably foolable: a review renamed `case "rate_limited":` to a
+    # typo, added `"rate_limited"` inside a nearby comment, and the gate passed
+    # with the UI carrying no such case at all. This block's own prose then
+    # claimed it "cannot be fooled by a value the UI merely mentions in a
+    # comment" — a check asserting a property it did not have.
+    #
+    # Still a substring search over the stripped text rather than a parse: it
+    # cannot be defeated by a formatter, and running the TypeScript does not
+    # belong in a pytest run.
+    plan = (
+        Path(__file__).resolve().parents[2]
+        / "apps"
+        / "web"
+        / "lib"
+        / "gmail"
+        / "sync-plan.ts"
+    )
+    if plan.exists():
+        raw = plan.read_text(encoding="utf-8")
+        code = re.sub(r"/\*.*?\*/", " ", raw, flags=re.S)
+        code = re.sub(r"//[^\n]*", " ", code)
+        unread = sorted(v for v in declared if f'"{v}"' not in code)
+        assert not unread, (
+            f"sync-plan.ts never names {unread} in CODE (comments do not "
+            f"count), so `stopReasonPhrase` falls through to the generic "
+            f"'stopped before finishing'. On the full-scan path `stopped_by` "
+            f"is the only channel to the user, so they are told the scan "
+            f"stopped early and never that waiting fixes it."
+        )

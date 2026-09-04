@@ -1,5 +1,26 @@
 # Applied Detailed Timeline
 
+> **Scope, added 2026-09-04 — this file is a historical record, frozen at
+> 2026-03-05. Nothing below describes the system as it runs today.**
+>
+> It records the desktop-era build: a SwiftUI macOS app over a local FastAPI
+> backend over SQLite. That app was de-scoped on 2026-08-12 and deleted.
+> Applied is web-only now — a Next.js app on Vercel over a FastAPI serverless
+> function over Supabase Postgres, with no local process and no SQLite in the
+> deployed path. The current code-level map is
+> [`ARCHITECTURE.md`](ARCHITECTURE.md); the deployment-level view is
+> [`WEB_ARCHITECTURE.md`](WEB_ARCHITECTURE.md).
+>
+> The phase history is kept rather than deleted because it is the only record
+> of what changed and why. Read every metric, model path, issue number and
+> open item in it as true on the date printed beside it and not re-measured
+> since. The per-cycle measured ML results are in
+> [`ML_EXECUTION_TRACKER.md`](ML_EXECUTION_TRACKER.md), whose last entry is
+> Cycle N (2026-08-11); the operator loop that superseded the priorities
+> listed here is
+> [`ML_WEEKLY_OPERATIONS.md`](ML_WEEKLY_OPERATIONS.md) plus
+> [`ML_MONITORING_RUNBOOK.md`](ML_MONITORING_RUNBOOK.md).
+
 As of **March 5, 2026**.
 
 This is the continuity document for product and ML behavior. It records what changed, why it changed, what was verified, and what remains open.
@@ -10,7 +31,7 @@ This is the continuity document for product and ML behavior. It records what cha
 - Classifier quality depended on interactions between rules, embeddings, SetFit, and data ingestion; isolated notes were insufficient.
 - Regressions were often caused by good-intention changes without a durable historical record of rationale.
 
-## Current Snapshot (March 5, 2026)
+## Snapshot as of 2026-03-05
 
 - Architecture remains local-first: SwiftUI macOS app + local FastAPI backend + SQLite.
 - Classification stack remains hybrid: `rules -> embeddings -> SetFit -> fallback/needs_review`.
@@ -109,6 +130,9 @@ Impact:
 
 What changed:
 - Added project continuity docs (`timeline.md`, `NEXT_STEPS.md`) and mock seed dataset.
+  (`docs/NEXT_STEPS.md` was deleted on 2026-09-04 — it was a to-do list last
+  updated 2026-03-05, superseded by `docs/ML_WEEKLY_OPERATIONS.md` and
+  `docs/ML_MONITORING_RUNBOOK.md`. The phase above is recorded as it happened.)
 
 Impact:
 - Sessions could resume with lower context-loss risk.
@@ -398,7 +422,8 @@ Impact:
 ## Resume Checklist
 
 1. Read this file first.
-2. Read `docs/ML_STRATEGY.md` and `docs/NEXT_STEPS.md`.
+2. Read `docs/ML_STRATEGY.md`, then `docs/ML_WEEKLY_OPERATIONS.md` and
+   `docs/ML_MONITORING_RUNBOOK.md` for the current operator loop.
 3. Run evaluator locally:
    - `cd backend`
    - `.venv311/bin/python -m jobtracker.scripts.evaluate_classifier --mode rules --dataset data/evaluation/classifier_eval_v1.jsonl --baseline data/evaluation/baseline_rules_v1.json`

@@ -168,7 +168,7 @@ That comparison is now a measurement rather than a citation. `scripts/cascade_ga
 
 What the v3 set is, exactly, from `classifier_eval_v3_spec.json` and the dataset itself: **96 examples, 12 per label across 8 labels**, grouped as 65 core-positive, 17 edge-noise, 8 historical-miss and 6 core-negative, with confusion-pair tagging. The rows carry `subject`, `body_text`, `label`, `sender_email`, `scenario_group` and `confusion_pair` — and **no provenance field**, so the dataset does not record how many examples came from a real inbox versus a generator. That is a real limit on how far 0.9791 generalizes, and 96 examples is a small sample under any reading.
 
-### The 16,780-message adversarial corpus
+### The 18,200-message adversarial corpus
 
 The answer to the paragraph above. `backend/tests/corpus_independent/` invents **18,200 messages
 across 39 families over 8,500 companies**, every employer invented — six of those
@@ -223,8 +223,8 @@ not partly graded by the person who set the exam.
 | Updates held for a person because the classifier was unsure | 360 |
 | Mail about a real application that reached nothing | **0 lost**, 0 dropped |
 
-**No message has ever landed on the wrong card.** Zero merges, zero misrouted updates over 16,780
-messages and 9,177 cards — the half that could destroy a record, because a rejection filed onto a
+**No message has ever landed on the wrong card.** Zero merges, zero misrouted updates over 18,200
+messages and 9,908 cards — the half that could destroy a record, because a rejection filed onto a
 sibling application settles it terminally and `advance_application_status` will never let it leave.
 That claim survived the corpus growing to include applications that share one Gmail thread: real
 applicant tracking systems send every acknowledgement for an employer under one subject from one
@@ -256,13 +256,23 @@ never once caught it being *wrong*, so every mistake it made it made confidently
 as a fact about their own job search. Two thirds of them now land in the queue instead, because the
 classifier stopped scoring quoted history and a reply's copied subject as the message's own words.
 
-The remaining 100 have a known cause and a known fix whose cost is not yet acceptable:
-[#451](https://github.com/yadava5/applied/issues/451). A *reference* to an application ties with a
-*report* about one, and the tie breaks on enum declaration order. Demoting the reference pattern
-takes this figure to **0**, the dropped count to 0 and misrouted updates to 0 while leaving correctly
-auto-filed verdicts at exactly 12,256 — and it also drops a real rejection from the owner's own
-mailbox below the review floor, from queued to lost. One real message outranks several hundred
-invented ones, so it is filed rather than shipped.
+**That fix shipped, as [#451](https://github.com/yadava5/applied/issues/451)** — this paragraph used
+to describe it as filed-not-shipped, three lines under a table already reporting the result. A
+*reference* to an application tied with a *report* about one, and the tie broke on enum declaration
+order. Two changes in one commit: the reference pattern demoted from `strong` to `weak` for
+`applied`, and ties broken by what a category **claims**, a report of a later stage outranking an
+assertion that an application merely exists.
+
+**Zero is not "eliminated", and the difference is measurable.** At the two other seeds the corpus
+re-samples, the same count reads 0 and 1. The pinned value is this seed's, not a proof that no
+wording can still reach the auto-file gate wrongly.
+
+**It was not free, and the price is the part worth reading.** 107 messages left the auto-filed
+bucket: the wrong ones, and 35 *correct* ones that now wait in the review queue instead of arriving
+on the board by themselves. 104 applications moved from a card the product guessed at to a question
+it asks. Nothing became unreachable — messages lost did not move, and held updates rose from 631 to
+685. A product whose pitch is that it can be trusted with a job search should prefer asking to
+guessing, so that trade was taken deliberately.
 
 The last row is the one that stayed bad longest. Until 2026-08-22 the replay ran only the rollup and never
 the review path, so "held for a person to settle" and "vanished entirely" produced identical scores —
@@ -298,26 +308,33 @@ Every defect below is pinned at its measured size rather than excluded, because 
 asserts only what already passes is a check that cannot fail — and this repository has a ledger of
 those. When one is fixed its number moves and the gate has to say so:
 
-- **`quoted-history`, 200 of 200.** Every follow-up that quotes its own confirmation reads as
+- **`quoted-history`, 200 of 400.** Half of the follow-ups that quote their own confirmation read as
   `applied`, so an interview invite never advances the card it belongs to. The widest of the three
   and the mechanism behind the next one.
-- **`rescinded-offer`, 0 wrong and 260 lost** ([#417](https://github.com/yadava5/applied/issues/417)).
-  It measured 164 of 260 confidently wrong until the classifier stopped scoring quoted history, and
-  the board no longer shows an offer the person does not have. It is not yet right: all 260 now
-  abstain below the review floor, which means they reach no screen at all. That is a better failure
-  and still a failure, and it is half of #447.
-- **`hostile-zero-width`, 100 of 100** ([#424](https://github.com/yadava5/applied/issues/424) is
+- **`rescinded-offer`, 0 wrong and 260 held** ([#417](https://github.com/yadava5/applied/issues/417)).
+  It measured 164 of 260 confidently wrong until the classifier stopped scoring quoted history. It is
+  not yet right, and this bullet used to describe the wrong failure: the withdrawals do not vanish,
+  they **land in the review queue**. The offer files a card at `offered`, the withdrawal that revokes
+  it scores `other` at 0.50 — nothing in the rejection patterns matches "we must rescind the offer" —
+  and until the user answers, the board shows an offer they no longer have. The card is ahead of
+  their life. A known, open defect, pinned so a fix moves it, and half of #447.
+- **`hostile-zero-width`, 70 to 83 of 100** ([#424](https://github.com/yadava5/applied/issues/424) is
   the sender-name half). A zero-width space inside "moving" defeats the rejection pattern while
   rendering identically to the eye.
 
 **Re-seeded, three times.** The seed varies which company, role, sender and wording every case
 draws; it never varies the family sizes or the ground truth, so a re-seed is a different sample of
 the same population rather than a different question. `quoted-history` is 200 of 400 at all three
-seeds, `hostile-zero-width` 100 of 100 at all three, truncation wrong 0 times at all three, and
-`correct` is exactly 8,930 at all three — the errors are structural. The one number that moves is
-`rescinded-offer`, at 164, 171 and 170, because which withdrawal wording a case draws decides
-whether the quoted offer or the withdrawal reaches the classifier first. That is asserted as a band
-rather than a point.
+seeds and truncation is wrong 0 times at all three, so those errors are structural.
+
+**Two of the figures this paragraph used to give were a generation out of date, and the corrections
+run in opposite directions.** `hostile-zero-width` was an exact 100 of 100 while every job title in
+the corpus was short; with realistic titles drawn it measures 72, 72 and 81, asserted as a band of
+70 to 83 — the attack still lands, but how many messages it lands on now depends on the title each
+case drew. `rescinded-offer` moved the other way: it was a band of 164, 171 and 170, and is now
+exactly **0 wrong** at every seed, with all 260 held for review instead. `correct` is no longer
+pinned to a point at all; the re-seed test asserts it stays within a tolerance of the recorded
+figure, because a long title can push a verdict past a bounded window at one seed and not another.
 
 The seed did nothing at all until 2026-08-22: `_Builder` constructed a `random.Random` and never
 drew from it, so three seeds produced one byte-identical corpus and "we ran it three times" would
@@ -511,7 +528,7 @@ page you can show is wrong, and security findings are genuinely wanted: email th
 | [Privacy](https://getapplied.vercel.app/privacy) | What Applied reads, what it stores, where it runs, how to delete it — each claim cited to the file that implements it |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System architecture and component boundaries |
 | [`docs/WEB_ARCHITECTURE.md`](docs/WEB_ARCHITECTURE.md) | Deployment modes, cloud auth flow, credential storage |
-| [`docs/API_SPEC.md`](docs/API_SPEC.md) | Backend REST contract — auth, the 28-route table, and the shapes worth stating in prose. The machine-checked authority is `apps/web/lib/api/schema.d.ts`, generated from the app and gated by `e2e-ci.yml` |
+| [`docs/API_SPEC.md`](docs/API_SPEC.md) | Backend REST contract — auth, the 29-route table, and the shapes worth stating in prose. The machine-checked authority is `apps/web/lib/api/schema.d.ts`, generated from the app and gated by `e2e-ci.yml` |
 | [`docs/ML_STRATEGY.md`](docs/ML_STRATEGY.md) | Classifier behaviour, training lifecycle, metadata contract |
 | [`docs/ML_EXECUTION_TRACKER.md`](docs/ML_EXECUTION_TRACKER.md) | Every ML cycle with its measured results — the source for the cascade's 0.9583 |
 | [`docs/ML_PROMOTION_POLICY.md`](docs/ML_PROMOTION_POLICY.md) | What a learned layer must beat before it serves real mail, and what puts it back |
@@ -728,7 +745,7 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 
 ### Testing
 
-**2939 tests collected, 0 skipped.** These figures were recorded on 2026-09-03 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. `--record` refuses to write at all unless that run was whole — Docker reachable, nothing skipped, suite green — because skipped tests are still *collected*, so a recording taken without the Postgres extras used to publish "0 skipped" while five modules sat out (#351). The artifact names the interpreter that ran the suite rather than the one that ran the script; those differ here, and a Python 3.14 run is exactly what produced the wrong coverage figures corrected below. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 1634 `test_*` functions across 139 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 2939 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
+**2939 tests collected, 0 skipped.** These figures were recorded on 2026-09-03 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. `--record` refuses to write at all unless that run was whole — Docker reachable, nothing skipped, suite green — because skipped tests are still *collected*, so a recording taken without the Postgres extras used to publish "0 skipped" while five modules sat out (#351). The artifact names the interpreter that ran the suite rather than the one that ran the script; those differ here, and a Python 3.14 run is exactly what produced the wrong coverage figures corrected below. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 1659 `test_*` functions across 141 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 2939 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
 
 The Postgres row-level-security module is the only thing in the repo that can demonstrate the isolation the product claims, and **22 tests** now exercise it. It has not always run: its tests waited on a database URL no workflow set, and a skip is green, so the 10 it held on 2026-08-02 had **never executed anywhere**. Two fixes: `test_rls_postgres.py` now starts its own `postgres:16` via testcontainers when `JOBTRACKER_TEST_PG_ADMIN_URL` is absent and Docker is available, and the `rls-postgres` CI job supplies its own service container. That job then parses the JUnit XML and **fails the build if the suite reports zero tests or any skip**, because a skipped security test and a passing one produce the same green tick.
 
@@ -747,7 +764,7 @@ This paragraph read "54% overall, 61% excluding one-off scripts … 2,163 statem
 | **Web e2e** | Playwright | 20 spec files — auth, beta, connect, dashboard, demo, file-application, import, landing, navigation, production, sample-inbox, scan-correct, session-edge, settings, shell, smoke |
 | **Web e2e, production build** | Playwright vs `next build` + `next start` | the `production` spec: every route driven against a real production build, failing on React hydration errors, uncaught exceptions and 5xx |
 | **Web static** | `tsc --noEmit`, ESLint, `next build` | every push touching `apps/web/**` |
-| **README claims** | `scripts/readme_facts.py --check` | the 61 **registered** facts, asserted at 186 sites across 20 files; no path filter. 49 are recomputed from source on every run; 12 need a pytest + coverage run and are replayed from `docs/readme-facts.json`. A number that is not registered is not checked — see the note under Tech Stack |
+| **README claims** | `scripts/readme_facts.py --check` | every **registered** fact, at every claim site, across every file that holds one; no path filter. Most are recomputed from source on each run; the ones needing a pytest + coverage run are replayed from `docs/readme-facts.json`. The totals used to be written out here and in the workflow table below, in two different and both-wrong versions — a hand-maintained count of a checker is the one number the checker cannot check. A number that is not registered is not checked — see the note under Tech Stack |
 
 Two lint gates run **advisory**, on purpose. `ruff check .` reported 379 findings on its first CI run (2026-08-07) and `mypy .` under `strict = true` reported 879 across 65 of 92 files. Both were configured in `pyproject.toml` from the start and had never actually run. They print their count on every build and flip to blocking when they reach zero; a gate that is red from birth gets ignored or deleted, and neither should be silenced with `--fix` or blanket `# type: ignore`.
 
@@ -863,7 +880,7 @@ applied/
 │   │   └── scripts/         # evaluator, latency benchmark, ML-ops tooling
 │   ├── alembic/versions/    # 23 revisions incl. the RLS + InitPlan-hoist migrations
 │   ├── data/evaluation/     # eval sets, committed baselines, benchmark + monitoring history
-│   └── tests/               # 139 modules
+│   └── tests/               # 141 modules
 │
 ├── ml/                      # the classifier as a deployable service
 │   ├── browser/             # ONNX export + the in-browser site (Transformers.js)
@@ -902,7 +919,7 @@ Every number above terminates in something you can open.
 | `.githooks/pre-commit` (local, opt-in) | The same scan over the *staged* diff, before the commit exists. Not a workflow — git does not enable a hooks path for you, so each clone runs `git config core.hooksPath .githooks` once. CI is the net that always runs; this one exists because a credential that reaches GitHub is published even if the next commit deletes it |
 | `ml-monitoring-weekly.yml` | Scheduled drift/confidence report, artifacts uploaded, alert issue opened on threshold breach |
 | `scorecard.yml`, `booklet.yml` | Supply-chain grading; the system-card booklet build |
-| `readme-facts.yml` | `python3 scripts/readme_facts.py --check` — the 55 registered facts at their 166 claim sites, 43 of them recomputed from the source that defines them and 12 replayed from `docs/readme-facts.json` because they need a full pytest + coverage run. Unfiltered by path, because a claim here can be invalidated from anywhere; and a claim site whose sentence was reworded so the checker can no longer find it fails the build rather than passing quietly. **What it does not do is find numbers nobody registered** — the four wrong dependency versions under Tech Stack sat on this page through a green `--check` |
+| `readme-facts.yml` | `python3 scripts/readme_facts.py --check` — every registered fact at every claim site — recomputed from the source that defines it, except those replayed from `docs/readme-facts.json` because they need a full pytest + coverage run. `--check` prints the current totals; they are not restated here, because a hardcoded count of the checker is exactly the kind of number it cannot police. Unfiltered by path, because a claim here can be invalidated from anywhere; and a claim site whose sentence was reworded so the checker can no longer find it fails the build rather than passing quietly. **What it does not do is find numbers nobody registered** — the four wrong dependency versions under Tech Stack sat on this page through a green `--check` |
 
 **Committed evaluation artifacts** — `backend/data/evaluation/`:
 

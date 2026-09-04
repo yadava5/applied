@@ -190,6 +190,28 @@ def tracked(*pathspecs: str) -> list[str]:
     return sorted(p for p in out.split("\0") if p)
 
 
+def untracked_test_modules() -> list[str]:
+    """`test_*.py` files on disk that git does not yet know about.
+
+    THE FALSE GREEN THIS CLOSES, observed 2026-09-04. Every count in this file
+    comes from `git ls-files`, which is right for CI — CI checks out a commit,
+    so what is committed is what exists. Locally it is a trap: a new test module
+    that has been written but not `git add`ed is invisible here, so `--check`
+    prints "all agree" while `testModules` is already one behind. Stage the
+    file and the same command reds. The author's reasonable conclusion is that
+    the checker is flaky.
+
+    Not fatal, and deliberately so: an untracked file is not yet a claim about
+    anything, and failing on one would red every work-in-progress tree. Printed,
+    because a silent disagreement between what a command sees and what CI will
+    see is the exact shape this file spends its comments warning about.
+    """
+
+    tracked = set(tracked_in_dir("backend/tests"))
+    on_disk = {p.name for p in (REPO / "backend" / "tests").glob("test_*.py")}
+    return sorted(on_disk - tracked)
+
+
 def tracked_in_dir(rel: str) -> list[str]:
     """Tracked file names DIRECTLY inside `rel` — one level, like `iterdir()`.
 
@@ -509,6 +531,11 @@ LANDING_CASCADE = "apps/web/components/landing/Cascade.tsx"
 LANDING_SIGNATURE = "apps/web/components/landing/SignatureEnding.tsx"
 WEB_SAMPLE_INBOX = "apps/web/components/demo/SampleInbox.tsx"
 WEB_IMPORT_MAIL = "apps/web/components/import/ImportMail.tsx"
+# The browser demo's own README. Registered 2026-09-04: it said "the 201 rules"
+# while every other surface said 218, INCLUDING `app.js` in the same directory,
+# which is already a claim site. Corrected in one file and not the other is the
+# exact failure this checker exists to prevent, so the sentence is now a site.
+BROWSER_SITE_README = "ml/browser/site/README.md"
 BROWSER_DEMO_JS = "ml/browser/site/app.js"
 BOOKLET_CONTENT = "booklet/src/content.ts"
 
@@ -965,6 +992,10 @@ FACTS: dict[str, dict] = {
         "sites": [
             r"invents \*\*([\d,]+) messages\n?",
             r"Correct \| \*\*[\d,]+ of ([\d,]+) —",
+            # Both said 16,780 while this fact read 18,200 — unregistered, so
+            # nothing noticed for two family additions (#626, #641).
+            r"### The ([\d,]+)-message adversarial corpus",
+            r"zero misrouted updates over ([\d,]+)\s+messages",
             # printed in the System Card booklet, page 22
             {"re": r"([\d,]+) generated messages across", "file": BOOKLET_CONTENT},
             {
@@ -1110,6 +1141,10 @@ FACTS: dict[str, dict] = {
             # merges stays a literal 0 on purpose: it is the failure that destroys a
             # record silently, and if it ever moves this pattern SHOULD stop matching.
             r"misrouted review \| \*\*([\d,]+) / \d+ / 0 / \d+ / 0\*\*",
+            # Said 9,177 while this fact read 9,908, in the sentence that makes
+            # the strongest claim on the page ("No message has ever landed on
+            # the wrong card").
+            r"messages and ([\d,]+) cards",
             {
                 "re": r"card: ([\d,]+) cards, 0 merges",
                 "file": BOOKLET_CONTENT,
@@ -1164,6 +1199,7 @@ FACTS: dict[str, dict] = {
             r"— (\d+) regex patterns and no model —",
             r"\*\*The rules engine\.\*\* (\d+) regex patterns across",
             r"rules\.py \((\d+) patterns\)",
+            {"re": r"the (\d+) rules and the tokenizer", "file": BROWSER_SITE_README},
             {"re": r"Same (\d+) patterns,", "file": "apps/web/lib/demo/rulesLayer.ts"},
             {"re": r"same (\d+) regexes,", "file": "ml/browser/site/app.js"},
         ],
@@ -2717,6 +2753,16 @@ def run(mode: str) -> None:
         f"  ✓ {n} facts, asserted at {sites} sites across {len(files)} file(s), "
         f"all agree with the code ({len(INVARIANTS)} invariants hold)."
     )
+    strays = untracked_test_modules()
+    if strays:
+        print(
+            f"  ! {len(strays)} test module(s) on disk are UNTRACKED and were "
+            f"not counted: {', '.join(strays)}.\n"
+            f"    Every count here comes from `git ls-files`, so staging these "
+            f"will move `testModules`/`testFunctions` and CI will red on a tree "
+            f"this command just called clean. Run `git add` first, then "
+            f"`--write`."
+        )
     # Never fatal. The recorded figures legitimately describe an earlier tree —
     # that is what "recorded" means — and a gate here would be red every other
     # day and deleted within the week. Printing it is what makes the drift

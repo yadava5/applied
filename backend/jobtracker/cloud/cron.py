@@ -166,7 +166,7 @@ CRON_SECRET_HEADER = "x-vercel-cron-secret"
 
 # One user's sync may not hold the batch hostage. Ten seconds is issue #23's
 # figure and it is kept, but the trade-off is real and is not hidden: a FIRST
-# sync scans up to ``_SYNC_DEFAULT_SCAN_TARGET`` (750) messages against a 30 s
+# sync scans up to ``_SYNC_DEFAULT_SCAN_TARGET`` (297, was 750) messages against a 30 s
 # scan budget, so it can exceed this and be cancelled — that run persists no
 # cursor and its error lands in ``errors[]`` where it is visible. An
 # incremental delta on an established cursor is a couple of Gmail calls and
