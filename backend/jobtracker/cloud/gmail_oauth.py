@@ -378,6 +378,40 @@ class SyncAlreadyRunning(HTTPException):
         )
 
 
+class GmailRateLimited(HTTPException):
+    """429: Gmail deferred this read. The same cursor will work shortly.
+
+    NOT 500, which is what this used to be. On 2026-09-04 a live scan on the
+    owner's own mailbox took ``HttpError 403 ... 'rateLimitExceeded'`` from
+    ``messages.list`` and the user was told "We couldn't finish reading your
+    mail" — a sentence that describes a broken server, for a mailbox that was
+    working perfectly and a condition that clears on its own within a minute.
+
+    NOT 503 EITHER, and that distinction is load-bearing:
+    ``apps/web/lib/gmail/server.ts`` maps 503 onto "Gmail is not configured on
+    this deployment", which is an operator problem the reader can do nothing
+    about. 429 is the honest status and the only one that carries the
+    information the client needs — ``Retry-After`` — so the mine can wait and
+    resume from its existing ``page_token`` instead of restarting.
+
+    Why the default is a full minute: the limit that fires here is Gmail's
+    **units per minute per user** (6,000 for this project). A per-minute bucket
+    refills on a minute boundary, so a shorter wait just spends another request
+    to be refused again — and that second refusal costs the very budget the
+    wait is supposed to be accumulating.
+    """
+
+    def __init__(self, retry_after_seconds: int = 60) -> None:
+        super().__init__(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                "Gmail is rate-limiting this mailbox. The scan can continue "
+                "from where it stopped in a moment."
+            ),
+            headers={"Retry-After": str(retry_after_seconds)},
+        )
+
+
 class SyncRequest(BaseModel):
     """Sync the classified pipeline into the user's Application rows.
 
@@ -433,6 +467,7 @@ STOPPED_DEADLINE = "deadline"  # ran out of the serverless time budget
 STOPPED_PAGE_LIMIT = "page_limit"  # hit the list-call safety rail
 STOPPED_DISCONNECTED = "disconnected"  # Gmail stopped answering mid-scan
 STOPPED_RELAY = "relay"  # not our scan — the client sent the items
+STOPPED_RATE_LIMITED = "rate_limited"  # Gmail deferred; the window is partial
 
 
 class SyncResponse(BaseModel):
@@ -1653,7 +1688,11 @@ async def gmail_inbox(
     # start path for the OAuth endpoints (matches hybrid.py's cloud discipline).
     from jobtracker.classifier import get_classifier
     from jobtracker.cloud import pipeline
-    from jobtracker.cloud.gmail_client import build_gmail_query, fetch_message_page
+    from jobtracker.cloud.gmail_client import (
+        build_gmail_query,
+        fetch_message_page,
+        is_retryable_gmail_error,
+    )
 
     range_months = _parse_range_months(range)
     mail_scope = _parse_scope(scope)
@@ -1680,9 +1719,24 @@ async def gmail_inbox(
         _apply_inbox_cache_headers(response, etag)
         return cached_response
 
-    page = await fetch_message_page(
-        user_id, query=query, page_size=effective_page, page_token=page_token
-    )
+    try:
+        page = await fetch_message_page(
+            user_id, query=query, page_size=effective_page, page_token=page_token
+        )
+    except Exception as exc:  # noqa: BLE001 — re-raised unless Gmail deferred
+        # `fetch_message_page` has already retried this internally
+        # (`_RETRY_ATTEMPTS`, Google's backoff). Reaching here means the
+        # refusal outlived a bounded retry, which a 60 s function cannot wait
+        # out — so hand it back as something the CLIENT can wait out, holding
+        # the cursor it already has.
+        if not is_retryable_gmail_error(exc):
+            raise
+        logger.warning(
+            "Gmail deferred an inbox page for user_id=%s beyond retry; "
+            "answering 429 so the mine can resume from its cursor.",
+            user_id,
+        )
+        raise GmailRateLimited() from exc
     if page is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -2040,7 +2094,10 @@ async def _full_scan(
     STARTED so no page can begin inside the budget and finish outside it.
     """
 
-    from jobtracker.cloud.gmail_client import fetch_message_page
+    from jobtracker.cloud.gmail_client import (
+        fetch_message_page,
+        is_retryable_gmail_error,
+    )
 
     if deadline is None:
         deadline = time.monotonic() + _SYNC_TIME_BUDGET_SECONDS
@@ -2067,12 +2124,30 @@ async def _full_scan(
                 scanned,
             )
             break
-        page = await fetch_message_page(
-            user_id,
-            query=query,
-            page_size=min(settings.gmail_fetch_page_size, remaining),
-            page_token=page_token,
-        )
+        try:
+            page = await fetch_message_page(
+                user_id,
+                query=query,
+                page_size=min(settings.gmail_fetch_page_size, remaining),
+                page_token=page_token,
+            )
+        except Exception as exc:  # noqa: BLE001 — re-raised unless Gmail deferred
+            # A deferred page must not sink a scan that has already read
+            # several. This loop's whole contract is that an incomplete window
+            # is reported as incomplete rather than claimed as whole — the
+            # same treatment `STOPPED_DEADLINE` and `STOPPED_DISCONNECTED`
+            # already get. Raising here would instead discard every page
+            # collected so far and 500 the sync.
+            if not is_retryable_gmail_error(exc):
+                raise
+            logger.warning(
+                "Gmail full scan for user_id=%s stopped on a rate limit after "
+                "%s message(s); the window is not fully covered.",
+                user_id,
+                scanned,
+            )
+            stopped_by = STOPPED_RATE_LIMITED
+            break
         if page is None:
             if page_index == 0:
                 raise HTTPException(

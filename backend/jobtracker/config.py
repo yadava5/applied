@@ -537,19 +537,36 @@ class Settings(BaseSettings):
         default=100,
         description=(
             "Sub-requests per Gmail batch HTTP request when fetching message "
-            "metadata (Subject/From/Date + snippet). Gmail caps a batch at "
-            "100. A 100-message metadata batch costs ~500 quota units, so the "
-            "batch pace (below) keeps the per-user ~250 units/sec quota "
-            "respected. Env: JOBTRACKER_GMAIL_BATCH_SIZE."
+            "bodies (Subject/From/Date + snippet + body text). Gmail caps a "
+            "batch at 100 and recommends no more than 50. Further clamped by "
+            "`_FULL_BATCH_SIZE` (25) in `cloud/gmail_client.py`, which is the "
+            "value that actually applies. "
+            "NOTE, corrected 2026-09-04: this text used to say a 100-message "
+            "batch costs ~500 units and that the pace below respects a "
+            "per-user ~250 units/sec quota. BOTH numbers were stale. "
+            "`messages.get` costs 20 units (changed 2026-05-01), so 100 of "
+            "them cost 2,000; and the limit is 6,000 units per MINUTE per "
+            "user, with no per-second limit published at all. Batching does "
+            "not help: Gmail counts n batched sub-requests as n requests. "
+            "Env: JOBTRACKER_GMAIL_BATCH_SIZE."
         ),
     )
     gmail_batch_pause_seconds: float = Field(
         default=0.4,
         description=(
-            "Seconds to sleep between successive Gmail metadata batches to "
-            "stay under the per-user quota (~250 units/sec; a full 100-message "
-            "batch ≈ 500 units). Set to 0 to disable pacing. Env: "
-            "JOBTRACKER_GMAIL_BATCH_PAUSE_SECONDS."
+            "Seconds to sleep between successive Gmail batches. "
+            "ITS ORIGINAL JUSTIFICATION WAS WRONG and is recorded here rather "
+            "than quietly replaced: it said this paced against a per-user "
+            "~250 units/sec limit with a 100-message batch costing ~500 units. "
+            "Gmail publishes no per-second limit; the limit is 6,000 units per "
+            "minute per user, and a 25-message batch of `messages.get` costs "
+            "500 units on its own. Pacing against a per-second figure cannot "
+            "bound a per-minute bucket, which is how a live scan came to spend "
+            "two thirds of a minute's quota in one invocation and take a 403. "
+            "This pause still earns its keep — it spreads a burst rather than "
+            "delivering it instantaneously — but the real bound is the page "
+            "size and the caller's retry, not this number. Set to 0 to "
+            "disable. Env: JOBTRACKER_GMAIL_BATCH_PAUSE_SECONDS."
         ),
     )
     gmail_followup_stale_days: int = Field(

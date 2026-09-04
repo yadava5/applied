@@ -71,6 +71,26 @@ export type GmailFailure =
   | { kind: "auth"; status: number }
   /** Backend says Gmail isn't configured on this deployment (503). */
   | { kind: "unavailable" }
+  /**
+   * The backend deferred this call and said when to come back (429).
+   *
+   * Its own kind, not folded into `backend`, because it is the one failure
+   * here that is NOT a fault: the mailbox is healthy, the request was valid,
+   * and the only thing wrong is timing. Collapsed into `backend` it renders as
+   * "mail backend responded 429" under a red SCAN FAILED heading, which tells
+   * a user whose account is working perfectly that the server is broken.
+   *
+   * Two backend conditions arrive here and both mean "wait, then resume":
+   * `GmailRateLimited` (Gmail's per-user quota deferred the read) and
+   * `SyncAlreadyRunning` (this mailbox already has a sync in flight).
+   *
+   * `retryAfterSeconds` is read from the `Retry-After` header, falling back to
+   * 60 — the per-minute quota bucket's own period, and the safe direction to
+   * err in, since a wait that is too short spends another request to be
+   * refused again and that refusal costs the very budget the wait is
+   * accumulating.
+   */
+  | { kind: "rate_limited"; retryAfterSeconds: number }
   /** Any other non-2xx or a network error — treat as transient. */
   | { kind: "backend"; message: string; status?: number };
 
@@ -135,8 +155,13 @@ async function sessionToken(): Promise<string | null> {
 /**
  * Map a non-2xx backend response to a labelled failure. 401/403 are auth
  * problems (the JWT was rejected); 503 is the honest "not configured on this
- * deploy" signal the routers emit; everything else is a transient backend
- * error the user can retry.
+ * deploy" signal the routers emit; 429 is "valid request, wrong moment" and
+ * carries the wait; everything else is a transient backend error the user can
+ * retry.
+ *
+ * TAKES THE HEADERS, NOT JUST THE STATUS, because a 429 whose `Retry-After` is
+ * discarded is a 429 the caller has to guess about — and a guessed wait
+ * against a per-minute quota bucket is how a retry becomes a second refusal.
  *
  * 409 IS DELIBERATELY NOT HANDLED HERE, because it does not mean one thing
  * across these endpoints: `/gmail/inbox` and `/gmail/sync` answer 409 for "this
@@ -146,10 +171,29 @@ async function sessionToken(): Promise<string | null> {
  * `getGmailAuthorizeUrl`. A 409 branch in here would have quietly relabelled a
  * not-connected pipeline read as "the beta is full".
  */
-function classifyBadResponse(status: number): GmailFailure {
+function classifyBadResponse(status: number, headers?: Headers): GmailFailure {
   if (status === 401 || status === 403) return { kind: "auth", status };
   if (status === 503) return { kind: "unavailable" };
+  if (status === 429) {
+    return { kind: "rate_limited", retryAfterSeconds: retryAfter(headers) };
+  }
   return { kind: "backend", message: `Backend responded ${status}`, status };
+}
+
+/** `Retry-After` in seconds, defaulting to one quota-bucket period.
+ *
+ * Only the delta-seconds form is read. The HTTP-date form is legal and this
+ * backend never sends it; parsing a date here would add a clock-skew failure
+ * mode to a path whose entire job is to pick a safe wait.
+ */
+const RETRY_AFTER_FALLBACK_SECONDS = 60;
+
+function retryAfter(headers?: Headers): number {
+  const raw = headers?.get("Retry-After");
+  const parsed = raw === null || raw === undefined ? NaN : Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return RETRY_AFTER_FALLBACK_SECONDS;
+  // Bounded so a hostile or buggy header cannot park the UI for an hour.
+  return Math.min(Math.ceil(parsed), 300);
 }
 
 function networkFailure(err: unknown): GmailFailure {
@@ -184,7 +228,7 @@ export async function getGmailStatus(
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
       cache: "no-store",
     });
-    if (!res.ok) return classifyBadResponse(res.status);
+    if (!res.ok) return classifyBadResponse(res.status, res.headers);
     return { kind: "ok", status: (await res.json()) as GmailStatus };
   } catch (err) {
     return networkFailure(err);
@@ -239,7 +283,7 @@ export async function getGmailAuthorizeUrl(
     // mint a consent URL. Status only — never the body — so editing the
     // backend's message cannot change what the UI does.
     if (res.status === 409) return { kind: "at_capacity" };
-    if (!res.ok) return classifyBadResponse(res.status);
+    if (!res.ok) return classifyBadResponse(res.status, res.headers);
     const data = (await res.json()) as { authorization_url?: string };
     if (!data.authorization_url) {
       return {
@@ -294,7 +338,7 @@ export async function fetchGmailInboxPage(
       cache: "no-store",
     });
     if (res.status === 409) return { kind: "not_connected" };
-    if (!res.ok) return classifyBadResponse(res.status);
+    if (!res.ok) return classifyBadResponse(res.status, res.headers);
     return { kind: "ok", page: (await res.json()) as InboxPage, response: res };
   } catch (err) {
     return networkFailure(err);
@@ -325,7 +369,7 @@ export async function analyzeGmailPipeline(
       body: JSON.stringify({ items }),
       cache: "no-store",
     });
-    if (!res.ok) return classifyBadResponse(res.status);
+    if (!res.ok) return classifyBadResponse(res.status, res.headers);
     return { kind: "ok", analysis: (await res.json()) as PipelineAnalysis };
   } catch (err) {
     return networkFailure(err);
@@ -358,7 +402,7 @@ export async function syncGmailPipeline(
       cache: "no-store",
     });
     if (res.status === 409) return { kind: "not_connected" };
-    if (!res.ok) return classifyBadResponse(res.status);
+    if (!res.ok) return classifyBadResponse(res.status, res.headers);
     return { kind: "ok", result: (await res.json()) as GmailSyncOutcome };
   } catch (err) {
     return networkFailure(err);

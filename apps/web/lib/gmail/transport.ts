@@ -58,6 +58,11 @@ export function toPipelineItems(verdicts: InboxVerdict[]): PipelineItem[] {
 export interface ScanPageResult {
   status: number;
   page: InboxPage | null;
+  /**
+   * Seconds to wait before re-requesting the SAME page, when the backend
+   * deferred this read (429). Absent on every other outcome.
+   */
+  retryAfterSeconds?: number;
 }
 
 export interface ScanFileResult {
@@ -96,6 +101,17 @@ const live: ScanTransport = {
   mode: "live",
   async fetchPage(query, signal) {
     const res = await fetch(`/api/gmail/inbox?${query}`, { cache: "no-store", signal });
+    if (res.status === 429) {
+      // The proxy passes Gmail's deferral through with the wait intact. The
+      // fallback matches the quota bucket's own period; see
+      // `RETRY_AFTER_FALLBACK_SECONDS` in `lib/gmail/server.ts`.
+      const raw = Number(res.headers.get("Retry-After"));
+      return {
+        status: 429,
+        page: null,
+        retryAfterSeconds: Number.isFinite(raw) && raw > 0 ? Math.ceil(raw) : 60,
+      };
+    }
     if (!res.ok) return { status: res.status, page: null };
     return { status: res.status, page: (await res.json()) as InboxPage };
   },

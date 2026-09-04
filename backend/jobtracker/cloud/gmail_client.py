@@ -61,7 +61,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
+import random
 import re
 import time
 import uuid
@@ -164,9 +166,200 @@ _MAX_BODY_CHARS = 4000
 
 # `format="full"` payloads are one to two orders of magnitude larger than
 # metadata ones, so the batch that was right for headers is not right here.
-# Quota is unchanged (messages.get is 5 units at any format); this is purely
-# about how much arrives at once.
+# This bound is about how much arrives at once, not about quota.
+#
+# THE QUOTA SENTENCE THAT USED TO SIT HERE WAS WRONG BY 2026-09-04. It read
+# "Quota is unchanged (messages.get is 5 units at any format)". The parenthesis
+# is now false and the reassurance it carried was never load-bearing:
+#
+# - `messages.get` costs **20** units, not 5. Gmail's release notes list it
+#   among the methods whose cost changed on 2026-05-01.
+# - The claim's true half stays true: cost does NOT vary by `format`. There is
+#   no `format` dimension in the quota table at all, so moving to `full` did
+#   not change the per-call price.
+#
+# What that arithmetic actually means, against a 6,000 units/minute/user
+# ceiling: a mine spends `20 x messages + 5 per list page`, so **300 messages
+# per minute is the whole per-user budget**. A 200-message page is 4,005 units
+# — two thirds of a minute's quota in one invocation, which is why two mines
+# eight seconds apart put the endpoint over the line and into a 403. See
+# `_RETRYABLE_REASONS` below for the production trace.
 _FULL_BATCH_SIZE = 25
+
+
+# =============================================================================
+# Transient refusals: telling Gmail's "later" apart from its "never"
+# =============================================================================
+#
+# Gmail answers an over-quota request with **403**, not 429 — and 403 is also
+# what it answers for a permanently insufficient grant. The two are
+# distinguishable only by the ``reason`` string inside the error body, so a
+# handler that keys on the status code alone must either retry a hopeless
+# request forever or abandon a recoverable one. These sets are that
+# discriminator, and every retry below consults them rather than the status.
+#
+# Not a hypothetical. Production, 2026-09-04, on the owner's own mailbox:
+#
+#     HttpError 403 ... "Quota exceeded for quota metric 'Total Query Cost'
+#     and limit 'Units per minute per user'" ... 'reason': 'rateLimitExceeded'
+#
+# raised from the ``messages.list`` call in :func:`_collect_page` and answered
+# to the user as a 500 "We couldn't finish reading your mail". In the same
+# minute, the batch sub-requests below lost 146 of 200 messages to what was
+# almost certainly the same refusal — the identical condition taking a quieter
+# exit, because the callback recorded only ``type(exception).__name__`` and
+# "HttpError" is what a permanent 404 is called too.
+#
+# An unrecognised reason is deliberately NOT retryable: a 403 we cannot read is
+# far more likely to be a revoked grant than a rate limit, and retrying that
+# burns the budget a real rate limit would need.
+_RETRYABLE_REASONS = frozenset(
+    {
+        "rateLimitExceeded",
+        "userRateLimitExceeded",
+        "backendError",
+        "internalError",
+    }
+)
+
+# Statuses retryable whatever reason came with them (or none did). 403 is
+# absent on purpose — see above, it is decided by reason alone.
+_RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
+
+# How hard to try inside ONE invocation before handing the problem back.
+#
+# Small on purpose. A per-minute quota that is genuinely exhausted is not
+# waited out inside a 60 s function budget, and pretending otherwise trades a
+# fast honest 429 for a slow timeout. The retries here exist to absorb a blip;
+# the caller's ``page_token`` is what absorbs a real outage, because the mine
+# resumes from the same cursor rather than restarting.
+_RETRY_ATTEMPTS = 3
+
+# Google's published ceiling for this is 32-64 s. 8 s is deliberately lower:
+# the whole request lives inside a 60 s serverless budget, and a backoff that
+# can outlast its own function trades a fast honest 429 for a timeout, which is
+# strictly the worse answer to give a waiting user.
+_RETRY_MAX_SECONDS = 8.0
+
+
+def _error_status(exc: BaseException) -> int | None:
+    """The HTTP status on a googleapiclient error, or ``None``.
+
+    Defensive throughout: this runs on the failure path, and an exception
+    raised while inspecting an exception would turn a recoverable condition
+    into a crash — which is the exact shape of the bug it exists to fix.
+    """
+
+    raw = getattr(getattr(exc, "resp", None), "status", None)
+    try:
+        return int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _error_reasons(exc: BaseException) -> frozenset[str]:
+    """Every ``reason`` string Gmail attached to an error.
+
+    Reads ``error_details`` first, then falls back to parsing the raw body.
+    The fallback is not belt-and-braces: ``error_details`` is a
+    googleapiclient convenience that has moved between library versions, and a
+    reason we fail to read is a reason we call permanent — so the cost of
+    missing it is a scan that gives up when it did not have to.
+    """
+
+    reasons: set[str] = set()
+
+    details = getattr(exc, "error_details", None)
+    if isinstance(details, list):
+        for item in details:
+            if isinstance(item, dict) and isinstance(item.get("reason"), str):
+                reasons.add(item["reason"])
+    if reasons:
+        return frozenset(reasons)
+
+    content = getattr(exc, "content", None)
+    if isinstance(content, (bytes, bytearray)):
+        try:
+            content = content.decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001 — a bad body must not raise here
+            content = None
+    if isinstance(content, str) and content:
+        try:
+            body = json.loads(content)
+        except (ValueError, TypeError):
+            body = None
+        if isinstance(body, dict):
+            error = body.get("error")
+            if isinstance(error, dict):
+                for item in error.get("errors") or []:
+                    if isinstance(item, dict) and isinstance(item.get("reason"), str):
+                        reasons.add(item["reason"])
+                if isinstance(error.get("status"), str):
+                    reasons.add(error["status"])
+
+    return frozenset(reasons)
+
+
+def is_retryable_gmail_error(exc: BaseException) -> bool:
+    """True when Gmail is saying "later" rather than "never".
+
+    Public because the router needs the same verdict: an exhausted retry has
+    to leave the endpoint as a 429 the client can act on, not a 500 that tells
+    a user with a perfectly healthy mailbox that the server is broken.
+    """
+
+    if _error_reasons(exc) & _RETRYABLE_REASONS:
+        return True
+    return _error_status(exc) in _RETRYABLE_STATUSES
+
+
+def _retry_delay(attempt: int) -> float:
+    """``min((2^n + jitter), _RETRY_MAX_SECONDS)`` — Google's own formula.
+
+    Copied deliberately rather than improvised, because the shape matters and
+    two plausible variants are wrong here:
+
+    - **The jitter is ADDITIVE on a full ``2^n``**, not multiplicative over
+      ``[0, 2^n]``. Google's guidance is "start retry periods at least one
+      second after the error", and multiplicative jitter has no floor — it
+      routinely produces a few-millisecond first retry, which against a
+      per-minute bucket is not a retry at all, just a second miss. This is the
+      exact flaw in ``googleapiclient``'s own built-in retry
+      (``sleep_time = rand() * 2**retry_num``), and the reason this function
+      exists instead of passing ``num_retries``.
+    - **The jitter is still needed.** Everything sharing a per-user bucket is
+      refused at the same instant, so a deterministic ramp reconverges the
+      callers onto one retry moment and rebuilds the burst that caused the
+      refusal.
+
+    ``random_number_milliseconds`` is redrawn per attempt, per the spec.
+    """
+
+    return min(2**attempt + random.uniform(0, 1.0), _RETRY_MAX_SECONDS)
+
+
+def _execute_with_retry(request: Any, *, what: str) -> Any:
+    """``request.execute()``, retrying only what Gmail said to retry."""
+
+    attempt = 0
+    while True:
+        try:
+            return request.execute()
+        except Exception as exc:  # noqa: BLE001 — re-raised unless retryable
+            if attempt >= _RETRY_ATTEMPTS or not is_retryable_gmail_error(exc):
+                raise
+            delay = _retry_delay(attempt)
+            logger.warning(
+                "Gmail %s deferred (status=%s reason=%s); retry %s/%s in %.2fs",
+                what,
+                _error_status(exc),
+                ",".join(sorted(_error_reasons(exc))) or "-",
+                attempt + 1,
+                _RETRY_ATTEMPTS,
+                delay,
+            )
+            time.sleep(delay)
+            attempt += 1
 
 # The end tag is NOT the literal ``</script>``. HTML5 leaves the
 # script-data-end-tag-name state on whitespace, ``/`` or ``>``, so a browser
@@ -534,23 +727,81 @@ def _batch_fetch_metadata(
     the per-user ~250 units/sec limit.
 
     Returns the ``{message_id: raw_metadata_response}`` map AND the number of
-    requested ids it could not produce one for. Individual failed sub-requests
-    are still dropped (logged by type only) rather than raised — one bad
-    message must not sink the whole page — but they are no longer silent: the
-    count is derived from what came back, not from the callback's exception
-    argument, so an id answered with an empty body counts as lost too.
+    requested ids it could not produce one for. A sub-request Gmail *deferred*
+    is re-sent (see :func:`_send`); one it *refused* is dropped rather than
+    raised, because one bad message must not sink the whole page. The count is
+    derived from what came back, not from the callback's exception argument, so
+    an id answered with an empty body counts as lost too.
+
+    THE LOG LINE NAMES THE STATUS AND REASON, NOT JUST THE CLASS. It used to
+    read ``type(exception).__name__``, which is ``"HttpError"`` for a permanent
+    404 and for a retryable 403 ``rateLimitExceeded`` alike. On 2026-09-04 this
+    path lost 146 of 200 messages in the same minute the sibling
+    ``messages.list`` call raised 403 for exhausted quota, and the logs could
+    not be used to prove the two were the same condition — the drop was
+    recorded, but not diagnosable.
     """
 
     results: dict[str, dict] = {}
+    # What Gmail handed back per sub-request for the round IN FLIGHT. Cleared
+    # at the top of each round so an id that fails once and succeeds on the
+    # re-send does not carry its stale verdict into the retry decision.
+    failures: dict[str, BaseException] = {}
 
     def _on_result(request_id: str, response: Any, exception: Any) -> None:
         if exception is not None:
+            failures[request_id] = exception
             logger.warning(
-                "Gmail metadata sub-request failed: %s", type(exception).__name__
+                "Gmail metadata sub-request failed: %s status=%s reason=%s",
+                type(exception).__name__,
+                _error_status(exception),
+                ",".join(sorted(_error_reasons(exception))) or "-",
             )
             return
         if response is not None:
             results[request_id] = response
+
+    def _send(window: list[str]) -> None:
+        """Send one batch of gets, then re-send only what Gmail deferred.
+
+        The retry is per SUB-REQUEST, not per batch: a window of 25 where two
+        ids were rate-limited re-sends those two, so a partial refusal costs
+        two gets rather than twenty-five — which matters when the thing being
+        conserved is the very quota that caused the refusal.
+        """
+
+        pending = list(window)
+        attempt = 0
+        while pending:
+            failures.clear()
+            batch = service.new_batch_http_request(callback=_on_result)
+            for message_id in pending:
+                batch.add(
+                    service.users()
+                    .messages()
+                    .get(userId="me", id=message_id, format="full"),
+                    request_id=message_id,
+                )
+            batch.execute()
+
+            deferred = [
+                mid for mid, exc in failures.items() if is_retryable_gmail_error(exc)
+            ]
+            if not deferred or attempt >= _RETRY_ATTEMPTS:
+                return
+            delay = _retry_delay(attempt)
+            logger.warning(
+                "Gmail deferred %s of %s metadata sub-request(s); "
+                "retry %s/%s in %.2fs",
+                len(deferred),
+                len(pending),
+                attempt + 1,
+                _RETRY_ATTEMPTS,
+                delay,
+            )
+            time.sleep(delay)
+            attempt += 1
+            pending = deferred
 
     # Clamped to ``_FULL_BATCH_SIZE`` rather than Gmail's 100 ceiling: the
     # configured ``gmail_batch_size`` was chosen when this fetched metadata.
@@ -560,15 +811,7 @@ def _batch_fetch_metadata(
     bodies: dict[str, str] = {}
     for start in range(0, len(ids), chunk):
         window = ids[start : start + chunk]
-        batch = service.new_batch_http_request(callback=_on_result)
-        for message_id in window:
-            batch.add(
-                service.users()
-                .messages()
-                .get(userId="me", id=message_id, format="full"),
-                request_id=message_id,
-            )
-        batch.execute()
+        _send(window)
         # Reduce each full payload to text, then REPLACE it with a slim copy
         # carrying only what `_parse_metadata_message` reads. Without this the
         # map accumulates whole message bodies across every batch of a
@@ -642,11 +885,11 @@ def _collect_page(
     """
 
     limit = max(1, min(page_size, _GMAIL_LIST_PAGE_MAX))
-    listing = (
+    listing = _execute_with_retry(
         service.users()
         .messages()
-        .list(userId="me", q=query, maxResults=limit, pageToken=page_token)
-        .execute()
+        .list(userId="me", q=query, maxResults=limit, pageToken=page_token),
+        what="messages.list",
     )
     refs = listing.get("messages", []) or []
     ids = [ref["id"] for ref in refs[:limit] if ref.get("id")]
@@ -723,8 +966,22 @@ async def fetch_message_page(
 
     Returns ``None`` when Gmail is not connected (so the router can answer
     409); otherwise a :class:`MessagePage` (possibly empty) with the cursor to
-    request the next page. Read-only, metadata-only: ``messages.list`` +
-    batched ``messages.get(format="metadata")`` — no bodies, no mutation.
+    request the next page. Read-only, and never a mutation: ``messages.list``
+    plus batched ``messages.get``.
+
+    THE FORMAT IS ``full``, NOT ``metadata``. This paragraph claimed
+    "metadata-only — no bodies" long after the fetch moved to ``format="full"``
+    to feed the classifier, contradicting the router that calls it
+    (``gmail_oauth.gmail_inbox``, which sets out at length that bodies ARE
+    fetched and never returned). Bodies are read, capped at
+    ``_MAX_BODY_CHARS``, carried on :attr:`MessagePage.bodies` for
+    classification, and never persisted — see
+    ``tests/test_body_is_never_persisted.py``.
+
+    Raises the underlying ``HttpError`` when Gmail refuses beyond
+    :data:`_RETRY_ATTEMPTS` retries. Callers that answer a user must ask
+    :func:`is_retryable_gmail_error` before choosing a status: a deferred read
+    is a 429 the client can resume from this page's cursor, not a 500.
     """
 
     creds = await load_valid_credentials(user_id)

@@ -76,6 +76,25 @@ export interface InboxPage {
   scope: string;
   range_months: number | null;
   note: string;
+  /**
+   * Messages Gmail listed for this page but would not hand over.
+   *
+   * THIS FIELD WAS MISSING FROM THIS INTERFACE, and its absence is the whole
+   * mechanism of a defect. The backend has always computed it
+   * (`MessagePage.unreadable` = `len(ids) - len(out)`) and always put it on
+   * the wire; it is in the generated types at `lib/api/schema.d.ts`. This
+   * hand-written mirror dropped it, so `page.unreadable` did not type-check
+   * and no caller could ever have read it — a field cannot be forgotten in the
+   * UI if the type still offers it, but it cannot be found either if the type
+   * denies it exists.
+   *
+   * On 2026-09-04 a live scan lost 146 of 200 messages to a Gmail rate limit
+   * and reported "54 scanned" as an ordinary success.
+   *
+   * Optional because a snapshot written before this field existed hydrates
+   * without it, and `0` is the honest reading of "this page never told us".
+   */
+  unreadable?: number;
 }
 
 /** An `applied` message with no later response — a nudge to follow up. */
@@ -127,7 +146,30 @@ export const DEFAULT_FILTERS: InboxFilters = {
 };
 
 /** Per-page fetch ceiling — mirrors the backend `gmail_fetch_page_size`. */
-export const PAGE_SIZE = 500;
+export const PAGE_SIZE = 100;
+
+/*
+ * WAS 500 UNTIL 2026-09-04, WHICH BECAME ARITHMETICALLY IMPOSSIBLE.
+ *
+ * Gmail charges 20 quota units per `messages.get` (raised from 5 on
+ * 2026-05-01) against a ceiling of 6,000 units per minute per user (cut from
+ * 15,000 the same day). Both numbers were read from this project's own Cloud
+ * Console, not assumed.
+ *
+ *   one page of 500  =  20 x 500 + 5  =  10,005 units
+ *   the whole minute's budget         =   6,000 units
+ *
+ * So a single 500-message page could not succeed on a full bucket, ever, no
+ * matter how the server retried — and the failure it produced was a 403 that
+ * reached the user as "We couldn't finish reading your mail."
+ *
+ *   one page of 100  =  20 x 100 + 5  =   2,005 units
+ *
+ * which leaves room for three pages inside one minute and keeps the sustained
+ * rate near the 300 messages/minute the quota actually affords. Smaller pages
+ * also make a deferral cheap to recover: the retry re-costs one page, not
+ * five, against the very budget that just refused.
+ */
 
 // --- Category presentation --------------------------------------------------
 

@@ -32,6 +32,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ detail: "unauthenticated" }, { status: 401 });
     case "auth":
       return NextResponse.json({ detail: "auth" }, { status: result.status });
+    case "rate_limited":
+      // Passed through with the wait intact, NOT flattened into a 5xx. The
+      // client loop reads this to pause and resume from the page cursor it
+      // already holds, so a deferred read costs a wait rather than the whole
+      // scan.
+      return NextResponse.json(
+        { detail: "rate_limited" },
+        {
+          status: 429,
+          headers: { "Retry-After": String(result.retryAfterSeconds) },
+        },
+      );
     case "unavailable":
       return NextResponse.json({ detail: "unavailable" }, { status: 503 });
     default:
