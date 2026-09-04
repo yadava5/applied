@@ -923,13 +923,42 @@ async def test_inbox_forwards_filters_to_query_and_pagination(
     # they read like applications to a person too.
     assert captured["query"] == "in:anywhere -in:sent newer_than:6m"
     assert captured["page_token"] == "ABC"
-    assert captured["page_size"] == 200
+
+    # THE PAGE SIZE IS THE SMALLER OF WHAT THE CALLER WANTS AND WHAT THE QUOTA
+    # AFFORDS, and this assertion used to be able to see only one of those.
+    #
+    # It read `== 200` and passed because the configured page size was 500, so
+    # `count` was always the smaller term and the server's own bound was never
+    # exercised. When the default dropped to 99 — a page costs `20N + 5` units
+    # against 6,000 per minute per user, and 99 is the size that fits three
+    # pages into a minute where 100 fits two — this assertion redded, correctly:
+    # asking for 200 in one page is now refused, and the caller gets 99 plus the
+    # `next_page_token` it already handles.
+    #
+    # A LITERAL, not `min(200, settings.gmail_fetch_page_size)`. Reading the
+    # expectation from the same setting the handler reads compares the config
+    # against itself: it would pass for any value, including one that cannot
+    # complete inside a quota minute. `test_the_page_size_fits_gmails_minute.py`
+    # is what says 99 is the RIGHT number; this says the handler applies it.
+    assert captured["page_size"] == 99, "the server's page bound must clamp count"
 
     body = resp.json()
     assert body["scope"] == "anywhere"
     assert body["range_months"] == 6
     assert body["next_page_token"] == "TOK2"
     assert body["query"] == "in:anywhere -in:sent newer_than:6m"
+
+    # The other direction of the same `min()`. Without this, a handler that
+    # ignored `count` entirely and always sent the configured size would pass
+    # everything above — the clamp would be asserted in one direction only,
+    # which is the shape that lets a bound look tested while half of it is not.
+    captured.clear()
+    resp = await client.get(
+        "/gmail/inbox?range=6&scope=anywhere&count=25",
+        headers={"Authorization": f"Bearer {_token_for(USER_A)}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert captured["page_size"] == 25, "a caller asking for less must get less"
 
 
 async def test_inbox_reports_unreadable_messages_and_the_size_estimate(
