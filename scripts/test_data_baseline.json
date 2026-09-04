@@ -166,10 +166,6 @@
       "count": 12,
       "digest": "71a2425326f8d746"
     },
-    "backend/tests/test_dismissed_card_does_not_settle_its_mail.py": {
-      "count": 1,
-      "digest": "8a63a117bcf30887"
-    },
     "backend/tests/test_dropped_verdict_is_logged.py": {
       "count": 4,
       "digest": "724250aa0d4514c9"
