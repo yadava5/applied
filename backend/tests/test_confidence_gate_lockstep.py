@@ -152,10 +152,13 @@ def test_every_registered_gate_copy_holds_the_canonical_value() -> None:
 # WHAT IS NOT COLLECTED, named so each exclusion is a decision rather than a
 # hole (the shape ``readme_facts.NOT_THE_AUTO_FILE_GATE`` uses):
 #
-#   * ``config.py::Settings.embedding_similarity_threshold`` — "embedding
-#     similarity threshold", a pydantic ``Field(default=0.85)``. A keyword in a
-#     call, not an assignment of the constant. Nothing in ``backend/`` reads
-#     this field, so it decides nothing.
+#   * ``config.py::Settings.embedding_similarity_threshold`` — GONE. It was a
+#     pydantic ``Field(default=0.85)`` that nothing in ``backend/`` read, so it
+#     decided nothing, and #631 ruled DELETE rather than wire. Wiring it would
+#     have reinstated the defect closed on 2026-08-30: a second literal that a
+#     source-reading gate can see and a runtime value it cannot. Recorded here
+#     rather than dropped, because "excluded because dead" and "deleted because
+#     dead" are different facts and the next census should not re-find it.
 #   * ``classifier/embeddings.py::find_most_similar(threshold=0.85)`` —
 #     "embedding similarity threshold, parameter default". A hand-written fourth
 #     copy in this family, but a parameter default rather than either collected
