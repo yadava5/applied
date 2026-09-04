@@ -270,6 +270,32 @@ def test_quota_flake_and_refusal_are_three_different_answers() -> None:
     assert is_retryable_gmail_error(_refusal(503, "unknownToUs")) is True
 
 
+def test_a_quota_reason_beats_a_retryable_status() -> None:
+    """The one input where the rate-limit short-circuit actually decides.
+
+    WRITTEN BECAUSE A MUTATION FAILED TO RED. Deleting the
+    `is_rate_limited_gmail_error` early return from `is_retryable_gmail_error`
+    changed nothing in any other test, and the reason is that the two sets do
+    not currently overlap: no rate-limit reason is in `_RETRYABLE_REASONS`, and
+    429 is not in `_RETRYABLE_STATUSES`. So the guard was real intent with no
+    input to prove it — a line that could be deleted for free.
+
+    A 503 carrying `rateLimitExceeded` is that input, and it is not contrived:
+    the status says "server wobbled, retry in seconds" and the reason says
+    "quota, wait a minute", and the reason is the one that is true. Without the
+    short-circuit, the status wins and the request is retried in place — the
+    exact behaviour that put minutes of sleeping inside a 60 s function.
+    """
+
+    both = _refusal(503, "rateLimitExceeded")
+
+    assert is_rate_limited_gmail_error(both) is True
+    assert is_retryable_gmail_error(both) is False, (
+        "a quota reason must outrank a retryable status, or a rate limit gets "
+        "retried in place through the 5xx door"
+    )
+
+
 def test_the_newer_error_envelope_is_still_read_as_quota() -> None:
     """Gmail's google.rpc-shaped errors say `RESOURCE_EXHAUSTED`, not a reason.
 
@@ -557,12 +583,19 @@ def test_the_budget_is_shared_by_the_list_call_and_the_batches(
 
     monkeypatch.setattr(gc.settings, "gmail_batch_size", 3)
     ids = [f"m{i}" for i in range(12)]
+    # Exactly `_RETRY_ATTEMPTS` list flakes, so the list call spends its whole
+    # allowance and then SUCCEEDS. One more would raise before a single batch
+    # ran, and the test would prove nothing about sharing — it would only prove
+    # the list call is bounded, which the test above already does.
     service = FakeService(
         ids,
-        list_errors=[_FLAKE] * 3,
+        list_errors=[_FLAKE] * gc._RETRY_ATTEMPTS,
         sub_errors={mid: [_FLAKE] * 50 for mid in ("m0", "m3", "m6", "m9")},
     )
 
     _collect_page(service, query="in:inbox", page_size=50, page_token=None)
 
+    # The list call alone spends roughly 1-2 s + 2-3 s. If each batch window
+    # then got a FRESH budget, four windows would add four more ramps and the
+    # total would run past this bound several times over.
     assert sum(slept) <= gc._PAGE_RETRY_BUDGET_SECONDS

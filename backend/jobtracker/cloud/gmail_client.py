@@ -258,12 +258,28 @@ _RETRYABLE_STATUSES = frozenset({500, 502, 503, 504})
 # fast honest 429 for a slow timeout. The retries here exist to absorb a blip;
 # the caller's ``page_token`` is what absorbs a real outage, because the mine
 # resumes from the same cursor rather than restarting.
-_RETRY_ATTEMPTS = 3
+# TWO, NOT THREE, AND THE TWO BOUNDS BELOW HAVE TO AGREE.
+#
+# Google's backoff is `2^n + jitter`, so three retries need 1-2 s, then 2-3 s,
+# then 4-5 s: **7 to 10 seconds**. That does not fit the 6 s page budget below,
+# which is itself set by the cron's 10 s per-user slot. An attempt count the
+# budget cannot honour is not a bound, it is two numbers disagreeing — the
+# budget wins at runtime and the constant lies to the reader.
+#
+# Two retries cost at most 1-2 s plus 2-3 s = 5 s, inside the page budget with
+# a second to spare, inside the cron slot with five. And two is enough for what
+# this path now retries: quota refusals do not come here at all (they raise
+# immediately, see `_RATE_LIMIT_REASONS`), so the only customers are 5xx and
+# `backendError` — transient server flakes, which clear on the first or second
+# attempt or are not going to.
+_RETRY_ATTEMPTS = 2
 
-# Google's published ceiling for this is 32-64 s. 8 s is deliberately lower:
-# the whole request lives inside a 60 s serverless budget, and a backoff that
-# can outlast its own function trades a fast honest 429 for a timeout, which is
-# strictly the worse answer to give a waiting user.
+# A rail on any SINGLE delay. Google's published ceiling is 32-64 s; 8 s is
+# deliberately lower, because the whole request lives inside a 60 s serverless
+# budget and a backoff that can outlast its own function trades a fast honest
+# 429 for a timeout. At `_RETRY_ATTEMPTS = 2` the largest delay is ~3 s so this
+# never binds today — it is here so that raising the attempt count cannot
+# quietly reintroduce a minute-long sleep.
 _RETRY_MAX_SECONDS = 8.0
 
 
@@ -386,7 +402,14 @@ def _retry_delay(attempt: int) -> float:
 # up to `_RETRY_MAX_SECONDS`, so per-call bounds permit minutes of sleep inside
 # a 60 s function. This is the bound that makes the arithmetic safe, and it is
 # why the budget is threaded through rather than created per call.
-_PAGE_RETRY_BUDGET_SECONDS = 12.0
+# 6 s, NOT 12. `cron.py`'s `_CRON_PER_USER_TIMEOUT_SECONDS` is 10.0, and a
+# budget larger than that means one transient flake during a scheduled run can
+# spend the whole slot sleeping — the user's sync is then cancelled, the cursor
+# held, and the same thing happens on the next tick. Self-healing but wasteful,
+# and it converts a Gmail hiccup into a mailbox that never syncs while the
+# hiccup lasts. 6 s still affords the first two backoffs (~1-2 s and ~2-3 s),
+# which is where a flake actually clears.
+_PAGE_RETRY_BUDGET_SECONDS = 6.0
 
 
 class _RetryBudget:
@@ -1113,26 +1136,6 @@ async def fetch_message_page(
         )
 
     return await loop.run_in_executor(None, _run)
-
-
-async def fetch_recent_messages(
-    user_id: uuid.UUID,
-    *,
-    max_results: Optional[int] = None,
-    query: str = DEFAULT_QUERY,
-) -> Optional[list[CloudGmailMessage]]:
-    """Fetch a single bounded page of recent messages for ``user_id``.
-
-    Backwards-compatible convenience over :func:`fetch_message_page`: returns
-    just the message list (no cursor) for callers that want one quick batch.
-    Returns ``None`` when Gmail is not connected.
-    """
-
-    limit = max_results or settings.gmail_fetch_max_results
-    page = await fetch_message_page(user_id, query=query, page_size=limit)
-    if page is None:
-        return None
-    return page.messages
 
 
 # =============================================================================

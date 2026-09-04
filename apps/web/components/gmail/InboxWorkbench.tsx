@@ -119,6 +119,13 @@ function maxDeferralsFor(target: number): number {
  */
 const MAX_BARREN_PAGES = 3;
 
+/**
+ * Never resume sooner than this after a deferral, however much of the named
+ * wait the burst already consumed. A burst that ran the full minute would
+ * otherwise resume instantly and spend a request to be refused again.
+ */
+const MIN_DEFERRAL_WAIT_MS = 5_000;
+
 /** `setTimeout` that resolves early and false when the mine is superseded. */
 function waitOrAbort(ms: number, signal: AbortSignal): Promise<boolean> {
   if (signal.aborted) return Promise.resolve(false);
@@ -493,6 +500,9 @@ export function InboxWorkbench({
       let token: string | null | undefined;
       let deferrals = 0;
       const maxDeferrals = maxDeferralsFor(target);
+      // When this run started spending the quota bucket. The wait below is
+      // measured from HERE, not from the refusal — see the deferral branch.
+      let burstStartedAt = Date.now();
       // Consecutive pages that listed mail but yielded no verdict. Bounded so
       // a mailbox full of unreadable ids cannot page forever at 20 quota units
       // a message, but not zero — see the break condition below.
@@ -521,6 +531,22 @@ export function InboxWorkbench({
           // `continue` without touching `token` is what makes it a resume.
           if (status === 429) {
             if (deferrals >= maxDeferrals) {
+              // Keep what was read. A deep scan can spend minutes and get most
+              // of the way before a co-spender exhausts its patience, and
+              // dropping the snapshot here means a remount re-mines the whole
+              // window from zero — spending the very quota that ran out. The
+              // verdicts are already on screen; this makes them survive a
+              // navigation, honestly labelled as short of the target.
+              writeSnapshot({
+                sig: filtersSig(f),
+                savedAt: Date.now(),
+                verdicts: acc,
+                analysis: null,
+                analysisFailed: true,
+                fetched: acc.length,
+                target,
+                unreadable,
+              });
               setState({
                 phase: "error",
                 fetched: acc.length,
@@ -531,16 +557,41 @@ export function InboxWorkbench({
               return;
             }
             deferrals += 1;
-            const waitSeconds = retryAfterSeconds ?? 60;
+
+            // THE WAIT RUNS FROM THE START OF THE BURST, NOT FROM THE REFUSAL,
+            // and that distinction is worth about two minutes on a deep scan.
+            //
+            // The bucket is a rolling minute. When Gmail refuses us we have
+            // just spent roughly a minute's worth of units — but we spent them
+            // over the preceding ten or twenty seconds, and it is the OLDEST of
+            // those units that has to age out before we may spend again.
+            // Sleeping the backend's full `Retry-After` from the moment of
+            // refusal therefore waits the elapsed burst twice: once while
+            // spending, once again while sleeping. Each cycle becomes ~75 s per
+            // page-triple instead of 60, which is how a 2,000-message scan
+            // penciled out at nine minutes against a 6.7-minute floor.
+            //
+            // Crediting the elapsed burst against the named wait removes the
+            // double count. Floored at MIN_DEFERRAL_WAIT_MS so a burst that
+            // happened to run long cannot turn into an immediate re-request,
+            // which would spend a unit to be refused again.
+            const namedWaitMs = (retryAfterSeconds ?? 60) * 1000;
+            const spentSoFarMs = Date.now() - burstStartedAt;
+            const waitMs = Math.max(
+              namedWaitMs - spentSoFarMs,
+              MIN_DEFERRAL_WAIT_MS,
+            );
             setState({
               phase: "deferred",
               fetched: acc.length,
               target,
               unreadable,
-              resumesInSeconds: waitSeconds,
+              resumesInSeconds: Math.round(waitMs / 1000),
             });
-            const resumed = await waitOrAbort(waitSeconds * 1000, ac.signal);
+            const resumed = await waitOrAbort(waitMs, ac.signal);
             if (!resumed || runId !== runIdRef.current) return;
+            // A fresh window: the next refusal is measured from here.
+            burstStartedAt = Date.now();
             setState({ phase: "loading", fetched: acc.length, target, unreadable });
             continue;
           }
@@ -581,14 +632,22 @@ export function InboxWorkbench({
           token = page.next_page_token;
           if (!token) break;
           // A page with no verdicts used to end the mine as SUCCESS. That is
-          // right when the mailbox is exhausted and wrong when the page listed
-          // messages and could not read any of them — verdicts 0, unreadable
-          // 200, cursor still good — which reads to the user as "that is all
-          // your mail" over a window nothing was read from. Distinguish the
-          // two by whether anything was actually lost, and keep going in the
-          // second case rather than declaring the scan complete.
+          // right when the mailbox is exhausted and wrong whenever the cursor
+          // is still good — which reads to the user as "that is all your mail"
+          // over a window nothing came from.
+          //
+          // THE EMPTINESS IS NOT CONDITIONED ON `unreadable`, and an earlier
+          // version of this branch got that wrong. Gmail can answer a page with
+          // no messages AND no losses while still handing back a token — a
+          // filtered window whose matches all sit further on. The server's own
+          // scan loop pages through exactly that case and calls the
+          // alternative "the same class of bug as counting pages"
+          // (`cloud/gmail_oauth.py`, the full-scan loop). This mirrors it.
+          //
+          // Bounded, because every page costs quota whether or not it yields a
+          // verdict, so an unbounded walk of a sparse window would spend the
+          // user's minute finding nothing.
           if (page.verdicts.length === 0) {
-            if ((page.unreadable ?? 0) === 0) break;
             barrenPages += 1;
             if (barrenPages >= MAX_BARREN_PAGES) break;
             continue;

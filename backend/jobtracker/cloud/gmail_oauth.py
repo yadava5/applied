@@ -567,7 +567,7 @@ class SyncResponse(BaseModel):
 # =============================================================================
 #
 # ``GET /gmail/inbox`` is expensive: it lists + fetches metadata for up to
-# ``gmail_fetch_max_results`` messages from Gmail and runs each through the
+# ``gmail_fetch_page_size`` messages from Gmail and runs each through the
 # classifier. A dashboard/inbox refresh that repeats within a few seconds
 # should not pay that cost twice. We keep a tiny in-process cache keyed by
 # ``user_id`` with a short TTL (``gmail_inbox_cache_ttl_seconds``).
@@ -1908,6 +1908,14 @@ _SYNC_DEFAULT_RANGE_MONTHS = 12
 # yields 6000/20 = 300, and 750 became 15,005 units: two and a half minutes of
 # a bucket, in a scan that has one invocation to spend.
 #
+# 297, NOT 300, AND THE THREE MATTER. A page is `20N + 5` units, so 300 is four
+# pages — 99 + 99 + 99 + 3 — costing `1985*3 + 65 = 6,020`. Twenty over the
+# ceiling, which by the exact arithmetic this file now enshrines means the
+# DEFAULT full sync could never finish inside one bucket: every fresh-window
+# run would end `rate_limited` rather than `target`, making the partial banner
+# the common case and spending an extra invocation to discover it. 297 is three
+# whole pages at 5,955 units and fits, with 45 units to spare.
+#
 # That mattered beyond a slow sync. A first-connect backfill has no
 # continuation memory, so it re-read the same newest messages and stalled at
 # the same wall on every attempt, which made `cron.py`'s stated rationale —
@@ -1915,7 +1923,7 @@ _SYNC_DEFAULT_RANGE_MONTHS = 12
 # false. The deep-backfill path that DOES work is the workbench mine (paced by
 # the client against 429s) followed by "File N into Applications", because the
 # relay persist makes no Gmail calls at all.
-_SYNC_DEFAULT_SCAN_TARGET = 300
+_SYNC_DEFAULT_SCAN_TARGET = 297
 
 # The scan used to stop after a fixed number of PAGES, which is the wrong bound
 # when page sizes vary — and Gmail's do. ``maxResults`` is an upper bound, not a

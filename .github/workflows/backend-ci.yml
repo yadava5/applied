@@ -48,6 +48,18 @@ on:
       # `readme_facts.py` and ran no backend job at all. Edit BOTH blocks.
       - "scripts/check_test_data.py"
       - "scripts/readme_facts.py"
+      # `apps/web/lib/gmail/types.ts`, by the same argument a fourth time.
+      # `test_the_page_size_fits_gmails_minute.py` reads that file to check the
+      # web client asks for the page size the server is tuned for — the client
+      # is the party that LOOPS, so the server's careful default is a ceiling
+      # it never applies on its own. Without this line the gate cannot fire on
+      # the edit it exists to catch: a web-only PR "tidying" PAGE_SIZE from 99
+      # back to 100 touches nothing under backend/, runs no backend job, and
+      # silently costs a third of the mailbox read rate (a page is 20N + 5
+      # units against 6,000 per minute, so 100 fits two pages in a minute where
+      # 99 fits three). Found by a review of the gate itself, before it had
+      # ever been relied on. Edit BOTH blocks.
+      - "apps/web/lib/gmail/types.ts"
       # The post-migration RLS gate, by the same argument a third time and with
       # a worse starting point: until now it appeared in NO workflow's paths at
       # all — not this one, not db-migrate.yml — so editing the script that
@@ -91,6 +103,18 @@ on:
       - "scripts/schema_fingerprint.sql"
       - "scripts/check_test_data.py"
       - "scripts/readme_facts.py"
+      # `apps/web/lib/gmail/types.ts`, by the same argument a fourth time.
+      # `test_the_page_size_fits_gmails_minute.py` reads that file to check the
+      # web client asks for the page size the server is tuned for — the client
+      # is the party that LOOPS, so the server's careful default is a ceiling
+      # it never applies on its own. Without this line the gate cannot fire on
+      # the edit it exists to catch: a web-only PR "tidying" PAGE_SIZE from 99
+      # back to 100 touches nothing under backend/, runs no backend job, and
+      # silently costs a third of the mailbox read rate (a page is 20N + 5
+      # units against 6,000 per minute, so 100 fits two pages in a minute where
+      # 99 fits three). Found by a review of the gate itself, before it had
+      # ever been relied on. Edit BOTH blocks.
+      - "apps/web/lib/gmail/types.ts"
       # The RLS gate — see the note in the pull_request block, including why it
       # is not also on db-migrate.yml's list.
       - "scripts/verify_rls.py"

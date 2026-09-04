@@ -481,14 +481,6 @@ class Settings(BaseSettings):
             "now, deliberately. Env: JOBTRACKER_WEB_APP_URL."
         ),
     )
-    gmail_fetch_max_results: int = Field(
-        default=25,
-        description=(
-            "Upper bound on messages fetched per cloud Gmail read. Kept small so a "
-            "single serverless invocation stays within the Vercel 60 s / memory "
-            "budget; the desktop app fetches far more."
-        ),
-    )
     gmail_oauth_state_ttl_seconds: int = Field(
         default=600,
         description=(
