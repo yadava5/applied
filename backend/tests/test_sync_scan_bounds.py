@@ -454,12 +454,19 @@ async def test_every_stop_reason_the_backend_can_emit_is_a_known_constant(
 ) -> None:
     """A guard on the vocabulary itself.
 
-    The frontend classifies ``stopped_by`` into complete / partial / broken and
-    falls back to "complete" for anything it does not recognise — the safest
-    default for an OLD frontend against a NEW backend, and the most dangerous
-    one for a value the backend invents later. So the set is asserted here: a
-    new constant has to be added deliberately, and whoever adds it is the
-    person who should be teaching the UI to read it.
+    The frontend classifies ``stopped_by`` into complete / partial / broken.
+
+    THIS DOCSTRING USED TO SAY IT "falls back to complete for anything it does
+    not recognise". It does not, and the difference is a safety property rather
+    than a detail: ``stopKind`` in ``apps/web/lib/gmail/sync-plan.ts`` returns
+    **"partial"** for an unknown value, on the stated grounds that an end state
+    the UI cannot vouch for must not claim the mailbox was covered. Anyone who
+    "fixed" the code to match the old wording would have deleted that property.
+    Corrected 2026-09-04 after a verification pass read the function.
+
+    The set is still asserted here, for the reason below the assertion: a new
+    constant has to be added deliberately, and whoever adds it is the person who
+    should be teaching the UI to read it.
     """
 
     import jobtracker.cloud.gmail_oauth as gmail_module
@@ -490,8 +497,23 @@ async def test_every_stop_reason_the_backend_can_emit_is_a_known_constant(
     # somebody edited this file — the instruction to teach `sync-plan.ts` first
     # was pure honour system, and honour systems are the estate's recurring
     # defect. Adding `STOPPED_RATE_LIMITED` here while forgetting the UI would
-    # have passed, and the frontend's unknown-value fallback is "complete", so
-    # the failure mode is a partial scan reported to the user as a finished one.
+    # have passed.
+    #
+    # WHAT THE FAILURE ACTUALLY IS, corrected after a verification pass caught
+    # this comment asserting the opposite. `stopKind` (`sync-plan.ts`) returns
+    # **"partial"** for an unrecognised value, not "complete" — read the
+    # function, its own comment says the safety property is deliberate. So an
+    # untaught constant does NOT report a partial scan as finished; the docstring
+    # a few lines up in this file makes that claim and is wrong too.
+    #
+    # The real cost is quieter and worth the gate anyway: `stopReasonPhrase`
+    # falls through to the generic "stopped before finishing". For a rate limit
+    # that is a bad answer, because the full-scan path has no 429 and no
+    # `Retry-After` — `stopped_by` is its ONLY channel to the user — so the
+    # person is told the scan stopped early and never that waiting fixes it,
+    # while the interactive scan gets "Gmail asked us to slow down, resuming in
+    # Ns". An untaught constant makes the two paths disagree about the same
+    # condition.
     #
     # A literal substring search, not a parse: it cannot be fooled by a value
     # the UI merely mentions in a comment, but it also cannot be defeated by a
