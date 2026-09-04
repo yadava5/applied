@@ -1,4 +1,11 @@
-# Deploying Applied (free tier, minimal owner effort)
+# Deploying Applied (minimal owner effort)
+
+> **Plan, corrected 2026-09-04.** This title said "free tier". The Vercel
+> account has been **Pro** since 2026-08-14, so the Hobby limits discussed
+> further down are history rather than live constraints — they are kept because
+> the analysis of *why* a build gets skipped is still correct, and because the
+> incident they document is real. Where a Hobby number appears, it is labelled
+> as the era it belonged to.
 
 > Product name: **Applied**. The repo, backend project, and `JOBTRACKER_*`
 > environment variables keep the original `jobtracker` identifier — those are
@@ -194,13 +201,34 @@ completes the steps below, the button is graceful: clicking it shows an inline
 
 ## Known limits of the cloud build (by design, today)
 
-Cloud serves auth + applications CRUD **and** the Gmail web-OAuth read →
-classify path (C5, Path C above; rules-only classifier). Email sync
-persistence, the review queue, SetFit, and analytics remain desktop-only
-routers not yet mounted in `main_cloud` — the full-model classifier story is
-carried by the ML demo (`ml/demo`, Hugging Face Spaces) and the web `/demo`
-fixture. Until an owner completes Path C's Google setup, the deployed
-`/settings` page honestly reports Gmail as "not enabled on this deployment."
+> **Corrected 2026-09-04.** This section described a build that no longer
+> exists. It said the review queue and email sync persistence "remain
+> desktop-only routers not yet mounted in `main_cloud`" — both are mounted
+> cloud routes and have been since the desktop routers were deleted. It also
+> pointed at the Hugging Face Space for "the full-model classifier story"; that
+> Space has been private since 2026-08-15. The section was un-selling the
+> product's actual centrepiece.
+
+Cloud serves auth, applications CRUD, the Gmail web-OAuth read → classify path
+(Path C above), **the review queue** (`/applications/review` and
+`/applications/review/{message_id}/classify`, in `cloud/applications.py`) and
+**sync persistence** (`/gmail/sync` in `cloud/gmail_oauth.py`, `/cron/sync` in
+`cloud/cron.py`).
+
+**The real limit is the classifier, and it is one sentence:** the deployed app
+is **rules-only**. `HybridClassifier.classify` short-circuits to the rules layer
+whenever `settings.deployment == "cloud"`, which is every hosted request, so the
+embedding and SetFit layers never load and no hosted path retrains anything.
+That is a deliberate choice with a measured justification — on the committed v3
+set the full cascade scores **0.9582** macro-F1 against the rules layer's
+**0.9791**, so the learned layers make it worse (`docs/ML_PROMOTION_POLICY.md`).
+
+The trained checkpoint was withdrawn on 2026-08-15 and the Hugging Face Space
+and model repo are private, so neither carries a public demo. The one that does
+is the web `/demo` fixture, where Layer 1 recomputes live in the browser.
+
+Until an owner completes Path C's Google setup, the deployed `/settings` page
+honestly reports Gmail as "not enabled on this deployment."
 
 ### `JOBTRACKER_TRAINING_ALLOWED_USER_IDS` — leave it unset
 
@@ -337,10 +365,13 @@ the intuitive reading, so here it is verbatim, from
 > using the ignore build step will still count towards your deployment quotas
 > and concurrent build slots.
 
-The Hobby cap is 100 deployments per day, and this repo has hit it. What a skip
-buys is build minutes, the single Hobby concurrent-build slot released in well
-under a second instead of a full Next.js build, and a production deployment
-that no-op commits stop replacing. Worth having — but it is not the cap.
+**On Hobby**, the cap was 100 deployments per day and this repo hit it — the
+incident that prompted this whole section. The account moved to Pro on
+2026-08-14, so that ceiling is no longer what binds. What a skip buys is
+unchanged and still worth having: build minutes, a concurrent-build slot
+released in well under a second instead of after a full Next.js build, and a
+production deployment that no-op commits stop replacing. It was never the cap,
+and now there is no Hobby cap to be mistaken for.
 
 ### `git.deploymentEnabled` is the part that saves quota
 
@@ -391,8 +422,13 @@ lone `dependabot/*` would have matched *nothing* and silently done nothing.
 matcher that treats `*` as crossing `/`; where rules conflict Vercel takes the
 permissive one, and both of these are `false`, so they cannot fight.
 
-`main` has no branch protection and no rulesets, so no Vercel status is a
-required check and a missing or skipped one cannot block a merge.
+`main` IS protected. Measured 2026-09-04 with
+`gh api repos/yadava5/applied/branches/main/protection`: three required
+status checks — `README numbers agree with the code`, `Scan for secrets` and
+`Test data baseline agrees with the tree` — plus strict up-to-date branches
+(`strict: true`). `enforce_admins` is `false` and no pull-request review is
+required. **No Vercel status is among the three**, so a missing or skipped
+Vercel check still cannot block a merge.
 
 **Do not rely on a Vercel commit status arriving at all.** The documentation
 describes them as terminal — a status reports that a commit "successfully
@@ -435,8 +471,10 @@ reads `GET /health`, which reports the running commit from Vercel's own
 `VERCEL_GIT_COMMIT_SHA` and needs no credential; for the web app it reads the
 newest READY production deployment's `meta.githubCommitSha` from the Vercel REST
 API, which needs a read-scoped token in the `VERCEL_TOKEN` repository secret.
-**That secret does not exist yet**, so until an owner creates it the live job is
-red with `UNKNOWN`, which is the honest answer for a check that cannot see.
+That secret **exists** — created 2026-08-15, confirmed by `gh secret list -R
+yadava5/applied` on 2026-09-04. This paragraph previously said it did not, and
+concluded the job was red with `UNKNOWN`; that conclusion followed from a
+premise that stopped being true the day the secret was added.
 
 ### The dashboard "Skip deployments when there are no changes…" toggle is inert here
 

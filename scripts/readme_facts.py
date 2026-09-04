@@ -531,6 +531,11 @@ LANDING_CASCADE = "apps/web/components/landing/Cascade.tsx"
 LANDING_SIGNATURE = "apps/web/components/landing/SignatureEnding.tsx"
 WEB_SAMPLE_INBOX = "apps/web/components/demo/SampleInbox.tsx"
 WEB_IMPORT_MAIL = "apps/web/components/import/ImportMail.tsx"
+# The browser demo's own README. Registered 2026-09-04: it said "the 201 rules"
+# while every other surface said 218, INCLUDING `app.js` in the same directory,
+# which is already a claim site. Corrected in one file and not the other is the
+# exact failure this checker exists to prevent, so the sentence is now a site.
+BROWSER_SITE_README = "ml/browser/site/README.md"
 BROWSER_DEMO_JS = "ml/browser/site/app.js"
 BOOKLET_CONTENT = "booklet/src/content.ts"
 
@@ -987,6 +992,10 @@ FACTS: dict[str, dict] = {
         "sites": [
             r"invents \*\*([\d,]+) messages\n?",
             r"Correct \| \*\*[\d,]+ of ([\d,]+) —",
+            # Both said 16,780 while this fact read 18,200 — unregistered, so
+            # nothing noticed for two family additions (#626, #641).
+            r"### The ([\d,]+)-message adversarial corpus",
+            r"zero misrouted updates over ([\d,]+)\s+messages",
             # printed in the System Card booklet, page 22
             {"re": r"([\d,]+) generated messages across", "file": BOOKLET_CONTENT},
             {
@@ -1132,6 +1141,10 @@ FACTS: dict[str, dict] = {
             # merges stays a literal 0 on purpose: it is the failure that destroys a
             # record silently, and if it ever moves this pattern SHOULD stop matching.
             r"misrouted review \| \*\*([\d,]+) / \d+ / 0 / \d+ / 0\*\*",
+            # Said 9,177 while this fact read 9,908, in the sentence that makes
+            # the strongest claim on the page ("No message has ever landed on
+            # the wrong card").
+            r"messages and ([\d,]+) cards",
             {
                 "re": r"card: ([\d,]+) cards, 0 merges",
                 "file": BOOKLET_CONTENT,
@@ -1186,6 +1199,7 @@ FACTS: dict[str, dict] = {
             r"— (\d+) regex patterns and no model —",
             r"\*\*The rules engine\.\*\* (\d+) regex patterns across",
             r"rules\.py \((\d+) patterns\)",
+            {"re": r"the (\d+) rules and the tokenizer", "file": BROWSER_SITE_README},
             {"re": r"Same (\d+) patterns,", "file": "apps/web/lib/demo/rulesLayer.ts"},
             {"re": r"same (\d+) regexes,", "file": "ml/browser/site/app.js"},
         ],

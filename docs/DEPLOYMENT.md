@@ -162,8 +162,26 @@ test fails the workflow, which is the whole point of having the gate.
 
 | Surface | Trigger | Gate |
 |---|---|---|
-| Vercel (Preview) — `apps/web/` + `api/index.py` | Every PR push (via the Vercel GitHub integration) | **frontend-ci** + **e2e-ci** green are required before merge |
-| Vercel (Production) — `main` branch | Merge to `main` | All of the above + **backend-ci** (both `test` and `cloud-smoke` jobs) |
+| Vercel (Preview) — `apps/web/` + `api/index.py` | Every PR push (via the Vercel GitHub integration) | **frontend-ci** + **e2e-ci** run, and neither is a required context — see *Branch protection* below |
+| Vercel (Production) — `main` branch | Merge to `main` | The above, plus **backend-ci** (both `test` and `cloud-smoke` jobs) — also not a required context |
+
+**Branch protection, measured 2026-09-04** with
+`gh api repos/yadava5/applied/branches/main/protection`. `main` requires
+exactly three status checks, and these are their names:
+`README numbers agree with the code` (`readme-facts.yml`), `Scan for secrets`
+(`gitleaks.yml`) and `Test data baseline agrees with the tree`
+(`test-data.yml`). A branch must also be up to date with `main` before it
+merges (`strict: true`). `enforce_admins` is `false`, and no pull-request
+review is required.
+
+`frontend-ci`, `e2e-ci` and `backend-ci` are **not** required contexts. They
+run on the paths they filter on and a failure is visible on the pull request,
+but none of them blocks a merge by itself. The three that do block are
+unfiltered, for the reason `docs/TEST_DATA_POLICY.md` gives: a required
+context a pull request never produces sits at *Expected — waiting for status*
+and wedges the merge instead of gating it. Protection matches a context by
+the job's `name:`, not its workflow file or job id, so renaming a job
+un-requires it silently.
 
 There is no third surface. The macOS `.app` bundle used to be one, cut by
 `scripts/bundle.sh` and notarised by `scripts/notarize.sh`; the app, both

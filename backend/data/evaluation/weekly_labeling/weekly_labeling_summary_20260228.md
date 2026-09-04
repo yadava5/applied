@@ -23,4 +23,4 @@ Target confusion pairs: assessment vs follow_up
 - It does not include subjects, snippets, or email body content.
 
 ## Artifact
-- candidates_csv: `/Users/ayush/Documents/Projects/applied/backend/data/evaluation/weekly_labeling/weekly_labeling_candidates_20260228.csv`
+- candidates_csv: `backend/data/evaluation/weekly_labeling/weekly_labeling_candidates_20260228.csv`
