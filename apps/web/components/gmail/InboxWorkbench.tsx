@@ -163,8 +163,23 @@ interface FetchState {
    * wording below deliberately echoes it.
    */
   unreadable: number;
-  /** While `phase === "deferred"`: how long the mine is waiting out Gmail. */
-  resumesInSeconds?: number;
+  /**
+   * While `phase === "deferred"`: the epoch-ms instant the wait ends.
+   *
+   * A DEADLINE, not a duration, and the distinction is the whole of #750. The
+   * first version stored `resumesInSeconds` — computed once on entering the
+   * wait and rendered straight out — so the number never moved. Over a wait
+   * that runs up to a minute, an unchanging "resuming in 59s" is
+   * indistinguishable from a hung scan, which is the exact failure this line
+   * exists to rule out. It cost a false alarm during the pass that verified
+   * the deferral works.
+   *
+   * A deadline also survives what a decremented counter does not: a re-render
+   * mid-wait recomputes the same remaining time instead of restarting or
+   * freezing, and a backgrounded tab that throttles timers shows the truth on
+   * its next paint rather than however far its interval happened to get.
+   */
+  resumesAt?: number;
 }
 
 /** The "file these into my pipeline" action's own state — never the mine's. */
@@ -477,6 +492,16 @@ export function InboxWorkbench({
 
   const runIdRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
+
+  // Stop the mine when this component goes away.
+  //
+  // `run` aborts the PREVIOUS run when it starts a new one, which covers a
+  // filters change and covers nothing else: leaving the page left the in-flight
+  // request and, during a deferral, a pending `setTimeout` of up to a minute
+  // running against a tree that is no longer mounted. Found while writing the
+  // #750 test — the deferral timer kept the test process alive for the whole
+  // wait, which is the same fact from the other side.
+  useEffect(() => () => abortRef.current?.abort(), []);
   // Distinguishes the first mount (may hydrate from cache) from a later
   // filters change (always a real, user-initiated re-mine).
   const didInitRef = useRef(false);
@@ -586,7 +611,7 @@ export function InboxWorkbench({
               fetched: acc.length,
               target,
               unreadable,
-              resumesInSeconds: Math.round(waitMs / 1000),
+              resumesAt: Date.now() + waitMs,
             });
             const resumed = await waitOrAbort(waitMs, ac.signal);
             if (!resumed || runId !== runIdRef.current) return;
@@ -875,6 +900,35 @@ export function InboxWorkbench({
    *  keeps the progress block rather than falling through to the idle line. */
   const deferred = state.phase === "deferred";
   const running = loading || deferred;
+
+  // The deferral clock. Mirrors SyncBar's elapsed ticker: one interval, gated
+  // on the state that needs it, cleared on the way out.
+  //
+  // No synchronous first tick, deliberately. `resumesAt` is set in the same
+  // update that enters the wait, so the first paint already computes a correct
+  // remaining time from it; seeding `nowMs` here would only repeat that work.
+  //
+  // The interval is gated on `deferred` rather than left running, because a
+  // timer that survives the wait re-renders this component once a second for
+  // the rest of the scan to change nothing.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!deferred) return;
+    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [deferred]);
+
+  /**
+   * Seconds left in the wait, floored at 0 and rounded UP.
+   *
+   * Up, not down, so the line never reads "resuming in 0s" for a whole second
+   * while still waiting — 0 is a claim that it is resuming now, and it should
+   * only appear when that is true.
+   */
+  const resumesInSeconds =
+    state.resumesAt === undefined
+      ? null
+      : Math.max(0, Math.ceil((state.resumesAt - nowMs) / 1000));
   /** The MINE broke (Gmail/proxy). Distinct from `analysisFailed`, which is a
    *  successful mine whose whole-set analysis didn't answer. */
   const mineFailed = state.phase === "error";
@@ -989,8 +1043,10 @@ export function InboxWorkbench({
                 <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
                 {deferred ? (
                   <>
-                    Gmail asked us to slow down · resuming in{" "}
-                    {state.resumesInSeconds ?? 60}s
+                    Gmail asked us to slow down
+                    {resumesInSeconds === null
+                      ? null
+                      : ` · resuming in ${resumesInSeconds}s`}
                   </>
                 ) : (
                   <>
