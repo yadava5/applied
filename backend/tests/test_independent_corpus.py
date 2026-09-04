@@ -310,8 +310,16 @@ RECORDED_EMPLOYER_SPELLINGS = {
     # +60 on both (#641), which is the new family's employer count exactly:
     # ONE sender for all three of its messages, so it adds a token and a
     # display apiece and never a second spelling of either.
-    "tokens": 9156,
-    "distinct_displays": 9396,
+    # -43 on both (#733), and the two moving together by the SAME amount is the
+    # shape of the change: the person-as-employer guard refuses 43 bare
+    # Title-Case display names outright, so each loses one token and its one
+    # display. Nothing was re-keyed and nothing gained a second spelling —
+    # `tokens_with_several_spellings` below is unmoved at 150, which is the
+    # assertion that says so. All 43 sit in the corpus's `nowhere` bucket
+    # (`must_be_addressed=False`), which is why the board counters do not move
+    # at all: cards 9908 before and after, company_drift 0, splits 0, merges 0.
+    "tokens": 9113,
+    "distinct_displays": 9353,
     # UNMOVED, and that is the assertion. 150 is documented above as entirely the
     # `employer-spelling` family; a family that added one would be #532 returning.
     "tokens_with_several_spellings": 150,
@@ -1767,8 +1775,13 @@ def test_one_employer_gets_one_spelling(cases) -> None:
         "tokens_with_several_spellings": len(several),
     }
     assert got["tokens"] == RECORDED_EMPLOYER_SPELLINGS["tokens"], (
-        f"the employer TOKEN count moved to {got['tokens']}. This is grouping, "
-        "not naming: something re-keyed the board."
+        f"the employer TOKEN count moved to {got['tokens']}. Two different "
+        "causes reach this line and they want opposite responses. A RISE is "
+        "grouping: something re-keyed the board, and that is the defect this "
+        "gate was written for. A DROP means messages stopped resolving an "
+        "employer at all — check the board counters before assuming a re-key, "
+        "because #733's guard dropped this by 43 while cards, company_drift, "
+        "splits and merges all held exactly."
     )
     for name in ("distinct_displays", "tokens_with_several_spellings"):
         assert got[name] == RECORDED_EMPLOYER_SPELLINGS[name], (
