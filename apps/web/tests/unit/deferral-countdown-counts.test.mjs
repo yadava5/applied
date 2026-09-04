@@ -43,7 +43,7 @@ test("the deferral countdown decreases while the wait is running", async () => {
   let calls = 0;
 
   // Every page refused, with a wait long enough to sample twice inside it and
-  // short enough not to hold the suite. 8s clears MIN_DEFERRAL_WAIT_MS (5s), so
+  // short enough not to hold the suite. 20s clears MIN_DEFERRAL_WAIT_MS (5s) and comfortably contains the 10s poll window, so
   // the floor is not what decides the number here, and the test unmounts long
   // before the wait elapses — leaving it to run would add 8 idle seconds to a
   // suite that finishes in three.
@@ -52,7 +52,7 @@ test("the deferral countdown decreases while the wait is running", async () => {
       calls += 1;
       return new Response(null, {
         status: 429,
-        headers: { "Retry-After": "8" },
+        headers: { "Retry-After": "20" },
       });
     }
     return new Response("{}", { status: 200 });
@@ -83,18 +83,40 @@ test("the deferral countdown decreases while the wait is running", async () => {
         "This assertion would pass vacuously.",
     );
 
-    // A real second and a bit, because the ticker is a one-second interval.
-    await React.act(async () => {
-      await sleep(1300);
-    });
+    // POLL FOR A DECREASE RATHER THAN SAMPLING AT A FIXED OFFSET.
+    //
+    // A single "sleep 1.3s then look" turns a one-second interval into a race:
+    // the tick has to land inside that window, and a starved CI runner can
+    // stall a timer for longer than that. This estate has the scar — timing
+    // gates verified on an idle laptop that red under parallel load.
+    //
+    // A bounded poll has no such window. The correct code decreases within a
+    // tick or two and exits immediately; the frozen version never decreases and
+    // burns the whole deadline before failing with the same diagnostic. Slow is
+    // the failure path, not the passing one.
+    const deadlineMs = Date.now() + 10_000;
+    let second = first;
+    let waited = 0;
+    while (Date.now() < deadlineMs) {
+      await React.act(async () => {
+        await sleep(250);
+      });
+      waited += 250;
+      const now = secondsOnScreen(view);
+      if (now === null) break;
+      second = now;
+      if (second < first) break;
+    }
 
-    const second = secondsOnScreen(view);
-    assert.ok(second !== null, "the deferral line vanished mid-wait");
+    assert.ok(
+      secondsOnScreen(view) !== null,
+      "the deferral line vanished mid-wait, so there was nothing left to count",
+    );
     assert.ok(
       second < first,
-      `the countdown did not count: ${first}s then ${second}s, 1.3s apart, ` +
-        "inside one deferral. This is #750 — a duration captured once instead " +
-        "of a deadline recomputed.",
+      `the countdown did not count: ${first}s, still ${second}s after ` +
+        `${waited}ms of polling inside one deferral. This is #750 — a duration ` +
+        "captured once instead of a deadline recomputed.",
     );
     // Unmount before the wait elapses. The component aborts its run, which
     // clears the pending timer — without this the process stays alive for the
