@@ -219,7 +219,10 @@ updates:
   # major there can change the PDF, so that one wants a human and a re-export
   # rather than a green install.
   #
-  # EXPECT SOME OF THESE PULL REQUESTS TO LAND RED, and do not read that as a
+  # EXPECT SOME OF THESE PULL REQUESTS TO LAND RED (DEC-006 in
+  # docs/DECISIONS.md records why this arrangement was kept, what the four
+  # alternatives were, and which of them is the tempting one), and do not
+  # read that as a
   # broken config. .github/workflows/booklet.yml rebuilds the System Card on any
   # `booklet/**` pull request and exits 1 on a single byte of difference in
   # apps/web/public/system-card. `react`, `react-dom`, `vite` and
