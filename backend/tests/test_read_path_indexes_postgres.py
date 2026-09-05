@@ -33,6 +33,22 @@ hold.
 them: it builds the exact index #293 specifies, shows the planner ignores it,
 and shows it is still ignored with ``enable_seqscan = off``. That is why the
 migration ships a partial index instead.
+
+WHAT ``ix_emails_review_queue`` MEASURES NOW
+--------------------------------------------
+Not the review queue, and not the summary tile. Its partial predicate names
+``application_id IS NULL``; both readers stopped asking that in #587 and now ask
+"no application of mine answers this"
+(:func:`~jobtracker.cloud.applications._not_filed_on_an_application_that_answers`),
+which does not imply it — so the partial index is unusable on both paths. The
+two constants below named ``…_THE_INDEX_WAS_CUT_FOR`` are the shapes it does
+still serve, kept because they are the only demonstration that the shipped index
+and its ``INCLUDE`` work at all. What the handlers compile TODAY is measured
+separately, off the handler's own predicate builder, in
+``test_the_orm_emits_the_predicates_these_indexes_were_measured_against``.
+Keeping both is the point: one says the shipped index works, the other says
+nothing in the product reaches it. This module claimed the opposite for months,
+which is #590.
 """
 
 from __future__ import annotations
@@ -202,7 +218,7 @@ def _recreate(engine, name: str) -> None:
         conn.execute(text("VACUUM ANALYZE applications"))
 
 
-# The queries the three handlers issue. Kept as literals rather than built from
+# The /mail queries the handler issues. Kept as literals rather than built from
 # the ORM so a refactor of a handler cannot quietly change what is measured —
 # and so a refactor that changes a PREDICATE (which would un-match the partial
 # index) shows up here as a plan change rather than silently.
@@ -213,12 +229,33 @@ MAIL_PAGE = (
 MAIL_COUNT = (
     "SELECT count(*) FROM emails WHERE user_id = :uid AND classified_as = 'REJECTION'"
 )
-REVIEW_QUEUE = (
+
+# …and that last sentence is exactly what did NOT happen for the next two, which
+# is why they are named for what they are rather than for handlers that stopped
+# issuing them (#590). Both were once "the review queue" and "the summary tile":
+#
+#   * the queue's ``application_id IS NULL`` became a NOT EXISTS in #587 and was
+#     widened again in #597. See
+#     :func:`~jobtracker.cloud.applications._filed_on_an_application_that_answers`,
+#     section "THE INDEX COST, MEASURED", which carries the before/after and the
+#     decision to leave the index as it is rather than re-cut it;
+#   * the tile stopped counting ``DISTINCT coalesce(thread_id, message_id)`` in
+#     #454 — it selects the keying columns and dedups in Python now, through
+#     ``pipeline.review_dedup_key``, because the key needs the subject and
+#     snippet and SQL here cannot parse those.
+#
+# A literal notices neither, which is the defect #590 names. They are kept, under
+# honest names, because they remain the only demonstration that the SHIPPED
+# partial index works for the query it was cut for and that its ``INCLUDE``
+# earns its place. The handlers' real statements are compiled from the ORM, off
+# the imported predicate, in
+# ``test_the_orm_emits_the_predicates_these_indexes_were_measured_against``.
+QUEUE_THE_INDEX_WAS_CUT_FOR = (
     "SELECT * FROM emails WHERE user_id = :uid AND classified_as = 'NEEDS_REVIEW' "
     "AND application_id IS NULL AND is_reviewed = false "
     "ORDER BY received_at DESC LIMIT 100"
 )
-SUMMARY_TILE = (
+TILE_THE_INDEX_WAS_CUT_FOR = (
     "SELECT count(DISTINCT coalesce(thread_id, message_id)) FROM emails "
     "WHERE user_id = :uid AND classified_as = 'NEEDS_REVIEW' "
     "AND application_id IS NULL AND is_reviewed = false"
@@ -336,40 +373,55 @@ def test_without_the_mail_index_the_page_sorts_the_global_received_at_index(
 
 
 # =============================================================================
-# 2. /review + the summary tile — the partial index, with INCLUDE
+# 2. the partial index, with INCLUDE — for the queries it was CUT for
+#
+# Which are no longer the queries the review queue and the summary tile issue;
+# see the constants above and the ORM test at the end of this file. These three
+# cases are facts about the shipped index, not about either handler.
 # =============================================================================
 
 
-def test_the_planner_uses_the_partial_index_for_the_review_queue(seeded_engine):
+def test_the_planner_uses_the_partial_index_for_the_query_it_was_cut_for(seeded_engine):
     """All four predicates are in the index, so none is left as a Filter."""
 
-    plan = _plan(seeded_engine, REVIEW_QUEUE)
+    plan = _plan(seeded_engine, QUEUE_THE_INDEX_WAS_CUT_FOR)
 
-    assert REVIEW_INDEX in plan, f"the review queue fell back to a scan:\n{plan}"
+    assert REVIEW_INDEX in plan, f"the cut-for queue query fell back to a scan:\n{plan}"
     assert "Filter:" not in plan, (
-        f"the queue is still re-checking rows it read for another reason:\n{plan}"
+        f"the query is still re-checking rows it read for another reason:\n{plan}"
     )
 
 
-def test_the_summary_tile_becomes_an_index_only_scan(seeded_engine):
-    """The half the ``INCLUDE`` buys, and the reason it is in the index."""
+def test_the_tile_query_the_index_was_cut_for_becomes_an_index_only_scan(seeded_engine):
+    """The half the ``INCLUDE`` buys, and the reason it is in the index.
 
-    plan = _plan(seeded_engine, SUMMARY_TILE)
+    ``count(DISTINCT coalesce(thread_id, message_id))`` is the shape the tile
+    issued until #454, not what it issues today — so this is what the INCLUDE
+    was bought for, and it is still the only thing that exercises it.
+    """
+
+    plan = _plan(seeded_engine, TILE_THE_INDEX_WAS_CUT_FOR)
 
     assert "Index Only Scan" in plan and REVIEW_INDEX in plan, (
-        f"the needs-review tile still bitmap-scans and re-checks the heap:\n{plan}"
+        f"the cut-for tile query still bitmap-scans and re-checks the heap:\n{plan}"
     )
 
 
-def test_the_partial_index_without_include_does_not_help_the_tile(seeded_engine):
+def test_the_partial_index_without_include_does_not_help_that_tile_query(seeded_engine):
     """PROVE THE ``INCLUDE`` EARNS ITS PLACE — measured, not assumed.
 
-    Rebuilds the same partial index WITHOUT the two included columns. The review
-    queue still uses it (it only needs the ordering), but the tile falls back to
-    its bitmap heap scan, because ``count(DISTINCT coalesce(thread_id,
-    message_id))`` cannot be answered from an index that does not carry those
-    columns. Without this test the ``INCLUDE`` reads as superstition and the
-    next person deletes it.
+    Rebuilds the same partial index WITHOUT the two included columns. The
+    cut-for queue query still uses it (it only needs the ordering), but the
+    cut-for tile query falls back to its bitmap heap scan, because
+    ``count(DISTINCT coalesce(thread_id, message_id))`` cannot be answered from
+    an index that does not carry those columns. Without this test the
+    ``INCLUDE`` reads as superstition and the next person deletes it.
+
+    What it does NOT establish, since #454 and #587 moved both handlers off
+    these shapes: that either column earns its place for a query the product
+    issues. No statement the product compiles can use this index at all — a
+    property of the index rather than of this module, and the reason this case
+    is worded about the query rather than about the tile.
     """
 
     with seeded_engine.begin() as conn:
@@ -384,10 +436,10 @@ def test_the_partial_index_without_include_does_not_help_the_tile(seeded_engine)
     with seeded_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
         conn.execute(text("VACUUM ANALYZE emails"))
     try:
-        queue_plan = _plan(seeded_engine, REVIEW_QUEUE)
+        queue_plan = _plan(seeded_engine, QUEUE_THE_INDEX_WAS_CUT_FOR)
         assert REVIEW_INDEX in queue_plan, queue_plan
 
-        tile_plan = _plan(seeded_engine, SUMMARY_TILE)
+        tile_plan = _plan(seeded_engine, TILE_THE_INDEX_WAS_CUT_FOR)
         assert "Index Only Scan" not in tile_plan, (
             "the tile was index-only WITHOUT the included columns, so the "
             f"INCLUDE buys nothing and should come out:\n{tile_plan}"
@@ -409,11 +461,21 @@ def test_a_changed_handler_predicate_would_silently_un_match_the_partial_index(
     returns correct rows. This is why the assertions in this module are on the
     PLAN, and it is the thing to check first if the review queue ever gets slow
     again.
+
+    WHAT THIS CASE DOES NOT SEE, said out loud because its name suggests
+    otherwise: the handler. The predicate it changes is the widened literal
+    below, not
+    :func:`~jobtracker.cloud.applications._not_filed_on_an_application_that_answers`,
+    so it demonstrates the failure mode rather than detecting an instance of
+    one — and it stayed green through the real instance, twice (#587's rename,
+    and a mutation that deleted the handler's application filter outright). The
+    case that reads the handler is
+    ``test_the_orm_emits_the_predicates_these_indexes_were_measured_against``.
     """
 
     # The contrast is the test. Without this line the assertion below would also
     # hold on a database where the index simply does not exist.
-    assert REVIEW_INDEX in _plan(seeded_engine, REVIEW_QUEUE)
+    assert REVIEW_INDEX in _plan(seeded_engine, QUEUE_THE_INDEX_WAS_CUT_FOR)
 
     widened = (
         "SELECT * FROM emails WHERE user_id = :uid AND classified_as = 'NEEDS_REVIEW' "
@@ -509,7 +571,8 @@ def test_the_board_index_the_issue_proposed_does_not_work(seeded_engine):
 
 
 # =============================================================================
-# …and the SQL above is the SQL the handlers actually emit
+# …and what the handlers actually emit, which for two of them is no longer the
+# SQL above
 # =============================================================================
 
 
@@ -523,76 +586,176 @@ def test_the_orm_emits_the_predicates_these_indexes_were_measured_against(
     must not quietly change what is measured. The risk runs the other way too:
     if SQLAlchemy compiles something the indexes do not match, nothing here
     would say so. So this builds the statements the way the handlers build them,
-    compiles them for Postgres, and EXPLAINs *that* — not a retyped copy.
+    off the handler's OWN predicate builder, compiles them for Postgres, and
+    EXPLAINs *that* — not a retyped copy.
 
     The sharpest case is ``Email.is_reviewed == False``. Postgres renders it as
     ``NOT is_reviewed`` in a plan while the partial index's predicate says
     ``is_reviewed = false``; they match, and this is the assertion that keeps
     knowing so.
+
+    WHY THE TWO REVIEW CASES DO NOT EXPECT ``ix_emails_review_queue``
+    -----------------------------------------------------------------
+    Because the handlers can no longer use it, and this module said otherwise
+    for months — which is #590.
+    :func:`~jobtracker.cloud.applications._not_filed_on_an_application_that_answers`
+    is a ``NOT EXISTS`` over ``applications``; a partial index is usable only
+    while its predicate is implied by the query's, and that one does not imply
+    ``application_id IS NULL``. So the queue plans as an anti join whose outer
+    side is the MAIL index and whose inner probe is ``applications_pkey``, and
+    the expectations below encode exactly that. An expectation the codebase
+    abandoned is not coverage; changing this one to match the plan is not the
+    same act as loosening it, and the negatives are what keep the difference
+    visible — a re-cut index, or a predicate that goes back to
+    ``application_id IS NULL``, reds this case rather than sliding through.
+
+    THE COST OF THAT MOVE IS RECORDED WHERE THE DECISION IS, NOT HERE. See
+    :func:`~jobtracker.cloud.applications._filed_on_an_application_that_answers`,
+    section "THE INDEX COST, MEASURED": it carries the before/after buffers,
+    says whose measurement they are, and records "left as it is rather than
+    re-cut". Cited rather than copied — a second copy of a number drifts the way
+    a second copy of a predicate does, and nothing here re-measured them.
+
+    WHAT IS STILL RETYPED, AND WHAT WOULD FIX IT
+    ---------------------------------------------
+    The tile's projection. Its PREDICATE is imported, which is the half that
+    moves a plan, but the ``select()`` itself is built inline inside
+    :func:`~jobtracker.cloud.applications.application_summary_cloud` and there is
+    no statement to import — so those six columns are a copy, and a copy is the
+    thing this issue is about. What would close it is a
+    ``_review_queue_rows_statement(user_id)`` in ``applications.py`` that the
+    endpoint and this test both call; that is a production refactor for a test's
+    benefit and is deliberately NOT done here. Until it exists this projection is
+    checked by a human against ``applications.py``, and saying which half is
+    imported beats letting the import at the top imply both.
     """
 
     from sqlalchemy import func
     from sqlalchemy.dialects import postgresql
     from sqlmodel import select
 
+    from jobtracker.cloud.applications import (
+        _not_filed_on_an_application_that_answers,
+    )
     from jobtracker.database.models import Application, Email, EmailCategory
 
+    # IMPORTED, NOT RETYPED, and that is the whole point of #590. This file
+    # used to spell `Email.application_id.is_(None)` here — a second copy of a
+    # predicate the handler owns. A copy cannot see the original change: the
+    # handler's entire application filter was deleted in a mutation run and
+    # every case in this module still passed, including the one named
+    # `test_a_changed_handler_predicate_would_silently_un_match_the_partial_index`.
+    #
+    # Importing the accessor makes that impossible rather than merely
+    # discouraged, which is the same argument `_not_filed_on_an_application_that_answers`
+    # makes for being the mechanical negation of its own partner (#596).
+    # `Email.is_reviewed == False` stays alongside it because the handler keeps
+    # it alongside too — that is stated in the accessor's own docstring.
     review_predicates = (
         Email.user_id == USER,
         Email.classified_as == EmailCategory.NEEDS_REVIEW,
-        Email.application_id.is_(None),
+        _not_filed_on_an_application_that_answers(USER),
         Email.is_reviewed == False,  # noqa: E712
     )
 
-    statements = {
-        MAIL_INDEX: (
+    # (the handler, its statement, fragments the plan MUST carry, fragments it
+    # must NOT). Keyed by handler rather than by index now: two of these five no
+    # longer reach the index this file names for them, and a dict keyed by index
+    # name cannot say that.
+    cases = (
+        (
+            "GET /mail — the page",
             select(Email)
             .where(Email.user_id == USER, Email.classified_as == EmailCategory.REJECTION)
             .order_by(Email.received_at.desc(), Email.id.desc())
             .offset(0)
             .limit(50),
+            (MAIL_INDEX,),
+            (),
+        ),
+        (
+            "GET /mail — the total",
             select(func.count())
             .select_from(Email)
             .where(Email.user_id == USER, Email.classified_as == EmailCategory.REJECTION),
+            (MAIL_INDEX,),
+            (),
         ),
-        REVIEW_INDEX: (
+        (
+            "GET /applications/review — the queue",
             select(Email)
             .where(*review_predicates)
             .order_by(Email.received_at.desc())
             .limit(100),
-            select(
-                func.count(
-                    func.distinct(func.coalesce(Email.thread_id, Email.message_id))
-                )
-            )
-            .select_from(Email)
-            .where(*review_predicates),
+            # The whole access path, not "some index was used": the anti join,
+            # the mail index on its outer side, the pkey probe on its inner. The
+            # ORDER BY + LIMIT is what makes this a nested loop rather than a
+            # statistics question, so naming both sides is safe here.
+            ("Anti Join", MAIL_INDEX, "applications_pkey"),
+            (REVIEW_INDEX,),
         ),
-        BOARD_INDEX: (
+        (
+            "GET /applications/summary — the needs_review tile",
+            # RETYPED PROJECTION, IMPORTED PREDICATE — see the docstring. The
+            # columns are ``pipeline.review_dedup_key``'s inputs; the tile stopped
+            # counting DISTINCT coalesce(thread_id, message_id) in #454 because
+            # that key cannot be computed in SQL.
+            select(
+                Email.message_id,
+                Email.thread_id,
+                Email.subject,
+                Email.body_snippet,
+                Email.identity_role,
+                Email.identity_req_id,
+            ).where(*review_predicates),
+            # No ORDER BY and no LIMIT, so WHICH join and WHICH scan the planner
+            # picks here is a fact about this corpus's statistics rather than
+            # about the handler. Asserted only at the level that is about the
+            # handler: applications is joined, anti, on every call.
+            ("Anti Join", "applications"),
+            (REVIEW_INDEX,),
+        ),
+        (
+            "GET /applications — the board page",
             select(Application)
             .where(Application.user_id == USER, Application.dismissed_at.is_(None))
             .order_by(Application.created_at.desc(), Application.id.desc())
             .offset(0)
             .limit(50),
+            (BOARD_INDEX,),
+            (),
         ),
-    }
+    )
 
-    for index_name, group in statements.items():
-        for statement in group:
-            sql = str(
-                statement.compile(
-                    dialect=postgresql.dialect(),
-                    compile_kwargs={"literal_binds": True},
-                )
+    for handler, statement, expected, forbidden in cases:
+        sql = str(
+            statement.compile(
+                dialect=postgresql.dialect(),
+                compile_kwargs={"literal_binds": True},
             )
-            with seeded_engine.connect() as conn:
-                plan = "\n".join(
-                    r[0] for r in conn.execute(text(f"EXPLAIN (COSTS OFF) {sql}"))
-                )
-            assert index_name in plan, (
-                "the statement the HANDLER compiles does not use "
-                f"{index_name}, even though the literal in this module does — "
-                f"the index is dead in production:\n{sql}\n\n{plan}"
+        )
+        with seeded_engine.connect() as conn:
+            plan = "\n".join(
+                r[0] for r in conn.execute(text(f"EXPLAIN (COSTS OFF) {sql}"))
+            )
+
+        for fragment in expected:
+            assert fragment in plan, (
+                f"{handler}: the statement the HANDLER compiles no longer shows "
+                f"{fragment!r} in its plan. Its access path has moved, which is "
+                "the event this module exists to notice — measure the new one "
+                "and change this expectation deliberately, rather than dropping "
+                f"the fragment:\n{sql}\n\n{plan}"
+            )
+        for fragment in forbidden:
+            assert fragment not in plan, (
+                f"{handler}: the statement the HANDLER compiles used "
+                f"{fragment!r}. For {REVIEW_INDEX} that means either the "
+                "readers' predicate implies `application_id IS NULL` again, or "
+                "the index was re-cut around the NOT EXISTS. Both reverse the "
+                "decision recorded in `_filed_on_an_application_that_answers` "
+                "under 'THE INDEX COST, MEASURED', and neither should land "
+                f"silently:\n{sql}\n\n{plan}"
             )
 
 
