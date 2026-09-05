@@ -343,13 +343,23 @@ class Application(TimestampMixin, table=True):
     company: str = Field(index=True, description="Company name")
     position: str = Field(description="Job position/title")
     # Who put the position there — NULL for "the sync owns this field", 'user'
-    # for a title a human typed. Issue #72: the Gmail path fetches
-    # ``format=metadata`` and the ATS acknowledgement subjects it reads name the
-    # employer and never the role, so ``position`` is permanently "" for every
-    # auto-filed row and no amount of extraction work changes that from the
-    # subject alone. Letting the user fill it in needs a way to say the field is
-    # theirs now, or the next sync to learn role extraction silently overwrites
-    # it.
+    # for a title a human typed.
+    #
+    # THE ORIGINAL JUSTIFICATION HERE WAS FALSE AND IS CORRECTED (#543). It read
+    # that the Gmail path fetches ``format=metadata``, that ATS subjects never
+    # name the role, and that ``position`` is therefore permanently "" on every
+    # auto-filed row. All three are wrong today and the first was wrong when
+    # written: the fetch is ``format="full"`` (``cloud/gmail_client.py:17``,
+    # ``:521``, ``:907``), and the trailing- and lead-segment readers do resolve
+    # roles from subjects (#553, #626), measured at 40 fire / 40 exact / 0 wrong
+    # on the corpus. ``cloud/gmail_client.py:1121-1128`` already corrected the
+    # same ``metadata`` claim in its own docstring; this site and its twin in
+    # ``cloud/applications.py`` were missed.
+    #
+    # The column is still right, for the reason that survives the correction:
+    # extraction succeeding sometimes is exactly why a user-typed title needs a
+    # way to say the field is theirs now. Without it the next sync overwrites a
+    # human's answer with a machine's — and it can now produce one.
     #
     # A separate column rather than the ``source`` flip
     # ``record_status_correction`` uses, because ``_is_auto_row(source)`` also

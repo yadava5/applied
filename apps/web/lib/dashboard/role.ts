@@ -1,13 +1,15 @@
 /**
  * The role a human types in, and the rules around it — issue #72.
  *
- * Nothing in the Gmail path can supply a role. `cloud/gmail_client.py`
- * batch-fetches with `format=metadata`, so no message body is ever read, and
- * the ATS acknowledgement subjects that ARE read name the employer rather than
- * the job: "Thanks for applying to Supabase", "Thank you for applying with
- * MotherDuck!", "Thank you for applying to Anthropic" all extract nothing. So
- * `position` is `""` on every auto-filed row, permanently, and the only way one
- * ever gets a title is for the person who applied to type it.
+ * Issue #543: the founding premise here was that the Gmail path could never
+ * supply a role, because it fetched `format=metadata` and the ATS subjects it
+ * read named the employer rather than the job. Both halves are false now.
+ * `cloud/gmail_client.py` fetches `format="full"`, and `role_from_message`
+ * reads the subject and then the body, so many auto-filed rows arrive WITH a
+ * title.
+ *
+ * The module's job is unchanged, for the reason that survives: a title the
+ * person who applied typed is the one answer the sync may not overwrite.
  *
  * That makes this module's job narrow and mostly about restraint. It must never
  * produce a role — no placeholder, no guess from the employer, no plausible
