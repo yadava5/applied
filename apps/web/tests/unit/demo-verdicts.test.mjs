@@ -81,35 +81,30 @@ const FLOOR_CONFIDENCES = 19;
 const FLOOR_NOTES = 11;
 
 /**
- * DISAGREEMENTS PINNED ON PURPOSE.
+ * NOTHING IS PINNED HERE, AND THAT IS THE POINT (#586).
  *
- * s06 is STALE, and it is the fixture that is stale — not a rules bug. Its
- * stored rejection verdict was written when `rules.json` scored that body at
- * 90%; the table has moved eight times since (#324, #356, #444, #455, #459,
- * #498, #524) and the same body now scores 12 with a margin of 12, which is the
- * 95% tier. Verified 2026-08-29 against BOTH engines — the browser port and
- * `backend/jobtracker/classifier/rules.py` — which agree with each other on all
- * eleven messages and disagree with the fixture only here.
+ * One disagreement used to be. s06's stored rejection verdict was written when
+ * `rules.json` scored that body at 90%; the table moved eight times since
+ * (#324, #356, #444, #455, #459, #498, #524) and the same body now scores 12
+ * with a margin of 12, which is the 95% tier. A `PINNED_STALE` map held that
+ * disagreement with the exact values on both sides rather than correcting it,
+ * because correcting it was a product change to a public page: `/demo/inbox`
+ * rendered "rejection @ 90% — regex answered" beside a live recompute reading
+ * 95%, and `tests/e2e/sample-inbox.spec.ts` asserted the stale string was
+ * visible.
  *
- * It is pinned rather than corrected because correcting it is a product change
- * to a public page: `/demo/inbox` renders "rejection @ 90% — regex answered"
- * beside a live recompute reading 95%, and `tests/e2e/sample-inbox.spec.ts`
- * asserts that stale string is visible.
+ * #586 took that decision and corrected the fixture, so the map is gone —
+ * which is what its own closing assertion said to do with the last entry. The
+ * walk below now admits NO exceptions: every recomputable value must equal
+ * what the rules layer computes, for all eleven messages.
  *
- * WHEN THE FIXTURE IS CORRECTED THIS ENTRY MUST GO. It asserts the exact pair
- * of values on both sides, so it reds if the fixture is fixed, it reds if the
- * rules move again, and a second entry appearing here shows up in a diff.
+ * IF A DISAGREEMENT EVER HAS TO BE PINNED AGAIN, re-add the map with the
+ * argument that one carried — both sides' values written out, so the pin reds
+ * when the fixture is corrected AND when the rules move again, and a second
+ * entry has to appear in a diff. Do not instead loosen an assertion below;
+ * that lets a stale fixture through silently, which is the whole failure this
+ * file exists to catch.
  */
-const PINNED_STALE = new Map([
-  [
-    "s06",
-    {
-      why: "fixture predates the rejection patterns added since; both engines say 0.95",
-      stored: { category: "rejection", confidence: 0.9 },
-      computed: { category: "rejection", confidence: 0.95 },
-    },
-  ],
-]);
 
 /** The trace's percentage form: `0.95` -> `95%`. */
 const pct = (confidence) => `${Math.round(confidence * 100)}%`;
@@ -129,7 +124,6 @@ test("every stored verdict is what lib/demo/rulesLayer.ts actually computes", ()
   let messages = 0;
   let confidences = 0;
   let notes = 0;
-  const pinsSeen = [];
 
   for (const email of emails) {
     messages += 1;
@@ -142,41 +136,9 @@ test("every stored verdict is what lib/demo/rulesLayer.ts actually computes", ()
     const step = email.verdict.trace.find((s) => s.layer === "rules");
     assert.ok(step, `${email.id} has no "rules" step in its trace; nothing to compare.`);
 
-    const pin = PINNED_STALE.get(email.id);
-    if (pin) {
-      pinsSeen.push(email.id);
-      // The pin is itself a gate: it names what the rules layer computes TODAY.
-      assert.equal(
-        live.category,
-        pin.computed.category,
-        `${email.id} is pinned as a known-stale fixture (${pin.why}) but the rules layer now ` +
-          `computes category "${live.category}", not "${pin.computed.category}". The pin is out ` +
-          "of date: re-verify against backend/jobtracker/classifier/rules.py and update it.",
-      );
-      assert.equal(
-        live.confidence,
-        pin.computed.confidence,
-        `${email.id} is pinned as a known-stale fixture (${pin.why}) but the rules layer now ` +
-          `computes ${live.confidence}, not ${pin.computed.confidence}. The pin is out of date: ` +
-          "re-verify against backend/jobtracker/classifier/rules.py and update it.",
-      );
-      // And it pins the fixture's side too, so CORRECTING sampleInbox.ts reds
-      // this file and forces the pin to be deleted in the same commit.
-      assert.equal(
-        step.confidence,
-        pin.stored.confidence,
-        `${email.id} no longer holds the disagreement pinned in PINNED_STALE: its stored rules ` +
-          `confidence is ${step.confidence}, not the pinned ${pin.stored.confidence}. If ` +
-          "sampleInbox.ts was corrected, delete the entry (and fix " +
-          "tests/e2e/sample-inbox.spec.ts, which asserts the same stale string is on screen). " +
-          "If it moved some other way, re-verify it before re-pinning.",
-      );
-    }
-
-    // What the fixture SHOULD say. For a pinned row that is the stale value it
-    // is known to hold; for every other row it is whatever the rules layer just
-    // computed. Nothing else is ever an accepted answer.
-    const expected = pin ? pin.stored : { category: live.category, confidence: live.confidence };
+    // What the fixture SHOULD say: whatever the rules layer just computed.
+    // Nothing else is ever an accepted answer.
+    const expected = { category: live.category, confidence: live.confidence };
 
     // ---- The rules step of the trace, for all eleven messages. ----
     // Structural, not thresholded: the step said "answered" exactly when the
@@ -260,25 +222,5 @@ test("every stored verdict is what lib/demo/rulesLayer.ts actually computes", ()
     notes >= FLOOR_NOTES,
     `compared ${notes} trace notes, floor is ${FLOOR_NOTES}. The prose restating each verdict ` +
       "stopped being checked, which is exactly how a re-typed number drifts.",
-  );
-
-  // The pin is scoped: one known disagreement, and no message may quietly join
-  // it. A new entry is a deliberate, reviewable line in a diff.
-  //
-  // Sorted on both sides — the fixture's order is a curated reading order and a
-  // pin declared in a different one is not a defect. This must fail for the
-  // reason it names, which is a pinned id that no longer matches any row.
-  assert.deepEqual(
-    [...pinsSeen].sort(),
-    [...PINNED_STALE.keys()].sort(),
-    "PINNED_STALE names a message the walk never reached. Every pinned disagreement must " +
-      "correspond to a live fixture row.",
-  );
-  assert.equal(
-    PINNED_STALE.size,
-    1,
-    `PINNED_STALE holds ${PINNED_STALE.size} known disagreements. Each one is a public page ` +
-      "stating something the shipped classifier does not; adding another needs the same argument " +
-      "the s06 entry carries, and removing the last one should delete the map.",
   );
 });

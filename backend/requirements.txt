@@ -45,9 +45,33 @@ keyring>=25.7.0               # Secure credential storage (macOS Keychain)
 # -----------------------------------------------------------------------------
 # ~800 MB with torch. This is the whole reason the two manifests differ: it
 # blows Vercel's Python Function size budget many times over.
-sentence-transformers>=5.7.0  # Sentence embeddings (loads e5-small-v2)
-transformers>=4.40,<5         # HuggingFace transformers (see the note above)
-setfit>=1.1.3                 # Few-shot text classification
+# These three move together. `transformers` carried `>=4.40,<5` and that cap was
+# the sole life support for four Dependabot alerts (3 high, 1 moderate) whose
+# every fixed version is 5.x -- no dependent asked for it, so it excluded the
+# patches by construction (#746). Nothing under `backend/` imports
+# `transformers` directly; the only direct import in the tree is
+# `ml/browser/export_onnx.py:28`.
+#
+# `setfit` is here at 1.2.0 rather than 1.1.3 because the pairing MATTERS and
+# the failure is silent: under transformers 5.x, setfit 1.1.3 raises
+# `ImportError: cannot import name 'default_logdir'`, and the hybrid evaluation
+# then scores ~0.979 having loaded no model at all -- the exact degradation
+# `tests/test_evaluate_classifier_layer_guard.py:20` records. A floor of 1.1.3
+# still permits that combination, so raising `transformers` alone would ship it.
+#
+# `sentence-transformers` moves to 6.x because that is what actually resolves:
+# ST 6.0.1 declares `transformers>=5.0.0,<6.0.0`, so transformers 5 forces it,
+# which in turn pulls `huggingface-hub>=1.3.0`. Naming it here rather than
+# letting two majors arrive unannounced through a transitive.
+#
+# Verified by two clean resolves differing in one line, then by the only thing
+# that can see a degraded cascade: `scripts/cascade_gate.sh --mode hybrid
+# --hybrid-profile full` returns BIT-IDENTICAL predictions on 5.16.1 and on
+# 4.57.6 (same 4 misclassified, `embeddings loaded=True`, `setfit loaded=True`).
+# The backend suite cannot see this change -- it never imports the ML stack.
+sentence-transformers>=6.0.0  # Sentence embeddings (loads e5-small-v2)
+transformers>=5.10.0          # HuggingFace transformers (see the note above)
+setfit>=1.2.0                 # Few-shot text classification; 1.1.3 breaks on 5.x
 scikit-learn>=1.3.0           # ML utilities (cosine similarity, etc.)
 numpy>=2.4.6                 # Numerical operations, embedding serialization
 

@@ -1094,10 +1094,20 @@ async def test_inbox_reports_unreadable_messages_and_the_size_estimate(
     assert quiet.json()["result_size_estimate"] is None
 
 
-async def test_inbox_unknown_range_falls_back_to_all_time(
+async def test_inbox_unknown_range_falls_back_to_the_bounded_default(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A stray/unsupported range never errors — it means all-time (no bound)."""
+    """A stray/unsupported range never errors — and it now BOUNDS (#755).
+
+    This test used to assert the opposite, and it was the defect written down:
+    ``range=999`` produced ``in:inbox`` with no age term, i.e. an unbounded read
+    of the mailbox on ``gmail.readonly``, a Google restricted scope.
+
+    The no-500 property it was written to protect is unchanged and is still
+    asserted below. What changed is the fallback VALUE, not whether a stray
+    param can break the mine — failing open is right when the failure mode is an
+    error page, and wrong when it degrades to reading MORE of someone's mail.
+    """
 
     import jobtracker.cloud.gmail_client as gmail_client_module
     from jobtracker.cloud.gmail_client import MessagePage
@@ -1115,8 +1125,8 @@ async def test_inbox_unknown_range_falls_back_to_all_time(
         headers={"Authorization": f"Bearer {_token_for(USER_A)}"},
     )
     assert resp.status_code == 200, resp.text
-    assert captured["query"] == "in:inbox"
-    assert resp.json()["range_months"] is None
+    assert captured["query"] == "in:inbox newer_than:12m"
+    assert resp.json()["range_months"] == 12
 
 
 async def test_pipeline_analyze_summary_and_follow_ups(client: AsyncClient) -> None:
