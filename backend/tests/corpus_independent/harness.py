@@ -371,6 +371,16 @@ class Replay:
     #: label because the label is an identity for the harness's own bookkeeping
     #: and comparing it to ground truth would compare an id, not a title.
     title: dict[str, tuple[str, str]]
+    #: message id -> the CATEGORY the classifier returned for it. Carried so the
+    #: board score can say which of three mechanisms held an update, which the
+    #: groups and the queue cannot distinguish on their own: an `offer` the
+    #: auto-file gate would not clear and an `other` floored into the queue by
+    #: ``references_an_application`` are the same membership of ``reviewed`` and
+    #: two different issues (#448 against #417). Defaulted, so the hand-built
+    #: ``Replay``s in the unit tests below keep working; an update with no
+    #: recorded verdict falls to the non-offer bucket and the SUM — which is all
+    #: those fixtures read — is unaffected.
+    verdict: dict[str, str] = field(default_factory=dict)
 
 
 async def _stored(session, message_ids: list[str]) -> set[str]:
@@ -467,11 +477,21 @@ async def replay(session, verdicts: list[Verdict]) -> Replay:
         if offered:
             suppressed |= set(offered) - await _stored(session, offered)
 
-    return await _read_the_board(session, dropped, suppressed, synced)
+    return await _read_the_board(
+        session,
+        dropped,
+        suppressed,
+        synced,
+        {v.case.message_id: v.category for v in verdicts},
+    )
 
 
 async def _read_the_board(
-    session, dropped: set[str], suppressed: set[str], synced: SyncTotals
+    session,
+    dropped: set[str],
+    suppressed: set[str],
+    synced: SyncTotals,
+    verdict: dict[str, str],
 ) -> Replay:
     """The board, exactly as :func:`replay` left it.
 
@@ -542,6 +562,7 @@ async def _read_the_board(
             f"row{r.id}:{r.company}": (r.company or "", r.position or "")
             for r in live
         },
+        verdict=verdict,
     )
 
 
@@ -731,7 +752,11 @@ async def answer_the_queue(
     # answering the queue is not a sync. Re-reading the board is not a second
     # measurement of them.
     return score, await _read_the_board(
-        session, replayed.dropped, replayed.suppressed, replayed.synced
+        session,
+        replayed.dropped,
+        replayed.suppressed,
+        replayed.synced,
+        replayed.verdict,
     )
 
 
@@ -758,10 +783,33 @@ class BoardScore:
     wrong_review: int = 0
     #: An update that landed on a DIFFERENT card from the one it belongs to.
     update_opened_a_card: int = 0
-    #: An update the product was not confident enough to file, sitting in the
-    #: review queue. THE DESIGNED ANSWER, not a failure — counted so it is
-    #: visible rather than invisible, and excluded from ``total``.
-    update_held_for_review: int = 0
+    #: ── AN UPDATE THAT SAT IN THE REVIEW QUEUE, IN THREE CAUSES ────────────
+    #:
+    #: THE DESIGNED ANSWER, not a failure — counted so it is visible rather than
+    #: invisible, and excluded from ``total``. It was ONE counter until #448,
+    #: and one counter is what let three unrelated mechanisms be read as one:
+    #: measured at seed 20260822 the 685 are 345 + 80 + 260, and only the first
+    #: 345 are the mechanism the issue is about. A number that moves for three
+    #: reasons cannot say which one moved it.
+    #:
+    #: The update's own verdict is an ``offer`` that did not clear the auto-file
+    #: gate, so the product asked instead of guessing. THE #448 POPULATION: all
+    #: 345 sit in ``[REVIEW_FLOOR, AUTO_FILE_GATE)`` — 79 at 0.70 and 266 at
+    #: 0.75 — and lifting them over the gate is what "fixing" this means.
+    update_held_on_its_own_confidence: int = 0
+    #: The update itself was filed and its ANCHOR is the row in the queue, so
+    #: the pair is split by the anchor's uncertainty rather than the update's.
+    #: All 80 are ``update-before-confirmation``, whose confirmation arrives
+    #: AFTER the update that belongs to it and is the message being held. A gate
+    #: change aimed at updates does not move these; a change aimed at
+    #: confirmations does.
+    update_held_on_its_anchor: int = 0
+    #: The update is in the queue on a verdict that is not an ``offer`` at all,
+    #: so the auto-file gate is not what put it there. All 260 are
+    #: ``rescinded-offer`` — ``other`` at 0.50, under the review FLOOR, floored
+    #: into the queue by ``references_an_application`` — which is #417 and a
+    #: different issue. They were 38% of a counter people read as this one.
+    update_held_on_a_non_offer_verdict: int = 0
     #: The right card, showing the wrong stage.
     wrong_status: int = 0
     #: The card claims a BETTER outcome than the user has, and the mail that
@@ -886,6 +934,24 @@ class BoardScore:
     #: belongs in the tree; it is named as the first item of #614's control set.
     suppressed_as_settled: int = 0
     failures: list[Failure] = field(default_factory=list)
+
+    @property
+    def update_held_for_review(self) -> int:
+        """The three causes above, summed, under the name they used to share.
+
+        Kept because four readers ask for it and mean "how many updates did the
+        product ask about" — the ranked table, ``card_overstates``'s control,
+        the UPDATE-HELD closure check, and ``run_independent_corpus.py``. It is
+        a PROPERTY and not a field so the sum cannot drift from its parts:
+        incrementing this without incrementing one of the three raises
+        ``AttributeError`` rather than opening a silent fourth population.
+        """
+
+        return (
+            self.update_held_on_its_own_confidence
+            + self.update_held_on_its_anchor
+            + self.update_held_on_a_non_offer_verdict
+        )
 
     @property
     def total(self) -> int:
@@ -1066,8 +1132,27 @@ def score_board(
         here, there = card_of.get(case.message_id), card_of.get(case.joins)
         if here is not None and here == there:
             continue
-        if case.message_id in replayed.reviewed or case.joins in replayed.reviewed:
-            score.update_held_for_review += 1
+        held_itself = case.message_id in replayed.reviewed
+        if held_itself or case.joins in replayed.reviewed:
+            # WHICH OF THREE MECHANISMS HELD IT, because they are three issues
+            # and were one number until #448. See the three counters on
+            # ``BoardScore`` for what each population is.
+            #
+            # ITS OWN HOLD WINS when both rows are in the queue: an update the
+            # product is already unsure about does not become somebody else's
+            # problem because its anchor is unsure too. No case in this corpus
+            # reaches that arm — every held pair is (self, not anchor) or
+            # (anchor, not self) at seed 20260822 — so the precedence is stated
+            # rather than exercised.
+            if not held_itself:
+                score.update_held_on_its_anchor += 1
+                why = "its ANCHOR is in the queue, so the pair is split there"
+            elif replayed.verdict.get(case.message_id) == "offer":
+                score.update_held_on_its_own_confidence += 1
+                why = "under the auto-file gate, so the product asked"
+            else:
+                score.update_held_on_a_non_offer_verdict += 1
+                why = "in the queue on a verdict the auto-file gate never saw"
             # Recorded as a Failure so ``rank`` can show WHICH families are
             # being held, and excluded from ``total`` by ``BoardScore`` rather
             # than by not existing. A designed outcome that leaves no trace is
@@ -1076,7 +1161,7 @@ def score_board(
                 Failure(
                     mode="UPDATE-HELD",
                     family=case.family,
-                    detail="under the auto-file gate, so the product asked",
+                    detail=why,
                     message_ids=(case.joins, case.message_id),
                 )
             )
