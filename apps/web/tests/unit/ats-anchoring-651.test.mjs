@@ -21,10 +21,12 @@
  * `LOOKALIKE_SENDERS` and `REAL_RELAY_SENDERS` from
  * `backend/tests/test_ingestion_hole_166.py`, ported host-for-host, so the
  * oracle is the Python engine's own table and not a reconstruction of it. It
- * is modelled on `rescission-divergence-417.test.mjs` and means the OPPOSITE:
- * 417 pins a divergence that is still open and asks to be deleted when it is
- * ported; this one pins a divergence that has been CLOSED. If it goes red, the
- * two engines have come apart again — fix the port, do not delete the file.
+ * was modelled on `rescission-divergence-417.test.mjs`, which pinned a
+ * divergence that was still open and asked to be deleted when it was ported.
+ * It has been: that file is now `rescission-cap-417.test.mjs` and asserts the
+ * ported behaviour. This one means the OPPOSITE of a pin — it guards a
+ * divergence that is CLOSED. If it goes red, the two engines have come apart
+ * again — fix the port, do not delete the file.
  *
  * WHAT IS EVIDENCE HERE AND WHAT IS NOT, kept apart the way the Python file
  * keeps it. The lookalike cases FAIL on the pre-#651 line (swap the operand
