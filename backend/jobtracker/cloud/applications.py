@@ -3281,6 +3281,16 @@ async def _persist_review_items(session, user_id: uuid.UUID, review) -> int:
             category="needs_review",
             confidence=item.confidence,
             snippet=item.snippet,
+            # First of the two identity carry sites (#484). Without these the
+            # ref is built with ``MessageRef.identity_role`` at its ``None``
+            # default, the create branch of :func:`_persist_message_refs`
+            # writes NULL, and the ``is not None`` ratchet in its update branch
+            # can never fire — so a queue row's identity was permanently
+            # unwritable, on a column ``GET /applications/review`` already
+            # reads. ``None`` still means "not derived" and still leaves a
+            # stored value alone.
+            identity_role=item.identity_role,
+            identity_req_id=item.identity_req_id,
             suggested_category=item.category,
         )
         for item in review
@@ -3321,6 +3331,13 @@ async def _persist_review_items_additive(session, user_id: uuid.UUID, review) ->
             category="needs_review",
             confidence=item.confidence,
             snippet=item.snippet,
+            # Second identity carry site (#484), and the one a routine sync
+            # takes. Both are needed: removing the kwargs from either one alone
+            # leaves the other path's tests green, which is measured in
+            # ``test_the_queue_keeps_the_identity`` and was measured for the
+            # identical shape of change in ``test_suggested_category``.
+            identity_role=item.identity_role,
+            identity_req_id=item.identity_req_id,
             # Second of the two hardcode sites. Same reasoning as
             # :func:`_persist_review_items`: the queue state is the commitment,
             # the verdict is the proposal.

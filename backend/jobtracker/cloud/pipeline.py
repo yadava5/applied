@@ -2278,6 +2278,23 @@ class ReviewItem:
     # through review had its stored snippet ERASED — taking the role with it,
     # which is the one field per-application identity depends on.
     snippet: str = ""
+    # THE SAME CARRY, for the identity the reader derived from the BODY (#484).
+    #
+    # This list was `message_id … company_display, snippet` and nothing else, so
+    # a queue row was built from a `MessageRef` with both identity fields at
+    # their `None` default, the create branch of `_persist_message_refs` wrote
+    # `None`, and the `is not None` ratchet in the update branch never fired.
+    # Migration `d5e91c4a7f28` is add-column-only, so the row never acquired an
+    # identity on any number of syncs — while `GET /applications/review` and
+    # `_hold_reason_for` both already READ `emails.identity_role` and cite this
+    # issue for doing so. The readers were live and the writer was not.
+    #
+    # `None` keeps its module-wide meaning, "this pass derived nothing", so a
+    # relay-built review item leaves them unset and every reader falls back to
+    # the snippet exactly as it did before. `""` means "derived, names nothing",
+    # which is what a server scan writes for mail that genuinely names no job.
+    identity_role: str | None = None
+    identity_req_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -5277,6 +5294,14 @@ def collect_review_items(
             confidence=item.confidence,
             company_display=employer[1] if employer else None,
             snippet=item.snippet,
+            # Carried, not re-derived — and this is the only place the values
+            # exist. The dedup key three lines below already reads them off the
+            # item; before this the QUEUE grouped by the body-derived identity
+            # and the row it persisted held NULL, so the two halves of one
+            # decision were computed from different text. Same failure
+            # ``STORED_SNIPPET_CHARS`` records, one layer down.
+            identity_role=item.identity_role,
+            identity_req_id=item.identity_req_id,
         )
         key = review_dedup_key(
             message_id=item.message_id,
