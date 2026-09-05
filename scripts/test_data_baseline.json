@@ -151,8 +151,8 @@
       "digest": "4a2d56cec36e8b1e"
     },
     "backend/tests/test_cloud_pipeline.py": {
-      "count": 85,
-      "digest": "d6869e9d25b7d744"
+      "count": 84,
+      "digest": "91dcb01182ae6711"
     },
     "backend/tests/test_corrected_rows_carry_no_confidence.py": {
       "count": 1,
