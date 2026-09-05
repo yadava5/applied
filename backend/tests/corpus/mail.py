@@ -73,7 +73,8 @@ from __future__ import annotations
 
 import base64
 import re
-from dataclasses import dataclass, field
+import textwrap
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from jobtracker.cloud.gmail_client import _html_to_text as _cloud_html_to_text
@@ -2561,6 +2562,82 @@ AXES = (
     _axis_wrappers,
     _axis_bulk,
 )
+
+
+#: Where a mailer breaks a line. RFC 5322 caps a line at 998 octets and
+#: RECOMMENDS 78; mail clients and ATS templates settle around 72.
+WRAP_COLUMNS = 72
+
+
+def hard_wrap(text: str, width: int = WRAP_COLUMNS) -> str:
+    """Break every over-long line at ``width``, the way a mailer does.
+
+    Existing line breaks are kept, so a paragraph stays a paragraph and a
+    quoted block stays quoted; only lines longer than ``width`` gain new
+    breaks. Words are never split: a mailer that hard-wraps prose breaks at
+    spaces, and splitting mid-word would model quoted-printable's soft break
+    instead, which is a different defect with its own cases in ``encodings``.
+    """
+
+    out: list[str] = []
+    for line in text.split("\n"):
+        if len(line) <= width:
+            out.append(line)
+            continue
+        out.extend(
+            textwrap.wrap(
+                line,
+                width=width,
+                break_long_words=False,
+                break_on_hyphens=False,
+                replace_whitespace=False,
+                drop_whitespace=True,
+            )
+            or [line]
+        )
+    return "\n".join(out)
+
+
+def _wrap_payload(payload: Payload, width: int) -> Payload:
+    """``payload`` with every ``text/plain`` part hard-wrapped.
+
+    Walks the part tree, because a plain part is very often the twin inside a
+    ``multipart/alternative`` and that is exactly the one production reads —
+    ``extract_body_text`` PREFERS ``text/plain`` whenever any part offers it.
+    ``text/html`` is left alone: it has no line structure to preserve by the
+    time ``_html_to_text`` is done with it.
+    """
+
+    mime = (payload.get("mimeType") or "").lower()
+    if payload.get("parts"):
+        return {**payload, "parts": [_wrap_payload(p, width) for p in payload["parts"]]}
+    data = (payload.get("body") or {}).get("data")
+    if mime != "text/plain" or not data:
+        return payload
+    text = base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
+    return {**payload, "body": {**payload["body"], "data": _b64(hard_wrap(text, width))}}
+
+
+def generate_wrapped(width: int = WRAP_COLUMNS) -> list[MailCase]:
+    """The corpus with every ``text/plain`` body hard-wrapped at ``width``.
+
+    NOT A VARIANT FOR CURIOSITY. Until #430 the extractor collapsed every
+    newline, so wrapping was invisible to the classifier and this function
+    would have been a no-op instrument: measured, the wrap changes the OLD
+    extractor's output for 0 of 404 cases. With the line structure preserved it
+    changes 354 of 404, and the rules layer meets mid-sentence newlines for the
+    first time. Real ``text/plain`` from an ATS is wrapped; the corpus's
+    authored bodies are not, so without this the harness only ever grades the
+    shape a fixture author happens to type.
+
+    ``verdict_offset`` and ``verdict_text`` are carried over unchanged and
+    stay correct: they are recorded against ``collapse()``, which maps a
+    wrapped body and its unwrapped original to the same string.
+
+    ``tests/test_wrap_invariance.py`` is the gate that reads this.
+    """
+
+    return [replace(c, payload=_wrap_payload(c.payload, width)) for c in generate()]
 
 
 def generate() -> list[MailCase]:
