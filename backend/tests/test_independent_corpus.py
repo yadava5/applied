@@ -1423,22 +1423,33 @@ async def test_an_update_updates_the_card_it_belongs_to(
 
     assert score.update_opened_a_card == RECORDED["update_stranded"]
 
-    # THE DESIGNED OUTCOME, counted so it stays visible.
+    # THE DESIGNED OUTCOME, counted so it stays visible — AND IT IS THREE
+    # OUTCOMES, NOT ONE (#448).
     #
-    # 431 updates are held for a person instead of filed. Every one is an
-    # OFFER, and every one scores 0.75 — over the 0.70 review floor and under
-    # the 0.85 auto-file gate. That is the product saying it is not sure, which
-    # is the answer it is built to give: below the gate, a human decides.
+    # 685 updates are held for a person instead of filed. That was a single
+    # counter until now, described right here as "every one is an OFFER, and
+    # every one scores 0.75". Measured, it is three unrelated mechanisms and
+    # the description was true of half of them:
     #
-    # It is a BAND and not an equality because it moves with the seed: which
-    # update wording a case draws decides whether it clears the gate, and the
-    # measured spread is 431 at 20260822 against 442 at seed 7.
+    #   345  the update's OWN `offer` verdict landed in [0.70, 0.85) — over the
+    #        review floor and under the auto-file gate. THE MECHANISM THIS
+    #        ISSUE IS ABOUT: the product saying it is not sure, which is the
+    #        answer it is built to give. 79 at 0.70, 266 at 0.75.
+    #    80  the update itself cleared the gate (`applied` at 0.95) and its
+    #        ANCHOR is the row sitting in the queue. All of them
+    #        `update-before-confirmation`, where the confirmation arrives after
+    #        the update that belongs to it. A gate change aimed at updates does
+    #        not move these; one aimed at confirmations does.
+    #   260  `rescinded-offer` — `other` at 0.50, UNDER the review floor, in
+    #        the queue because `references_an_application` floors it there and
+    #        not because of the gate at all. That is #417, a different issue,
+    #        and it was 38% of a counter everyone read as this one.
     #
     # WHY THIS IS NOT SCORED AS A FAILURE, stated because an earlier version of
     # this file scored it as one and reported 431 defects that were not
-    # defects. Every one of those 431 was the same message type, and chasing
-    # them would have meant tuning the gate until a corpus fixture passed —
-    # which is the shape of forcing a group rather than fixing a rule.
+    # defects. Chasing them would have meant tuning the gate until a corpus
+    # fixture passed — which is the shape of forcing a group rather than fixing
+    # a rule.
     held = Counter(f.family for f in score.failures if f.mode == "UPDATE-HELD")
     assert sum(held.values()) == score.update_held_for_review, (
         "the counter and the recorded failures disagree, so `rank` is showing "
@@ -1455,10 +1466,75 @@ async def test_an_update_updates_the_card_it_belongs_to(
         # `card_overstates` and `test_a_held_message_may_still_leave_a_lying_card`.
         "rescinded-offer",
     }, dict(held)
-    assert 560 <= score.update_held_for_review <= 700, (
-        f"{score.update_held_for_review} updates held for review. A large "
-        "move here is worth reading either way: fewer means the classifier got "
-        "more confident, more means it got less."
+    # THE THREE CAUSES, ASSERTED AGAINST THE FAMILIES THAT PRODUCE THEM. Two
+    # independent readings of the same 685: the counters are derived from each
+    # message's VERDICT and its membership of the queue, the right-hand sides
+    # from the family the generator wrote. They agree today. A family that
+    # started reaching the queue by one of the other two mechanisms would make
+    # them disagree, which is exactly the thing one number could never say.
+    assert score.update_held_on_a_non_offer_verdict == held["rescinded-offer"], (
+        f"{score.update_held_on_a_non_offer_verdict} updates are in the queue "
+        f"on a verdict that is not an offer, but {held['rescinded-offer']} are "
+        "`rescinded-offer`. #417's population and #448's have stopped being "
+        "the same set, so one of them is being counted under the other's name."
+    )
+    assert score.update_held_on_its_anchor == held["update-before-confirmation"], (
+        f"{score.update_held_on_its_anchor} updates are held because their "
+        f"ANCHOR is in the queue, but {held['update-before-confirmation']} are "
+        "`update-before-confirmation`. A second family has started being split "
+        "by its anchor's uncertainty rather than by its own."
+    )
+
+    # THE UPPER BOUND, AND THERE IS NO LOWER ONE ANY MORE.
+    #
+    # This read `560 <= update_held_for_review <= 700`, and the floor was
+    # INVERTED. `update_held_for_review` counts the defect the band is nominally
+    # about, so a floor under it reds when the defect is FIXED and stays green
+    # while it persists. Measured in process, without touching a rule: lift
+    # every `offer` verdict under 0.85 to 0.95 — the class fixed — and the
+    # counter falls 685 -> 260 and the old floor of 560 fails. The floor had
+    # also drifted, from a 431 that was filed to a 560-700 that was recorded,
+    # so it never held the number still either: it could grow 60% underneath it.
+    #
+    # THE CEILING IS SOURCED FROM THE GATE INSTEAD OF FROM TODAY'S COUNT. An
+    # update can only be held if the auto-file gate failed to clear it at one
+    # end or the other; a pair the gate cleared at BOTH ends has no business in
+    # a queue. So the bound tracks the classifier rather than the defect, and
+    # it does not have to be re-recorded when #448 is fixed — 685 <= 685 here,
+    # 260 <= 260 under the probe above, 606 <= 685 under the mirror one below.
+    #
+    # IT IS TIGHT TODAY, and that is the assertion rather than a coincidence:
+    # every update the gate did not clear is held, and no update it cleared is.
+    # A red means a fully confident update reached the queue anyway, which is a
+    # fourth mechanism and worth stopping for.
+    auto_filed = {v.case.message_id: v.auto_filed for v in verdicts}
+    the_gate_did_not_clear = sum(
+        1
+        for c in cases
+        if c.joins is not None
+        and not (auto_filed[c.message_id] and auto_filed[c.joins])
+    )
+    assert score.update_held_for_review <= the_gate_did_not_clear, (
+        f"{score.update_held_for_review} updates are held, but the auto-file "
+        f"gate failed to clear only {the_gate_did_not_clear} of them at either "
+        "end. Something is holding an update the product was confident about."
+    )
+
+    # AND THE CLASS GETTING WORSE HAS TO RED TOO, which is why the ceiling is
+    # not the only thing left here. Dropping the floor drops the only assertion
+    # that noticed this counter FALLING, and it can fall the wrong way: push
+    # those same `offer` verdicts UNDER the review floor instead of over the
+    # gate and the rows are dropped rather than queued — strictly worse, and
+    # the ceiling stays green at 606 <= 685. Measured at 0.65: `dropped` goes
+    # 0 -> 79, all `update-from-another-domain`, and this is the assertion that
+    # fails. The other direction — an update FILED onto the wrong card — is
+    # covered by `merges`, `splits` and `update_opened_a_card` at the top of
+    # this test.
+    assert score.dropped == RECORDED["dropped"], (
+        f"{score.dropped} lifecycle verdict(s) fell under the review floor "
+        "instead of reaching the queue. Fewer updates held is an improvement "
+        "only if they were FILED; a drop is the same message reaching nobody, "
+        "with a counter to say so."
     )
 
 
