@@ -19,7 +19,8 @@
 > - **`POST /classify/retrain` and `POST /classify/import-training-data` are not
 >   routes in this tree.** No module defines them; the production app registers
 >   four routers — applications, Gmail, account, cron
->   (`backend/jobtracker/main_cloud.py:667-684`). The desktop client that served
+>   (the `include_router` calls in `backend/jobtracker/main_cloud.py`). The
+>   desktop client that served
 >   them was de-scoped in August 2026. The shell scripts named here
 >   (`scripts/ml_cycle.sh`, `scripts/train_pipeline.sh`,
 >   `scripts/weekly_labeling_cycle.sh`, `scripts/monitoring_cycle.sh`) do still
@@ -209,7 +210,8 @@ Backward compatibility note:
 **None of these four routes is defined in this tree** (checked 2026-08-15). They
 belonged to the desktop FastAPI app that was de-scoped in August 2026; no module
 declares them and the production app registers four routers — applications,
-Gmail, account, cron (`backend/jobtracker/main_cloud.py:667-684`). The only
+Gmail, account, cron (the `include_router` calls in
+`backend/jobtracker/main_cloud.py`). The only
 classification route that exists is `POST
 /applications/review/{message_id}/classify` (`cloud/applications.py:3487`), which
 records a decision and does not train. Kept listed because the underlying

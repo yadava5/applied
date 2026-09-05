@@ -77,10 +77,10 @@ apps/web/
 │   ├── demo/                      # signed-out product demo
 │   ├── landing-a/ landing-c/      # landing variants
 │   ├── fonts/  layout.tsx  page.tsx  not-found.tsx  globals.css
-├── components/                    # 16 directories: applications, auth, beta,
-│                                  # boot, brand, dashboard, demo, gmail,
-│                                  # import, landing, mail, marketing,
-│                                  # settings, shell, ui, viz
+├── components/                    # 18 directories: applications, auth, beta,
+│                                  # boot, brand, dashboard, demo, feedback,
+│                                  # gmail, import, landing, mail, marketing,
+│                                  # review, settings, shell, ui, viz
 ├── lib/
 │   ├── env.ts / env.server.ts     # zod-validated public + server env
 │   ├── api/                       # client.ts, server.ts, schema.d.ts,

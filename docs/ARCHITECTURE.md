@@ -25,14 +25,22 @@ no SQLite in the deployed path.
 ## Backend Components
 
 The deployed app mounts **29 routes**. Four routers are *registered*
-(`applications`, `gmail_oauth`, `account`, `cron` — `main_cloud.py:667-684`),
+(`applications`, `gmail_oauth`, `account`, `cron` — the `include_router`
+calls in `main_cloud.py`),
 but **five modules define routes**, because `main_cloud` owns five itself.
 
 **Auth, stated exactly, because the blanket version of this sentence was
-false.** Two of the four routers carry a router-level `require_user()`:
-`applications.py:266` and `account.py:61`. `gmail_oauth.py:122` and
-`cron.py:159` create their routers with no `dependencies=` — deliberately, and
-`main_cloud.py:679-680` says why. Of the 29 routes, **23 require a Supabase
+false.** Two of the four routers carry a router-level `require_user()`: the
+module-level `router` in `applications.py` and in `account.py`. The
+module-level `router` in `gmail_oauth.py` and in `cron.py` is created with no
+`dependencies=`, deliberately — the callback arrives from Google carrying no
+JWT and is bound by its signed `state`, and Vercel Cron carries none at all
+and is gated on a shared secret. Each mount in `main_cloud.py` says so in its
+own comment. Which routes that leaves public is enforced rather than
+described: the `PUBLIC` allowlist in
+`backend/tests/test_cloud_routes_carry_auth.py` names every one with its
+reason, and `test_every_public_route_on_the_allowlist_still_exists` reds on a
+stale entry. Of the 29 routes, **23 require a Supabase
 JWT** and **6 do not**:
 
 | Public route | What stands in for the JWT |
@@ -41,8 +49,8 @@ JWT** and **6 do not**:
 | `GET /health` | nothing — no DB hit, no credential probe, so uptime monitors can poll it |
 | `GET /health/schema` | nothing — reports `{expected, applied, ok}` |
 | `GET /health/gmail-capacity` | nothing — a count of enrolled mailboxes against the beta ceiling |
-| `GET /auth/gmail/callback` | the HS256-signed `state` parameter, verified before any identity is bound (`gmail_oauth.py:1242`) |
-| `GET\|POST /cron/sync` | `JOBTRACKER_VERCEL_CRON_SECRET`, compared with `hmac.compare_digest` and **failing closed** when unconfigured (`cron.py:295-339`) |
+| `GET /auth/gmail/callback` | the HS256-signed `state` parameter, verified by `_verify_state()` before any identity is bound |
+| `GET\|POST /cron/sync` | `JOBTRACKER_VERCEL_CRON_SECRET`, compared with `hmac.compare_digest` in `_authorize()` and **failing closed** when unconfigured |
 
 The other six `gmail_oauth` routes declare `Depends(current_user)` per
 endpoint rather than at the router. So a handler added to `gmail_oauth.py` or

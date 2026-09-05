@@ -43,12 +43,16 @@ Authorization: Bearer <supabase-jwt>
 
 **Six routes are reachable without a JWT, and the router mount is not
 what protects the rest.** Two of the four registered routers declare a
-router-level `require_user()` — `cloud/applications.py:266` and
-`cloud/account.py:61`. `cloud/gmail_oauth.py:122` and `cloud/cron.py:159`
-create their routers with no `dependencies=`, deliberately
-(`main_cloud.py:679-680`). In those two modules a handler *can* skip auth by
-forgetting its own `Depends(current_user)`, so the dependency is declared per
-endpoint and must stay that way.
+router-level `require_user()` — the module-level `router` in
+`cloud/applications.py` and in `cloud/account.py`. The module-level `router` in
+`cloud/gmail_oauth.py` and in `cloud/cron.py` is created with no
+`dependencies=`, deliberately; each mount in `main_cloud.py` says why in its own
+comment. In those two modules a handler *can* skip auth by forgetting its own
+`Depends(current_user)`, so the dependency is declared per endpoint and must
+stay that way. The exemptions are enforced, not just written down: the `PUBLIC`
+allowlist in `backend/tests/test_cloud_routes_carry_auth.py` carries every
+public route with its reason, and a stale entry reds
+`test_every_public_route_on_the_allowlist_still_exists`.
 
 The six that carry no JWT, and what stands in for one:
 
@@ -58,8 +62,8 @@ The six that carry no JWT, and what stands in for one:
 | `GET /health` | none — deliberately credential-free so an uptime monitor can poll it |
 | `GET /health/schema` | none — reports `{expected, applied, ok}` |
 | `GET /health/gmail-capacity` | none — a count of enrolled mailboxes against the beta ceiling |
-| `GET /auth/gmail/callback` | the HS256-signed `state` parameter, verified before any identity is bound (`cloud/gmail_oauth.py:1242`) |
-| `GET`/`POST` `/cron/sync` | the shared `JOBTRACKER_VERCEL_CRON_SECRET`, compared with `hmac.compare_digest` and **failing closed** when unconfigured (`cloud/cron.py:295-339`) |
+| `GET /auth/gmail/callback` | the HS256-signed `state` parameter, verified by `_verify_state()` before any identity is bound |
+| `GET`/`POST` `/cron/sync` | the shared `JOBTRACKER_VERCEL_CRON_SECRET`, compared with `hmac.compare_digest` in `_authorize()` and **failing closed** when unconfigured |
 
 Every one of the other 23 routes requires the header above. Reads are
 additionally scoped by an explicit `user_id` filter and by Postgres RLS, so an

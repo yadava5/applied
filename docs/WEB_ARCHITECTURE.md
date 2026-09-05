@@ -79,12 +79,13 @@ What used to be the divergence:
   `backend/jobtracker/services/` were deleted with the desktop app
   (issue #73), so there is no second, unauthenticated package tree
   any more. Two of the four routers declare
-  `dependencies=[require_user()]` at the router level —
-  `applications.py:266` and `account.py:61`. `gmail_oauth.py:122`
-  and `cron.py:159` declare none, deliberately: the OAuth callback
-  arrives from Google carrying no JWT and is bound by its signed
-  `state` instead, and Vercel Cron carries no JWT at all and is
-  gated on a shared secret (`main_cloud.py:679-680`). In those two
+  `dependencies=[require_user()]` at the router level — the
+  module-level `router` in `applications.py` and in `account.py`.
+  The one in `gmail_oauth.py` and in `cron.py` declares none,
+  deliberately: the OAuth callback arrives from Google carrying no
+  JWT and is bound by its signed `state` instead, and Vercel Cron
+  carries no JWT at all and is gated on a shared secret. Each mount
+  in `main_cloud.py` says which it is. In those two
   modules auth is declared per endpoint, so the mount is not the
   guarantee — see [`API_SPEC.md`](API_SPEC.md) for the six routes
   that carry no user token and what stands in for one.
@@ -188,9 +189,10 @@ apps/web/
 │   ├── demo/                   # the signed-out product demo
 │   ├── landing-a/ landing-c/   # landing variants
 │   ├── fonts/  layout.tsx  page.tsx  not-found.tsx  globals.css
-├── components/                 # 16 directories, not 2: applications, auth, beta,
-│                               # boot, brand, dashboard, demo, gmail, import,
-│                               # landing, mail, marketing, settings, shell, ui, viz
+├── components/                 # 18 directories: applications, auth, beta,
+│                               # boot, brand, dashboard, demo, feedback, gmail,
+│                               # import, landing, mail, marketing, review,
+│                               # settings, shell, ui, viz
 ├── lib/
 │   ├── env.ts / env.server.ts  # zod-validated public + server env
 │   ├── api/{client,server,schema.d.ts,serverTiming}.ts
