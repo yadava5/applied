@@ -27,6 +27,51 @@ their docstrings, and rewriting the prose around a deletion would ship a
 provenance claim that is no longer true. See "The baseline is a ratchet, not a
 backlog" in the policy document. This gate draws the line at NEW material.
 
+WHAT IT SCANS: EVERY TRACKED FILE
+
+Until #623 it read four roots, and everything else in a public repository was
+unwatched by construction. Nothing enumerated what "everything else" held, which
+is the property that makes an allowlist dangerous rather than merely narrow: its
+blind spot is an absence, and an absence is not something a reader notices. The
+measurement was 239 non-reserved addresses across 24 tracked files outside the
+roots — the demo data the product renders to every visitor, the evaluation
+corpora, this script, and the policy document itself. The roots had already been
+patched twice for the same defect ("a root the gate does not read"); #623 was
+the third instance and was found by measuring rather than by another leak.
+
+So the default is now "scanned", and the exceptions are a list with a reason on
+each line. A path nobody thought about is read, not skipped. See `EXCLUDED`.
+
+A FILE THAT IS NOT TEXT
+
+Widening the scope means meeting the first PNG, and on this tree that PNG made
+the whole run refuse — correctly, because a file this gate cannot read is not a
+file it can call clean. The answer is a sniff on CONTENT: a file whose bytes are
+not UTF-8 is skipped, and RECORDED as skipped in the baseline, so that "nobody
+read this one" and "this one is clean" can never print the same.
+
+The sniff is deliberately not an extension allowlist. That would be a second
+allowlist with a second invisible blind spot, which is the shape the paragraph
+above is about. It is also not git's "a NUL byte in the first 8000" heuristic:
+measured on this tree, 54 tracked files fail to decode and every one of them is
+a font, an image or a video, while the one tracked TEXT file carrying a NUL —
+`apps/web/lib/feedback/coalesce.ts`, whose field delimiter is one — decodes
+fine. The NUL rule would have dropped product source.
+
+Three outcomes, three different things, and none of them is silence:
+
+* it decodes            -> scanned, and its findings are baselined
+* it does not decode    -> skipped, and the SKIP is baselined
+* it cannot be read     -> the run fails. An `OSError` is not a sniff with an
+                           answer, it is no answer: a broken checkout or a
+                           tracked file that is gone.
+
+`--write-baseline` refuses to move a file from the scanned set into the skipped
+set. Recording that would launder a scanned file's findings into a skip —
+corrupt one byte of a module holding fifty addresses, re-record, and the next
+run is green on a file nobody has read. That is the same defect as everything in
+HOW IT FAILS below, arriving through the escape hatch instead of the check.
+
 AN ADDRESS THAT IS ASSEMBLED AT RUN TIME
 
 Until #647 a LITERAL was the only thing this gate could see. `EMAIL`'s domain
@@ -83,8 +128,11 @@ removing or rewriting — has to arrive as a deliberate `--write-baseline` commi
 with a reason in its body. The audit is that commit; this gate is what makes it
 impossible to skip.
 
-A file that cannot be read or decoded FAILS rather than counting as zero. A
-skip that passes is the same defect as everything above.
+A file that cannot be READ fails rather than counting as zero, and a file that
+is not text is recorded as skipped rather than counted as clean. A skip that
+passes silently is the same defect as everything above; a skip that is recorded
+is a line in the baseline that somebody had to write, and the set of them is
+ratcheted exactly like the addresses are.
 
 The baseline records paths, counts and digests. It never records the matched
 strings, for the same reason there is no denylist — and see "Why a digest is
@@ -104,27 +152,47 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import NamedTuple
 
-#: Directories whose tracked files are scanned. `backend/tests/corpus/` is a
-#: subset of the first entry and needs no line of its own.
+#: Tracked paths this gate does NOT read, each with the reason it does not — an
+#: exclusion list, because an exclusion list and an allowlist fail in opposite
+#: directions. This was `SCAN_ROOTS` until #623: four prefixes, and the rest of a
+#: public repository outside the gate by construction. An entry here is a
+#: decision somebody wrote down and a reviewer can argue with. A path nobody
+#: thought about is scanned.
 #:
-#: Product source is in here on purpose. Issue #593's requisition numbers were
-#: not confined to tests — they were in `jobtracker/cloud/pipeline.py` and
-#: `classifier/rules.py` — so a tests-only scope would have measured the half of
-#: the problem that was easiest to see.
+#: IT IS EMPTY, AND THAT IS THE MEASURED ANSWER RATHER THAN AN OMISSION. Every
+#: one of this repository's tracked files either scans clean, is recorded in the
+#: baseline, or does not decode and is recorded as skipped. Nothing needed a
+#: line — not the lockfiles, not the generated schema, not the built bundles.
 #:
-#: `ml/` was added for #615. `ml/demo/space/jobtracker/` is a *generated copy*
-#: of `backend/jobtracker/`, written by `ml/demo/package_space.py` and committed,
-#: so the same material was tracked twice and scanned once. #593's corrected
-#: inventory named `ml/demo/space/jobtracker/classifier/rules.py` explicitly,
-#: hours before the first cut of this gate merged without it — a blind spot
-#: nobody had chosen. Adding it also means repackaging the Space moves the
-#: baseline; that is correct, and the policy says so.
-SCAN_ROOTS = (
-    "backend/tests/",
-    "backend/jobtracker/",
-    "apps/web/tests/",
-    "ml/",
-)
+#: Adding one is deliberate: a prefix, one line saying why, and the knowledge
+#: that an exclusion is coverage removed. The three findings in this gate's own
+#: history were all coverage nobody knew was missing.
+#:
+#: THE ONE THAT WAS ARGUED FOR AND REJECTED: `docs/TEST_DATA_POLICY.md`. The
+#: policy document illustrated its own rule with eight address-shaped templates
+#: on routable suffixes, and a line here would have made the run green in one
+#: character. It would also have exempted every address added to that file
+#: afterwards, for any reason, by anybody — an exemption is not scoped to the
+#: text that motivated it, and "a rule with a hole in it exactly where the rule
+#: is written down" is this repository's recurring defect wearing a hat.
+#:
+#: The rule GOVERNS WRITING; the baseline RECORDS WHAT IS ALREADY WRITTEN; and
+#: no file is outside either. Where existing text breaks the rule and nothing is
+#: lost by fixing it, fix it — the document's eight were invented templates
+#: making no provenance claim, so they were rewritten to name domains instead of
+#: spelling addresses, and the file now scores zero and appears nowhere below.
+#: Where the particulars are load-bearing, record them: this script's own
+#: examples stay verbatim because one of them quotes the open-redirect fixture
+#: `test_gmail_oauth_return_host.py` refuses, and an example that does not match
+#: the thing it documents is worth less than a baseline line.
+#:
+#: (Two properties the old roots carried, kept here so they are not re-learned:
+#: product source is in scope on purpose — #593's requisition numbers were in
+#: `jobtracker/cloud/pipeline.py` and `classifier/rules.py`, not only in tests —
+#: and `ml/demo/space/jobtracker/` is a *generated copy* of `backend/jobtracker/`
+#: written by `ml/demo/package_space.py`, so repackaging the Space moves the
+#: baseline. That is correct behaviour, and the policy document says so.)
+EXCLUDED: tuple[tuple[str, str], ...] = ()
 
 #: RFC 2606 §2 reserves the `.test`, `.example`, `.invalid` and `.localhost`
 #: top-level domains, and §3 reserves `example.com`, `example.net` and
@@ -233,10 +301,25 @@ class Match(NamedTuple):
     interpolated: bool
 
 
+#: The two ways a file can fail to become text, kept apart because they are not
+#: the same event. BINARY is an answer — the bytes are not UTF-8, the file is a
+#: font or an image, and the gate records that it did not read it. UNREADABLE is
+#: the absence of an answer: the file is gone, or the checkout is broken. One is
+#: baselined; the other fails the run.
+BINARY = "binary"
+UNREADABLE = "unreadable"
+
+
 class Skipped(NamedTuple):
-    """A tracked file the scanner could not read. Never silently a zero."""
+    """A tracked file that produced no findings because none were read.
+
+    Never silently a zero, and never merged with a clean result: `kind` is what
+    keeps "nobody read this file" from printing like "this file has no
+    addresses in it".
+    """
 
     path: str
+    kind: str
     reason: str
 
 
@@ -431,35 +514,62 @@ def digest_of(addresses: Iterable[str]) -> str:
 
 
 def tracked_files(repo_root: Path) -> list[str]:
-    """Tracked paths under `SCAN_ROOTS`, from git — never a filesystem walk.
+    """Every tracked path except `EXCLUDED`, from git — never a filesystem walk.
 
     A walk reaches `node_modules`, `.venv*`, `.next` and `__pycache__`, none of
     which is this repository's material and all of which are full of addresses.
     A gate that reports hundreds of hits it does not own is a gate that gets
     turned off.
+
+    The pathspec is gone (#623) and that is the whole change: git is asked for
+    everything it tracks, and the filtering is done here where the reasons live.
+    `git ls-files` still answers from the INDEX, so an untracked file is not
+    scanned and a staged one is — the same definition `scripts/readme_facts.py`
+    settled on in #621.
+
+    AN ENTRY IS A PATH, NEVER A BARE SUBSTRING. One that ends in `/` is a
+    directory and covers its subtree; anything else has to match a file exactly.
+    A raw `startswith` would let `apps/web/lib` silently also exclude
+    `apps/web/library/` and `apps/web/lib-utils/` — the same defect as the
+    destructive-command hook matching `main` inside `maintenance`, and a
+    particularly bad one here because its symptom is coverage that quietly is
+    not there. Forgetting the slash therefore excludes nothing, which is the
+    direction that fails safe.
     """
 
     out = subprocess.run(
-        ["git", "ls-files", "-z", "--", *SCAN_ROOTS],
+        ["git", "ls-files", "-z"],
         cwd=repo_root,
         capture_output=True,
         text=True,
         check=True,
     ).stdout
-    return sorted(p for p in out.split("\0") if p)
+    subtrees = tuple(p for p, _reason in EXCLUDED if p.endswith("/"))
+    exact = frozenset(p for p, _reason in EXCLUDED if not p.endswith("/"))
+    return sorted(
+        p
+        for p in out.split("\0")
+        if p and p not in exact and not p.startswith(subtrees)
+    )
 
 
-def scan_file(path: Path) -> Finding:
-    """Non-reserved addresses in one file: count by occurrence, digest by set.
+def scan_file(path: Path) -> Finding | None:
+    """Non-reserved addresses in one file, or None when the file is not text.
 
     The whole file, not just its string literals: the most recent leak came
     through a module DOCSTRING sitting above fixtures that had been correctly
     sanitised. Comments and docstrings are published surfaces too.
 
-    Raises `UnicodeDecodeError` or `OSError` rather than returning zero. This
-    used to swallow both, so an unreadable file read as clean — a skip that
-    counts as a pass, which is the same defect family as the count-only ratchet
-    it sat next to (#615).
+    THE TEXT/BINARY DECISION IS THE BYTES' OWN. `None` means the content did not
+    decode as UTF-8, which is a sniff on the file itself rather than a guess from
+    its name — an extension allowlist would be a second allowlist with a second
+    invisible blind spot, and this gate has just been rebuilt to get rid of the
+    first one. The caller records the skip; it never reads as a zero.
+
+    Raises `OSError` rather than answering, and that stays a hard failure. Both
+    used to be swallowed and returned as zero, so a file nobody could read was
+    recorded as clean — the same defect family as the count-only ratchet it sat
+    next to (#615).
 
     The count is by OCCURRENCE and the digest is over the DE-DUPLICATED set, so
     the two answer different questions on purpose: adding a second copy of an
@@ -467,27 +577,46 @@ def scan_file(path: Path) -> Finding:
     one address for another moves the digest and not the count. Either fails.
     """
 
-    matched = matches_in(path.read_text(encoding="utf-8"))
+    try:
+        text = path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    matched = matches_in(text)
     return Finding(len(matched), digest_of(match.text for match in matched))
 
 
 def scan(repo_root: Path) -> tuple[dict[str, Finding], list[Skipped]]:
-    """Findings for every scanned file with at least one hit, plus the skips."""
+    """Findings for every scanned file with at least one hit, plus the skips.
+
+    A file with no findings and a file that was never read are both absent from
+    the first return value, which is exactly why the second one exists and is
+    baselined alongside it.
+    """
 
     findings: dict[str, Finding] = {}
     skipped: list[Skipped] = []
     for rel in tracked_files(repo_root):
         try:
             finding = scan_file(repo_root / rel)
-        except (UnicodeDecodeError, OSError) as exc:
-            skipped.append(Skipped(rel, f"{type(exc).__name__}: {exc}"))
+        except OSError as exc:
+            skipped.append(Skipped(rel, UNREADABLE, f"{type(exc).__name__}: {exc}"))
+            continue
+        if finding is None:
+            skipped.append(Skipped(rel, BINARY, "not UTF-8"))
             continue
         if finding.count:
             findings[rel] = finding
     return findings, skipped
 
 
-def load_baseline(path: Path) -> dict[str, Finding]:
+class Baseline(NamedTuple):
+    """What was recorded on purpose: the findings, and the files nobody read."""
+
+    files: dict[str, Finding]
+    skipped: dict[str, str]
+
+
+def load_baseline(path: Path) -> Baseline:
     data = json.loads(path.read_text(encoding="utf-8"))
     if "files" not in data:
         raise SystemExit(
@@ -496,34 +625,74 @@ def load_baseline(path: Path) -> dict[str, Finding]:
             "    python3 scripts/check_test_data.py --write-baseline\n"
             f"and say in the commit body why the numbers moved. See {POLICY_DOC}."
         )
-    return {
-        str(path_): Finding(int(entry["count"]), str(entry["digest"]))
-        for path_, entry in data["files"].items()
-    }
+    #: Checked AFTER `files`, so a pre-#615 baseline is still named as one.
+    #: Degrading to "no opinion" on a missing `skipped` map would restore the
+    #: exact hole #623 closed: every binary file would read as newly skipped on
+    #: one branch and as nothing at all on another, and a file that had gone
+    #: from scanned to unreadable would slip through the difference.
+    if "skipped" not in data:
+        raise SystemExit(
+            f"FAIL — {path} is in the pre-#623 format (no record of which tracked\n"
+            "files were skipped because they are not text). Reading it would let a\n"
+            "file nobody could read pass as a file that is clean. Regenerate it:\n"
+            "    python3 scripts/check_test_data.py --write-baseline\n"
+            f"and say in the commit body why the numbers moved. See {POLICY_DOC}."
+        )
+    return Baseline(
+        files={
+            str(path_): Finding(int(entry["count"]), str(entry["digest"]))
+            for path_, entry in data["files"].items()
+        },
+        skipped={str(path_): str(kind) for path_, kind in data["skipped"].items()},
+    )
 
 
-def write_baseline(path: Path, findings: dict[str, Finding]) -> None:
+def previously_scanned(path: Path) -> dict[str, int]:
+    """The `files` map of the baseline being replaced, read leniently.
+
+    Only the write path uses this, and only to refuse turning a scanned file
+    into a skipped one, so a baseline that is missing or in an older format
+    means "nothing to protect" rather than a failure — otherwise the pre-#623
+    format could never be re-recorded at all.
+    """
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {str(p): int(e["count"]) for p, e in data.get("files", {}).items()}
+
+
+def write_baseline(
+    path: Path, findings: dict[str, Finding], skipped: list[Skipped]
+) -> None:
     path.write_text(
         json.dumps(
             {
                 "_README": [
                     "Per-file counts AND digests of sender addresses on domains that",
-                    "are not RFC-reserved, under the roots scripts/check_test_data.py",
-                    "scans. The digest is a truncated SHA-256 over the sorted,",
-                    "lower-cased, de-duplicated set of matches in that file.",
+                    "are not RFC-reserved, across every tracked file except the ones",
+                    "scripts/check_test_data.py names in EXCLUDED. The digest is a",
+                    "truncated SHA-256 over the sorted, lower-cased, de-duplicated",
+                    "set of matches in that file.",
                     "No matched string is ever written here — that would republish",
                     "the material the gate exists to stop. A hash is not the string:",
                     f"see 'Why a digest is allowed where a literal is not' in {POLICY_DOC}.",
+                    "'skipped' lists tracked files whose bytes are not UTF-8, so",
+                    "NOTHING IN THEM WAS READ. They are recorded rather than dropped",
+                    "because a file nobody read must never look like a file that is",
+                    "clean, and so that a new one is a deliberate line in a diff.",
                     "Any divergence fails, in EITHER direction: a count up, a count",
-                    "down, a new file, a cleared file, or a same-count SWAP that",
-                    "moves the digest. This is a RATCHET, not a backlog — moving the",
-                    f"numbers is a deliberate act with a reason, see {POLICY_DOC}.",
+                    "down, a new file, a cleared file, a same-count SWAP that moves",
+                    "the digest, or a change to the skipped set. This is a RATCHET,",
+                    f"not a backlog — moving it is a deliberate act, see {POLICY_DOC}.",
                     "Regenerate with: python3 scripts/check_test_data.py --write-baseline",
                 ],
                 "files": {
                     path_: {"count": finding.count, "digest": finding.digest}
                     for path_, finding in sorted(findings.items())
                 },
+                "skipped": {skip.path: skip.kind for skip in sorted(skipped)},
             },
             indent=2,
         )
@@ -532,57 +701,105 @@ def write_baseline(path: Path, findings: dict[str, Finding]) -> None:
     )
 
 
-def _print_skips(skipped: list[Skipped]) -> None:
+def _print_unreadable(skipped: list[Skipped]) -> None:
     for skip in skipped:
         print(f"  unreadable: {skip.path} — {skip.reason}")
     print(
-        "\nA tracked file under a scanned root could not be read, so this build\n"
-        "does not know what is in it. That is not a pass. Either the file is\n"
-        "binary and does not belong under a scanned root, or the checkout is\n"
-        "broken. Fix the file or narrow SCAN_ROOTS — do not ignore the line."
+        "\nA tracked file could not be READ — not `could not be decoded`, which is\n"
+        "a sniff with an answer, but no answer at all. This build does not know\n"
+        "what is in it, and that is not a pass. The checkout is broken or the file\n"
+        "is tracked and gone. Fix it; do not ignore the line."
     )
 
 
 def report(
     findings: dict[str, Finding],
-    baseline: dict[str, Finding],
+    baseline: Baseline,
     skipped: list[Skipped],
 ) -> int:
     """Print the verdict. Returns a process exit code."""
 
-    new_files = sorted(set(findings) - set(baseline))
-    cleared = sorted(p for p in baseline if p not in findings)
+    recorded = baseline.files
+    new_files = sorted(set(findings) - set(recorded))
+    cleared = sorted(p for p in recorded if p not in findings)
     grown = sorted(
-        p for p in findings if p in baseline and findings[p].count > baseline[p].count
+        p for p in findings if p in recorded and findings[p].count > recorded[p].count
     )
     shrunk = sorted(
-        p for p in findings if p in baseline and findings[p].count < baseline[p].count
+        p for p in findings if p in recorded and findings[p].count < recorded[p].count
     )
     #: Same count, different set. The #615 hole: one published address replaced
     #: by a brand-new one, total unchanged, previously green.
     swapped = sorted(
         p
         for p in findings
-        if p in baseline
-        and findings[p].count == baseline[p].count
-        and findings[p].digest != baseline[p].digest
+        if p in recorded
+        and findings[p].count == recorded[p].count
+        and findings[p].digest != recorded[p].digest
     )
+
+    unreadable = [skip for skip in skipped if skip.kind == UNREADABLE]
+    binary = {skip.path for skip in skipped if skip.kind == BINARY}
+    #: The skipped set is ratcheted for the same reason the counts are. A new
+    #: unreadable file means a file nobody has read joined a public repository;
+    #: a file that stopped being skipped means its contents are being read for
+    #: the first time. Both are events, and neither gets to be silent.
+    newly_skipped = sorted(binary - set(baseline.skipped))
+    #: Measured against every path that produced no findings, not against the
+    #: binary ones alone. A baselined font that goes MISSING is unreadable
+    #: rather than binary, and subtracting only `binary` would print "it decodes
+    #: now" about a file that is not there — a message that says something
+    #: untrue, on a run that already fails for the right reason.
+    unread = binary | {skip.path for skip in unreadable}
+    no_longer_skipped = sorted(set(baseline.skipped) - unread)
 
     total = sum(f.count for f in findings.values())
     print(
         f"test-data gate: {total} non-reserved addresses across "
         f"{len(findings)} tracked files (baseline "
-        f"{sum(f.count for f in baseline.values())} across {len(baseline)})."
+        f"{sum(f.count for f in recorded.values())} across {len(recorded)}); "
+        f"{len(binary)} tracked files skipped as not-UTF-8 and read by nothing "
+        f"(baseline {len(baseline.skipped)})."
     )
 
-    if not (new_files or cleared or grown or shrunk or swapped or skipped):
+    addresses_moved = bool(new_files or cleared or grown or shrunk or swapped)
+    skips_moved = bool(newly_skipped or no_longer_skipped)
+
+    if not (addresses_moved or skips_moved or unreadable):
         print("OK")
         return 0
 
-    if skipped:
+    if unreadable:
         print("\nFAIL — a tracked file could not be scanned.\n")
-        _print_skips(skipped)
-        if not (new_files or cleared or grown or shrunk or swapped):
+        _print_unreadable(unreadable)
+        if not (addresses_moved or skips_moved):
+            return 1
+        print()
+
+    if skips_moved:
+        print("FAIL — the recorded set of files nobody reads has moved.\n")
+        for path in newly_skipped:
+            print(f"  now skipped: {path} — not UTF-8, so nothing in it was read")
+        for path in no_longer_skipped:
+            print(
+                f"  no longer skipped: {path} — it decodes now, so its contents "
+                "are being read for the first time"
+            )
+        print(
+            f"""
+A file whose bytes are not UTF-8 is skipped and RECORDED as skipped, so that it
+can never read like a file that is clean. Adding one — a font, an image, a video
+— moves this set, and re-recording is how you say you meant to. If a file here
+is a surprise, it is a file that has stopped being text; look at it before you
+re-record.
+
+    python3 scripts/check_test_data.py --write-baseline
+
+The one thing that will not work is re-recording a file that used to be scanned:
+that would launder its findings into a skip, and the write path refuses it. See
+{POLICY_DOC}."""
+        )
+        if not addresses_moved:
             return 1
         print()
 
@@ -598,16 +815,16 @@ def report(
     for path in new_files:
         print(f"  new file: {path} ({findings[path].count})")
     for path in grown:
-        print(f"  count up: {path} {baseline[path].count} -> {findings[path].count}")
+        print(f"  count up: {path} {recorded[path].count} -> {findings[path].count}")
     for path in swapped:
         print(
             f"  SWAPPED:  {path} — count unchanged at {findings[path].count}, "
             "but the set of addresses is different"
         )
     for path in shrunk:
-        print(f"  count down: {path} {baseline[path].count} -> {findings[path].count}")
+        print(f"  count down: {path} {recorded[path].count} -> {findings[path].count}")
     for path in cleared:
-        print(f"  cleared: {path} {baseline[path].count} -> 0")
+        print(f"  cleared: {path} {recorded[path].count} -> 0")
 
     print(
         f"""
@@ -679,19 +896,44 @@ def main(argv: list[str] | None = None) -> int:
     findings, skipped = scan(repo_root)
 
     if args.write_baseline:
-        # A skip is refused HERE too. If the write path quietly omitted an
-        # unreadable file, it would launder the skip into a baseline that says
-        # the file is clean, and the next check run would be green on a file
-        # nobody has read.
-        if skipped:
+        # A file that could not be READ is refused HERE too. Omitting it would
+        # launder the skip into a baseline that says the file is clean, and the
+        # next check run would be green on a file nobody has read.
+        unreadable = [skip for skip in skipped if skip.kind == UNREADABLE]
+        if unreadable:
             print("FAIL — refusing to record a baseline over unreadable files.\n")
-            _print_skips(skipped)
+            _print_unreadable(unreadable)
             return 1
-        write_baseline(baseline_path, findings)
+
+        # And the same defect through the other door, which is the one the
+        # binary sniff opens. A file that WAS scanned and now does not decode
+        # has not become a font: one byte of it is wrong, or it has been
+        # replaced. Recording that as an ordinary skip would drop every finding
+        # it used to carry and leave the next run green on a file nobody read.
+        # This is the only skip the write path will not take.
+        was_scanned = previously_scanned(baseline_path)
+        regressed = [skip for skip in skipped if skip.path in was_scanned]
+        if regressed:
+            print("FAIL — refusing to record a scanned file as skipped.\n")
+            for skip in regressed:
+                print(
+                    f"  {skip.path} — was scanned with {was_scanned[skip.path]} "
+                    f"finding(s), now reads as {skip.reason}"
+                )
+            print(
+                "\nThis is not a re-baseline, it is a file that has stopped being\n"
+                "readable while holding material this gate had recorded. Recording\n"
+                "it would drop those findings and turn every later run green on a\n"
+                "file nobody has read. Restore the file, then re-record."
+            )
+            return 1
+
+        write_baseline(baseline_path, findings, skipped)
+        binary = [skip for skip in skipped if skip.kind == BINARY]
         print(
             f"Wrote {baseline_path}: "
             f"{sum(f.count for f in findings.values())} addresses across "
-            f"{len(findings)} files."
+            f"{len(findings)} files, and {len(binary)} files skipped as not-UTF-8."
         )
         return 0
 

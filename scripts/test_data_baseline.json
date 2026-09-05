@@ -1,19 +1,92 @@
 {
   "_README": [
     "Per-file counts AND digests of sender addresses on domains that",
-    "are not RFC-reserved, under the roots scripts/check_test_data.py",
-    "scans. The digest is a truncated SHA-256 over the sorted,",
-    "lower-cased, de-duplicated set of matches in that file.",
+    "are not RFC-reserved, across every tracked file except the ones",
+    "scripts/check_test_data.py names in EXCLUDED. The digest is a",
+    "truncated SHA-256 over the sorted, lower-cased, de-duplicated",
+    "set of matches in that file.",
     "No matched string is ever written here \u2014 that would republish",
     "the material the gate exists to stop. A hash is not the string:",
     "see 'Why a digest is allowed where a literal is not' in docs/TEST_DATA_POLICY.md.",
+    "'skipped' lists tracked files whose bytes are not UTF-8, so",
+    "NOTHING IN THEM WAS READ. They are recorded rather than dropped",
+    "because a file nobody read must never look like a file that is",
+    "clean, and so that a new one is a deliberate line in a diff.",
     "Any divergence fails, in EITHER direction: a count up, a count",
-    "down, a new file, a cleared file, or a same-count SWAP that",
-    "moves the digest. This is a RATCHET, not a backlog \u2014 moving the",
-    "numbers is a deliberate act with a reason, see docs/TEST_DATA_POLICY.md.",
+    "down, a new file, a cleared file, a same-count SWAP that moves",
+    "the digest, or a change to the skipped set. This is a RATCHET,",
+    "not a backlog \u2014 moving it is a deliberate act, see docs/TEST_DATA_POLICY.md.",
     "Regenerate with: python3 scripts/check_test_data.py --write-baseline"
   ],
   "files": {
+    "LICENSE": {
+      "count": 1,
+      "digest": "8c490f89ffd2eb11"
+    },
+    "README.md": {
+      "count": 3,
+      "digest": "8c490f89ffd2eb11"
+    },
+    "apps/web/app/(app)/privacy/page.tsx": {
+      "count": 1,
+      "digest": "8c490f89ffd2eb11"
+    },
+    "apps/web/components/beta/constants.ts": {
+      "count": 1,
+      "digest": "8c490f89ffd2eb11"
+    },
+    "apps/web/components/landing/InboxScene.tsx": {
+      "count": 7,
+      "digest": "78b0fa5bff168ba5"
+    },
+    "apps/web/components/marketing/heldMail.ts": {
+      "count": 1,
+      "digest": "0cfecfe4eef8e9ed"
+    },
+    "apps/web/components/marketing/verdictEmailData.ts": {
+      "count": 2,
+      "digest": "73459c57cb73ec3f"
+    },
+    "apps/web/components/shell/RailFooter.tsx": {
+      "count": 2,
+      "digest": "fd36fc15bf4ac228"
+    },
+    "apps/web/lib/dashboard/review.ts": {
+      "count": 2,
+      "digest": "f5955c7a6d340bc3"
+    },
+    "apps/web/lib/demo/demoData.ts": {
+      "count": 6,
+      "digest": "b39357ff89668ed9"
+    },
+    "apps/web/lib/demo/reviewQueue.ts": {
+      "count": 11,
+      "digest": "2ecdd6b945beb75e"
+    },
+    "apps/web/lib/demo/sampleInbox.ts": {
+      "count": 11,
+      "digest": "4b76bdec4843169a"
+    },
+    "apps/web/lib/demo/scanMine.ts": {
+      "count": 3,
+      "digest": "5b20a23edf546e6c"
+    },
+    "apps/web/lib/gmail/notices.ts": {
+      "count": 1,
+      "digest": "8c490f89ffd2eb11"
+    },
+    "apps/web/public/system-card/assets/index-CRnM8P9b.js": {
+      "count": 5,
+      "digest": "aeaee4ce69a35a44"
+    },
+    "apps/web/public/system-card/assets/index-NxexRUsn.css": {
+      "count": 11,
+      "digest": "9d674729fd166a77"
+    },
+    "apps/web/scripts/footage/README.md": {
+      "count": 1,
+      "digest": "8c490f89ffd2eb11"
+    },
     "apps/web/tests/e2e/import.spec.ts": {
       "count": 10,
       "digest": "d1b6e6e5919b2326"
@@ -61,6 +134,18 @@
     "apps/web/tests/unit/scan-correction.test.mjs": {
       "count": 2,
       "digest": "769cb4366a1da579"
+    },
+    "backend/data/evaluation/classifier_eval_v1.jsonl": {
+      "count": 33,
+      "digest": "88b7e34abd76a143"
+    },
+    "backend/data/evaluation/classifier_eval_v2.jsonl": {
+      "count": 53,
+      "digest": "f2abeb2ffcd317c1"
+    },
+    "backend/data/evaluation/classifier_eval_v3.jsonl": {
+      "count": 84,
+      "digest": "cf5de354ca21b6ea"
     },
     "backend/jobtracker/classifier/hybrid.py": {
       "count": 2,
@@ -338,6 +423,10 @@
       "count": 22,
       "digest": "0822d1a02af661c2"
     },
+    "booklet/src/content.ts": {
+      "count": 5,
+      "digest": "aeaee4ce69a35a44"
+    },
     "ml/demo/space/jobtracker/classifier/hybrid.py": {
       "count": 2,
       "digest": "f28601e965723bb1"
@@ -349,6 +438,70 @@
     "ml/demo/space/jobtracker/email_clients/parser.py": {
       "count": 1,
       "digest": "01f4506118947fc6"
+    },
+    "scripts/check_test_data.py": {
+      "count": 16,
+      "digest": "a8f8ff87409ddc28"
+    },
+    "vercel-ignore-build.sh": {
+      "count": 1,
+      "digest": "3de132cd98be7bf2"
     }
+  },
+  "skipped": {
+    "apps/web/app/fonts/atkinson-hyperlegible-next-latin-wght.woff2": "binary",
+    "apps/web/public/footage/board-syncs.jpg": "binary",
+    "apps/web/public/footage/board-syncs.mp4": "binary",
+    "apps/web/public/footage/board-syncs.webm": "binary",
+    "apps/web/public/footage/one-letter.jpg": "binary",
+    "apps/web/public/footage/one-letter.mp4": "binary",
+    "apps/web/public/footage/one-letter.webm": "binary",
+    "apps/web/public/footage/rules-read-the-body.jpg": "binary",
+    "apps/web/public/footage/rules-read-the-body.mp4": "binary",
+    "apps/web/public/footage/rules-read-the-body.webm": "binary",
+    "apps/web/public/og.png": "binary",
+    "apps/web/public/system-card/assets/instrument-serif-latin-400-italic-DKMiL14s.woff2": "binary",
+    "apps/web/public/system-card/assets/instrument-serif-latin-400-italic-u__WvvIK.woff": "binary",
+    "apps/web/public/system-card/assets/instrument-serif-latin-400-normal-BVbkICAY.woff": "binary",
+    "apps/web/public/system-card/assets/instrument-serif-latin-400-normal-DnYpCC2O.woff2": "binary",
+    "apps/web/public/system-card/assets/instrument-serif-latin-ext-400-italic-C9HzH3YL.woff2": "binary",
+    "apps/web/public/system-card/assets/instrument-serif-latin-ext-400-italic-D7-lnxEk.woff": "binary",
+    "apps/web/public/system-card/assets/instrument-serif-latin-ext-400-normal-C2je3j2s.woff2": "binary",
+    "apps/web/public/system-card/assets/instrument-serif-latin-ext-400-normal-CFCUzsTy.woff": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-cyrillic-ext-400-normal-CJkVxub1.woff2": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-cyrillic-ext-400-normal-Dbdydbkh.woff": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-cyrillic-ext-500-normal-B7C_nQD_.woff": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-cyrillic-ext-500-normal-WMJmRWOr.woff2": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-cyrillic-ext-600-normal-BtwufOTE.woff": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-cyrillic-ext-600-normal-C5KBqx06.woff2": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-cyrillic-ext-700-normal-iShZaXYX.woff2": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-cyrillic-ext-700-normal-pWfpUei5.woff": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-latin-400-normal-BDKaGhyp.woff": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-latin-400-normal-Dhut76fR.woff2": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-latin-500-normal-Bf-nb4oT.woff2": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-latin-500-normal-DYtqi0QS.woff": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-latin-600-normal-BR_Ojra4.woff": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-latin-600-normal-DLTa1BUW.woff2": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-latin-700-normal-CfpNZvy6.woff2": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-latin-700-normal-DqEcQeE5.woff": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-latin-ext-400-normal-2ppkqaOR.woff": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-latin-ext-400-normal-D127hM_v.woff2": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-latin-ext-500-normal-9VZagAe1.woff2": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-latin-ext-500-normal-CqEEAICU.woff": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-latin-ext-600-normal-B0WRRYJ1.woff": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-latin-ext-600-normal-DQgPU_Cg.woff2": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-latin-ext-700-normal-8-d-IyIQ.woff": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-latin-ext-700-normal-BajbvANd.woff2": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-vietnamese-400-normal-B8TCSmUq.woff": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-vietnamese-400-normal-Cg2kxhWu.woff2": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-vietnamese-500-normal-CvE5C8T-.woff": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-vietnamese-500-normal-DiU8zqi-.woff2": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-vietnamese-600-normal-5YsyKbU1.woff": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-vietnamese-600-normal-Y4VTTRme.woff2": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-vietnamese-700-normal-BCh_uG_5.woff": "binary",
+    "apps/web/public/system-card/assets/plus-jakarta-sans-vietnamese-700-normal-CV6qDkkj.woff2": "binary",
+    "apps/web/public/system-card/fonts/MonaspaceNeon.woff2": "binary",
+    "booklet/public/fonts/MonaspaceNeon.woff2": "binary",
+    "docs/branding/applied-icon-composer-source.png": "binary"
   }
 }
