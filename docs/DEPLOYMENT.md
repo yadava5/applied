@@ -142,7 +142,7 @@ Any non-zero exit fails the job. `--frozen-lockfile` ensures
    `/login` up to 90 s so Next.js has time to Turbopack-compile the
    first route.
 5. Runs `pnpm exec playwright test --project=chromium`. The suite is
-   **18 spec files** under `apps/web/tests/e2e/` — auth, beta, boot,
+   **20 spec files** under `apps/web/tests/e2e/` — auth, beta, boot,
    connect, dashboard, demo, file-application, import, inbox-geometry,
    landing, navigation, production, sample-inbox, scan-correct,
    session-edge, settings, shell, smoke. `smoke.spec.ts` is one of them,

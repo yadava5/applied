@@ -1668,6 +1668,23 @@ FACTS: dict[str, dict] = {
             # NOTHING is a failure here, not a silent pass.
             r"\| (\d+) spec files —",
             r"# (\d+) Playwright specs",
+            # FOUR SITES OUTSIDE README.md, and the reason they are here is
+            # #401. A bare-string site defaults to `README.md` (see the site
+            # loader), so every claim this fact knew about lived in one file
+            # while four more sat in three others reading `18` against a tree
+            # of 20 -- unwatched, because coverage here is set membership in
+            # TWO dimensions: which claims are registered, and which files
+            # those claims are looked for in. The second one is the quiet one.
+            #
+            # `README.md:767` says this gate checks "at every claim site,
+            # across every file that holds one." That sentence is only true if
+            # entries like these four exist for every such file, which nothing
+            # enforces -- so the sentence is a promise the code cannot keep and
+            # is corrected in the same change as this.
+            {"file": "docs/DEPLOYMENT.md", "re": r"\*\*(\d+) spec files\*\* under"},
+            {"file": "docs/WEB_ARCHITECTURE.md", "re": r"# (\d+) Playwright specs \+"},
+            {"file": "apps/web/README.md", "re": r"# (\d+) Playwright spec files"},
+            {"file": "apps/web/README.md", "re": r"(\d+) spec files live under"},
         ],
     },
     "workflows": {
