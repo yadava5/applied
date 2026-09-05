@@ -147,9 +147,16 @@ jobs:
       # zone name `Intl` does not know -- because a MISSPELLED zone does not
       # error, it silently resolves to UTC and becomes a second control.
       #
-      # Cost is ~15s (876 tests in under 4s per zone). Every zone runs even
-      # after one fails: which zones broke is the finding, since a west-only
-      # failure and an all-zones failure are different defects.
+      # COST, measured on this runner rather than extrapolated from a laptop:
+      # 57s for the four zones, against 13-15s for the single-zone step it
+      # replaced -- about +42s. The figure that shipped with #835 said ~15s and
+      # was wrong: it multiplied a local 3.8s run by four, and a zone here costs
+      # ~14s, not 3.8s. Timed from the steps of run 33973900411 against the four
+      # runs before it.
+      #
+      # Every zone runs even after one fails: which zones broke is the finding,
+      # since a west-only failure and an all-zones failure are different
+      # defects.
       - name: Unit tests (four zones)
         timeout-minutes: 5
         run: |
