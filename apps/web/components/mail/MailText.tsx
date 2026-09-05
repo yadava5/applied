@@ -16,7 +16,12 @@ import { hostileTextNote, inspectHostileText } from "@/lib/security/hostileText"
  * silently drop the warning — there is one thing to call, and it does both.
  *
  * `lib/security/hostileText.ts` carries the reasoning for the sentinel and for
- * which thirteen code points are in the set. Read it before changing either.
+ * what is in the set: everything the Unicode standard marks
+ * `Default_Ignorable_Code_Point`, less the implicit marks and the variation
+ * selectors, which it argues one by one. It also names the two blocks whose
+ * coverage costs something legitimate. Read it before changing either, and
+ * take the count from `HOSTILE_RANGES` rather than from a number written in
+ * prose — one was written here, and it went stale within the day.
  *
  * WHERE THE FLAG SITS, AND WHY IT IS FIRST. Every row that draws a subject
  * wraps it in `truncate` (`overflow: hidden; text-overflow: ellipsis`). A

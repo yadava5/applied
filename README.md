@@ -45,7 +45,7 @@ honest record of where they applied.
 
 ### In the product today
 
-- **Inbox sync** — Gmail (OAuth, `gmail.readonly` scope only) or iCloud (IMAP); incremental or full sync, with polled status. The live WebSocket stream belonged to the deleted desktop client; Vercel's Python runtime does not support WebSockets
+- **Inbox sync** — Gmail only (OAuth, `gmail.readonly` scope). Incremental or full sync, with polled status. **iCloud IMAP is not in the product today**: that client lives at `jobtracker/email_clients/icloud.py`, it belonged to the desktop app, and `test_cloud_app_does_not_import_the_desktop_email_clients` actively forbids the deployed app from importing it — so there is no path in the web UI that could reach it. The live WebSocket stream belonged to the same deleted client; Vercel's Python runtime does not support WebSockets
 - **Automatic classification** into the nine `EmailCategory` enum values — `applied`, `pending_application`, `interview`, `rejection`, `offer`, `assessment`, `follow_up`, `other`, plus `needs_review` for anything under the gate. Eight of the nine are predicted labels; `needs_review` is the routing outcome.
 - **Application linking** — related messages are grouped into one tracked application and relinked when new signals arrive
 - **Human-in-the-loop review** — anything below `CONFIDENCE_AUTO = 0.85` (`classifier/hybrid.py`) lands in a review queue; corrections persist to `training_data` and flag the email `user_corrected`, so a later sync leaves your answer alone. Nothing retrains on them — the deployed classifier is rules-only. The training machinery ships in the repository, but no hosted path reaches it
@@ -123,8 +123,9 @@ the file that implements it.
 ## What you can check
 
 The reason to trust a product that reads your mail is not a promise; it is something you can open.
-Applied publishes specific numbers about itself and `scripts/readme_facts.py` recomputes every one
-of them from the code that defines it — [`readme-facts.yml`](.github/workflows/readme-facts.yml)
+Applied publishes specific numbers about itself and `scripts/readme_facts.py` recomputes every
+**registered** one of them from the code that defines it — an unregistered number, or a
+registered one whose site nobody pointed at the file holding it, is unchecked — [`readme-facts.yml`](.github/workflows/readme-facts.yml)
 fails the build when a claim on this page stops matching the source, and a claim reworded so the
 checker can no longer find it fails too. Where each number terminates is in [Verify it](#verify-it).
 
@@ -526,6 +527,9 @@ page you can show is wrong, and security findings are genuinely wanted: email th
 | --- | --- |
 | [System Card](https://getapplied.vercel.app/system-card) | Classifier design, evaluation, limitations, safety notes |
 | [Privacy](https://getapplied.vercel.app/privacy) | What Applied reads, what it stores, where it runs, how to delete it — each claim cited to the file that implements it |
+| [`docs/DECISIONS.md`](docs/DECISIONS.md) | Choices whose rejected alternative is attractive and whose reason is invisible from the code — what was chosen against, and whether anything enforces it |
+| [`docs/CLASSIFIER_RULES_GOVERNANCE.md`](docs/CLASSIFIER_RULES_GOVERNANCE.md) | What a change to the classifier rules has to prove before it lands, and what actually enforces it |
+| [`docs/TEST_DATA_POLICY.md`](docs/TEST_DATA_POLICY.md) | What a fixture may contain, why nothing already published is deleted, and what the gate does not cover |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System architecture and component boundaries |
 | [`docs/WEB_ARCHITECTURE.md`](docs/WEB_ARCHITECTURE.md) | Deployment modes, cloud auth flow, credential storage |
 | [`docs/API_SPEC.md`](docs/API_SPEC.md) | Backend REST contract — auth, the 29-route table, and the shapes worth stating in prose. The machine-checked authority is `apps/web/lib/api/schema.d.ts`, generated from the app and gated by `e2e-ci.yml` |
@@ -588,7 +592,7 @@ The desktop half of this diagram — a SwiftUI app over a local FastAPI process 
 
 #### The design decision that shaped the repo
 
-**One classifier package, two import graphs.** The desktop app runs all three layers. The cloud deployment runs the rules layer alone, and that is not a simplification for the README — it is enforced in code.
+**One classifier package, two import graphs.** The desktop app ran all three layers; it was deleted on 2026-08-12 and nothing runs them on a request path now. The cloud deployment runs the rules layer alone, and that is not a simplification for the README — it is enforced in code.
 
 The reason is a hard budget. Root `requirements.txt` states it: torch (~800 MB) plus sentence-transformers plus SetFit exceeds Vercel's Python function budget of 50 MB zipped on Hobby and 250 MB zipped on Pro, and `docs/WEB_ARCHITECTURE.md` adds that even on Pro the cold-start cost blows the 60-second wall clock. So the deployed function must never *import* the heavy stack, not merely never call it.
 
@@ -697,7 +701,7 @@ RLS here is live, not staged. Verified against the production database on 2026-0
 - **Identity is bound per transaction.** `_install_rls_guc_listener` in `database/connection.py` sets `request.jwt.claims` transaction-locally on every `begin`, so nothing leaks across the PgBouncer transaction pool, and `search_path` is pinned to `public` so a policy cannot be fooled by a shadowed relation.
 - **It fails closed.** With no user bound, `auth.uid()` is NULL, `user_id = NULL` matches nothing, and an unauthenticated path sees zero rows rather than everything.
 - **All 32 owner predicates are `user_id = (SELECT auth.uid())`** after rev `c6_rls_initplan_hoist` — the enumeration policy on `gmail_sync_enrollment` above is the deliberate exception, and it guards a table with no secret in it. This is a planning-time change: bare `auth.uid()` is `STABLE` and re-evaluated once per *row*; the sub-select is hoisted into an `InitPlan` evaluated once per *query*. Measured on a **synthetic** 200,000-row sequential scan in a throwaway `postgres:16` — **not** a production measurement — invocations went 200,001 → 1 and the query 126 ms → 10 ms, with an identical row set. The invocation ratio is the part that holds at any table size; Applied's real tables are far smaller.
-- The migration is a **no-op on SQLite**, so `alembic upgrade head` stays green for the desktop build and for CI.
+- The migration is a **no-op on SQLite**, so `alembic upgrade head` stays green for CI. It was written while the SQLite-backed desktop build still existed and the no-op is what kept that build green too.
 
 ### Tech Stack
 
@@ -714,7 +718,7 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 | **Styling** | Tailwind CSS 4, shadcn/ui-compatible scaffold, Radix Slot |
 | **Auth** | Supabase Auth via `@supabase/ssr` `^0.12.4` (SSR cookie `getAll`/`setAll`) |
 | **API client** | `openapi-fetch` 0.17 over types generated by `openapi-typescript` 7 |
-| **Testing** | Playwright 1.48+ (20 spec files under `apps/web/tests/e2e/`) |
+| **Testing** | Playwright 1.48+ (21 spec files under `apps/web/tests/e2e/`) |
 
 #### Backend
 
@@ -741,11 +745,11 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 | Category | Technologies |
 | --- | --- |
 | **Hosting** | Vercel (Next.js + one Python function, `maxDuration` 60), Supabase Postgres, Hugging Face Spaces |
-| **CI** | GitHub Actions — 14 workflows (see [Verify it](#verify-it)) |
+| **CI** | GitHub Actions — 15 workflows (see [Verify it](#verify-it)) |
 
 ### Testing
 
-**2939 tests collected, 0 skipped.** These figures were recorded on 2026-09-03 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. `--record` refuses to write at all unless that run was whole — Docker reachable, nothing skipped, suite green — because skipped tests are still *collected*, so a recording taken without the Postgres extras used to publish "0 skipped" while five modules sat out (#351). The artifact names the interpreter that ran the suite rather than the one that ran the script; those differ here, and a Python 3.14 run is exactly what produced the wrong coverage figures corrected below. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 1659 `test_*` functions across 141 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 2939 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
+**2939 tests collected, 0 skipped.** These figures were recorded on 2026-09-03 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. `--record` refuses to write at all unless that run was whole — Docker reachable, nothing skipped, suite green — because skipped tests are still *collected*, so a recording taken without the Postgres extras used to publish "0 skipped" while five modules sat out (#351). The artifact names the interpreter that ran the suite rather than the one that ran the script; those differ here, and a Python 3.14 run is exactly what produced the wrong coverage figures corrected below. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 1669 `test_*` functions across 142 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 2939 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
 
 The Postgres row-level-security module is the only thing in the repo that can demonstrate the isolation the product claims, and **22 tests** now exercise it. It has not always run: its tests waited on a database URL no workflow set, and a skip is green, so the 10 it held on 2026-08-02 had **never executed anywhere**. Two fixes: `test_rls_postgres.py` now starts its own `postgres:16` via testcontainers when `JOBTRACKER_TEST_PG_ADMIN_URL` is absent and Docker is available, and the `rls-postgres` CI job supplies its own service container. That job then parses the JUnit XML and **fails the build if the suite reports zero tests or any skip**, because a skipped security test and a passing one produce the same green tick.
 
@@ -761,10 +765,10 @@ This paragraph read "54% overall, 61% excluding one-off scripts … 2,163 statem
 | --- | --- | --- |
 | **Backend unit + integration** | pytest | classifier, API, sync, auth, cloud entrypoint, evaluator, ML-ops scripts |
 | **Database isolation** | pytest + testcontainers / CI service container | 22 RLS enforcement tests against real Postgres |
-| **Web e2e** | Playwright | 20 spec files — auth, beta, connect, dashboard, demo, file-application, import, landing, navigation, production, sample-inbox, scan-correct, session-edge, settings, shell, smoke |
+| **Web e2e** | Playwright | 21 spec files — auth, beta, boot, connect, dashboard, demo, file-application, import, inbox-geometry, landing, navigation, production, review-picker, sample-inbox, scan-correct, security-headers, session-edge, settings, shell, smoke, stage-focus |
 | **Web e2e, production build** | Playwright vs `next build` + `next start` | the `production` spec: every route driven against a real production build, failing on React hydration errors, uncaught exceptions and 5xx |
 | **Web static** | `tsc --noEmit`, ESLint, `next build` | every push touching `apps/web/**` |
-| **README claims** | `scripts/readme_facts.py --check` | every **registered** fact, at every claim site, across every file that holds one; no path filter. Most are recomputed from source on each run; the ones needing a pytest + coverage run are replayed from `docs/readme-facts.json`. The totals used to be written out here and in the workflow table below, in two different and both-wrong versions — a hand-maintained count of a checker is the one number the checker cannot check. A number that is not registered is not checked — see the note under Tech Stack |
+| **README claims** | `scripts/readme_facts.py --check` | every **registered** fact, at every **registered** claim site; no path filter. Both words are load-bearing and #401 is why: a site that names no file defaults to `README.md`, so for six months this row read "across every file that holds one" while four claims in three other files said 18 against a tree of 20. Coverage here is set membership in two dimensions — which facts are registered, and which files their sites point at — and the second one is the quiet one. Most are recomputed from source on each run; the ones needing a pytest + coverage run are replayed from `docs/readme-facts.json`. The totals used to be written out here and in the workflow table below, in two different and both-wrong versions — a hand-maintained count of a checker is the one number the checker cannot check. A number that is not registered is not checked — see the note under Tech Stack |
 
 Two lint gates run **advisory**, on purpose. `ruff check .` reported 379 findings on its first CI run (2026-08-07) and `mypy .` under `strict = true` reported 879 across 65 of 92 files. Both were configured in `pyproject.toml` from the start and had never actually run. They print their count on every build and flip to blocking when they reach zero; a gate that is red from birth gets ignored or deleted, and neither should be silenced with `--fix` or blanket `# type: ignore`.
 
@@ -866,7 +870,7 @@ applied/
 │   ├── web/                 # Next.js 16 App Router product (the cloud UI)
 │   │   ├── app/             # (auth) · (app) · demo · import · api routes
 │   │   ├── lib/demo/        # rulesLayer.ts — layer 1 ported to run live in the tab
-│   │   └── tests/e2e/       # 20 Playwright specs
+│   │   └── tests/e2e/       # 21 Playwright specs
 │   └── mobile/              # reserved; empty
 │
 ├── backend/
@@ -880,7 +884,7 @@ applied/
 │   │   └── scripts/         # evaluator, latency benchmark, ML-ops tooling
 │   ├── alembic/versions/    # 23 revisions incl. the RLS + InitPlan-hoist migrations
 │   ├── data/evaluation/     # eval sets, committed baselines, benchmark + monitoring history
-│   └── tests/               # 141 modules
+│   └── tests/               # 142 modules
 │
 ├── ml/                      # the classifier as a deployable service
 │   ├── browser/             # ONNX export + the in-browser site (Transformers.js)
@@ -891,7 +895,7 @@ applied/
 ├── api/index.py             # Vercel Python entry → jobtracker.main_cloud
 ├── requirements.txt         # the CLOUD dependency set; deliberately not backend/requirements.txt
 ├── docs/                    # architecture, API spec, ML strategy + runbooks, RLS audit
-└── .github/workflows/       # 14 workflows
+└── .github/workflows/       # 15 workflows
 ```
 
 </details>
@@ -902,7 +906,7 @@ applied/
 
 **A gate below the measured value, and a gate on the gate.** The macro-F1 floor is 0.95 against a measured 0.9791, deliberately loose, because a gate pinned at the current number turns every honest refactor red; what it guards against is a collapse, not a two-point drift. Separately, the RLS job asserts that its own suite *ran*, because the failure mode that actually occurred here was not a failing test but ten silently skipped ones.
 
-**Deployment mode as an import-graph decision.** The alternative to splitting the classifier by deployment was a single build that carries torch everywhere — which does not fit in a Vercel function — or two divergent packages, which drift. Applied keeps one package and makes the divergence a property of the import graph, then tests that property in a subprocess. The cost is honesty overhead: the cloud is a weaker classifier than the desktop, and every surface that talks about accuracy has to say which one it means.
+**Deployment mode as an import-graph decision.** The alternative to splitting the classifier by deployment was a single build that carries torch everywhere — which does not fit in a Vercel function — or two divergent packages, which drift. Applied keeps one package and makes the divergence a property of the import graph, then tests that property in a subprocess. The cost is honesty overhead: the cloud runs a weaker classifier than the full cascade, and every surface that talks about accuracy has to say which one it means. That was true of the desktop comparison when the desktop existed, and it is true today of the cascade the repository still trains and evaluates but does not deploy.
 
 ### Verify it
 

@@ -77,12 +77,22 @@ _NO_ROLE = ""
 DUE_FROM_USER = "user"
 DUE_FROM_MAIL = "mail"
 
-# Who set the ROLE. Issue #72: nothing in the Gmail path can ever supply one —
-# ``format=metadata`` means no body is fetched and the ATS acknowledgement
-# subjects that are fetched name the employer ("Thanks for applying to
-# Supabase"), so ``_role_from_subject`` returns None for all three of the
-# owner's real production subjects. ``position`` is therefore permanently "" on
-# every auto-filed row, and the honest fix is to let the user type it.
+# Who set the ROLE.
+#
+# THE ORIGINAL JUSTIFICATION HERE WAS FALSE AND IS CORRECTED (#543). It read
+# that nothing in the Gmail path can ever supply a role because
+# ``format=metadata`` fetches no body and ATS subjects name only the employer.
+# The fetch is ``format="full"`` (``cloud/gmail_client.py:17``, ``:521``,
+# ``:907``) and has been for longer than this comment has been wrong, and the
+# lead- and trailing-segment readers do resolve roles from subjects (#553,
+# #626) at 40 fire / 40 exact / 0 wrong on the corpus. The sibling docstring at
+# ``cloud/gmail_client.py:1121-1128`` already corrected the same claim; this
+# site and its twin in ``database/models.py`` were missed.
+#
+# The column survives the correction because its real reason was never the
+# extraction gap: a title a human typed must not be overwritten by the next
+# sync, and now that the sync can produce a title, that matters more rather
+# than less.
 #
 # NULL means the sync owns the field, which is the state of every row that
 # exists today; ``user`` means a human typed it and the sync must not argue.
@@ -597,9 +607,10 @@ class CloudApplicationResponse(BaseModel):
     due_source: str | None = None
     # Who named the role: ``user`` when a human typed it, null when the field is
     # still the sync's. Sent for the same reason ``due_source`` is — the UI has
-    # to be able to say whose word a value is without guessing, and an empty
-    # role is a permanent fact about Gmail-sourced rows (issue #72) rather than
-    # something still loading.
+    # to be able to say whose word a value is without guessing. Issue #543: an
+    # empty role is NOT a permanent fact about Gmail-sourced rows. Extraction
+    # fills one when it can (:2197, :2804-2826), so a blank field means the mail
+    # named no title this sync could read, and a later sync may fill it.
     position_source: str | None = None
 
 
@@ -2194,6 +2205,10 @@ def _adopt_mail_identity(app, role: str | None, req_id: str | None) -> bool:
         return False
 
     changed = False
+    # DEC-004: the `position_source` guard is why extraction may write here at
+    # all. Removing it because "extraction works now" is the reversal that entry
+    # exists to refuse -- it is the only thing between this line and a title the
+    # user typed. See docs/DECISIONS.md.
     if role and not app.position and app.position_source != ROLE_FROM_USER:
         app.position = role
         changed = True

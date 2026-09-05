@@ -1,11 +1,14 @@
 /**
  * Unit tests for filling in a role by hand — issue #72.
  *
- * Every application filed from Gmail lands with `position: ""` and always will:
- * the Gmail path fetches `format=metadata` so no body is ever read, and the ATS
- * acknowledgement subjects it does read name the employer rather than the role
- * ("Thanks for applying to Supabase"). The product's answer is to let the user
- * type it, which makes two things testable at this level and worth pinning:
+ * Issue #543 killed this module's founding premise. It said every Gmail-filed
+ * application lands with `position: ""` and always would, because the fetch was
+ * `format=metadata` and the subjects it read named the employer. The fetch is
+ * `format="full"` now and `role_from_message` reads the body, so a row can
+ * arrive with a title already on it.
+ *
+ * What is tested here does not change, and matters more than it did: a title
+ * the user typed must survive the next sync. Two things worth pinning:
  *
  *  1. WHICH endpoint the control hits. The role write is its own PUT, not a
  *     field smuggled into the status PATCH — the backend's `ApplicationStatusUpdate`

@@ -40,6 +40,10 @@ export const RESEND_COOLDOWN_SECONDS = 60;
  * address. Anything the caller could branch on would eventually be branched on.
  */
 export interface ResetRequestOutcome {
+  // DEC-005 in docs/DECISIONS.md. Adding a field here is the reversal that
+  // entry exists to refuse, and it has been proposed once already, in an audit
+  // written by someone who had this file open. The header above is the reason;
+  // the entry records that the header alone did not hold.
   readonly notice: string;
 }
 
