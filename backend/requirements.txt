@@ -37,7 +37,7 @@
 uvicorn[standard]>=0.27.0     # ASGI server with uvloop
 websockets>=17.1              # WebSocket support for real-time sync updates
 aiosqlite>=0.22.1             # Async SQLite driver (desktop/tests)
-alembic>=1.13.0               # DB migrations (owns schema on Postgres)
+alembic>=1.19.1               # DB migrations (owns schema on Postgres)
 keyring>=25.7.0               # Secure credential storage (macOS Keychain)
 
 # -----------------------------------------------------------------------------

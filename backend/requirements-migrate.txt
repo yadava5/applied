@@ -17,4 +17,4 @@ psycopg[binary]>=3.3.4
 # and the bundle has a size limit the .vercelignore exists to respect). Without
 # this line, "install the migration dependencies" quietly produces an
 # environment that cannot run a migration.
-alembic>=1.13.0
+alembic>=1.19.1
