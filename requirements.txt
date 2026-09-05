@@ -71,7 +71,7 @@ google-auth-httplib2>=0.1.1
 # silently autogenerating a verifier per Flow — which broke the split
 # authorize/callback exchange with invalid_grant — and dropping the
 # kwargs entirely).
-google-auth-oauthlib>=1.2.4
+google-auth-oauthlib>=1.4.1
 aioimaplib>=2.0.1
 
 # -----------------------------------------------------------------------------
