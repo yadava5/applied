@@ -1312,6 +1312,17 @@ def test_the_three_readers_never_count_one_run_twice(tree: Path) -> None:
         hits = gate.matches_in(probe)
         assert len(hits) <= 1, f"{probe!r} was read by more than one reader: {hits}"
 
+    # ADJACENT RUNS, where ordering alone is NOT enough. `TEMPLATE` greedily
+    # swallows the second run's local part, this reader resumes past it, and
+    # the match it then finds STARTS inside `TEMPLATE`'s span and ENDS outside
+    # it — which the span guard, testing containment rather than overlap, does
+    # not drop. Measured: shipped finds 1 here; admitting markers into this
+    # reader's domain finds 2. That is what makes the literal domain
+    # load-bearing rather than merely defensive, and it is the input that reds
+    # the mutation I first recorded as behaviour-equivalent.
+    adjacent = "{a}@{b}.com{c}@{d}.com"
+    assert len(gate.matches_in(adjacent)) == 1, gate.matches_in(adjacent)
+
 
 def test_the_interpolated_local_is_judged_on_its_domain_not_its_template(tree: Path) -> None:
     """`is_allowed` takes a DOMAIN. Handing it `{prefix}@example.com` is not the same.

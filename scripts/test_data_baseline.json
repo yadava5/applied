@@ -388,8 +388,8 @@
       "digest": "0deb823e3b07bfae"
     },
     "backend/tests/test_test_data_gate.py": {
-      "count": 35,
-      "digest": "0c98f1f796186b50"
+      "count": 36,
+      "digest": "cb62b66ed20aacbb"
     },
     "backend/tests/test_the_review_answer_keeps_the_title.py": {
       "count": 2,
@@ -427,10 +427,6 @@
       "count": 5,
       "digest": "aeaee4ce69a35a44"
     },
-    "docs/TEST_DATA_POLICY.md": {
-      "count": 3,
-      "digest": "94776fe4bdec75eb"
-    },
     "ml/demo/space/jobtracker/classifier/hybrid.py": {
       "count": 2,
       "digest": "f28601e965723bb1"
@@ -445,7 +441,7 @@
     },
     "scripts/check_test_data.py": {
       "count": 19,
-      "digest": "2bf7420926fa09ef"
+      "digest": "67747d32c98a0e90"
     },
     "vercel-ignore-build.sh": {
       "count": 1,
