@@ -84,6 +84,12 @@ jobs:
         working-directory: booklet
         run: npm run build:system-card
 
+      # DEC-006: scoping this job to `booklet/src` changes only is the
+      # cheapest-looking repair for the Dependabot red and the one that
+      # destroys the guard -- it would stop the gate firing on direct
+      # tampering with the committed artifact, which PR #783 demonstrated
+      # it currently catches. See docs/DECISIONS.md.
+      #
       # This step runs from the repo ROOT on purpose. If it inherited
       # working-directory: booklet, the pathspec below would resolve against
       # booklet/, match nothing, and the guard would pass forever on a drifted
