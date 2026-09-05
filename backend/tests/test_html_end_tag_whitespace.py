@@ -66,6 +66,30 @@ def test_element_body_never_survives_a_whitespace_end_tag(where: str, shape: str
     assert "Hello" in text, f"{where} dropped the surrounding prose on `{shape}`"
 
 
+# THE ONE PROBE WHOSE ANSWER IS NOT SHARED — #430.
+#
+# ``cloud.gmail_client._html_to_text`` turns block-level markup into a newline
+# BEFORE tags are stripped, because the classifier's quote detection is
+# line-oriented and an HTML-only message spells its lines in tags; the desktop
+# strippers feed rendering and snippets and still flatten. The corpus entry is
+# the cloud function itself (``tests/corpus/mail.py`` re-exports it), so it
+# answers the same. The interior space is the one ``_TAG`` leaves where the
+# second ``<div>`` opened.
+#
+# WRITTEN AS A PER-STRIPPER VALUE, not as a comparison with the newlines
+# normalised away. Erasing the difference to make one assertion serve five
+# would stop this guard pinning any of them — see
+# ``tests/test_the_quote_survives_the_html_body.py`` for what the cloud copy
+# now has to do.
+BLOCK_BOUNDARY = {
+    "email_clients.parser._html_to_text": "a b",
+    "email_clients.gmail._strip_html": "a b",
+    "email_clients.icloud._strip_html": "a b",
+    "cloud.gmail_client._html_to_text": "a\n\n b",
+    "tests.corpus.mail.html_to_text": "a\n\n b",
+}
+
+
 @pytest.mark.parametrize("where", sorted(STRIPPERS))
 def test_ordinary_markup_is_unchanged(where: str) -> None:
     """Equivalence guard: the shapes real mail actually uses still behave.
@@ -80,6 +104,6 @@ def test_ordinary_markup_is_unchanged(where: str) -> None:
     assert strip("<style>p { color: red }</style><p>body</p>") == "body"
     assert strip("<script>evil()</script><p>Offer</p>") == "Offer"
     assert strip("<p>Interview</p>") == "Interview"
-    assert strip("<div>a</div>\n<div>b</div>") == "a b"
+    assert strip("<div>a</div>\n<div>b</div>") == BLOCK_BOUNDARY[where]
     # A tag name that merely STARTS with "script" is not a script element.
     assert "keep" in strip("<scripture>keep</scripture>")
