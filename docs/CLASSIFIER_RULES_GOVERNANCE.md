@@ -97,10 +97,25 @@ confidence, every one of them gold-labelled `rejection` and every one upward
 ### Propagate to every port, or say why not, in the commit
 
 `PATTERNS` reaches five tracked surfaces. It is the source in
-`backend/jobtracker/classifier/rules.py`; it is copied verbatim into
-`ml/demo/space/jobtracker/classifier/rules.py`; and it is generated into
+`backend/jobtracker/classifier/rules.py`; `ml/demo/package_space.py` copies it
+into `ml/demo/space/jobtracker/classifier/rules.py`; and it is generated into
 `apps/web/lib/demo/rules.json` and `ml/browser/site/rules.json`, the first of
-which `apps/web/lib/demo/rulesLayer.ts` reads. `6919e63` regenerated all of
+which `apps/web/lib/demo/rulesLayer.ts` reads.
+
+**The Space copy is 182 lines behind `backend/` right now, 65 of them
+executable** — measured, not guessed: it is missing `own_text_span`,
+`own_text_refutes`, `_RETRACTION` and `_SEMANTIC_REFUTATIONS`, which is the
+whole of #417's short-reply work. That is not a defect to file. `package_space.py`
+rebuilds the directory wholesale and the Space has been withdrawn since
+2026-08-15, and `readme_facts.py`'s vendored-Space invariant is deliberately a
+top-level-module comparison rather than a file diff, for a reason worth reading
+before anyone "improves" it: a deep comparison would go red on every ordinary
+classifier edit and get switched off. So the copy legitimately lags between
+repackagings.
+
+It is worth knowing anyway, because it is the honest scale of this section's
+subject: **the drift a port accumulates is not visible from the port's source,
+and no gate in this repository reports it.** `6919e63` regenerated all of
 them and proved the generator faithful first, "by reproducing the committed
 rules.json byte-for-byte from the unmodified rules.py". `9e013ff` deliberately
 did **not** port its change to `rulesLayer.ts` and said so in the commit,
