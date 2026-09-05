@@ -409,6 +409,51 @@ jobs:
           tail -n 200 frontend-prod.log || true
           exit 1
 
+      # The CSP wire gate. It reads the SERVED response and compares the
+      # header's nonce against every `<script>` in the body, which is the one
+      # check that can see the failure mode the nonced policy can ship
+      # silently: a 200 whose header advertises a fresh nonce while the HTML
+      # carries a stale one or none, because the route came from a build-time
+      # prerender. Asserting the policy STRING cannot see that, so
+      # `security-headers.spec.ts` -- which reads headers off the wire and is
+      # the right check for its own question -- does not cover this one.
+      #
+      # It ran nowhere until now (#742), while `docs/casa/SESSION-COOKIES.md`
+      # cited it as the standing verification of the compensating control for
+      # the readable session cookie. This job is the only place it CAN run: it
+      # needs `next build && next start`, and the dev-server job's policy
+      # carries `'unsafe-eval'` by design.
+      #
+      # Before the step, first: under a broken `'strict-dynamic'` policy every
+      # script on the page is blocked and the Playwright failures that follow
+      # are unreadable. The gate names the defect in 0.3s.
+      #
+      # PROVEN ABLE TO FAIL before wiring, four ways, each rebuilt and each
+      # confirmed on the wire before the gate was read: `'unsafe-inline'` into
+      # `script-src` (12 routes red); the request headers set AFTER
+      # `updateSession` in `proxy.ts` (un-nonced=2 of 14 -- the partial case,
+      # and the one that matters); a hardcoded stale nonce in the layout (all
+      # tags red); and an inline `<script>` added to the System Card bundle,
+      # which needs no rebuild because `public/` is served from disk.
+      #
+      # `timeout-minutes: 2` against a 0.30s cold run is not headroom. The gate
+      # makes 17 sequential `fetch` calls with no `AbortSignal`, so a route
+      # that accepts the socket and never answers would park this step until
+      # GitHub's 360-minute JOB default reported `cancelled` -- the #712
+      # signature this file exists to keep deleted.
+      #
+      # Two limits, recorded so the next reader does not assume otherwise. The
+      # gate never asserts 2xx: a deleted or renamed route still receives the
+      # proxy's CSP and Next's nonces, so it goes green rather than red. And
+      # `checkRedirect` requires 3xx while signed out on /dashboard, /inbox,
+      # /settings and /callback -- if the seeded session from #188 ever lands
+      # in this job those answer 200 and this step reds for a reason that is
+      # not about CSP.
+      - name: CSP wire gate
+        timeout-minutes: 2
+        working-directory: apps/web
+        run: node scripts/csp-gate.mjs http://127.0.0.1:3000
+
       # Again no `--project` filter — and this is the job where it matters
       # most. The race the offset projects exist for is a HYDRATION-adjacent
       # defect, and only this job hydrates a real static prerender; the dev
