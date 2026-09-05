@@ -1,0 +1,52 @@
+# Dependencies of ml/browser/export_onnx.py.
+#
+# WHY THIS FILE EXISTS SEPARATELY FROM backend/requirements.txt
+#
+# This script is a standalone export environment, not part of the serving
+# backend, and its dependency set is INCOMPATIBLE with the backend's by
+# construction. Declaring it here is how that incompatibility becomes visible
+# instead of latent: two manifests that disagree, on purpose and in writing,
+# beat one that quietly cannot satisfy both.
+#
+# Before this file, `optimum` and `onnxruntime` were declared in NO manifest at
+# all -- seven were checked -- while the script imported them. So no resolver
+# was ever given the constraint below, and the conflict could not be found by
+# installing anything.
+#
+# THE CONSTRAINT, AND WHERE IT COMES FROM
+#
+# The ceiling is not in `optimum`, which is the natural guess. It is in
+# `optimum-onnx`, which is what actually provides the `optimum.onnxruntime`
+# import path. Read from the installed distributions on 2026-09-05:
+#
+#     optimum       2.1.0   transformers>=4.29             (no ceiling)
+#     optimum-onnx  0.1.0   transformers<4.58.0,>=4.36     (the ceiling)
+#     onnxruntime   1.27.0  (no transformers constraint)
+#
+# backend/requirements.txt declares transformers>=5.10.0, which is far outside
+# that range. So this script cannot run against the backend's declared set, and
+# after #746's cap lift that is definite rather than latent. The ONNX artefacts
+# are already recorded as withdrawn, which is what bounds the consequence.
+#
+# Install into an environment of its own:
+#     python -m venv .venv-onnx && .venv-onnx/bin/pip install -r ml/browser/requirements.txt
+
+optimum>=2.1.0
+optimum-onnx>=0.1.0,<0.2
+onnxruntime>=1.27.0
+
+# The bound optimum-onnx imposes, written where a resolver can see it. Widening
+# this to <5 to match the backend is the change that would put the two manifests
+# back into silent disagreement -- backend/tests/test_ml_browser_requirements.py
+# is what refuses it.
+transformers>=4.36,<4.58
+
+# Imported at export_onnx.py:61, and undeclared until this file existed --
+# found by the declaration check on its first run, not by reading the script.
+# Its own bound is transformers<6.0.0,>=4.41.0, which is WIDER than
+# optimum-onnx's, so it does not move the ceiling above; recorded because a
+# reader who only checks this line would conclude the ceiling is 6.0.
+sentence-transformers>=5.2.2
+
+joblib>=1.3.0
+numpy>=1.26.0

@@ -107,9 +107,39 @@ export const UNDO_WINDOW_SECONDS = 6;
 
 export const UNDO_LABEL = "Undo";
 
+/**
+ * EACH OUTCOME LINE IS A NAME PLUS A TAIL, AND THE SPLIT IS THE FIX (#424).
+ *
+ * `company` on a synced row is whatever an applicant-tracking system put in a
+ * display name — attacker-chosen end to end, and the extraction path that
+ * produces it (`_clean_sender_display_name`, `_valid_company_token`) rejects
+ * stopwords, requisition codes and digits but applies no character class at
+ * all. So the employer name can carry a bidi override, and these three
+ * functions used to hand the row ONE composed string with the name already
+ * inside it. A string cannot hold an element, so nothing could be neutralised
+ * at the render site and the whole sentence drew raw: an unterminated U+202E in
+ * the name reverses the text that FOLLOWS it, which on the pending tombstone is
+ * the countdown the reader is deciding against ("… undo within 6s" swapped
+ * ahead of the employer, measured on the real `<p role="status">`).
+ *
+ * Isolation does not fix that and was measured not to: the paragraph's computed
+ * `unicode-bidi` is already `isolate` (Chromium blockifies the flex child) and
+ * the reversal still happened, because isolation contains a run OUTWARD and the
+ * defect is inside the paragraph, where the name has no element of its own.
+ * Giving it one is the fix, so the name is handed back separately and
+ * `ApplicationRow` draws it through `MailText`.
+ *
+ * The composed forms are kept — several callers only ever want a string — and
+ * they are DEFINED from the same two parts, so the sentence a row draws and the
+ * sentence a caller reads can never drift apart.
+ */
+export function rowName(company: string): string {
+  return company.trim() || "This row";
+}
+
 /** What the tombstone that replaces the row says while the window is open. */
-export function removalPendingMessage(company: string, secondsLeft: number): string {
-  return `${rowName(company)} removed from the board · undo within ${Math.max(0, secondsLeft)}s`;
+export function removalPendingTail(secondsLeft: number): string {
+  return ` removed from the board · undo within ${Math.max(0, secondsLeft)}s`;
 }
 
 /**
@@ -117,16 +147,20 @@ export function removalPendingMessage(company: string, secondsLeft: number): str
  * the board and left it on disk, the other erased it. Saying "removed" for both
  * would undo, in the copy, the whole distinction this change exists to draw.
  */
+export const REMOVED_TAIL = " removed from the board · not deleted";
+
+export const DELETED_TAIL = " deleted permanently";
+
+export function removalPendingMessage(company: string, secondsLeft: number): string {
+  return `${rowName(company)}${removalPendingTail(secondsLeft)}`;
+}
+
 export function removedMessage(company: string): string {
-  return `${rowName(company)} removed from the board · not deleted`;
+  return `${rowName(company)}${REMOVED_TAIL}`;
 }
 
 export function deletedMessage(company: string): string {
-  return `${rowName(company)} deleted permanently`;
-}
-
-function rowName(company: string): string {
-  return company.trim() || "This row";
+  return `${rowName(company)}${DELETED_TAIL}`;
 }
 
 // --- Copy -------------------------------------------------------------------

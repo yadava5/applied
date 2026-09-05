@@ -1,5 +1,6 @@
 import { type NextRequest } from "next/server";
 
+import { publicEnv } from "@/lib/env";
 import { buildNonceCsp, createNonce } from "@/lib/security/csp";
 import { updateSession } from "@/lib/supabase/middleware";
 
@@ -16,7 +17,21 @@ import { updateSession } from "@/lib/supabase/middleware";
  */
 export async function proxy(request: NextRequest) {
   const nonce = createNonce();
-  const csp = buildNonceCsp(nonce);
+
+  /**
+   * The policy's `connect-src` names THIS deployment's Supabase project rather
+   * than a literal (#740). A hardcoded ref built green on every deployment and
+   * blocked sign-in outright on any that pointed elsewhere — see
+   * `lib/security/csp.ts` for what exactly breaks and why the origin arrives
+   * as an argument instead of being read inside that module.
+   *
+   * `.origin` rather than the raw variable: it drops any path or trailing
+   * slash, which a browser would otherwise enforce as a path restriction on
+   * the source. `publicEnv` costs no extra bundle weight here — `updateSession`
+   * below already pulls it in — and `lib/env.ts` has already refused to build
+   * on an absent or malformed value, so there is nothing left to validate.
+   */
+  const csp = buildNonceCsp(nonce, new URL(publicEnv.NEXT_PUBLIC_SUPABASE_URL).origin);
 
   /**
    * ORDER IS LOAD-BEARING. Both mutations must happen BEFORE `updateSession`

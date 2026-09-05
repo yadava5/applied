@@ -6,26 +6,29 @@ import { memo, useCallback, useEffect, useId, useRef, useState } from "react";
 
 import { DeadlineTag, FiledStamp, SameCompanyChip } from "@/components/dashboard/CardMeta";
 import { notifySuccess } from "@/components/feedback/notify";
+import { MailText } from "@/components/mail/MailText";
 import { RowActionsMenu, type RowMenuItem } from "@/components/dashboard/RowActionsMenu";
+import { safeText } from "@/lib/security/hostileText";
 import { cardQualifier } from "@/lib/dashboard/board";
 import { todayISO } from "@/lib/dashboard/age";
 import { filedAt } from "@/lib/dashboard/dates";
 import {
   CANCEL_LABEL,
+  DELETED_TAIL,
   DELETE_CONFIRM_LABEL,
   DELETE_CONFIRM_QUESTION,
   DELETE_FAILED,
   DELETE_HINT,
   DELETE_LABEL,
+  REMOVED_TAIL,
   REMOVE_FAILED,
   REMOVE_HINT,
   REMOVE_LABEL,
   REMOVE_STICKY_HINT,
   UNDO_LABEL,
   UNDO_WINDOW_SECONDS,
-  deletedMessage,
-  removalPendingMessage,
-  removedMessage,
+  removalPendingTail,
+  rowName,
   statusChangeFailure,
 } from "@/lib/dashboard/rowActions";
 import { statusOptions, statusSelectValue } from "@/lib/dashboard/status";
@@ -37,6 +40,32 @@ import { liveBoardTransport, type BoardTransport } from "@/lib/dashboard/transpo
  *  use — instead of rendering shorter than its neighbours and making the
  *  whole list ragged. */
 export const NO_ROLE_LABEL = "role not captured";
+
+/**
+ * One of the two tombstones' sentences: the row's name, then what happened
+ * to it.
+ *
+ * WHY THIS IS ITS OWN COMPONENT AND NOT AN INLINE FRAGMENT (#424). The name is
+ * mail-derived — a synced row's `company` is whatever an ATS put in a display
+ * name — so it has to go through `MailText`, which means it needs an element
+ * of its own; `rowActions.ts` explains why the composed one-string form could
+ * not be neutralised and why isolation does not stand in for the wrapper. It
+ * is EXPORTED and hook-free for the same reason `MailText` is: it is the piece
+ * of this row that `tests/unit/helpers/renderTsx.mjs` can render by calling it,
+ * so the tombstone — a `useState` branch a static render can never reach — is
+ * proven by execution rather than by a source scan.
+ *
+ * `tail` is written by `rowActions.ts` and never here, so the two outcomes go
+ * on reading differently ("not deleted" versus "deleted permanently").
+ */
+export function RowOutcome({ company, tail }: { company: string; tail: string }) {
+  return (
+    <>
+      <MailText value={rowName(company)} />
+      {tail}
+    </>
+  );
+}
 
 /**
  * The stage control — label and `<select>` together — behind `memo`, and that
@@ -113,8 +142,13 @@ const StageSelect = memo(function StageSelect({
 }) {
   return (
     <>
+      {/* `safeText`, not `MailText`: this is an accessible NAME. The company
+          is drawn visibly a few nodes away and carries the hidden-character
+          flag there, and stuffing a second warning into every control's
+          announced name would bury the name the label exists to give — the
+          trade `lib/security/hostileText.ts` states for exactly these slots. */}
       <label className="sr-only" htmlFor={`status-${id}`}>
-        Change stage for {company}
+        Change stage for {safeText(company)}
       </label>
       {/* Still a NATIVE controlled <select> — the memo contract above, the
           keyboard/AT semantics and the enum options are all unchanged. Only
@@ -382,7 +416,7 @@ export function ApplicationRow({
       // "N applications updated" instead of stacking one per row. Failure
       // stays out of the toaster on purpose — this row already owns an
       // inline `role="alert"` for it, and a toast would say it twice.
-      notifySuccess("application.status", `${app.company} updated`, {
+      notifySuccess("application.status", `${safeText(app.company)} updated`, {
         countMessage: (n) => `${n} applications updated`,
       });
       router.refresh();
@@ -479,7 +513,7 @@ export function ApplicationRow({
     return (
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-dashed border-line bg-surface-2/60 px-3 py-2">
         <p role="status" className="min-w-0 flex-1 text-xs leading-snug text-muted">
-          {removalPendingMessage(app.company, secondsLeft ?? 0)}
+          <RowOutcome company={app.company} tail={removalPendingTail(secondsLeft ?? 0)} />
         </p>
         <button
           ref={undoRef}
@@ -503,12 +537,32 @@ export function ApplicationRow({
     return (
       <div className="rounded-lg border border-dashed border-line-soft bg-surface-2/40 px-3 py-2">
         <p role="status" className="text-xs text-dim">
-          {removed === "deleted" ? deletedMessage(app.company) : removedMessage(app.company)}
+          <RowOutcome
+            company={app.company}
+            tail={removed === "deleted" ? DELETED_TAIL : REMOVED_TAIL}
+          />
         </p>
       </div>
     );
   }
 
+  /**
+   * NEUTRALISED UNCONDITIONALLY, NOT ONLY WHEN THE SYNC OWNS IT (#424).
+   * `position_source` is `"user"` for a typed title and NULL when extraction
+   * produced it, so only the NULL rows are mail-derived — but branching on that
+   * would leave a code path that renders `position` RAW, gated on a field that
+   * is not a trust boundary. It is a sync-ownership flag the backend sets on
+   * any write through `/role`, and the detail sheet sets it optimistically
+   * before the server confirms. A raw render path reachable whenever that flag
+   * says "user" is precisely the shape this fix exists to remove.
+   *
+   * What that costs is a marker on a self-typed role that genuinely carries an
+   * invisible code point — a soft hyphen pasted out of a job posting, say. The
+   * marker is TRUE in that case: there is an invisible character in the string.
+   * A raw path is not true in any case. So the sanitiser applies whoever chose
+   * the bytes, because the defect is about what the screen says, not about who
+   * typed it.
+   */
   const role = app.position.trim();
 
   const identity = inSet ? (
@@ -518,10 +572,10 @@ export function ApplicationRow({
     <span className="flex min-w-0 flex-1 items-baseline gap-2">
       {role ? (
         <span
-          title={role}
+          title={safeText(role)}
           className="line-clamp-2 min-w-0 break-words text-sm leading-snug text-foreground underline-offset-2 group-hover/row:underline"
         >
-          {role}
+          <MailText value={role} />
         </span>
       ) : (
         <span className="text-sm leading-snug text-dim underline-offset-2 group-hover/row:underline">
@@ -541,7 +595,7 @@ export function ApplicationRow({
     <>
       <span className="flex min-w-0 items-baseline gap-2 text-sm font-medium text-strong sm:max-w-[16rem] sm:shrink-0">
         <span className="min-w-0 truncate underline-offset-2 group-hover/row:underline">
-          {app.company}
+          <MailText value={app.company} />
         </span>
         {qualifier && (
           <span className="shrink-0 rounded-full border border-line px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-muted">
@@ -563,10 +617,10 @@ export function ApplicationRow({
           the line's shape never changes. */}
       {role ? (
         <span
-          title={role}
+          title={safeText(role)}
           className="line-clamp-2 min-w-0 break-words text-[13px] leading-snug text-foreground"
         >
-          {role}
+          <MailText value={role} />
         </span>
       ) : (
         <span className="text-[13px] leading-snug text-dim">{NO_ROLE_LABEL}</span>
@@ -595,7 +649,7 @@ export function ApplicationRow({
         <button
           type="button"
           onClick={() => onOpenDetail(app)}
-          aria-label={`Open ${app.company}${role ? ` — ${role}` : ""}`}
+          aria-label={`Open ${safeText(app.company)}${role ? ` — ${safeText(role)}` : ""}`}
           className="flex min-w-0 flex-col gap-y-0.5 text-left sm:flex-1 sm:basis-56 sm:flex-row sm:items-baseline sm:gap-x-2.5"
         >
           {identity}
@@ -660,7 +714,7 @@ export function ApplicationRow({
               href={app.url}
               target="_blank"
               rel="noopener noreferrer"
-              aria-label={`Open the mail behind ${app.company} in Gmail`}
+              aria-label={`Open the mail behind ${safeText(app.company)} in Gmail`}
               title="open in gmail"
               className="grid h-6 w-6 place-items-center rounded text-dim transition-colors hover:bg-surface hover:text-strong"
             >
@@ -675,7 +729,7 @@ export function ApplicationRow({
           )}
         </span>
         <RowActionsMenu
-          label={`Row actions for ${app.company}${role ? ` — ${role}` : ""}`}
+          label={`Row actions for ${safeText(app.company)}${role ? ` — ${safeText(role)}` : ""}`}
           items={menuItems}
           disabled={busy !== null}
           triggerRef={triggerRef}
@@ -694,7 +748,7 @@ export function ApplicationRow({
       {confirmingDelete ? (
         <div
           role="group"
-          aria-label={`Confirm permanent delete of ${app.company}`}
+          aria-label={`Confirm permanent delete of ${safeText(app.company)}`}
           onKeyDown={(event) => {
             if (event.key !== "Escape") return;
             event.preventDefault();
