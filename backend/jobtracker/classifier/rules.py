@@ -790,7 +790,7 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             # "completing" and "completion" never contained the substring, so
             # `\bcomplete\b` costs nothing and closes the only hole there was.
             r"\bcomplete\b.{0,30}take.?home.{0,20}(assessment|challenge|test|exercise)",
-            r"complete.{0,30}(assessment|challenge|test)",
+            r"\bcomplete\b.{0,30}(assessment|challenge|test)",
             r"hackerrank",
             r"codility",
             r"codesignal",
