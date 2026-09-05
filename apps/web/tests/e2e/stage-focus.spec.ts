@@ -8,8 +8,14 @@ import { expect, test, type Page } from "@playwright/test";
  * while the write was in flight. The browser blurs a FOCUSED element that
  * becomes disabled, to `<body>`, and never gives the focus back: measured on
  * the live board at t=3ms after the change, on four different rows, at t=0,
- * 100, 500 and 1200ms. For a keyboard user the next Tab restarts at the top of
- * the document — and at the owner's 1024px, with the detail pane docked open,
+ * 100, 500 and 1200ms. What that costs a keyboard user is NOT "the next Tab
+ * restarts at the top of the document", which this file used to say: measured
+ * in Chromium, the sequential focus navigation starting point survives the
+ * blur (from the board's select at index 32 of 69, the next Tab landed on 31).
+ * What is lost is the focus ring, the assistive-technology announcement of
+ * where the reader is, and the Shift+Tab anchor — forward still works, seeing
+ * and hearing and going back do not. Chromium only; no other engine was
+ * measured. And at the owner's 1024px, with the detail pane docked open,
  * the pane's own select is the documented keyboard route to a stage change, so
  * both controls are fixed and both are driven here.
  *
@@ -22,15 +28,20 @@ import { expect, test, type Page } from "@playwright/test";
  * the `<select>` node stays in the document the whole time. It loses focus
  * identically on the defect. The stage-changing case follows as a second case
  * and asserts what is honestly assertable there: focus is never lost while the
- * control is still ON the page. What happens after React unmounts it is a
- * different question from this one.
+ * control is still ON the page. What happens AFTER React unmounts it is a
+ * different question, with a different repair — and it is answered lower down,
+ * by the three unmount cases this file grew in #425's second half.
  *
  * WHY A SAMPLED TRACE AND NOT `await expect(select).toBeFocused()`. That
  * matcher auto-retries, so it goes green against a blur-then-restore
- * implementation — which is precisely the repair this fix is not: restoring
- * focus races the unmount and flickers. The instrument below is armed BEFORE
- * the change and samples every 8ms in the page, and the assertion is over the
- * whole trace: focus never visited `<body>` at all.
+ * implementation — which is precisely the repair the ATTRIBUTE half of this
+ * fix is not: with the node still on the page there is nothing to restore
+ * from, and a restore would only be racing a blur it cannot see coming. (The
+ * UNMOUNT half below is the opposite case and does restore, in a layout effect
+ * in the same commit — which is why its cases assert over the trace too, and
+ * would red on a restore that arrived a frame late.) The instrument is armed
+ * BEFORE the change and samples every 8ms in the page, and the assertion is
+ * over the whole trace: focus never visited `<body>` at all.
  *
  * AND IT ASSERTS THE LOCK IS STILL A LOCK. A control that keeps focus by
  * becoming operable mid-write would be a worse bug than the one it replaces,
@@ -63,12 +74,26 @@ import { expect, test, type Page } from "@playwright/test";
  * assert ends at the unmount; the `needs_employer` case beside it is the one
  * that carries the settle, because its panel stays.
  *
- * WHAT NONE OF THESE CASES COVER, said plainly: focus after an unmount. A
- * stage-CHANGING board correction reparents its row, and a scan correction that
- * files swaps its panel; in both, focus goes to `<body>` WITH the node and does
- * not come back. That is a different repair (put focus somewhere deliberate
- * after the regroup) and a separate line item on #425. Nothing here should be
- * read as covering it.
+ * FOCUS AFTER AN UNMOUNT — the paragraph that used to say nothing here
+ * covered it. It is #425's second half, it is a different defect from the
+ * `disabled` blur above, and it takes the opposite repair: the focused node is
+ * REMOVED, so nothing can be un-blurred and something has to be given the
+ * reader's place deliberately. Three routes, all measured in Chromium at
+ * 1024x768 with this same sampler before the repair:
+ *
+ *   - the board, a stage-CHANGING correction from the ROW select: detached at
+ *     467ms, `<body>` from there through t=2505, and the write landed.
+ *   - /demo/scan, pressing `reclassify`: the trigger detaches at 8ms and
+ *     `<body>` holds for the whole 1200ms window.
+ *   - /demo/scan, an apply that FILES: detached at 171ms, `<body>` through
+ *     t=2505, and the write landed.
+ *
+ * All three are covered below, and each one asserts over the samples PAST the
+ * unmount rather than at a settled instant. Three controls keep those greens
+ * falsifiable: the blur control at the end of each describe (the probe must
+ * still be able to report `<body>`), a reader who moved to the search field
+ * before the regroup (the restore must refuse), and a regroup on a row nobody
+ * ever focused (it must refuse there too).
  */
 
 /**
@@ -435,6 +460,62 @@ function expectCompanionLockIsAdvisory(trace: FocusTrace, control: string): void
   ).toEqual([]);
 }
 
+/**
+ * The usable-trace check for an UNMOUNT case (#425's second half).
+ *
+ * Not `expectUsableTrace`: that one demands the probe saw `aria-busy="true"`,
+ * which is right for a case about an in-flight lock and wrong for these. Two of
+ * the three unmount routes have no write in flight at all — pressing
+ * `reclassify` opens a panel — so requiring a busy edge would make them
+ * unwritable rather than rigorous. What these need instead is that the node
+ * really was taken off the page and that the trace kept reading afterwards: a
+ * case whose last sample predates the unmount says nothing about where focus
+ * ended up, however green it reads.
+ */
+function expectUsableUnmountTrace(trace: FocusTrace, control: string): void {
+  expect(
+    trace.samples.length,
+    `${control}: the focus probe took no readings at all`,
+  ).toBeGreaterThan(2);
+  expect(
+    trace.detachedAt,
+    `${control}: the node the probe watches is supposed to be REMOVED here — if it never detaches, this case is not the one it says it is`,
+  ).not.toBeNull();
+  const past = trace.samples.filter((s) => !s.inDocument);
+  expect(
+    past.length,
+    `${control}: fewer than three readings past the unmount, so the trace does not cover the thing this case is about`,
+  ).toBeGreaterThan(2);
+}
+
+/**
+ * Where the reader is once the node they were standing on is gone.
+ *
+ * Over the samples rather than at a settled instant, so a restore that never
+ * happened and one that happened late are not the same green: an auto-retrying
+ * matcher would accept both.
+ *
+ * WHAT IT DOES NOT DISCRIMINATE, measured rather than assumed. This used to
+ * claim that a restore arriving a paint later would leave `<body>` readings
+ * here. It would not: swapping `PipelineBoard`'s `useLayoutEffect` for a
+ * passive `useEffect` — the one-word mutation — left the board's case green
+ * 3/3. The restore lands inside the same 8ms sample either way, so nothing in
+ * this file gates the layout-effect choice; that choice is made on React's
+ * semantics (DOM mutations, then the effect, then paint) and is unguarded.
+ * A `setTimeout` restore would be a different matter and is untested too.
+ */
+function expectFocusLandsOn(trace: FocusTrace, landingId: string): void {
+  const strayed = trace.samples.filter((s) => !s.inDocument && s.active !== landingId);
+  expect(
+    strayed.map((s) => `t=${s.t} activeElement=${s.active}`),
+    `focus must be handed to #${landingId} in the same commit that removes the node the reader was on — a BODY reading here is #425's second half, unfixed`,
+  ).toEqual([]);
+}
+
+/** The owner's width, and the width every unmount reading in this file was
+ *  taken at. Set per-case rather than on the project: the cases above are
+ *  deliberately left on the 1440 default. */
+const OWNER_VIEWPORT = { width: 1024, height: 768 };
 
 test.describe("a correction keeps the reader's place", () => {
   test("a same-section correction never blurs the stage control it was made on", async ({
@@ -540,13 +621,13 @@ test.describe("a correction keeps the reader's place", () => {
       trace.detachedAt,
       "a stage-CHANGING correction is supposed to reparent the row — if the control is never unmounted, this case is no longer testing what it says it is",
     ).not.toBeNull();
-    // And the honest limit of what it can then assert. Measured on this run:
-    // the node detaches at ~460ms (the instant the write returns and the board
-    // regroups) and focus goes to BODY WITH it. That is a reparent, it is
-    // downstream, and it is not what #425 was: the defect blurred the control
-    // at ~3ms, with the node still on the page and the write still in flight.
-    // That is the thing asserted here — and it is exactly the assertion a
-    // reparent-only "fix" could not pass.
+    // And the limit of what THIS case asserts. The node detaches at ~460ms —
+    // the instant the write returns and the board regroups — and everything
+    // above is about the window before that: the defect blurred the control at
+    // ~3ms, with the node still on the page and the write still in flight,
+    // which is exactly the assertion a reparent-only "fix" could not pass.
+    // Where focus goes after the detach is the next case's question, not this
+    // one's, and the two are kept apart so a regression in either names itself.
     expectNeverBlurredWhileMounted(trace, selectId);
     expectBusyIsCommunicated(trace, "the row's stage select (stage-changing)");
     expectSettlesIdle(trace, "the row's stage select (stage-changing)");
@@ -594,6 +675,163 @@ test.describe("a correction keeps the reader's place", () => {
       "a stage picked while the pane's write is in flight is ignored and the controlled value snaps back",
     ).toBe("ghosted");
     await expect(select).toHaveValue("ghosted");
+  });
+
+  test("a stage-changing correction hands the row's control back in its new group", async ({
+    page,
+  }) => {
+    // #425's second half on the board. The pane stays CLOSED on purpose: at
+    // 1024 with it docked the row folds its select away (ApplicationRow's fold
+    // note — 409px at the dock floor), and a control that is not rendered
+    // cannot be the one under test.
+    await page.setViewportSize(OWNER_VIEWPORT);
+    await page.goto("/demo");
+    await expect(page.getByRole("region", { name: /interviewing — 4/i })).toBeVisible();
+    const select = page.getByLabel("Change stage for Quarry Data");
+    const selectId = (await select.getAttribute("id"))!;
+    await expect(select).toHaveValue("applied");
+
+    await select.focus();
+    expect(
+      await activeElementId(page),
+      "the reader is standing on the control before they correct it",
+    ).toBe(selectId);
+
+    await armFocusProbe(page, selectId);
+    await select.selectOption("interviewing");
+    const trace = await page.evaluate(() => window.__focusProbe!.done);
+
+    expectUsableUnmountTrace(trace, "the row's stage select (stage-changing)");
+    // The same id, a DIFFERENT node: the row was torn out of `applied` and
+    // rebuilt under `interviewing`, and `#status-<id>` is the anchor that
+    // exists again on the other side because PipelineBoard renders it from
+    // `app.id`. The probe still watches the OLD node, so `inDocument` is what
+    // separates the two.
+    expectFocusLandsOn(trace, selectId);
+    expect(
+      await activeElementId(page),
+      "and the reader is still standing there once the board settles",
+    ).toBe(selectId);
+    await expect(page.getByLabel("Change stage for Quarry Data")).toBeFocused();
+    // The write still landed. Without this, a "fix" that kept focus by never
+    // moving the row would pass every assertion above.
+    await expect(page.getByRole("region", { name: /interviewing — 5/i })).toBeVisible();
+  });
+
+  test("a reader who moved on before the regroup is not pulled back", async ({ page }) => {
+    // CONTROL for the `activeElement === body` half of the restore, varying
+    // ONE thing against the case above: the reader DID stand on this row's
+    // select — so the board remembers the row — and then went somewhere else.
+    // Drop that guard and this reds; nothing else here changes.
+    await page.setViewportSize(OWNER_VIEWPORT);
+    await page.goto("/demo");
+    await expect(page.getByRole("region", { name: /interviewing — 4/i })).toBeVisible();
+    const select = page.getByLabel("Change stage for Quarry Data");
+    const selectId = (await select.getAttribute("id"))!;
+    await select.focus();
+    expect(await activeElementId(page)).toBe(selectId);
+
+    // `:visible` because the board renders the field TWICE — the copy in its
+    // own command row is `md:hidden`, and at 1024 the live one is the copy
+    // portalled into the rail. A bare label lookup is a strict-mode violation
+    // here, and picking `.first()` would silently take the hidden one.
+    const search = page.locator(
+      'input[aria-label="Search the board by company or role"]:visible',
+    );
+    await search.focus();
+    expect(
+      await activeElementId(page),
+      "the reader has left the row's control for the search field",
+    ).toBe("INPUT");
+
+    // In the page, not `selectOption`: driving the control through Playwright
+    // would move focus onto it and destroy the state this case sets up.
+    const moved = await dispatchStage(page, selectId, "interviewing");
+    expect(moved.wasBusy, "no write may be in flight when this dispatch is made").toBe(false);
+    await expect(page.getByRole("region", { name: /interviewing — 5/i })).toBeVisible();
+
+    expect(
+      await activeElementId(page),
+      "the regroup must not take focus off the field the reader moved to",
+    ).toBe("INPUT");
+    await expect(search).toBeFocused();
+  });
+
+  test("a regroup on a row nobody was standing on takes no focus", async ({ page }) => {
+    // CONTROL for the remembered-row half, varying the OTHER single thing:
+    // `activeElement` is `<body>` — the exact reading the defect leaves — but
+    // the reader never stood on this control. Without this, a mouse drag-drop
+    // (which regroups a row with focus on `<body>`) would plant a focus ring
+    // on a row nobody touched.
+    await page.setViewportSize(OWNER_VIEWPORT);
+    await page.goto("/demo");
+    await expect(page.getByRole("region", { name: /interviewing — 4/i })).toBeVisible();
+    const selectId = (await page
+      .getByLabel("Change stage for Quarry Data")
+      .getAttribute("id"))!;
+    expect(
+      await activeElementId(page),
+      "nothing has been focused on this page yet, which is the premise of the case",
+    ).toBe("BODY");
+
+    const moved = await dispatchStage(page, selectId, "interviewing");
+    expect(moved.wasBusy, "no write may be in flight when this dispatch is made").toBe(false);
+    await expect(page.getByRole("region", { name: /interviewing — 5/i })).toBeVisible();
+
+    expect(
+      await activeElementId(page),
+      "the board may only hand back a place the reader actually had",
+    ).toBe("BODY");
+  });
+
+  test("the probe can see a blur on the board — `disabled` put back from outside", async ({
+    page,
+  }) => {
+    // THE BOARD'S COPY OF THE ARM AT THE END OF THIS FILE. The scan's blur
+    // control proves the probe can report `<body>` on /demo/scan; this proves
+    // it on /demo, where the three cases above read their greens.
+    //
+    // A SAME-SECTION correction (`rejected → ghosted`, both `closed`), so the
+    // row never moves and the restore is not in play at all — this measures
+    // the sampler, not the repair.
+    await page.setViewportSize(OWNER_VIEWPORT);
+    await page.goto("/demo");
+    const select = page.getByLabel("Change stage for Fernworks");
+    const selectId = (await select.getAttribute("id"))!;
+    await select.focus();
+    expect(await activeElementId(page)).toBe(selectId);
+
+    await armFocusProbe(page, selectId);
+    await page.evaluate((id) => {
+      const sel = document.getElementById(id) as HTMLSelectElement;
+      // Scheduled INSIDE the page so it lands at a known point in the write
+      // window, and the change is dispatched here rather than through
+      // `selectOption` for `dispatchStage`'s reason: a disabled node is
+      // refused by Playwright's actionability layer, and that refusal would be
+      // the runner's rather than the product's.
+      window.setTimeout(() => {
+        sel.disabled = true;
+      }, 40);
+      sel.value = "ghosted";
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    }, selectId);
+    const trace = await page.evaluate(() => window.__focusProbe!.done);
+
+    expectUsableTrace(trace, "the board's blur control");
+    expect(
+      trace.detachedAt,
+      "a same-section correction must not unmount the row, or this stops measuring the sampler and starts measuring the restore",
+    ).toBeNull();
+    const strayed = trace.samples.filter((s) => s.inDocument && s.active !== selectId);
+    expect(
+      strayed.length,
+      "the probe reported no blur while the focused select was disabled mid-write — it cannot see the defect it is used to rule out, so every green above it is unfalsifiable",
+    ).toBeGreaterThan(0);
+    expect(strayed[0].active, "and where the browser sends it is the document body").toBe("BODY");
+    expect(
+      strayed[0].disabledProp,
+      "with the node still in the document and carrying the attribute that did it",
+    ).toBe(true);
   });
 });
 
@@ -655,7 +893,8 @@ test.describe("a scan correction keeps the reader's place", () => {
     expectNeverBlurredWhileMounted(trace, applyId);
     // The premise, checked rather than assumed: this correction FILES, so the
     // panel is replaced by "corrected" and the button goes with it. Focus after
-    // that is the unmount question, which is not this one.
+    // that is the unmount question — asserted in "a correction that files hands
+    // the reader the note that replaced the panel", not here.
     expect(
       trace.detachedAt,
       "a correction that files replaces its panel — if the button is never unmounted, this case is no longer the one that ends at an unmount",
@@ -796,5 +1035,78 @@ test.describe("a scan correction keeps the reader's place", () => {
       strayed[0].disabledProp,
       "with the node still in the document and carrying the attribute that did it",
     ).toBe(true);
+  });
+
+  test("opening a correction panel takes the reader into it", async ({ page }) => {
+    // #425's second half, first scan route. Pressing `reclassify` unmounts the
+    // button being pressed — measured before the repair: the trigger detaches
+    // at t=8ms and `document.activeElement` is `<body>` for the whole 1200ms
+    // window, on a panel the reader just asked for.
+    await page.setViewportSize(OWNER_VIEWPORT);
+    await page.goto("/demo/scan");
+    await expect(page.getByText(SCAN_FILES_SUBJECT)).toBeVisible();
+
+    const triggerId = `reclass-open-${SCAN_FILES_ID}`;
+    const categoryId = `reclass-${SCAN_FILES_ID}`;
+    await page.locator(`#${triggerId}`).focus();
+    expect(
+      await activeElementId(page),
+      "the reader is standing on the trigger before they press it",
+    ).toBe(triggerId);
+
+    await armFocusProbe(page, triggerId, { chevron: false });
+    // ENTER, the keyboard route: it is the one that makes the trigger the
+    // focused node at the moment it is removed.
+    await page.keyboard.press("Enter");
+    const trace = await page.evaluate(() => window.__focusProbe!.done);
+
+    expectUsableUnmountTrace(trace, "the scan's reclassify trigger");
+    // Unconditional, unlike the board's restore and unlike "corrected" below:
+    // this is a DISCLOSURE the reader asked for, so focus follows their
+    // gesture into the panel rather than waiting to see whether it was dropped.
+    expectFocusLandsOn(trace, categoryId);
+    expect(
+      await activeElementId(page),
+      "the panel the reader opened is where they are standing",
+    ).toBe(categoryId);
+  });
+
+  test("a correction that files hands the reader the note that replaced the panel", async ({
+    page,
+  }) => {
+    // The third route, and the one that costs the most: the correction LANDED
+    // and the reader lost their place anyway. Measured before the repair —
+    // detached at 171ms, `<body>` through t=2505.
+    await page.setViewportSize(OWNER_VIEWPORT);
+    await page.goto("/demo/scan");
+    await expect(page.getByText(SCAN_FILES_SUBJECT)).toBeVisible();
+    await openCorrection(page, SCAN_FILES_SUBJECT, "assessment");
+
+    const applyId = `reclass-apply-${SCAN_FILES_ID}`;
+    const doneId = `reclass-done-${SCAN_FILES_ID}`;
+    await page.locator(`#${applyId}`).focus();
+    expect(
+      await activeElementId(page),
+      "the reader is standing on apply before they press it",
+    ).toBe(applyId);
+
+    await armFocusProbe(page, applyId, { chevron: false });
+    await page.keyboard.press("Enter");
+    const trace = await page.evaluate(() => window.__focusProbe!.done);
+
+    expectUsableUnmountTrace(trace, "the scan's apply button (files)");
+    // The note is `role="status"` AND `tabIndex={-1}`: the live region that
+    // announces the outcome is also the thing that holds the place the panel
+    // took with it, so the announcement reaches a reader whose alternative was
+    // `<body>`.
+    expectFocusLandsOn(trace, doneId);
+    expect(
+      await activeElementId(page),
+      "the reader ends on the note, not on the document body",
+    ).toBe(doneId);
+    // And the write still landed — the whole point of this route is that it
+    // was the SUCCESSFUL path that lost the reader.
+    await expect(scanRow(page, SCAN_FILES_SUBJECT)).toContainText(/corrected/i);
+    await expect(page.getByRole("button", { name: /^assessment 1$/ })).toBeVisible();
   });
 });

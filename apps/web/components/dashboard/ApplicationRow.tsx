@@ -104,8 +104,18 @@ export function RowOutcome({ company, tail }: { company: string; tail: string })
  * control the user is standing on is the control the write locks, and a
  * FOCUSED element that becomes `disabled` is blurred by the browser to
  * `<body>` — measured at t=3ms after the change, on every row, and it never
- * comes back: the next Tab starts from the top of the document. That is not
- * the row being reparented into another stage group (a same-section
+ * comes back.
+ *
+ * WHAT THAT COSTS, corrected. This note used to say every subsequent Tab
+ * restarts from the top of the document. Measured in Chromium, that is false:
+ * the sequential focus navigation starting point survives the blur (standing
+ * on the board's select at index 32 of 69, the next Tab landed on 31). What
+ * is actually lost is the focus RING, the assistive-technology announcement
+ * of where the reader is, and the Shift+Tab anchor — they can go forward from
+ * where they were, but they cannot see or hear where that is, and they cannot
+ * go back. Chromium only; no other engine was measured.
+ *
+ * That is not the row being reparented into another stage group (a same-section
  * correction, `rejected → ghosted`, loses focus identically while the node
  * stays in the document; the unmount, when there is one, lands 1.4s later and
  * is downstream of a blur that has already happened).
@@ -114,8 +124,18 @@ export function RowOutcome({ company, tail }: { company: string; tail: string })
  * element out of the focus order or out of the accessibility tree, so the
  * keyboard user keeps their place and can hear the `aria-busy` they are
  * waiting on. The lock is then enforced in the handler instead of by the UA:
- * see `onChange` below. Restoring focus after the fact is NOT the repair —
- * it races the unmount and flickers; not blurring is.
+ * see `onChange` below. Restoring focus after the fact is NOT the repair for
+ * THIS defect: the control never leaves the page, so a restore would be
+ * racing a blur it cannot see coming, and would flicker; not blurring is.
+ *
+ * THAT SENTENCE DOES NOT GOVERN THE REPARENT (#425's other half). When a
+ * correction moves the row to another stage group, this row, its `<li>` and
+ * everything down to the `<span>` really are unmounted — measured: focus goes
+ * to `<body>` WITH the node at ~360ms and never returns. There is no race to
+ * lose there and nothing here that could survive to hold focus, so the repair
+ * is a deliberate restore after the board regroups, and it lives in the one
+ * component that outlives the move: see `PipelineBoard`'s post-regroup focus
+ * effect.
  */
 const StageSelect = memo(function StageSelect({
   id,
