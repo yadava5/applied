@@ -30,6 +30,41 @@ export type ScanMode = "live" | "demo";
  * 0.0 and `/gmail/sync` gates persistence on it (auto-file at 0.85, review
  * floor at 0.70). Omitting it meant every relayed item scored 0.0, fell below
  * both gates, and nothing was ever filed.
+ *
+ * `snippet` is NOT optional either, and for a sharper version of the same
+ * reason (#484). This relay used to forward seven fields and drop it, even
+ * though the mine hands us one on every verdict — so `PipelineItemIn.snippet`
+ * took its `""` default, `_persist_message_refs` wrote an empty
+ * `body_snippet`, and every reader that falls back to the stored text read
+ * ZERO characters instead of Gmail's ~200. Measured on a row this path wrote:
+ *
+ *     PipelineItemIn.snippet = '' len 0
+ *     stored body_snippet    = ''
+ *     identity_parts(...)    -> (None, None)      # nothing-grade
+ *     identity_parts(same subject, the real 180-char snippet)
+ *                            -> ('Backend Platform Engineer', None)
+ *
+ * That is worse than the "snippet-grade" fallback the server-side comments
+ * describe: the relay path is documented as sending the reader BACK to the
+ * snippet, and there was no snippet to go back to. Forwarding it restores the
+ * behaviour those comments already claim.
+ *
+ * IT IS NOT `string | null`. `InboxVerdict.snippet` is `string | null |
+ * undefined` (null is the real value for a message with no preview, and a
+ * rehydrated older snapshot has no key at all), while `PipelineItemIn.snippet`
+ * is a plain `str` with no `None` in its annotation. `undefined` is harmless —
+ * `JSON.stringify` drops the key and the default applies — but a literal
+ * `null` on the wire is a 422, and `SyncRequest.items` is a homogeneous list,
+ * so ONE preview-less message would reject the whole batch and file nothing.
+ * Verified against the shipped schema: `PipelineItemIn(snippet=None)` raises
+ * `Input should be a valid string`. Hence the `?? ""` below, and hence this
+ * field being required here so `tsc` names any other producer.
+ *
+ * THERE IS DELIBERATELY NO `identity_role`/`identity_req_id`. `PipelineItemIn`
+ * refuses them on purpose — they decide which application a message is filed
+ * against, and a client that could state them could reshape dedup keys and
+ * file its own mail onto whichever application it named. The server ignores
+ * them if sent; this relay does not send them.
  */
 export interface PipelineItem {
   message_id: string;
@@ -39,6 +74,7 @@ export interface PipelineItem {
   sender_name: string | null;
   received_at: string | null;
   confidence: number;
+  snippet: string;
 }
 
 /** Reduce mined verdicts to what the pipeline/sync endpoints consume. */
@@ -51,6 +87,10 @@ export function toPipelineItems(verdicts: InboxVerdict[]): PipelineItem[] {
     sender_name: v.sender_name,
     received_at: v.received_at,
     confidence: v.confidence,
+    // Coalesced, never relayed as null — see the interface comment. A message
+    // with no preview sends `""`, which is what the endpoint's own default
+    // already was, so nothing about that case changes.
+    snippet: v.snippet ?? "",
   }));
 }
 
