@@ -60,7 +60,7 @@ NEAR_MISS_SUBJECT = "Take-home assignment"
 NEAR_MISS_BODY = "This take-home exercise is part of our hiring process."
 
 #: The wording the independent corpus carries 300 times, employer-voiced. It is
-#: the reason the fix needs the ``complete.{0,30}`` twin: without it this mail
+#: the reason the fix needs the ``\bcomplete\b.{0,30}`` twin: without it this mail
 #: scores 3, falls to 0.70, and the board replay puts every one of the 300 in
 #: SUPPRESSED-AS-SETTLED rather than in the review queue.
 CORPUS_UPDATE_SUBJECT = "Next step in your application"
@@ -111,7 +111,7 @@ def test_the_bare_noun_excludes_every_noun_its_siblings_claim(strong: list[str])
     restoring the +3 that #758 removed.
     """
     qualified = _one(strong, "take.?home (")
-    general = _one(strong, "(technical|coding|take.?home)", exclude="complete.")
+    general = _one(strong, "(technical|coding|take.?home)", exclude=r"\bcomplete\b")
     bare = _one(strong, r"\btake-home\b")
 
     claimed = _alternation_after(qualified, "take.?home ") | _alternation_after(
@@ -136,7 +136,7 @@ def test_the_derivation_invariant_can_actually_fail(strong: list[str]) -> None:
     else — must fail the assertion the test above passes.
     """
     qualified = _one(strong, "take.?home (")
-    general = _one(strong, "(technical|coding|take.?home)", exclude="complete.")
+    general = _one(strong, "(technical|coding|take.?home)", exclude=r"\bcomplete\b")
     claimed = _alternation_after(qualified, "take.?home ") | _alternation_after(
         general, "(technical|coding|take.?home).{0,20}"
     )
@@ -164,14 +164,14 @@ def test_the_derivation_invariant_can_actually_fail(strong: list[str]) -> None:
 def test_the_imperative_twin_can_only_fire_where_its_partner_does(strong: list[str]) -> None:
     """``4c68e1a``'s shape: a general form and a narrower twin of it.
 
-    The twin is its partner with ``complete.{0,30}`` prefixed, so the
+    The twin is its partner with ``\bcomplete\b.{0,30}`` prefixed, so the
     containment is structural and does not rest on the probe set below. Both
     are asserted: the string relation, and that the relation holds when the two
     are actually run.
     """
-    general = _one(strong, "(technical|coding|take.?home)", exclude="complete.")
-    twin = _one(strong, "complete.{0,30}(technical|coding|take.?home)")
-    assert twin == "complete.{0,30}" + general
+    general = _one(strong, "(technical|coding|take.?home)", exclude=r"\bcomplete\b")
+    twin = _one(strong, r"\bcomplete\b")
+    assert twin == r"\bcomplete\b" + ".{0,30}" + general
 
     partner, narrower = re.compile(general, re.I), re.compile(twin, re.I)
     probe = [
@@ -250,7 +250,7 @@ def test_the_corpus_update_still_clears_the_auto_file_gate(
 ) -> None:
     """The 300, and the reason the twin exists.
 
-    Measured on the independent corpus: without ``complete.{0,30}…`` this mail
+    Measured on the independent corpus: without ``\bcomplete\b.{0,30}…`` this mail
     scores 3, lands at 0.70, and the board replay moves 300 messages out of
     ``addressed_on_a_card`` into ``suppressed_as_settled`` — dropped, not
     queued.
@@ -291,7 +291,7 @@ def test_the_deleted_alternation_lost_no_reach(strong: list[str]) -> None:
     one already covers it: a single space fits inside ``.{0,20}`` and
     ``exercise`` is in its tail. Proved by running both, not by reading them.
     """
-    general = re.compile(_one(strong, "(technical|coding|take.?home)", exclude="complete."), re.I)
+    general = re.compile(_one(strong, "(technical|coding|take.?home)", exclude=r"\bcomplete\b"), re.I)
     deleted = re.compile(r"take.?home (exercise)", re.I)
 
     matched = 0

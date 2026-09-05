@@ -735,7 +735,7 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             # `complete.{0,30}` in front, so it can only fire where its partner
             # already did. What it adds is the imperative — an employer tells you
             # to complete the exercise, a candidate says they submitted one.
-            r"complete.{0,30}(technical|coding|take.?home).{0,20}(assessment|challenge|test|exercise)",
+            r"\bcomplete\b.{0,30}(technical|coding|take.?home).{0,20}(assessment|challenge|test|exercise)",
             r"complete.{0,30}(assessment|challenge|test)",
             r"hackerrank",
             r"codility",

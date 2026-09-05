@@ -754,7 +754,22 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             # the corpus replay puts every one of them in SUPPRESSED-AS-SETTLED
             # — not the review queue: `addressed_on_a_card` 13987 -> 13687 and
             # `suppressed_as_settled` 0 -> 300, measured.
-            r"complete.{0,30}(technical|coding|take.?home).{0,20}(assessment|challenge|test|exercise)",
+            # ANCHORED, and the anchor is the whole difference between fixing
+            # this defect and re-importing it. Unanchored, `complete` matches
+            # inside "completed", so "I completed the take-home exercise — any
+            # update?" fires this AND its partner: two strong body hits, 6
+            # points, margin >= 3, confidence 0.90, and the cascade
+            # short-circuits on exactly the wording #758 was filed about. The
+            # candidate's report would have been read as the employer's
+            # imperative. Measured on this branch before the anchor went in:
+            # that sentence scored ASSESSMENT 0.90; with `\b` it scores 0.70
+            # and reaches the queue, while "Please complete the take-home
+            # exercise by Friday" holds at 0.90 and "Complete the coding
+            # challenge" at 0.95.
+            #
+            # "completing" and "completion" never contained the substring, so
+            # `\bcomplete\b` costs nothing and closes the only hole there was.
+            r"\bcomplete\b.{0,30}(technical|coding|take.?home).{0,20}(assessment|challenge|test|exercise)",
             r"complete.{0,30}(assessment|challenge|test)",
             r"hackerrank",
             r"codility",
