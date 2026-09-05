@@ -486,6 +486,55 @@ _SCRIPT_OR_STYLE = re.compile(
 _TAG = re.compile(r"<[^>]+>")
 _WHITESPACE = re.compile(r"\s+")
 
+# LINE STRUCTURE IS SIGNAL HERE, NOT FORMATTING (#430).
+#
+# ``extract_body_text`` used to finish with ``_WHITESPACE.sub(" ", text)``,
+# which destroys every newline in the body. The classifier's quote detection is
+# LINE-ORIENTED: ``classifier/rules.py:_QUOTE_BOUNDARY`` is ``^``-anchored
+# under ``re.MULTILINE``, and one of its alternatives — Outlook's
+# ``From:`` … newline … ``Sent:`` header block — spells a literal ``\n``. On a
+# one-line string the anchor can only match at offset 0 and that alternative
+# cannot match at all, so collapsing did not degrade quote detection, it
+# DISABLED it.
+#
+# MEASURED, on a reply that quotes the acknowledgement it answers: raw, the
+# boundary is found at offset 121 and ``own_text_span`` returns the reply's own
+# 119 characters; collapsed, NO MATCH, and the whole quoted "thank you for
+# applying" is scored as words this sender wrote. The verdict moves from
+# ``applied`` 0.75 — under the auto-file gate, so a person sees it — to
+# ``applied`` 0.95, filed silently. ``strip_quoted_history``, ``own_text_span``
+# and the refutation cap were all dead code on the request path, and no test
+# could see it: they hand those functions ``\n``-bearing fixtures directly and
+# never cross this extractor.
+#
+# So collapse HORIZONTAL runs only, and normalise the vertical ones instead of
+# erasing them: trailing spaces go (a horizontal collapse would otherwise leave
+# one sitting before each newline), and 3+ consecutive newlines become the two
+# that mean "paragraph break". ``_WHITESPACE`` is deliberately left alone and
+# is still right at its own call site in ``_html_to_text``, which runs AFTER
+# ``_TAG.sub(" ", …)`` — by then the markup that carried the line structure has
+# been replaced by spaces and there is nothing left to preserve.
+#
+# ``tests/test_the_quote_survives_the_body_extractor.py`` pins this against the
+# string production delivers rather than against a hand-written fixture, which
+# is the half that was missing.
+#
+# THE RULES LAYER HAS NEVER SEEN A NEWLINE FROM HERE, and keeping them costs
+# something. ``.`` does not match ``\n`` and ``rules.py`` sets no
+# ``re.DOTALL``, so every bounded gap of the form ``.{0,N}`` stops bridging a
+# line break the moment one exists. Measured on ``tests/corpus``: the two
+# quoted-thread cases this change exists for go from wrong-and-auto-filed to
+# correct, and three assessment cases lose ``next step.{0,30}(assessment|test)``
+# to a wrapped line and fall from a correct 0.60 to an abstention. 0.60 is under
+# ``REVIEW_FLOOR`` and none of the three is an ATS sender, so those verdicts
+# were in the dropped band either way, while the two that were fixed were being
+# filed to the board at 0.90 and 0.95. Overall accuracy moves 84.7% -> 84.4%
+# and confident-wrong auto-files 7 -> 5. Widening those gaps to ``[\s\S]`` is a
+# change to the rules and belongs with them, not here.
+_HORIZONTAL_WHITESPACE = re.compile(r"[^\S\n]+")
+_TRAILING_SPACES = re.compile(r" +\n")
+_BLANK_LINE_RUN = re.compile(r"\n{3,}")
+
 
 def _html_to_text(html: str) -> str:
     """Rough HTML → text for classification only.
@@ -503,6 +552,30 @@ def _html_to_text(html: str) -> str:
 
     html = _SCRIPT_OR_STYLE.sub(" ", html)
     return _WHITESPACE.sub(" ", _TAG.sub(" ", html)).strip()
+
+
+def normalise_body_text(text: str) -> str:
+    """Whitespace-normalise ``text`` and cap it, keeping the line structure.
+
+    NAMED AND EXPORTED so nobody has to copy it. ``extract_body_text`` is the
+    only production caller, but the corpus harness has to derive "what the
+    server would hold" for the identity layer, and it did that by
+    hand-transcribing ``_WHITESPACE.sub(" ", text)[:_MAX_BODY_CHARS]`` into
+    ``tests/corpus_independent/harness.py`` under a docstring claiming parity
+    character for character. The moment this function changed, that copy became
+    a false statement in the one file whose entire purpose is parity. A shared
+    function cannot drift; a transcription always can.
+
+    In this order: horizontal runs first, then the spaces that collapse has
+    just stranded at the ends of lines, and only then the blank-line runs —
+    "\n   \n   \n" is not a run of newlines until the spaces between them are
+    gone. See ``_HORIZONTAL_WHITESPACE`` for why the newlines survive at all.
+    """
+
+    text = text.strip()
+    text = _HORIZONTAL_WHITESPACE.sub(" ", text)
+    text = _TRAILING_SPACES.sub("\n", text)
+    return _BLANK_LINE_RUN.sub("\n\n", text)[:_MAX_BODY_CHARS]
 
 
 def _decode_part(part: dict) -> str:
@@ -532,7 +605,9 @@ def extract_body_text(payload: dict | None) -> str:
     you a deeply nested message, and a recursive walk would rather not be the
     thing that finds the recursion limit inside a serverless handler.
 
-    Returns at most ``_MAX_BODY_CHARS`` characters.
+    Returns at most ``_MAX_BODY_CHARS`` characters, whitespace-normalised but
+    with its LINE STRUCTURE INTACT — see ``_HORIZONTAL_WHITESPACE`` for why the
+    newlines have to survive this function.
     """
 
     if not payload:
@@ -559,7 +634,7 @@ def extract_body_text(payload: dict | None) -> str:
     text = " ".join(t for t in plain if t).strip()
     if not text:
         text = _html_to_text(" ".join(t for t in html if t)).strip()
-    return _WHITESPACE.sub(" ", text)[:_MAX_BODY_CHARS]
+    return normalise_body_text(text)
 
 
 @dataclass
