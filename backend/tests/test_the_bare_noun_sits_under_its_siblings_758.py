@@ -99,6 +99,18 @@ def classifier() -> RulesClassifier:
     return RulesClassifier()
 
 
+#: How to find THIS file's twin, now that it is not the only anchored
+#: ``complete`` pattern in the list. #820 anchored
+#: ``complete.{0,30}(assessment|challenge|test)`` for the same reason this twin
+#: is anchored — an unanchored ``complete`` matches inside ``completed``, so a
+#: candidate's report fired a rule written for an employer's invitation.
+#:
+#: The locator used to be ``\bcomplete\b`` alone and identified one pattern by
+#: accident of there being only one. It names the take-home half explicitly now,
+#: so a third anchored sibling cannot silently repoint these tests at it.
+_TWIN_NEEDLE = r"\bcomplete\b.{0,30}take.?home"
+
+
 def _one(strong: list[str], needle: str, *, exclude: str = "\x00") -> str:
     """The single assessment pattern containing ``needle``. Exactly one, or fail."""
     hits = [p for p in strong if needle in p and exclude not in p]
@@ -228,7 +240,7 @@ def test_the_imperative_twin_is_derived_from_its_partner(strong: list[str]) -> N
     """
 
     general = _one(strong, _HEAD, exclude=r"\bcomplete\b")
-    twin = _one(strong, r"\bcomplete\b")
+    twin = _one(strong, _TWIN_NEEDLE)
     assert twin == _derive(general)
 
 
@@ -240,7 +252,7 @@ def test_the_derivation_reds_when_its_partner_moves(strong: list[str]) -> None:
     """
 
     general = _one(strong, _HEAD, exclude=r"\bcomplete\b")
-    twin = _one(strong, r"\bcomplete\b")
+    twin = _one(strong, _TWIN_NEEDLE)
 
     tampered = general.replace("|exercise)", "|exercise|drill)")
     assert tampered != general, "the tamper changed nothing, so it tests nothing"
@@ -270,7 +282,7 @@ def test_the_twin_witnesses_both_directions_of_the_containment(
     """
 
     general = _one(strong, _HEAD, exclude=r"\bcomplete\b")
-    twin = _one(strong, r"\bcomplete\b")
+    twin = _one(strong, _TWIN_NEEDLE)
     partner, narrower = re.compile(general, re.I), re.compile(twin, re.I)
 
     invite = "Please complete the take-home exercise by Friday."
@@ -434,7 +446,7 @@ def test_dropping_the_word_boundary_puts_the_report_back_on_the_short_circuit() 
     """
 
     live = PATTERNS[EmailCategory.ASSESSMENT].strong
-    twin = _one(list(live), r"\bcomplete\b")
+    twin = _one(list(live), _TWIN_NEEDLE)
     index = live.index(twin)
     unanchored = twin.replace(r"\bcomplete\b", "complete", 1)
     assert unanchored != twin, "the mutation changed nothing, so it tests nothing"

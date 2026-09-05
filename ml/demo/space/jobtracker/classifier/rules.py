@@ -736,7 +736,7 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             # already did. What it adds is the imperative — an employer tells you
             # to complete the exercise, a candidate says they submitted one.
             r"\bcomplete\b.{0,30}take.?home.{0,20}(assessment|challenge|test|exercise)",
-            r"complete.{0,30}(assessment|challenge|test)",
+            r"\bcomplete\b.{0,30}(assessment|challenge|test)",
             r"hackerrank",
             r"codility",
             r"codesignal",

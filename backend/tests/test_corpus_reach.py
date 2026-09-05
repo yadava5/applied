@@ -134,7 +134,7 @@ RECORDED_FIRED: tuple[tuple[str, str, str], ...] = (
     ('assessment', 'strong', '\\btake-home\\b(?!\\s+(pay|message|gift|dose|salary|assignment|project|task|round|assessment|challenge|test|exercise))'),
     ('assessment', 'strong', 'assessments?\\s+(invitation|invite)\\b'),
     ('assessment', 'strong', 'coding (exercise|test|challenge)'),
-    ('assessment', 'strong', 'complete.{0,30}(assessment|challenge|test)'),
+    ('assessment', 'strong', '\\bcomplete\\b.{0,30}(assessment|challenge|test)'),
     ('assessment', 'strong', 'online (assessment|test)'),
     ('assessment', 'weak', 'next step.{0,30}(assessment|test)'),
     # follow_up — 1 of 9
