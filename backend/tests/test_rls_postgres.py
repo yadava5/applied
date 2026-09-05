@@ -174,13 +174,38 @@ async def _admin_build(engine: AsyncEngine) -> None:
         await c.execute(text("CREATE SCHEMA public"))
         await c.execute(text("CREATE SCHEMA IF NOT EXISTS auth"))
         await c.execute(text("CREATE TABLE IF NOT EXISTS auth.users (id uuid primary key)"))
-        # Supabase's auth.uid(): the sub claim out of the request.jwt.claims GUC.
+        # Supabase's auth.uid(), COPIED FROM THE DEPLOYED FUNCTION rather than
+        # approximated. Read off this project's own database with
+        # ``pg_get_functiondef`` (#847).
+        #
+        # The approximation this replaces cast first and nullif'd after:
+        #
+        #     nullif(current_setting('request.jwt.claims', true)::jsonb ->> 'sub', '')
+        #
+        # A transaction-local GUC is not left UNSET when its transaction ends —
+        # it is left as the empty string — so on any reused connection that
+        # expression evaluates ``''::jsonb``, which RAISES. Production nullifs
+        # the RAW SETTING before the cast and returns NULL, so RLS denies.
+        #
+        # The stub therefore diverged from production in exactly the state the
+        # ``database_pool_size > 0`` opt-in puts every connection into (#634),
+        # which is the one configuration whose safety is in question. Measured
+        # on postgres:16, both definitions installed side by side:
+        #
+        #     GUC unset (virgin)   stub -> None     production -> None
+        #     GUC = '' (reused)    stub -> RAISES   production -> None
+        #
+        # A hand-copied mirror of somebody else's function has no gate, which is
+        # why this one now carries the shape verbatim and a test below pins the
+        # behaviour that separates them.
         await c.execute(
             text(
                 "CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid "
                 "LANGUAGE sql STABLE AS $$ "
-                "SELECT nullif(current_setting('request.jwt.claims', true)::jsonb "
-                "->> 'sub', '')::uuid $$"
+                "select coalesce("
+                "  nullif(current_setting('request.jwt.claim.sub', true), ''),"
+                "  (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')"
+                ")::uuid $$"
             )
         )
         await c.execute(
@@ -1863,3 +1888,93 @@ async def test_sync_state_has_an_update_policy(pg_app: AsyncEngine) -> None:
         "sync_state has no UPDATE (or ALL) policy, so the lease's conditional "
         "UPDATE can only ever affect zero rows under FORCE RLS"
     )
+
+
+# =============================================================================
+# The stub is Supabase-shaped in the one state that matters — #847
+# =============================================================================
+
+#: The approximation this file used to install: cast to jsonb FIRST, nullif the
+#: extracted claim after. Kept as a literal so the test below can install it and
+#: demonstrate what it does, rather than describing it.
+_APPROXIMATED_UID = (
+    "CREATE OR REPLACE FUNCTION auth.uid_approx() RETURNS uuid "
+    "LANGUAGE sql STABLE AS $$ "
+    "SELECT nullif(current_setting('request.jwt.claims', true)::jsonb "
+    "->> 'sub', '')::uuid $$"
+)
+
+_BIND = (
+    "SELECT set_config('request.jwt.claims', "
+    "'{\"sub\":\"11111111-1111-1111-1111-111111111111\"}', true)"
+)
+
+
+async def test_a_reused_connection_reads_no_identity_rather_than_erroring(
+    pg_app: AsyncEngine,
+) -> None:
+    """The state every pooled connection is in, and RLS must fail closed there.
+
+    A transaction-local GUC is NOT left unset when its transaction ends — it is
+    left as the EMPTY STRING. `database/connection.py` says otherwise in the
+    branch taken when no identity is bound, and that comment is the written
+    safety argument for the ``database_pool_size > 0`` opt-in (#634).
+
+    The outcome is safe, for a reason the comment does not give: the deployed
+    ``auth.uid()`` nullifs the raw setting BEFORE the ``::jsonb`` cast, so ``''``
+    becomes NULL and RLS denies. Nothing here depends on the GUC being unset.
+    """
+
+    async with pg_app.connect() as c:
+        await c.execute(text(_BIND))
+        await c.commit()   # the transaction ends; the GUC becomes ''
+
+        guc = (
+            await c.execute(text("SELECT current_setting('request.jwt.claims', true)"))
+        ).scalar()
+        assert guc == "", (
+            f"expected the GUC to survive as the empty string, got {guc!r}. If "
+            "this is None, Postgres changed how transaction-local settings are "
+            "reset and #634's premise no longer holds."
+        )
+
+        assert (await c.execute(text("SELECT auth.uid()"))).scalar() is None
+
+
+async def test_the_approximated_uid_would_have_raised_on_that_same_state(
+    pg_app: AsyncEngine,
+) -> None:
+    """PROVE THE FIX MATTERS. Asserting the defect, in this file's own idiom.
+
+    Installs the definition this suite carried until #847 and runs it against
+    the identical GUC. It raises ``invalid input syntax for type json``, because
+    ``''::jsonb`` is a syntax error and the cast happens before the nullif.
+
+    Two things follow, and the second is why this test exists rather than a
+    comment. The suite could not have exercised the reused-connection case at
+    all — it would have measured an exception the deployed database does not
+    produce. And a future edit that "simplifies" the corrected definition back
+    toward the approximation reds here, naming the difference, instead of
+    quietly reintroducing a twin that is wrong in the one state under question.
+    """
+
+    from sqlalchemy.exc import DBAPIError
+
+    async with pg_app.connect() as c:
+        await c.execute(text(_APPROXIMATED_UID))
+        await c.commit()
+
+        await c.execute(text(_BIND))
+        await c.commit()
+
+        with pytest.raises(DBAPIError) as caught:
+            await c.execute(text("SELECT auth.uid_approx()"))
+        await c.rollback()
+
+    assert "json" in str(caught.value).lower(), str(caught.value)[:200]
+
+    # And the corrected one, on the same state, does not.
+    async with pg_app.connect() as c:
+        await c.execute(text(_BIND))
+        await c.commit()
+        assert (await c.execute(text("SELECT auth.uid()"))).scalar() is None
