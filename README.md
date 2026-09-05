@@ -123,8 +123,9 @@ the file that implements it.
 ## What you can check
 
 The reason to trust a product that reads your mail is not a promise; it is something you can open.
-Applied publishes specific numbers about itself and `scripts/readme_facts.py` recomputes every one
-of them from the code that defines it — [`readme-facts.yml`](.github/workflows/readme-facts.yml)
+Applied publishes specific numbers about itself and `scripts/readme_facts.py` recomputes every
+**registered** one of them from the code that defines it — an unregistered number, or a
+registered one whose site nobody pointed at the file holding it, is unchecked — [`readme-facts.yml`](.github/workflows/readme-facts.yml)
 fails the build when a claim on this page stops matching the source, and a claim reworded so the
 checker can no longer find it fails too. Where each number terminates is in [Verify it](#verify-it).
 
@@ -765,7 +766,7 @@ This paragraph read "54% overall, 61% excluding one-off scripts … 2,163 statem
 | **Web e2e** | Playwright | 20 spec files — auth, beta, connect, dashboard, demo, file-application, import, landing, navigation, production, sample-inbox, scan-correct, session-edge, settings, shell, smoke |
 | **Web e2e, production build** | Playwright vs `next build` + `next start` | the `production` spec: every route driven against a real production build, failing on React hydration errors, uncaught exceptions and 5xx |
 | **Web static** | `tsc --noEmit`, ESLint, `next build` | every push touching `apps/web/**` |
-| **README claims** | `scripts/readme_facts.py --check` | every **registered** fact, at every claim site, across every file that holds one; no path filter. Most are recomputed from source on each run; the ones needing a pytest + coverage run are replayed from `docs/readme-facts.json`. The totals used to be written out here and in the workflow table below, in two different and both-wrong versions — a hand-maintained count of a checker is the one number the checker cannot check. A number that is not registered is not checked — see the note under Tech Stack |
+| **README claims** | `scripts/readme_facts.py --check` | every **registered** fact, at every **registered** claim site; no path filter. Both words are load-bearing and #401 is why: a site that names no file defaults to `README.md`, so for six months this row read "across every file that holds one" while four claims in three other files said 18 against a tree of 20. Coverage here is set membership in two dimensions — which facts are registered, and which files their sites point at — and the second one is the quiet one. Most are recomputed from source on each run; the ones needing a pytest + coverage run are replayed from `docs/readme-facts.json`. The totals used to be written out here and in the workflow table below, in two different and both-wrong versions — a hand-maintained count of a checker is the one number the checker cannot check. A number that is not registered is not checked — see the note under Tech Stack |
 
 Two lint gates run **advisory**, on purpose. `ruff check .` reported 379 findings on its first CI run (2026-08-07) and `mypy .` under `strict = true` reported 879 across 65 of 92 files. Both were configured in `pyproject.toml` from the start and had never actually run. They print their count on every build and flip to blocking when they reach zero; a gate that is red from birth gets ignored or deleted, and neither should be silenced with `--fix` or blanket `# type: ignore`.
 
