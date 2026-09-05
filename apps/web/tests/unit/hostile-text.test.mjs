@@ -19,6 +19,36 @@
  * The last test in this file asserts both files stay clean, so the rule is
  * enforced rather than merely observed.
  *
+ * THE CENSUS BELOW IS THE SOURCE OF TRUTH, AND THAT DIRECTION IS THE POINT.
+ * It carries one row per code point this fix has ruled on, each with a
+ * disposition and the reason for it.
+ *
+ * WHAT WAS WRONG WITH WHAT IT REPLACED, said accurately because the census's
+ * whole claim is about accuracy. `EXPECTED_SET` was NOT a copy of the module —
+ * it was transcribed from #424's prose, so the two lists could genuinely
+ * disagree, and the per-member render cases, the over-match sweep and the
+ * source scan's positive control all had real teeth. Every one of those is
+ * still here. Its three actual defects were narrower: it was a FROZEN ARTIFACT
+ * (an anchor to a set someone chose once), `length === 13` PUNISHED HARDENING
+ * (covering one more character reddened the suite, so widening the threat model
+ * was the blocked act and leaving a hole was the free one), and it could not
+ * express a DISPOSITION at all — a code point was either in the list or
+ * unmentioned, and "considered and deliberately excluded" had nowhere to live
+ * except a comment beside a boundary case.
+ *
+ * The census fixes exactly those three. Add a `neutralise` row and this file
+ * reds, by name, until the module covers it. Add a `passthrough` row and the
+ * exclusion is written down with its reason, which is the state U+061C was
+ * found missing from.
+ *
+ * AND THE CENSUS IS ITSELF GRADED, because two lists in one repo maintained by
+ * one author stay green through any edit made to both. The universe sweep below
+ * asks the ENGINE's Unicode tables for every code point with the
+ * `Default_Ignorable_Code_Point` property — the standard's own name for
+ * "invisible" — and fails when one of them has no ruling here. Neither list
+ * controls that bound, and a Node upgrade that adds a default-ignorable arrives
+ * as a red rather than as a silent gap.
+ *
  * Run:  pnpm test:unit
  */
 import assert from "node:assert/strict";
@@ -40,6 +70,7 @@ const cp = (n) => String.fromCodePoint(n);
 const RLO = cp(0x202e); // RIGHT-TO-LEFT OVERRIDE
 const PDF = cp(0x202c); // POP DIRECTIONAL FORMATTING
 const ZWSP = cp(0x200b); // ZERO WIDTH SPACE
+const WJ = cp(0x2060); // WORD JOINER — the bypass, and outside #424's thirteen
 const SENTINEL = cp(0xfffd); // REPLACEMENT CHARACTER — what each one becomes
 
 /**
@@ -67,22 +98,449 @@ const SENTINEL = cp(0xfffd); // REPLACEMENT CHARACTER — what each one becomes
  */
 const GENUINE_SENDER = "no-reply@harbourgate.test";
 const FORGED_SENDER = GENUINE_SENDER.replace("@", `${ZWSP}@`);
+/** The same forgery, spelled with the character the thirteen did not cover. */
+const WORD_JOINER_SENDER = GENUINE_SENDER.replace("@", `${WJ}@`);
 
 /**
- * THE SET, WRITTEN OUT INDEPENDENTLY OF THE MODULE.
+ * THE CENSUS. Every code point this fix has ruled on, what was decided, and
+ * why — and it is what DECIDES, rather than what agrees.
  *
- * Deliberately not derived from `HOSTILE_CODE_POINTS`: a corpus graded by its
- * own author proves nothing, and an expectation imported from the code under
- * test agrees with it by construction. These thirteen numbers are transcribed
- * from #424's own ranges, so the two lists CAN disagree, and a test below
- * exists solely to notice if they ever do.
+ * Rows are a single `cp` or a `from`/`to` span. Spans exist because the tag
+ * block alone is 96 code points and the reserved plane-14 space is 3,600: rows
+ * that differ in nothing but their number carry no information, and the reason
+ * is the thing a row exists to hold. Every span here is transcribed from
+ * Unicode, never read out of the module.
+ *
+ * The four rules it is held to, all asserted below:
+ *   1. every `neutralise` code point is really replaced, really flagged and
+ *      really named in `found`;
+ *   2. every `passthrough` code point survives byte-identical, with an empty
+ *      `found` and no flag;
+ *   3. the module covers exactly the `neutralise` rows — stated in that
+ *      direction, so the failure reads "the census names X and the module does
+ *      not cover it";
+ *   4. and the census itself is measured against the engine's Unicode tables,
+ *      so it cannot quietly agree with the module about a code point neither
+ *      of them has heard of.
+ *
+ * The rows just outside each block are boundaries, not rulings: a range needs
+ * a case sitting ON each edge and one just outside it, or `2060-206F` and
+ * `205F-2070` are the same test.
  */
-const EXPECTED_SET = [
-  0x202a, 0x202b, 0x202c, 0x202d, 0x202e, // deprecated embeddings + overrides
-  0x2066, 0x2067, 0x2068, 0x2069, // modern isolates
-  0x200b, 0x200c, 0x200d, // zero-width space / non-joiner / joiner
-  0xfeff, // zero-width no-break space (BOM)
+const CENSUS = [
+  // ---- neutralised: everything the standard calls default-ignorable, less
+  //      the three exclusions below ----------------------------------------
+  {
+    cp: 0x00ad,
+    name: "SOFT HYPHEN",
+    disposition: "neutralise",
+    why: "zero advance width except at a line break; the hyphenation hint it costs is argued in the header",
+  },
+  {
+    cp: 0x034f,
+    name: "COMBINING GRAPHEME JOINER",
+    disposition: "neutralise",
+    why: "invisible, and it joins nothing a reader can see",
+  },
+  {
+    from: 0x115f,
+    to: 0x1160,
+    name: "HANGUL CHOSEONG/JUNGSEONG FILLER",
+    disposition: "neutralise",
+    why: "invisible LETTERS, category Lo: a scan for format characters never finds these",
+  },
+  {
+    from: 0x17b4,
+    to: 0x17b5,
+    name: "KHMER VOWEL INHERENT AQ and AA",
+    disposition: "neutralise",
+    why: "invisible in modern rendering, and default-ignorable by declaration",
+  },
+  {
+    from: 0x180b,
+    to: 0x180d,
+    name: "MONGOLIAN FREE VARIATION SELECTOR ONE to THREE",
+    disposition: "neutralise",
+    why: "zero width. Neutralised while U+FE00-U+FE0F pass: no emoji path reaches these",
+  },
+  {
+    cp: 0x180e,
+    name: "MONGOLIAN VOWEL SEPARATOR",
+    disposition: "neutralise",
+    why: "class BN and zero width since Unicode 6.3 moved it out of the space separators",
+  },
+  {
+    cp: 0x180f,
+    name: "MONGOLIAN FREE VARIATION SELECTOR FOUR",
+    disposition: "neutralise",
+    why: "zero width; the same ruling as its three siblings",
+  },
+  {
+    from: 0x200b,
+    to: 0x200d,
+    name: "ZERO WIDTH SPACE, NON-JOINER, JOINER",
+    disposition: "neutralise",
+    why: "zero advance width; U+200B is the one #424 measured inside a forged sender",
+  },
+  {
+    from: 0x202a,
+    to: 0x202e,
+    name: "the deprecated bidi embeddings and overrides",
+    disposition: "neutralise",
+    why: "LRE, RLE, PDF, LRO, RLO; U+202E renders `gpj.exe` as `exe.jpg`",
+  },
+  {
+    cp: 0x2060,
+    name: "WORD JOINER",
+    disposition: "neutralise",
+    why: "THE BYPASS: zero width, class BN, interchangeable with the covered U+FEFF, and a review forged a sender with it",
+  },
+  {
+    from: 0x2061,
+    to: 0x2064,
+    name: "the invisible mathematical operators",
+    disposition: "neutralise",
+    why: "FUNCTION APPLICATION, INVISIBLE TIMES, INVISIBLE SEPARATOR, INVISIBLE PLUS; zero width, class BN",
+  },
+  {
+    cp: 0x2065,
+    name: "(reserved)",
+    disposition: "neutralise",
+    why: "reserved and default-ignorable: invisible by declaration, with nothing assigned to it",
+  },
+  {
+    from: 0x2066,
+    to: 0x2069,
+    name: "the modern bidi isolates",
+    disposition: "neutralise",
+    why: "LRI, RLI, FSI, PDI: the deprecated overrides' power in the current spelling",
+  },
+  {
+    from: 0x206a,
+    to: 0x206f,
+    name: "the deprecated format controls",
+    disposition: "neutralise",
+    why: "the symmetric-swapping and Arabic-shaping switches and the digit-shape selectors",
+  },
+  {
+    cp: 0x3164,
+    name: "HANGUL FILLER",
+    disposition: "neutralise",
+    why: "the classic invisible-letter spoofer: a letter to a validator, blank to a reader",
+  },
+  {
+    cp: 0xfeff,
+    name: "ZERO WIDTH NO-BREAK SPACE",
+    disposition: "neutralise",
+    why: "the BOM anywhere but the start of a stream; zero advance width",
+  },
+  {
+    cp: 0xffa0,
+    name: "HALFWIDTH HANGUL FILLER",
+    disposition: "neutralise",
+    why: "U+3164's other half, and the same spoof",
+  },
+  {
+    from: 0xfff0,
+    to: 0xfff8,
+    name: "(reserved)",
+    disposition: "neutralise",
+    why: "reserved and default-ignorable",
+  },
+  {
+    from: 0x1bca0,
+    to: 0x1bca3,
+    name: "the Duployan shorthand format controls",
+    disposition: "neutralise",
+    why: "invisible format characters. RULED HERE rather than in the brief: the sweep surfaced them and the module's stated rule decides them",
+  },
+  {
+    from: 0x1d173,
+    to: 0x1d17a,
+    name: "the musical-notation format controls",
+    disposition: "neutralise",
+    why: "beams, slurs and phrases, all invisible. Ruled here for the same reason as U+1BCA0-U+1BCA3",
+  },
+  {
+    cp: 0xe0000,
+    name: "(reserved)",
+    disposition: "neutralise",
+    why: "reserved plane-14 space, default-ignorable",
+  },
+  {
+    cp: 0xe0001,
+    name: "LANGUAGE TAG",
+    disposition: "neutralise",
+    why: "deprecated and invisible, and above the BMP, which a \\uXXXX class cannot express",
+  },
+  {
+    from: 0xe0002,
+    to: 0xe001f,
+    name: "(reserved)",
+    disposition: "neutralise",
+    why: "reserved plane-14 space, default-ignorable",
+  },
+  {
+    from: 0xe0020,
+    to: 0xe007f,
+    name: "the tag block",
+    disposition: "neutralise",
+    why: "an invisible mirror of printable ASCII, and what emoji flag sequences are built from",
+  },
+  {
+    from: 0xe0080,
+    to: 0xe00ff,
+    name: "(reserved)",
+    disposition: "neutralise",
+    why: "reserved plane-14 space, default-ignorable",
+  },
+  {
+    from: 0xe01f0,
+    to: 0xe0fff,
+    name: "(reserved)",
+    disposition: "neutralise",
+    why: "the rest of plane 14, reserved and default-ignorable",
+  },
+  // ---- passed through: the three declared exclusions. Each is a TRADE with a
+  //      residual, stated in the module's header and repeated here in short --
+  {
+    cp: 0x061c,
+    name: "ARABIC LETTER MARK",
+    disposition: "passthrough",
+    why: "an implicit mark: it cannot reverse a run. It DOES meet attack 2 (byte-different, pixel-identical) and the exclusion accepts that residual. Declared because a review found it undeclared",
+  },
+  {
+    from: 0x200e,
+    to: 0x200f,
+    name: "LEFT-TO-RIGHT MARK and RIGHT-TO-LEFT MARK",
+    disposition: "passthrough",
+    why: "implicit marks that mail clients inject into legitimate Hebrew and Arabic subjects; neutralising them would deface ordinary RTL mail",
+  },
+  {
+    from: 0xfe00,
+    to: 0xfe0f,
+    name: "VARIATION SELECTOR-1 to -16",
+    disposition: "passthrough",
+    why: "U+FE0F is emoji presentation, so this block reaches ordinary subjects. RESIDUAL: a selector chain can smuggle data invisibly",
+  },
+  {
+    from: 0xe0100,
+    to: 0xe01ef,
+    name: "VARIATION SELECTOR-17 to -256",
+    disposition: "passthrough",
+    why: "the same trade and the same residual as U+FE00-U+FE0F",
+  },
+  // ---- passed through: the boundaries. None of these is default-ignorable,
+  //      which is what makes them evidence that the ranges do not over-reach --
+  {
+    cp: 0x00ac,
+    name: "NOT SIGN",
+    disposition: "passthrough",
+    why: "one below the soft hyphen",
+  },
+  {
+    cp: 0x00ae,
+    name: "REGISTERED SIGN",
+    disposition: "passthrough",
+    why: "one above it, and it appears in real company names",
+  },
+  {
+    cp: 0x034e,
+    name: "the combining mark below U+034F",
+    disposition: "passthrough",
+    why: "one below the grapheme joiner",
+  },
+  {
+    cp: 0x0350,
+    name: "the combining mark above U+034F",
+    disposition: "passthrough",
+    why: "one above it",
+  },
+  {
+    cp: 0x115e,
+    name: "the Hangul jamo below the fillers",
+    disposition: "passthrough",
+    why: "one below U+115F",
+  },
+  {
+    cp: 0x1161,
+    name: "HANGUL JUNGSEONG A",
+    disposition: "passthrough",
+    why: "one above U+1160, and a real letter",
+  },
+  {
+    cp: 0x17b3,
+    name: "the Khmer vowel below U+17B4",
+    disposition: "passthrough",
+    why: "one below the inherent vowels",
+  },
+  {
+    cp: 0x17b6,
+    name: "KHMER VOWEL SIGN AA",
+    disposition: "passthrough",
+    why: "one above them, and visible",
+  },
+  {
+    cp: 0x180a,
+    name: "MONGOLIAN NIRUGU",
+    disposition: "passthrough",
+    why: "one below the variation selectors, and visible",
+  },
+  {
+    cp: 0x1810,
+    name: "MONGOLIAN DIGIT ZERO",
+    disposition: "passthrough",
+    why: "one above them, and visible",
+  },
+  {
+    cp: 0x200a,
+    name: "HAIR SPACE",
+    disposition: "passthrough",
+    why: "one below the zero-width run, and a real space",
+  },
+  {
+    cp: 0x2010,
+    name: "HYPHEN",
+    disposition: "passthrough",
+    why: "one above U+200F, and visible",
+  },
+  {
+    cp: 0x2029,
+    name: "PARAGRAPH SEPARATOR",
+    disposition: "passthrough",
+    why: "one below the deprecated bidi controls",
+  },
+  {
+    cp: 0x202f,
+    name: "NARROW NO-BREAK SPACE",
+    disposition: "passthrough",
+    why: "one above them, and a real character in French typography",
+  },
+  {
+    cp: 0x205f,
+    name: "MEDIUM MATHEMATICAL SPACE",
+    disposition: "passthrough",
+    why: "one below the word joiner",
+  },
+  {
+    cp: 0x2070,
+    name: "SUPERSCRIPT ZERO",
+    disposition: "passthrough",
+    why: "one above the deprecated format controls. This seat MOVED: U+206A held it until that range grew",
+  },
+  {
+    cp: 0x3163,
+    name: "HANGUL LETTER I",
+    disposition: "passthrough",
+    why: "one below the filler, and visible",
+  },
+  {
+    cp: 0x3165,
+    name: "HANGUL LETTER SSANGNIEUN",
+    disposition: "passthrough",
+    why: "one above it, and visible",
+  },
+  {
+    cp: 0xfdff,
+    name: "the Arabic ligature below the variation selectors",
+    disposition: "passthrough",
+    why: "one below U+FE00",
+  },
+  {
+    cp: 0xfe10,
+    name: "PRESENTATION FORM FOR VERTICAL COMMA",
+    disposition: "passthrough",
+    why: "one above U+FE0F",
+  },
+  {
+    cp: 0xfefe,
+    name: "(unassigned)",
+    disposition: "passthrough",
+    why: "one below the BOM",
+  },
+  {
+    cp: 0xff00,
+    name: "(unassigned)",
+    disposition: "passthrough",
+    why: "one above it",
+  },
+  {
+    cp: 0xff9f,
+    name: "the halfwidth katakana mark below U+FFA0",
+    disposition: "passthrough",
+    why: "one below the halfwidth filler",
+  },
+  {
+    cp: 0xffa1,
+    name: "HALFWIDTH HANGUL LETTER KIYEOK",
+    disposition: "passthrough",
+    why: "one above it, and visible",
+  },
+  {
+    cp: 0xffef,
+    name: "(unassigned)",
+    disposition: "passthrough",
+    why: "one below the reserved default-ignorable run",
+  },
+  {
+    cp: 0xfff9,
+    name: "INTERLINEAR ANNOTATION ANCHOR",
+    disposition: "passthrough",
+    why: "one above it — a FORMAT character that is not default-ignorable, which is why the universe is that property and not category Cf",
+  },
+  {
+    cp: 0x1bc9f,
+    name: "the Duployan punctuation below the format controls",
+    disposition: "passthrough",
+    why: "one below U+1BCA0",
+  },
+  {
+    cp: 0x1bca4,
+    name: "(unassigned)",
+    disposition: "passthrough",
+    why: "one above U+1BCA3",
+  },
+  {
+    cp: 0x1d172,
+    name: "the musical combining flag below the format controls",
+    disposition: "passthrough",
+    why: "one below U+1D173",
+  },
+  {
+    cp: 0x1d17b,
+    name: "the musical combining accent above them",
+    disposition: "passthrough",
+    why: "one above U+1D17A",
+  },
+  {
+    cp: 0xdffff,
+    name: "(unassigned)",
+    disposition: "passthrough",
+    why: "the top of plane 13, one below plane 14's block",
+  },
+  {
+    cp: 0xe1000,
+    name: "(unassigned)",
+    disposition: "passthrough",
+    why: "one above U+E0FFF, where plane 14 stops being ignorable",
+  },
 ];
+
+/** `0x202e` -> `"U+202E"`. The label the module reports and the flag draws. */
+const label = (code) => `U+${code.toString(16).toUpperCase().padStart(4, "0")}`;
+
+/** Rows, with singletons and spans in one shape. */
+const ROWS = CENSUS.map((row) => ({ ...row, from: row.from ?? row.cp, to: row.to ?? row.cp }));
+const NEUTRALISE_ROWS = ROWS.filter((row) => row.disposition === "neutralise");
+const PASSTHROUGH_ROWS = ROWS.filter((row) => row.disposition === "passthrough");
+
+const membersOf = (row) => Array.from({ length: row.to - row.from + 1 }, (_, i) => row.from + i);
+/** First, middle, last: what gets RENDERED, since 3,915 renders would not pay. */
+const samplesOf = (row) => [...new Set([row.from, Math.floor((row.from + row.to) / 2), row.to])];
+const span = (row) => (row.from === row.to ? label(row.from) : `${label(row.from)}-${label(row.to)}`);
+
+const NEUTRALISE_POINTS = NEUTRALISE_ROWS.flatMap(membersOf);
+const CENSUS_POINTS = new Set(ROWS.flatMap(membersOf));
 
 const render = (value) => markup(MailText({ value }));
 
@@ -175,91 +633,241 @@ test("the zero-width forgery does NOT render as the genuine address", () => {
   );
 });
 
-// ---------------------------------------------------------------------------
-// 2. A directional control per member of the set. Thirteen code points, two
-//    ranges and four singletons: a case that only covers U+202E proves
-//    nothing whatever about U+2066.
-// ---------------------------------------------------------------------------
+test("the WORD JOINER forgery — the bypass a review actually sent — is closed", () => {
+  // U+2060 is not one of #424's thirteen and it did not need to be clever: it
+  // has zero advance width and bidi class BN, exactly like U+FEFF, which WAS
+  // covered, and the two do the same thing to a padded address. Before the set
+  // was sourced from `Default_Ignorable_Code_Point` this string rendered
+  // through untouched and unflagged — measured, not assumed.
+  //
+  // It earns its own named test rather than only a census row because it is
+  // the reason the census exists, and a name is what a reader sees in CI.
+  assert.equal(WORD_JOINER_SENDER.replaceAll(WJ, ""), GENUINE_SENDER);
+  assert.equal(WORD_JOINER_SENDER.length, GENUINE_SENDER.length + 1);
 
-test("the module's set is the set #424 names — thirteen code points, no more", () => {
-  assert.deepEqual(
-    HOSTILE_CODE_POINTS.map((c) => c.codePointAt(0)),
-    EXPECTED_SET,
+  const text = visibleText(render(WORD_JOINER_SENDER));
+  assert.equal(text.includes(WJ), false, "U+2060 reached the rendered text");
+  assert.equal(
+    text.includes(GENUINE_SENDER),
+    false,
+    "the word-joiner forgery rendered as the genuine address",
   );
-  assert.equal(HOSTILE_CODE_POINTS.length, 13);
+  assert.ok(
+    text.endsWith(GENUINE_SENDER.replace("@", `${SENTINEL}@`)),
+    `the line does not read as the marked address: ${JSON.stringify(text)}`,
+  );
+  const html = render(WORD_JOINER_SENDER);
+  assert.match(html, /data-testid="hidden-character-flag"/, "the bypass was cleaned in silence");
+  assert.ok(html.includes("U+2060"), "the flag did not name U+2060");
 });
 
-for (const code of EXPECTED_SET) {
-  const label = `U+${code.toString(16).toUpperCase().padStart(4, "0")}`;
+// ---------------------------------------------------------------------------
+// 2. The census against the module, the census against the engine, and a case
+//    per member. 3,915 code points in 26 rows: a case that only covers U+202E
+//    proves nothing whatever about U+2066, and the bypass that prompted this
+//    rewrite was precisely a member nobody had a case for.
+// ---------------------------------------------------------------------------
 
-  test(`${label} is neutralised in a rendered subject`, () => {
-    const html = render(`Offer${cp(code)} from Acme`);
-    const text = visibleText(html);
-
-    assert.equal(text.includes(cp(code)), false, `${label} reached the rendered text`);
-    assert.equal(text.includes(SENTINEL), true, `${label} left no sentinel behind`);
-    // The honest text either side of it survives untouched, in order. The
-    // flag renders first, so this is what the LINE ends with.
+test("the census is well formed — nothing ruled twice, every row gives a reason", () => {
+  // The census decides what the module must cover, so a row that overlaps
+  // another or carries no reason weakens every assertion below it, not just
+  // itself.
+  const seen = new Set();
+  for (const row of ROWS) {
+    assert.ok(row.from <= row.to, `${span(row)} runs backwards`);
+    for (const code of membersOf(row)) {
+      assert.equal(seen.has(code), false, `${label(code)} is ruled on twice`);
+      seen.add(code);
+    }
+    assert.match(row.disposition, /^(neutralise|passthrough)$/, `${span(row)}: bad disposition`);
+    assert.ok(row.name.length > 0, `${span(row)} has no name`);
     assert.ok(
-      text.endsWith(`Offer${SENTINEL} from Acme`),
-      `${label}: the honest text around it did not survive: ${JSON.stringify(text)}`,
+      row.why.length > 10,
+      `${span(row)} has no reason — a row without one is a transcription, not a ruling`,
     );
-    // And the row says so — neutralising in silence is the half that gets skipped.
-    assert.match(html, /data-testid="hidden-character-flag"/, `${label} was cleaned without a flag`);
-    assert.ok(html.includes(label), `the flag did not name ${label}`);
+  }
+  assert.equal(NEUTRALISE_ROWS.length + PASSTHROUGH_ROWS.length, ROWS.length);
+});
+
+test("every default-ignorable code point the engine knows has a ruling in the census", () => {
+  // THE ONE BOUND NEITHER LIST CONTROLS, and the reason it is here: the census
+  // and the module are two lists in one repo with one author, so an edit made
+  // to both keeps them green and "the census leads" is true only inside the
+  // census's own imagination. `Default_Ignorable_Code_Point` is the standard's
+  // own name for "a renderer that does not know this should draw NOTHING", and
+  // the engine's tables are outside both lists. A default-ignorable arriving
+  // with a Node upgrade lands here as a red instead of as a silent gap.
+  const DEFAULT_IGNORABLE = /\p{Default_Ignorable_Code_Point}/u;
+
+  // Controls first, both directions. A property escape that matched nothing —
+  // or everything — would report this sweep clean either way.
+  assert.equal(DEFAULT_IGNORABLE.test(cp(0x00ad)), true, "the property matches nothing at all");
+  assert.equal(DEFAULT_IGNORABLE.test("a"), false, "the property matches everything");
+
+  const unruled = [];
+  let counted = 0;
+  for (let code = 0; code <= 0x10ffff; code++) {
+    if (code >= 0xd800 && code <= 0xdfff) continue; // a lone surrogate is not a character
+    if (!DEFAULT_IGNORABLE.test(cp(code))) continue;
+    counted++;
+    if (!CENSUS_POINTS.has(code)) unruled.push(code);
+  }
+
+  assert.deepEqual(
+    unruled.slice(0, 8).map(label),
+    [],
+    `the engine knows ${unruled.length} default-ignorable code point(s) the census has not ruled ` +
+      `on — first: ${unruled.slice(0, 8).map(label).join(", ")}. Add a row with a disposition and ` +
+      "a reason; an invisible character nobody ruled on is how U+2060 got through.",
+  );
+
+  // And the count itself, taken from the engine rather than from either list.
+  assert.equal(
+    counted,
+    4174,
+    `the engine now reports ${counted} default-ignorable code points, not 4,174 (this run: ` +
+      `Unicode ${process.versions.unicode}). The tables moved. Rule on the difference in the ` +
+      "census — do not just update this number.",
+  );
+});
+
+test("the module covers every code point the census marks for neutralising", () => {
+  // THE DIRECTION IS THE POINT. The census names what must be neutralised and
+  // the module is measured against it, so adding a `neutralise` row reds this
+  // test, by name, until `HOSTILE_RANGES` and the `HOSTILE` literal both cover
+  // it. That is what makes widening the threat model the deliberate act rather
+  // than the blocked one — under the assertion this replaced, hardening the
+  // module was what broke the suite.
+  const covered = new Set(HOSTILE_CODE_POINTS.map((c) => c.codePointAt(0)));
+  const missing = NEUTRALISE_POINTS.filter((code) => !covered.has(code));
+  assert.deepEqual(
+    missing.slice(0, 8).map(label),
+    [],
+    `the census names ${missing.length} code point(s) the module does not cover — first: ` +
+      `${missing.slice(0, 8).map(label).join(", ")}. Add them to HOSTILE_RANGES and to the ` +
+      "HOSTILE range literal in lib/security/hostileText.ts.",
+  );
+  assert.equal(covered.size, NEUTRALISE_POINTS.length);
+});
+
+test("the module neutralises nothing the census has not ruled on", () => {
+  // The other direction, worded the other way round on purpose: a code point
+  // the code cleans that the census has not decided anything about is an
+  // undeclared decision, which is the shape U+061C was found in.
+  const named = new Set(NEUTRALISE_POINTS);
+  const undeclared = HOSTILE_CODE_POINTS.map((c) => c.codePointAt(0)).filter((c) => !named.has(c));
+  assert.deepEqual(
+    undeclared.slice(0, 8).map(label),
+    [],
+    `the module neutralises ${undeclared.length} code point(s) the census does not name for it — ` +
+      `first: ${undeclared.slice(0, 8).map(label).join(", ")}. Add a row saying why, or stop ` +
+      "neutralising it.",
+  );
+});
+
+for (const row of NEUTRALISE_ROWS) {
+  test(`${span(row)} ${row.name} is neutralised — ${row.why}`, () => {
+    // (a) EVERY member of the row, through the module itself. This is the case
+    //     per member the module's header asks for, and it is cheap.
+    for (const code of membersOf(row)) {
+      const { text, found } = inspectHostileText(`a${cp(code)}b`);
+      assert.equal(text, `a${SENTINEL}b`, `${label(code)} was not replaced`);
+      // By its OWN code point. For anything above the BMP this is what the
+      // regex's `u` flag buys: without it the replace callback receives a lone
+      // surrogate and the label reads U+DB40.
+      assert.deepEqual(found, [label(code)], `${label(code)} was misreported in found`);
+    }
+
+    // (b) the edges and the middle, RENDERED — because "the function returns
+    //     the right string" is not the claim; "the screen cannot lie" is. All
+    //     3,915 renders would cost more than they prove, so the row's edges
+    //     stand for it and the module-level walk above covers the interior.
+    for (const code of samplesOf(row)) {
+      const html = render(`Offer${cp(code)} from Acme`);
+      const text = visibleText(html);
+      assert.equal(text.includes(cp(code)), false, `${label(code)} reached the rendered text`);
+      assert.ok(
+        text.endsWith(`Offer${SENTINEL} from Acme`),
+        `${label(code)}: the honest text around it did not survive: ${JSON.stringify(text)}`,
+      );
+      // And the row says so — neutralising in silence is the half that gets skipped.
+      assert.match(
+        html,
+        /data-testid="hidden-character-flag"/,
+        `${label(code)} was cleaned without a flag`,
+      );
+      assert.ok(html.includes(label(code)), `the flag did not name ${label(code)}`);
+    }
   });
 }
 
-test("the range literal and the exported array cannot drift apart", () => {
-  // Both directions. Every member of the array must match the regex the module
-  // actually runs, AND the regex must match nothing the array does not name.
+test("the range literal and the exported ranges cannot drift apart", () => {
+  // Both directions, and note what this does and does not prove:
+  // `HOSTILE_CODE_POINTS` is DERIVED from `HOSTILE_RANGES`, so this compares
+  // the ranges to the regex — two artifacts written by hand and separately,
+  // which is a real check — and says nothing about whether the ranges are the
+  // right ones. The census above is what says that.
   for (const character of HOSTILE_CODE_POINTS) {
     assert.equal(
       inspectHostileText(character).found.length,
       1,
-      `the regex missed ${character.codePointAt(0).toString(16)}, which the array claims`,
+      `the regex missed U+${character.codePointAt(0).toString(16)}, which the ranges claim`,
     );
   }
-  // Sweep the whole neighbourhood the two ranges live in.
-  const named = new Set(EXPECTED_SET);
-  for (let code = 0x2000; code <= 0x2100; code++) {
+
+  // Over-match, swept across every code point there is rather than across a
+  // neighbourhood: the ranges now reach into three planes, and a sweep aimed
+  // at the wrong one reports clean.
+  const named = new Set(HOSTILE_CODE_POINTS.map((c) => c.codePointAt(0)));
+  const over = [];
+  let visited = 0;
+  for (let code = 0; code <= 0x10ffff; code++) {
+    if (code >= 0xd800 && code <= 0xdfff) continue;
+    visited++;
     if (named.has(code)) continue;
-    assert.equal(
-      inspectHostileText(cp(code)).found.length,
-      0,
-      `the regex caught U+${code.toString(16).toUpperCase()}, which the array does not name`,
-    );
+    if (inspectHostileText(cp(code)).found.length > 0) over.push(code);
   }
+  assert.deepEqual(
+    over.slice(0, 8).map(label),
+    [],
+    `the regex catches ${over.length} code point(s) the ranges do not name — first: ` +
+      `${over.slice(0, 8).map(label).join(", ")}`,
+  );
+  // A floor on the sweep itself: bounds collapsed to nothing would satisfy
+  // every assertion above and measure nothing at all.
+  assert.equal(visited, 0x110000 - 0x800, `the sweep visited ${visited} code points`);
 });
 
 // ---------------------------------------------------------------------------
-// 3. The boundaries. A range needs a case sitting ON each edge and one just
-//    outside it, or "202A-202E" and "2029-202F" are the same test.
+// 3. The other disposition, which the assertion this file used to carry could
+//    not express at all. Every `passthrough` row survives byte-identical and
+//    draws no flag.
+//
+//    Two kinds of row are in here and the difference matters. The BOUNDARIES
+//    are ordinary characters just outside each range — evidence the ranges do
+//    not over-reach. The EXCLUSIONS are default-ignorable characters the module
+//    could neutralise and deliberately does not: the implicit marks (U+200E,
+//    U+200F, U+061C) and the variation selectors (U+FE00-U+FE0F,
+//    U+E0100-U+E01EF). Each is a trade with a residual, argued in the module's
+//    header and named in the row's `why` — an exclusion nobody wrote down is
+//    indistinguishable from an oversight, which is exactly the state a review
+//    found U+061C in.
 // ---------------------------------------------------------------------------
 
-const NEIGHBOURS = [
-  [0x2029, "PARAGRAPH SEPARATOR, one below the first bidi range"],
-  [0x202f, "NARROW NO-BREAK SPACE, one above it — a real character in French typography"],
-  [0x2065, "unassigned, one below the isolates"],
-  [0x206a, "INHIBIT SYMMETRIC SWAPPING, one above them"],
-  [0x200a, "HAIR SPACE, one below the zero-width run"],
-  // The interesting exclusion, and it is deliberate. LRM/RLM sit immediately
-  // above U+200D and they DO affect direction — but as implicit marks, not
-  // overrides: they nudge a neutral character's resolved direction and cannot
-  // reverse a run the way U+202E can. #424's ranges stop at U+200D. Asserting
-  // the exclusion is what makes it a decision rather than an oversight; if it
-  // is ever revisited, this is the test that will say so out loud.
-  [0x200e, "LEFT-TO-RIGHT MARK — outside #424's ranges, on purpose"],
-  [0x200f, "RIGHT-TO-LEFT MARK — outside #424's ranges, on purpose"],
-];
-
-for (const [code, why] of NEIGHBOURS) {
-  test(`U+${code.toString(16).toUpperCase()} passes through untouched (${why})`, () => {
-    const value = `Offer${cp(code)}letter`;
-    const html = render(value);
-    assert.equal(visibleText(html), value);
-    assert.equal(inspectHostileText(value).found.length, 0);
-    assert.doesNotMatch(html, /hidden-character-flag/);
+for (const row of PASSTHROUGH_ROWS) {
+  test(`${span(row)} ${row.name} passes through untouched — ${row.why}`, () => {
+    for (const code of membersOf(row)) {
+      const value = `Offer${cp(code)}letter`;
+      const { text, found } = inspectHostileText(value);
+      assert.equal(text, value, `${label(code)} was altered`);
+      assert.deepEqual(found, [], `${label(code)} was reported as hostile`);
+    }
+    for (const code of samplesOf(row)) {
+      const value = `Offer${cp(code)}letter`;
+      const html = render(value);
+      assert.equal(visibleText(html), value, `${label(code)} did not render as itself`);
+      assert.doesNotMatch(html, /hidden-character-flag/, `${label(code)} drew a flag`);
+    }
   });
 }
 
@@ -312,6 +920,23 @@ test("the substitution is length-preserving, so a flag cannot be padded off the 
   const { text, found } = inspectHostileText(value);
   assert.equal(text.length, value.length);
   assert.equal(found.length, 200);
+});
+
+test("the astral substitution shortens the string and can never grow it", () => {
+  // The tag block is above the BMP, so one tag character is TWO UTF-16 units
+  // and the sentinel replacing it is one. The module's header states this
+  // rather than claiming a length preservation it does not have: code points
+  // are preserved one for one, `.length` drops by one per tag character, and
+  // the direction is the safe one — nothing can pad a flag off a line.
+  const TAG = cp(0xe0020);
+  const value = `a${TAG.repeat(50)}b`;
+  const { text, found } = inspectHostileText(value);
+
+  assert.equal(found.length, 50);
+  assert.deepEqual([...new Set(found)], ["U+E0020"]);
+  assert.equal([...text].length, [...value].length, "a code point was lost or gained");
+  assert.equal(text.length, value.length - 50, "each tag character should free one UTF-16 unit");
+  assert.ok(text.length < value.length, "the substitution grew the string");
 });
 
 test("the sentinel reaches the markup as a character, not an entity", () => {
@@ -407,11 +1032,22 @@ test("one occurrence reads as one, not as 1 characters", () => {
 test("no file in this fix contains a literal member of the set", () => {
   const WEB_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   // Built from numbers for the same reason everything else here is.
-  const hostile = new RegExp(`[${EXPECTED_SET.map((c) => `\\u{${c.toString(16)}}`).join("")}]`, "gu");
+  const hostile = new RegExp(
+    `[${NEUTRALISE_ROWS.map((row) => `\\u{${row.from.toString(16)}}-\\u{${row.to.toString(16)}}`).join("")}]`,
+    "gu",
+  );
 
   // POSITIVE CONTROL. A scan that silently matches nothing reports "clean" and
   // "never ran" with the same output, so prove the scanner sees one first.
   assert.equal(`ok${RLO}`.match(hostile).length, 1, "the scanner matches nothing at all");
+  // And an ASTRAL one, because matching above the BMP is new capability here:
+  // a class built without `u` would match neither the tag block nor anything
+  // else it was handed, and would still report every file clean.
+  assert.equal(
+    `ok${cp(0xe0020)}`.match(hostile).length,
+    1,
+    "the scanner cannot see a member above the BMP",
+  );
 
   for (const rel of [
     "lib/security/hostileText.ts",
