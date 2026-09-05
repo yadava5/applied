@@ -186,6 +186,36 @@ failure mode where the page renders fine and nothing is protected. The gate was
 proven able to fail: it caught the `/system-card` break described above before
 that route was excluded.
 
+**Where it runs, and what that is worth.** Until #742 the answer was *nowhere*:
+this document described the gate as standing verification while no workflow and
+no package script invoked it, so the only runs it had ever had were by hand. It
+is now a step named `CSP wire gate` in the `playwright (production build)` job
+of `.github/workflows/e2e-ci.yml`, which is the only job that produces the
+`next build && next start` the gate requires — the dev-server job's policy
+carries `'unsafe-eval'` by design and would be the wrong thing to measure.
+
+That job is **not** one of `main`'s required status checks; the three required
+checks are `README numbers agree with the code`, `Scan for secrets` and `Test
+data baseline agrees with the tree`. So the honest statement of this control is
+that it runs on every pull request and every push, and reds visibly, and does
+not by itself block a merge. Making that job required is a repository settings
+change and is open.
+
+Re-proven able to fail before wiring, four ways, each rebuilt and each
+confirmed on the wire before the gate was read: `'unsafe-inline'` added to
+`script-src` (12 routes red); the request headers set after `updateSession` in
+`proxy.ts`, which broke 2 of 14 tags and was still caught — the partial case is
+the one that matters; a hardcoded stale nonce in the layout (every tag red);
+and an inline `<script>` added to the System Card bundle. Cold run: 0.30s.
+
+Two limits, stated because a control described without its blind spots is the
+defect this pack exists to avoid. The gate never asserts 2xx, so a deleted or
+renamed route still receives the proxy's CSP and Next's nonces and goes green
+rather than red. And `checkRedirect` requires a 3xx while signed out on
+`/dashboard`, `/inbox`, `/settings` and `/callback`; if the seeded session from
+#188 ever lands in this job those answer 200 and the step reds for a reason
+that is not about CSP.
+
 ### 3.2 What the exposure actually is
 
 If an attacker achieves script execution on this origin, they can read the
@@ -253,8 +283,14 @@ token, and the control does not require it.
 *Provenance of the header values above, because it is not uniform. The
 `X-Frame-Options`, `Strict-Transport-Security`, `X-Content-Type-Options` and
 `Referrer-Policy` rows in §3.1 were read from the live production response. The
-`Content-Security-Policy` row was **not** — it states the policy this change
-ships, read off a local `next build && next start` via
-`apps/web/scripts/csp-gate.mjs`. It reaches production when this merges; a
-post-merge probe of `https://getapplied.vercel.app/` should confirm it before
-this pack is filed.*
+`Content-Security-Policy` row was **not** — it stated the policy that change
+shipped, read off a local `next build && next start` via
+`apps/web/scripts/csp-gate.mjs`.*
+
+*That probe has since been run. On 2026-09-04, `https://getapplied.vercel.app/`
+and `/login` each served exactly one `Content-Security-Policy` header carrying
+`'strict-dynamic'`, no `'unsafe-inline'` in `script-src`, and a **different**
+nonce per response — 14 `<script>` tags on `/login`, all 14 carrying that
+response's nonce. `/system-card` served the classic `script-src 'self'` with
+zero inline scripts. The row is now a production reading rather than a local
+one.*
