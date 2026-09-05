@@ -180,3 +180,55 @@ Valid while: the two 429s remain indistinguishable to the client. Supabase
   the quota half may be surfaced — with the enumeration test extended first,
   since a control that does not know about a branch cannot guard it.
 Markers: apps/web/lib/auth/recovery.ts
+
+## DEC-006 — the booklet drift gate stays byte-for-byte, and a red Dependabot booklet PR is finished by hand
+
+Status: active (2026-09-05)
+Claim: `booklet/` stays under Dependabot and the System Card drift gate stays a
+  byte-for-byte comparison against a rebuild. A booklet dependency pull request
+  is therefore EXPECTED to land red, and the design is two actors: Dependabot
+  proposes the bump, a human commits the rebuild — on that branch, or on a
+  branch that supersedes it. A red booklet pull request is finished or closed
+  within its month; the next monthly group supersedes it anyway.
+Why: a bundler, plugin or React bump changes the emitted bundle and therefore
+  its hashed filename, and Dependabot does not run project build scripts. That
+  is not a broken gate, and `.github/dependabot.yml` said so in capitals before
+  this entry existed. The cost that IS real is a red nobody reads: this gate is
+  the only thing between an edited system card and a stale committed bundle,
+  and a check whose red is routine has stopped being a check.
+  Both directions are demonstrated rather than asserted. Dependency direction:
+  PR #670 red, then green on #781 once the rebuild was committed — one variable
+  flipped. Tamper direction: PR #783 changed ONE byte of a committed
+  `apps/web/public/system-card` file with `booklet/` untouched, and the gate
+  exited 1 naming that file, after its own positive control reported "Guarding
+  44 committed files". That second run is what proves the comparison watches
+  the committed side and that the artifact-only path trigger fires at all.
+Moved away from: four alternatives, each attractive for a different reason.
+  (1) A workflow that rebuilds and commits onto the Dependabot branch. It means
+  executing freshly bumped third-party code in a job holding a write token, on
+  a public repository, to save one five-minute ritual a month. The workflow is
+  `permissions: contents: read` deliberately.
+  (2) Taking the booklet back out of Dependabot's scope. Killed by the reason
+  it went in: a high-severity advisory reached through a transitive dependency
+  where GitHub reports NO patched version, so security alerts can never deliver
+  the fix and only a routine version bump reaches a tree without the vulnerable
+  package. Unwatching recreates exactly the oversight #665 closed.
+  (3) Building the card at deploy time instead of committing it. Vercel build
+  CPU is the bill, and the committed files are what the git-driven build serves
+  directly; this also deletes a reproducibility property nothing else provides.
+  (4) Scoping the gate to `booklet/src` so a dependency-only PR skips it. The
+  cheapest-looking and the worst: it makes the gate unable to fail in exactly
+  the case where the bundle really changed, and — because the workflow also
+  watches `apps/web/public/system-card/**` — it would additionally stop the
+  gate firing on direct tampering with the committed artifact, which is the
+  case PR #783 was run to demonstrate.
+Enforced by: .github/workflows/booklet.yml enforces the byte-for-byte half.
+  The completion half has no gate and cannot have one here: `booklet-drift` is
+  not a required context and cannot become one, because its `paths:` filter
+  means it does not run on most pull requests and a required-but-skipped
+  context would wedge every unrelated merge. So a red booklet pull request is
+  mechanically mergeable, and for that half: nothing enforces this; prose only.
+Valid while: the built System Card is committed under `apps/web/public/` and
+  served directly. If it is ever built at deploy time, the drift class and this
+  entry go with it.
+Markers: .github/dependabot.yml, .github/workflows/booklet.yml
