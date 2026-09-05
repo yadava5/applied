@@ -66,6 +66,45 @@ employers — Northwind Systems, Halberd, Ironvale Robotics — with senders at
 preserves the *structure* of a real ATS relay hostname, which is what the
 sender-anchoring code reads, while the labels that identify anyone are invented.
 
+### The document is not exempt
+
+**Any address spelled out in this file sits on a domain that cannot route, and a
+routable domain is named as a domain rather than written as an address.** That
+is one sentence, it is the same rule as everything above, and it applies here
+for the reason it applies anywhere: there is no argument for the file that
+states the rule being the file that breaks it.
+
+It has a history worth keeping. Until #623 the gate read four roots and this
+document was outside all of them, so it had accumulated eight address-shaped
+illustrations on routable suffixes — the ones in [An address that is assembled
+at run time](#an-address-that-is-assembled-at-run-time), now written as bare
+domains, which is what they were always about. The obvious alternative was to
+exempt this path in the gate, and it was rejected: an exemption is not scoped to
+the text that motivated it, so it would have covered every address added to this
+file afterwards, for any reason, by anybody — a rule with a hole in it exactly
+where the rule is written down, which is this repository's recurring defect
+wearing a hat.
+
+The convention is not new, either.
+`apps/web/tests/unit/no-real-employer-in-shipped-fixtures.test.mjs` carries the
+same note about its own prose — "it names domains, never addresses" — and
+predates this section by an issue.
+
+Scoring zero is also **stronger** than a baseline entry would have been. This
+file now appears nowhere in `scripts/test_data_baseline.json`, so the next
+address added to it, in any section, reds the gate as a new file. A baselined
+count would have had to be re-recorded to change; an exemption would have said
+nothing at all.
+
+Two places where the rule bites and the answer is *record*, not rewrite:
+`scripts/check_test_data.py`'s own examples stay verbatim, because one of them
+quotes the open-redirect fixture `test_gmail_oauth_return_host.py` exists to
+refuse and an example that does not match what it documents is worth less than a
+baseline line; and everything in [The baseline is a
+ratchet](#the-baseline-is-a-ratchet-not-a-backlog) still holds for material that
+carries a provenance claim. The rule governs **writing**. The baseline records
+**what is already written**. No file is outside either.
+
 ## When the real message is the only evidence
 
 Several modules here are graded against wordings that a classifier has to read
@@ -163,6 +202,24 @@ Worth stating so nobody audits it a second time:
   not a fixture leak, and it is not in this gate's scope. Do not conflate the
   two.
 
+Two of those entries came **into** the gate's scope in #623 and are now counted
+and baselined, which is not the same as being cleared:
+
+- the evaluation corpora contribute 170 of the addresses the baseline records.
+  "Synthetic" is a claim about the material — no personal address, no real
+  employer — and not about the domains: several of the invented-looking
+  employers are live registrations that accept mail today. The ATS *vendor*
+  domains among them are load-bearing, because `ATS_DOMAINS` in
+  `classifier/rules.py` matches on them by name, and the placeholders are not.
+  Whether either should change is reserved to the owner in #623 and #593, and
+  nothing here decides it.
+- the demo data under `apps/web/lib/demo/` and the marketing components are
+  rendered to every visitor and are read by this gate for the first time. Same
+  reservation: recorded, not endorsed.
+
+**The baseline is a ratchet, not a certificate.** Recording an address means
+somebody will see it move. It does not say it is fine.
+
 ## The gate
 
 `scripts/check_test_data.py`, run by `test-data.yml` — its own workflow, whose
@@ -213,23 +270,65 @@ python3 scripts/check_test_data.py                   # check (what CI runs)
 python3 scripts/check_test_data.py --write-baseline  # deliberately re-record
 ```
 
-It reads tracked files under `backend/tests/`, `backend/jobtracker/`,
-`apps/web/tests/` and `ml/` — from `git ls-files`, never a filesystem walk,
+It reads **every tracked file** — from `git ls-files`, never a filesystem walk,
 because a walk reaches `node_modules`, `.venv*`, `.next` and `__pycache__`, and
 a gate that reports hundreds of hits it does not own is a gate that gets turned
 off. Product source is in scope on purpose: #593's requisition numbers were not
 confined to tests.
 
-`ml/` was added in #615. It had been neither scanned nor named as excluded,
-which is a blind spot rather than a decision — and #593's corrected inventory
-named `ml/demo/space/jobtracker/classifier/rules.py` explicitly, hours before
-the first cut of this gate merged without it. Note that
-**`ml/demo/space/jobtracker/` is a generated copy** of `backend/jobtracker/`,
-written by `ml/demo/package_space.py` and committed: the same material was
-tracked twice and scanned once. A consequence worth knowing before it surprises
-you — **repackaging the Space moves the baseline**, because whatever is in
-`backend/jobtracker/` gets copied in. That is correct behaviour, not a bug in
-the gate; re-record and say so.
+Every tracked file **minus a list of exclusions, which is currently empty** —
+`EXCLUDED` in the script. Until #623 it was the other way round: four scan roots,
+and the rest of a public repository outside the gate by construction. An
+allowlist's blind spot is an *absence*, and nothing enumerated what those four
+roots left out; the measurement, when somebody finally took it, was 239
+non-reserved addresses across 24 tracked files — the demo data the product
+renders to every visitor, the evaluation corpora, the built system-card bundle,
+the script itself and this document. The roots had already been patched twice
+for the same defect ("a root the gate does not read"), which is what makes the
+direction wrong rather than the list too short. Inverted, the default is scanned
+and every exception is a line somebody had to write a reason on.
+
+Two consequences worth knowing before they surprise you.
+**`ml/demo/space/jobtracker/` is a generated copy** of `backend/jobtracker/`
+(`ml/demo/package_space.py`), so the same material is tracked twice and counted
+twice, and repackaging the Space moves the baseline. And **rebuilding the
+system-card bundle moves it in the noisiest way this gate has**: those files are
+named by content hash, so a rebuild reads as a new file *plus* a cleared one —
+see "It reports a rename badly" below — and the minified CSS bundle's
+`}@font-face{` runs match the template reader eleven times as addresses they are
+not. Over-counting is the safe direction, so they are recorded rather than
+excluded; the sibling `.js` bundle holds five that are real.
+
+### A file that is not text
+
+Scanning everything means meeting the first PNG, and on this tree that PNG made
+the widened gate refuse the whole run — correctly, because a file the gate
+cannot read is not a file it can call clean. So the file is sniffed:
+
+| the file | what happens |
+| --- | --- |
+| its bytes decode as UTF-8 | scanned, and its findings are baselined |
+| its bytes do not decode | **skipped, and the skip is baselined** |
+| it cannot be read at all | the run **fails** — a broken checkout, or a tracked file that is gone |
+
+The sniff is on **content**, never on an extension. An extension allowlist is a
+second allowlist with a second invisible blind spot, which is the defect the
+paragraphs above are about. It is not git's "a NUL byte in the first 8000"
+heuristic either: measured on this tree, 54 tracked files fail to decode and
+every one of them is a font, an image or a video, while the one tracked *text*
+file that carries a NUL — `apps/web/lib/feedback/coalesce.ts`, whose field
+delimiter is one — decodes fine. The NUL rule would have dropped product source.
+
+A skipped file is **recorded** in the baseline rather than dropped from it, so
+that "nobody read this one" can never print like "this one is clean", and so
+that adding a binary file is a line in a diff instead of a silent widening of
+what nobody looks at.
+
+And `--write-baseline` **refuses to move a file from scanned to skipped**. That
+is the door this sniff opens and the one worth guarding: corrupt one byte of a
+module holding fifty addresses and it stops decoding, and a re-record would
+launder those fifty findings into a skip, leaving every later run green on a
+file nobody read. The write path names the file and refuses. Restore it first.
 
 For each file it records two things: the **count** of addresses whose domain is
 not reserved, by occurrence, and a **digest** — a truncated SHA-256 over the
@@ -237,13 +336,15 @@ sorted, lower-cased, de-duplicated set of those addresses.
 
 **Any divergence from the baseline fails, in either direction:** a count up, a
 count down, a scanned file that the baseline does not list, a baselined file
-that has gone to zero, or a file whose count is unchanged while its digest is
-not. That last case is the one the count-only first cut could not see —
-replacing one published address with a brand-new one nets to zero (#615).
+that has gone to zero, a file whose count is unchanged while its digest is not,
+or a change to the set of files that were skipped rather than read. The digest
+case is the one the count-only first cut could not see — replacing one published
+address with a brand-new one nets to zero (#615).
 
-A tracked file that cannot be read or decoded **fails**. It used to be counted
-as zero, so an unreadable file read as clean; a skip that passes is the same
-defect as a ratchet that only ratchets one way.
+A tracked file that cannot be **read** fails. One that cannot be **decoded** is
+skipped and recorded as skipped. Neither is ever counted as zero: it used to be,
+so a file nobody could read passed as clean, and a skip that passes silently is
+the same defect as a ratchet that only ratchets one way.
 
 There is **no denylist**, and there will not be one. A list of the exact strings
 this gate exists to forbid would republish every one of them, in a new tracked
@@ -252,10 +353,11 @@ file, in a public repository. The check is on shape.
 ### An address that is assembled at run time
 
 Until #647 the gate could see a **literal** and nothing else. Its domain pattern
-admitted letters, digits, dot and hyphen, so `f"careers@{domain}"` was not an
-address as far as the check was concerned — and neither was `"careers@%s.com"`,
-`"careers@" + domain`, nor `"careers@{0}.com".format(...)`. Every interpolation
-form this repository actually uses was invisible, which is the worse half of the
+admitted letters, digits, dot and hyphen, so a sender whose domain was assembled
+at run time was not an address as far as the check was concerned: not an
+f-string field (`{domain}`), not `%s`, not `+` concatenation, not a `str.format`
+field. Every interpolation form this repository actually uses was invisible,
+which is the worse half of the
 finding: writing a sender as an f-string is the *natural* way to write one, and
 most of this suite does, so a fixture author got a green gate unconditionally.
 It was hiding senders on two real companies' own domains in
@@ -270,13 +372,18 @@ the address could **resolve** somewhere, and for a template that is a question
 about the part of the domain no interpolation can change — the **sealed
 suffix**, everything after the last interpolation from its first literal dot:
 
-| written as | sealed suffix | verdict |
+Only the **domain** decides; the local part plays no part in this judgement. So
+the domains below are written without one — which is also how this document
+obeys its own rule, see [The document is not
+exempt](#the-document-is-not-exempt).
+
+| the domain, as written | sealed suffix | verdict |
 | --- | --- | --- |
-| `f"careers@{token}.test"` | `.test` | reserved whatever `{token}` is — **silent** |
-| `f"hello@acme-{n}hub.example"` | `.example` | the label interpolates, the TLD does not — **silent** |
-| `f"careers@{company}.com"` | `.com` | routable — **counted** |
-| `f"careers@{n}example.com"` | `.com` | `{n}` may be `not` — **counted** |
-| `f"careers@{domain}"` | none | nothing is sealed, nothing can be proved — **counted** |
+| `{token}.test` | `.test` | reserved whatever `{token}` is — **silent** |
+| `acme-{n}hub.example` | `.example` | the label interpolates, the TLD does not — **silent** |
+| `{company}.com` | `.com` | routable — **counted** |
+| `{n}example.com` | `.com` | `{n}` may be `not` — **counted** |
+| `{domain}` | none | nothing is sealed, nothing can be proved — **counted** |
 
 The three markers are `{...}` (which serves f-string fields, `str.format` fields
 and JavaScript template literals alike), `%s`, and `+` concatenation, which is
@@ -287,9 +394,10 @@ a formatting change and does not move the baseline, for the same reason
 re-ordering literals does not.
 
 One consequence to know before it surprises you: **`backend/tests/test_test_data_gate.py`
-is now a finding of its own**, because its probe addresses are built as
-`f"{local}@{domain}"` and a wholly interpolated domain is exactly the shape that
-cannot be proved. That is correct and it is not worked around. Writing the
+is now a finding of its own**, because its probe addresses are assembled at run
+time from a local part and a wholly interpolated domain (`{domain}`), which is
+exactly the shape that cannot be proved. That is correct and it is not worked
+around. Writing the
 gate's own probes in a construction the gate cannot see is the defect #647 is
 about.
 
@@ -316,12 +424,25 @@ the alternative is a gate that cannot see a swap.
 
 ### What is not scanned
 
-Named so it is a decision and not another blind spot. Outside the four roots
-above: `docs/`, `README.md`, `booklet/`, `scripts/`, `api/`, and everything in
-`apps/web/` that is not under `tests/`. Those surfaces are covered by the rule
-and by review, not by this gate. `apps/web/components/marketing/` and
-`apps/web/lib/demo/` are called out under [What is already
-clean](#what-is-already-clean) and are deliberately out of scope.
+Named so it is a decision and not another blind spot. **Three things, and the
+list is meant to stay this short:**
+
+- Anything named in `EXCLUDED` in `scripts/check_test_data.py`, which is
+  **currently empty**. That is the measured answer rather than an omission:
+  every tracked file in this repository either scans clean, is recorded in the
+  baseline, or does not decode and is recorded as skipped. Nothing needed a
+  line — not the lockfiles, not the generated API schema, not the built bundles.
+- Files whose bytes are not UTF-8 — see [A file that is not
+  text](#a-file-that-is-not-text). Skipped, and *recorded* as skipped.
+- Untracked files. `git ls-files` reads the index, so `node_modules/`, `.next/`
+  and a scratch file nobody staged are out; a staged file is in.
+
+Everything else is read: `docs/` and this document, `README.md`, `booklet/`,
+`scripts/`, `api/`, the whole of `apps/web/` rather than only its `tests/`, the
+evaluation corpora under `backend/data/`, and the built system-card bundle. That
+was #623's point — the surfaces most likely to be read by a stranger, the
+landing page and the demo fixtures and the docs, were the ones with no scan over
+them at all.
 
 ### What the gate does not check
 
@@ -380,6 +501,11 @@ separate code path:
 | an address assembled at run time on a routable domain | red |
 | the same assembly with a reserved literal suffix | green |
 | an untracked file | not scanned |
+| an address under `docs/`, which no scan root ever covered | red |
+| the same file, same path, with a reserved address | green |
+| a tracked file whose bytes are not UTF-8 | skipped, and red until the skip is recorded |
+| a file that WAS scanned and stops decoding | `--write-baseline` refuses to record it |
+| a path named in `EXCLUDED` | not scanned |
 
 The green rows are not padding. A gate that reddened on `careers@halberd.test`
 would punish the shape this document tells you to write. It nearly did: review
