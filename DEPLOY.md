@@ -135,8 +135,9 @@ The path that scales publicly **without** restricted-scope verification is
 job-related mail to a per-user Applied ingest address, and the same
 classifier labels what arrives (no account access, no restricted scope).
 For "deploy only things good to scale," **forwarding ingestion is the
-recommended public path**; the OAuth connection fits a small invited group
-and the desktop app. Forwarding ingestion is not yet built — it is the
+recommended public path**; the OAuth connection fits a small invited group.
+(This sentence used to end "and the desktop app"; that app was de-scoped on
+2026-08-12 and deleted.) Forwarding ingestion is not yet built — it is the
 recommended next increment.
 
 ## Path D — "Sign in with Google" (Supabase Auth social login)
