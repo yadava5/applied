@@ -41,7 +41,21 @@ described: the `PUBLIC` allowlist in
 `backend/tests/test_cloud_routes_carry_auth.py` names every one with its
 reason, and `test_every_public_route_on_the_allowlist_still_exists` reds on a
 stale entry. Of the 29 routes, **23 require a Supabase
-JWT** and **6 do not**:
+JWT** and **6 do not**.
+
+A route here is **one entry in the walked route table**, which is the unit
+`API_SPEC.md` counts in too: the two-method `/cron/sync` is one route object
+and counts once. Counting `(method, path)` pairs or distinct paths instead
+gives different totals, so a figure quoted here cannot be checked by counting
+either of those. The visible consequence is that the `PUBLIC` allowlist in
+`backend/tests/test_cloud_routes_carry_auth.py` holds **7 entries** for those
+six public routes: it is keyed on `(method, path)` and `/cron/sync` appears
+under both verbs. Six objects, seven keys, one endpoint — and a reader who
+checks "6 do not" against the allowlist and finds 7 has counted the other
+noun, not found an error.
+
+Every number in this paragraph is a registered fact (`scripts/readme_facts.py`),
+so the arithmetic reds when a route is added rather than going quietly stale:
 
 | Public route | What stands in for the JWT |
 | --- | --- |

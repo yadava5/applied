@@ -583,6 +583,11 @@ BROWSER_SITE_README = "ml/browser/site/README.md"
 BROWSER_DEMO_JS = "ml/browser/site/app.js"
 BOOKLET_CONTENT = "booklet/src/content.ts"
 
+# The three documents carrying the published route arithmetic (#838).
+ARCHITECTURE = "docs/ARCHITECTURE.md"
+API_SPEC = "docs/API_SPEC.md"
+WEB_ARCHITECTURE = "docs/WEB_ARCHITECTURE.md"
+
 DEMO_SPACE_HYBRID = "ml/demo/space/jobtracker/classifier/hybrid.py"
 
 # A `const NAME = <float>;` whose name is SCREAMING_CASE. Anchored at the start
@@ -1112,6 +1117,113 @@ def workflow_pin(pattern: str, what: str) -> int:
 
 def file_bytes(rel: str) -> int:
     return (REPO / rel).stat().st_size
+
+
+#: The verbs a FastAPI route decorator can carry. ``api_route`` is here and is
+#: the reason this counts DECORATORS rather than methods: ``/cron/sync`` is one
+#: ``@router.api_route(..., methods=["GET", "POST"])`` and is ONE route object.
+ROUTE_VERBS = frozenset(
+    {"get", "post", "put", "patch", "delete", "head", "options", "api_route"}
+)
+
+#: Where a route decorator can live. ``main_cloud`` owns some itself; the rest
+#: are the routers it mounts.
+ROUTE_MODULE_ROOTS = ("backend/jobtracker/main_cloud.py", "backend/jobtracker/cloud")
+
+ROUTE_AUTH_GATE = "backend/tests/test_cloud_routes_carry_auth.py"
+
+
+def _route_decorator_count(rel: str) -> int:
+    """Route decorators in one module, in ROUTE OBJECTS.
+
+    THE UNIT IS THE WHOLE POINT (#838). The same app answers three different
+    numbers depending on what you count, and all three are defensible:
+
+        route objects         29     <- what the docs say
+        (method, path) pairs  30
+        distinct paths        26
+
+    ``/cron/sync`` is the only object carrying two verbs, which is where the
+    30 comes from -- and it is also why ``PUBLIC`` in the auth gate has SEVEN
+    entries while six routes are public. A reader who checks "6 do not"
+    against that allowlist finds 7 and concludes the docs are wrong. They are
+    not, and this counts the unit that makes both true.
+    """
+
+    found = 0
+    for node in ast.walk(_module(rel)):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in node.decorator_list:
+            call = decorator.func if isinstance(decorator, ast.Call) else decorator
+            if (
+                isinstance(call, ast.Attribute)
+                and call.attr in ROUTE_VERBS
+                and isinstance(call.value, ast.Name)
+                and call.value.id in {"router", "app"}
+            ):
+                found += 1
+    return found
+
+
+def route_modules() -> list[str]:
+    """Every tracked module that defines at least one route.
+
+    DISCOVERED, never enumerated. A hardcoded list of five files is a
+    registration list, and a sixth module carrying routes would be invisible
+    to it -- which is the defect class this whole gate exists for. The
+    published "five modules define routes" is then a COUNT of this, not an
+    assumption behind it.
+    """
+
+    candidates = [ROUTE_MODULE_ROOTS[0]] + [
+        f"{ROUTE_MODULE_ROOTS[1]}/{name}"
+        for name in tracked_in_dir(ROUTE_MODULE_ROOTS[1])
+        if name.endswith(".py")
+    ]
+    return [rel for rel in candidates if _route_decorator_count(rel) > 0]
+
+
+def backend_routes() -> int:
+    return sum(_route_decorator_count(rel) for rel in route_modules())
+
+
+def public_routes() -> int:
+    """Distinct PATHS on the auth gate's ``PUBLIC`` allowlist.
+
+    Paths, not entries: the dict is keyed on ``(method, path)`` and
+    ``/cron/sync`` appears as both GET and POST, so seven entries describe six
+    route objects. This is the conversion between the two units, written once.
+    """
+
+    node = _assigned(ROUTE_AUTH_GATE, "PUBLIC")
+    if not isinstance(node, ast.Dict):
+        fail(f"  ✗ {ROUTE_AUTH_GATE}: PUBLIC is not a dict literal")
+    paths = set()
+    for key in node.keys:
+        pair = ast.literal_eval(key)
+        paths.add(pair[1])
+    return len(paths)
+
+
+def routers_registered() -> int:
+    """``include_router`` calls in ``main_cloud``.
+
+    A DIFFERENT NUMBER from the modules that define routes, and both are
+    published in the same sentence: four routers are mounted, five modules
+    define routes, because ``main_cloud`` owns some itself. Registering only
+    one of them leaves the other free to drift into disagreement with it.
+    """
+
+    found = 0
+    for node in ast.walk(_module(ROUTE_MODULE_ROOTS[0])):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "include_router"
+        ):
+            found += 1
+    return found
 
 
 def suite_outcome(key: str) -> int:
@@ -2188,6 +2300,88 @@ FACTS: dict[str, dict] = {
             },
         ],
     },
+    # ── the published route arithmetic (#838) ──
+    #
+    # 29 = 23 + 6 held on the day it was written and nothing would have said
+    # when it stopped. `test_cloud_routes_carry_auth.py` gates the SUBSTANCE
+    # (it walks the live app, so a new unguarded route reds) and deliberately
+    # asserts a FLOOR, `MIN_ROUTES = 25`, so adding a route does not red an
+    # unrelated PR. That leaves the arithmetic ungated: a 30th route moves the
+    # truth and all three documents keep saying 29.
+    "backendRoutes": {
+        "kind": "static",
+        "describe": "route decorators across the modules that define them",
+        "compute": backend_routes,
+        "sites": [
+            {"re": r"The deployed app mounts \*\*(\d+) routes\*\*", "file": ARCHITECTURE},
+            {"re": r"Of the (\d+) routes", "file": ARCHITECTURE},
+            {"re": r"required on \d+ of the (\d+) routes", "file": API_SPEC},
+            {"re": r"\*\*(\d+) routes across", "file": API_SPEC},
+        ],
+    },
+    "backendAuthedRoutes": {
+        "kind": "static",
+        "describe": "route objects NOT on the auth gate's PUBLIC allowlist",
+        "compute": lambda: backend_routes() - public_routes(),
+        "sites": [
+            {"re": r"\*\*(\d+) require a Supabase", "file": ARCHITECTURE},
+            {"re": r"required on (\d+) of the \d+ routes", "file": API_SPEC},
+        ],
+    },
+    "backendPublicRoutes": {
+        # SIX, from an allowlist holding SEVEN entries. See `public_routes`.
+        "kind": "static",
+        "describe": "distinct paths on PUBLIC in the cloud-route auth gate",
+        "compute": public_routes,
+        "sites": [
+            {"re": r"and \*\*(\d+) do not\*\*", "file": ARCHITECTURE},
+            # Spelled out, and beside a link rather than a digit -- invisible
+            # to every `(\d+)` site in this file until now.
+            {"re": r"for the (\w+) routes", "file": WEB_ARCHITECTURE, "word": True},
+        ],
+    },
+    "publicAllowlistEntries": {
+        # SEVEN, for six public routes, and the gap is the trap #838 is about
+        # -- I made this exact mistake while auditing it and had to walk back a
+        # "the docs say 6, the allowlist has 7" finding that was wrong.
+        "kind": "static",
+        "describe": "entries in PUBLIC in the cloud-route auth gate",
+        "compute": lambda: len(_assigned(ROUTE_AUTH_GATE, "PUBLIC").keys),
+        "sites": [
+            {"re": r"holds \*\*(\d+) entries\*\*", "file": ARCHITECTURE},
+        ],
+    },
+    "routeDefiningModules": {
+        "kind": "static",
+        "describe": "modules holding at least one route decorator",
+        "compute": lambda: len(route_modules()),
+        "sites": [
+            {"re": r"but \*\*(\w+) modules define routes\*\*", "file": ARCHITECTURE, "word": True},
+            {"re": r"routes, which is (\w+), because", "file": API_SPEC, "word": True},
+        ],
+    },
+    "routersRegistered": {
+        "kind": "static",
+        "describe": "include_router calls in main_cloud",
+        "compute": routers_registered,
+        "sites": [
+            {"re": r"Routers \*registered\* is (\w+)", "file": API_SPEC, "word": True},
+            {"re": r"(\w+) routers are \*registered\*", "file": ARCHITECTURE, "word": True},
+        ],
+    },
+    "mainCloudRoutes": {
+        # EQUAL TO `routeDefiningModules` TODAY, AND A DIFFERENT NOUN. Five
+        # modules define routes; main_cloud owns five routes. Registering them
+        # as one fact would make a swap between the two invisible, which is
+        # this repo's recorded count-noun defect.
+        "kind": "static",
+        "describe": "route decorators in main_cloud itself",
+        "compute": lambda: _route_decorator_count(ROUTE_MODULE_ROOTS[0]),
+        "sites": [
+            {"re": r"`main_cloud` owns (\w+) itself", "file": ARCHITECTURE, "word": True},
+            {"re": r"`main_cloud` owns (\w+) routes itself", "file": API_SPEC, "word": True},
+        ],
+    },
     "coveragePercent": {
         "kind": "recorded",
         "describe": "overall line coverage of jobtracker/, 2 decimals",
@@ -2254,6 +2448,26 @@ INVARIANTS = [
         # two numbers, so `--write` refreshed the digit twice and left the
         # word "all" alone each time. Collected is the SUM of its parts; a
         # sentence may quote any of them and this is what keeps them a set.
+        "name": "the authed/public split accounts for every route",
+        "holds": lambda f: f["backendAuthedRoutes"] + f["backendPublicRoutes"] == f["backendRoutes"],
+        "explain": lambda f: (
+            f"{f['backendAuthedRoutes']} authed + {f['backendPublicRoutes']} public = "
+            f"{f['backendAuthedRoutes'] + f['backendPublicRoutes']}, not {f['backendRoutes']}."
+        ),
+    },
+    {
+        # A ROUTE MUST LIVE IN A MODULE THAT DEFINES ROUTES. Trivial-looking,
+        # and it is the guard on `route_modules()` being a DISCOVERY rather
+        # than a list: if the discovery ever stops finding a module, the route
+        # total falls and this catches the drop against the mounted routers.
+        "name": "every mounted router's module is found by the route census",
+        "holds": lambda f: f["routeDefiningModules"] >= f["routersRegistered"],
+        "explain": lambda f: (
+            f"{f['routersRegistered']} routers are mounted but only "
+            f"{f['routeDefiningModules']} modules were found to define routes."
+        ),
+    },
+    {
         "name": "collected reconciles with passed, failed, skipped and the xfails",
         "holds": lambda f: (
             f["testsCollected"]
