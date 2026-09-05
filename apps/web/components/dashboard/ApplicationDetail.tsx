@@ -700,13 +700,14 @@ export function ApplicationDetail({
           </p>
         ) : null}
 
-        {/* --- The role: the one field the mail can never supply ------------ */}
-        {/* Issue #72. `format=metadata` means no body is read, and the subjects
-            that are read name the employer — so this field is empty on every
-            auto-filed row, permanently. The control states that plainly and
-            then lets the person who applied answer it. Nothing here proposes a
-            title: no placeholder text, no guess from the company. The title is
-            data (mono, strong ink); the words around it are not (Atkinson, dim). */}
+        {/* --- The role: the one field only the applicant can settle -------- */}
+        {/* Issue #72 built this control believing the mail could never supply a
+            title. #543: it can — the fetch is `format="full"` and extraction
+            writes one when the message names it — so this field is blank only
+            when nothing readable named a role. The control still proposes
+            nothing: no placeholder, no guess from the company, because a typed
+            answer is the one the sync must not overwrite. The title is data
+            (mono, strong ink); the words around it are not (Atkinson, dim). */}
         <div data-testid="detail-role" className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <Tag className="h-3.5 w-3.5 shrink-0 text-dim" aria-hidden />
           {roleEditing ? (

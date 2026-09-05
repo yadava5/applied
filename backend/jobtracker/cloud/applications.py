@@ -607,9 +607,10 @@ class CloudApplicationResponse(BaseModel):
     due_source: str | None = None
     # Who named the role: ``user`` when a human typed it, null when the field is
     # still the sync's. Sent for the same reason ``due_source`` is — the UI has
-    # to be able to say whose word a value is without guessing, and an empty
-    # role is a permanent fact about Gmail-sourced rows (issue #72) rather than
-    # something still loading.
+    # to be able to say whose word a value is without guessing. Issue #543: an
+    # empty role is NOT a permanent fact about Gmail-sourced rows. Extraction
+    # fills one when it can (:2197, :2804-2826), so a blank field means the mail
+    # named no title this sync could read, and a later sync may fill it.
     position_source: str | None = None
 
 

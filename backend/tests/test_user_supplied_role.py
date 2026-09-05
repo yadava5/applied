@@ -1,17 +1,21 @@
-"""A role the sync can never know, typed by the person who applied.
+"""A role the sync must not overwrite, typed by the person who applied.
 
-Issue #72. Every application filed from Gmail lands with ``position = ""`` for
-two independent reasons: at the time, the Gmail path fetched ``format=metadata``
-so no body was ever read, and ``_role_from_subject`` runs four regexes over a
-subject line that names the COMPANY — "Thanks for applying to Supabase" — and
-never the role. The first reason has since changed (the fetch reads bodies now,
-and discards them), but the field is still the human's: nothing extracts a role
-from the body, and the stored row still holds only the snippet.
-Both hold for all three of the owner's real production subjects.
+Issue #72 opened on the premise that no Gmail-filed application could ever
+carry a title: the path fetched ``format=metadata`` so no body was read, and
+``_role_from_subject`` runs four regexes over subjects that name the COMPANY
+and not the job.
 
-The chosen answer is the cheapest honest one: let the user type it, and remember
-it. What that costs is a way to say "this field is the human's now", because a
-sync that later learns to extract roles must not overwrite one.
+**BOTH HALVES ARE DEAD — issue #543.** The fetch is ``format="full"``, and
+``pipeline.role_from_message`` reads the subject and THEN the body, which is
+what makes per-application tracking possible when one ATS subject is reused
+across every role a candidate applied to. A partially-corrected version of this
+docstring still claimed "nothing extracts a role from the body"; it does, and
+``applications.py:2197`` writes the result onto auto rows.
+
+That makes this module MORE load-bearing, not less. When nothing could extract
+a title, ``position_source`` guarded a field nothing was competing for. Now
+extraction competes for it on every sync, and this column is the only thing
+that stops a working extractor from overwriting a human's answer.
 
 The mechanism is ``position_source``, and the tests below are mostly about why
 it is a NEW column rather than the ``source`` flip ``record_status_correction``

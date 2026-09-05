@@ -59,8 +59,9 @@ export function deadlineChangeRequest(id: number, dueAt: string | null): ProxyRe
  * PATCH: `ApplicationStatusUpdate` does not set `extra="forbid"`, so an unknown
  * key posted there is silently dropped and the UI would report a save the
  * server never made. A write here marks `position_source: "user"`, which the
- * sync never overwrites — and it never overwrites it because the sync can never
- * produce a role for these rows in the first place.
+ * sync never overwrites — and #543 is why that mark carries weight rather than
+ * being redundant: the sync CAN produce a role for these rows, so the mark is
+ * the only thing standing between a typed title and the next extraction.
  */
 export function roleChangeRequest(id: number, role: string | null): ProxyRequest {
   return { path: `/api/applications/${id}/role`, method: "PUT", body: { role } };
