@@ -2822,31 +2822,68 @@ async def gmail_sync(
                         user_id,
                         unreadable,
                     )
-                await record_gmail_sync_success(
-                    session,
-                    user_id,
-                    account_email=account_email,
-                    history_id=cursor_to_record,
-                    # The durable half of #422. A response answers "did you see
-                    # my mail?" only for as long as the tab is open; the person
-                    # diagnosing the report reads Postgres days later, which is
-                    # where the answer was missing entirely.
-                    #
-                    # ``scanned`` is passed separately because the pipeline
-                    # cannot know it: it counts what Gmail handed back, and
-                    # ``_classify_messages`` skips the user's own sent mail
-                    # before an item exists.
-                    #
-                    # ONLY REACHED WHEN ``account_email`` IS SET, which is the
-                    # one gap and it is stated rather than hidden: an
-                    # items-relay from a user with no Gmail connected has no row
-                    # to key on and gets the response's numbers only. That is
-                    # the same limit ``last_sync_at`` has had since this row
-                    # existed, not a new one.
-                    ledger=ledger,
-                    scanned=scanned,
-                )
-                await session.commit()
+                # SCOPED TO THE STAMP, and only the stamp (#643). Every commit that
+                # matters has already happened above: the merge commits, and
+                # ``upsert_applications_for_user`` commits inside it. What is left
+                # is recording that the run happened, so a failure here means the
+                # mail is durably filed and the request still ends badly.
+                #
+                # THE TRAP THIS AVOIDS. Converting the stamp failure into an
+                # ``HTTPException`` without this inner ``note_gmail_sync_failure``
+                # would be silently WORSE than the untyped 500 it replaces: the
+                # ``except HTTPException: raise`` below sits ABOVE the
+                # ``except Exception`` that records the failure, so every stamp
+                # failure would skip the record it used to get. The record is made
+                # here, before the typed raise, for exactly that reason.
+                #
+                # BROAD ``Exception``, not the migrate-window's ``UndefinedColumn``:
+                # a narrow catch is green on SQLite and on any test that mocks the
+                # raise, while missing a stamp deadlock or a dropped connection,
+                # which have the same shape and the same consequence.
+                try:
+                    await record_gmail_sync_success(
+                        session,
+                        user_id,
+                        account_email=account_email,
+                        history_id=cursor_to_record,
+                        # The durable half of #422. A response answers "did you see
+                        # my mail?" only for as long as the tab is open; the person
+                        # diagnosing the report reads Postgres days later, which is
+                        # where the answer was missing entirely.
+                        #
+                        # ``scanned`` is passed separately because the pipeline
+                        # cannot know it: it counts what Gmail handed back, and
+                        # ``_classify_messages`` skips the user's own sent mail
+                        # before an item exists.
+                        #
+                        # ONLY REACHED WHEN ``account_email`` IS SET, which is the
+                        # one gap and it is stated rather than hidden: an
+                        # items-relay from a user with no Gmail connected has no row
+                        # to key on and gets the response's numbers only. That is
+                        # the same limit ``last_sync_at`` has had since this row
+                        # existed, not a new one.
+                        ledger=ledger,
+                        scanned=scanned,
+                    )
+                    await session.commit()
+                except Exception as exc:  # noqa: BLE001 — see the note above
+                    await note_gmail_sync_failure(
+                        user_id, account_email, type(exc).__name__
+                    )
+                    # FAILURE VALENCE FIRST. The counts are the precision, not the
+                    # verdict: a client that reads this as "Filed 3 ✓" has turned a
+                    # 500 into a success, which is the outcome #604 rejected. The
+                    # status stays 500 and the cursor stays unmoved; only the
+                    # narration gets more precise.
+                    raise HTTPException(
+                        status_code=500,
+                        detail=(
+                            "Could not record this sync. "
+                            f"{ledger.filed} filed and {ledger.queued} queued "
+                            f"of {scanned} scanned before it failed; "
+                            "sync again to finish."
+                        ),
+                    ) from exc
 
             # LIVE rows only — a dismissed row is off the board, so counting it
             # here would make the dashboard's total disagree with the list.

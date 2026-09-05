@@ -558,3 +558,187 @@ async def test_recovery_re_files_idempotently_and_then_stamps(
     last_sync_at, _history_id = await _cursor_row()
     assert last_sync_at != SEEDED_SYNC_AT_SQL, "the recovered sync did not stamp"
     assert datetime.fromisoformat(last_sync_at) > SEEDED_SYNC_AT
+
+
+def _items_with_three_distinct_counts() -> list[dict]:
+    """The three filable items plus one that is HELD, so no two counts match.
+
+    ``filed`` 3, ``queued`` 1, ``scanned`` 4. That matters more than it looks:
+    with the plain three-item relay every one of these is 3 except ``queued``,
+    so a template that swapped ``filed`` and ``scanned`` emitted a
+    BYTE-IDENTICAL sentence and no assertion here could see it. Equality does
+    not distinguish equal values, and asserting "3 filed" against a fixture
+    where scanned is also 3 pins a coincidence rather than the operand.
+
+    The fourth item sits under the 0.85 auto-file gate, so it is queued for a
+    person rather than filed — which is also the only shape that makes
+    ``queued`` non-zero anywhere in this module.
+    """
+
+    held = {
+        "message_id": "hold-1",
+        "category": "applied",
+        "sender_email": "no-reply@greenhouse.test",
+        "subject": "Your application to Willowmere",
+        "sender_name": "Willowmere",
+        "received_at": "2026-07-20T12:00:00+00:00",
+        "confidence": 0.70,
+        "thread_id": "th-willowmere",
+    }
+    return [*_filable_items(), held]
+
+# =============================================================================
+# What the 500 SAYS — #643, the precision layer on top of #604's sentence
+# =============================================================================
+
+
+async def _sync_state_error() -> tuple[str | None, str | None]:
+    """``(status, error_message)`` for this user, WITHOUT the ORM.
+
+    Raw SQL for the same reason ``_cursor_row`` uses it: the ORM's select
+    names every column, and half these tests run with six of them dropped.
+    """
+
+    from sqlalchemy import text
+
+    from jobtracker.database import get_session
+
+    async with get_session() as session:
+        row = (
+            await session.exec(
+                text(
+                    "SELECT status, error_message FROM sync_state "
+                    "WHERE user_id = :uid AND account_email = :email"
+                ).bindparams(uid=USER_A_KEY, email=GMAIL_ADDRESS)
+            )
+        ).all()
+    if not row:
+        return None, None
+    return row[0][0], row[0][1]
+
+
+async def test_the_500_says_what_it_filed_before_the_stamp_failed(
+    client_500: AsyncClient,
+) -> None:
+    """The body carries the counts the handler already held.
+
+    Before #643 this was Starlette's body-less plain-text 500, so a client
+    that wanted to say "three are on your board" had nothing to read. The
+    handler holds ``ledger`` and ``scanned`` at the moment the stamp raises, so
+    the precision costs no extra bookkeeping.
+
+    THREE DISTINCT VALUES, which is stronger than equality-not-truthiness and
+    is the correction this test needed. It first ran against the plain
+    three-item relay, where ``filed`` and ``scanned`` are both 3 — so swapping
+    them in the template emitted a byte-identical sentence and this test stayed
+    green. Measured, not supposed: that mutant survived all seven tests. With
+    ``filed`` 3, ``queued`` 1 and ``scanned`` 4 no two operands can be
+    exchanged without changing the string.
+    """
+
+    await _make_returning_user(client_500)
+    await _set_ledger_columns(present=False)
+
+    resp = await client_500.post(
+        "/gmail/sync",
+        json={"items": _items_with_three_distinct_counts()},
+        headers=HEADERS,
+    )
+
+    assert resp.status_code == 500, resp.text
+    detail = resp.json()["detail"]
+
+    # FAILURE VALENCE FIRST, and this is the assertion that keeps #604's
+    # rejected fix rejected: a body that opened "Filed 3" is one CSS class away
+    # from rendering as a success beside a 500.
+    assert detail.startswith("Could not record this sync."), detail
+    assert "sync again to finish" in detail, detail
+
+    assert "3 filed" in detail, detail
+    assert "1 queued" in detail, detail
+    assert "of 4 scanned" in detail, detail
+
+    # The counts describe what is REALLY on disk, not what the handler hoped.
+    assert await _filed_mail_rows() == 3
+    # And the contract #604 fixed is untouched: still 500, cursor still unmoved.
+    last_sync_at, history_id = await _cursor_row()
+    assert history_id == SEEDED_HISTORY_ID
+    assert last_sync_at == SEEDED_SYNC_AT_SQL
+
+
+async def test_a_first_time_syncer_gets_no_counts(client_500: AsyncClient) -> None:
+    """THE DISCRIMINATOR: the body is attached by what happened, not always.
+
+    This user dies in ``load_gmail_sync_state``, before the relay items are
+    parsed and far above the stamp — so there is no ledger to report and the
+    500 stays Starlette's untyped one. Without this case the test above cannot
+    distinguish "the handler reports what it filed" from "the handler always
+    attaches a body", and the second would be a worse defect: a sentence
+    claiming three were filed on a run that filed nothing.
+    """
+
+    await _connect_gmail(USER_A)
+    assert await _sync_state_rows() == 0, "this user is not a first-time syncer"
+    await _set_ledger_columns(present=False)
+
+    resp = await client_500.post(
+        "/gmail/sync", json={"items": _filable_items()}, headers=HEADERS
+    )
+
+    assert resp.status_code == 500, resp.text
+    assert resp.text == "Internal Server Error", resp.text
+    assert "filed" not in resp.text.lower(), resp.text
+    assert await _filed_mail_rows() == 0
+
+
+async def test_the_typed_500_still_records_the_failure_against_the_mailbox(
+    client_500: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE EXCEPT-ORDERING CONTROL. The regression this issue exists to prevent.
+
+    ``except HTTPException: raise`` sits ABOVE the ``except Exception`` that
+    calls ``note_gmail_sync_failure``. So converting the stamp failure into an
+    ``HTTPException`` — which is the whole of #643 — would, done naively, make
+    error recording strictly WORSE than the untyped 500 it replaces: every
+    stamp failure would skip the record it used to get, silently.
+
+    The columns are PRESENT here, unlike every other case in this file, and
+    that is the point: in the migrate window the failure record cannot be
+    written either, so the window cannot tell a preserved record from a lost
+    one. A stamp deadlock or a dropped connection is the same failure with the
+    database intact, and that is what this reproduces.
+
+    Monkeypatching ``jobtracker.cloud.sync_state.record_gmail_sync_success``
+    reaches the handler because the handler imports it INSIDE the request, so
+    the name is resolved per call.
+    """
+
+    await _make_returning_user(client_500)
+    status_before, _ = await _sync_state_error()
+    assert status_before != "error", f"seeded state already error: {status_before}"
+
+    async def _boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("stamp deadlock")
+
+    monkeypatch.setattr(
+        "jobtracker.cloud.sync_state.record_gmail_sync_success", _boom
+    )
+
+    resp = await client_500.post(
+        "/gmail/sync", json={"items": _filable_items()}, headers=HEADERS
+    )
+
+    # BOTH halves in one test, deliberately: either alone passes while the
+    # regression is live.
+    assert resp.status_code == 500, resp.text
+    detail = resp.json()["detail"]
+    assert detail.startswith("Could not record this sync."), detail
+    assert "3 filed" in detail, detail
+
+    status, error_message = await _sync_state_error()
+    assert status == "error", (
+        f"sync_state.status is {status!r}; the typed raise skipped "
+        "note_gmail_sync_failure, which is exactly the regression this test "
+        "exists for"
+    )
+    assert error_message == "RuntimeError", error_message
