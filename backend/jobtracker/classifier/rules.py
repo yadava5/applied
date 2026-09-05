@@ -1215,6 +1215,69 @@ def asserted_text(body: str) -> str:
     return " ".join(out)
 
 
+#: A blank line — the only line break in a body that means anything to a reader.
+_PARAGRAPH_BREAK = re.compile(r"\n{2,}")
+#: Horizontal whitespace, once the newlines inside a paragraph are gone.
+_LINE_INTERIOR_SPACE = re.compile(r"[^\S\n]+")
+
+
+def reflow_paragraphs(text: str) -> str:
+    """Join the lines INSIDE a paragraph; keep the blank line between them.
+
+    THE OTHER HALF OF #430, and it does not work without the first half.
+    ``cloud/gmail_client.extract_body_text`` used to collapse every newline in
+    the body, which disabled :data:`_QUOTE_BOUNDARY` — ``^``-anchored under
+    ``re.MULTILINE`` — and made :func:`strip_quoted_history` dead code on the
+    request path. Keeping the newlines fixes that and hands this layer a shape
+    it has never been asked to read: real ``text/plain`` from an ATS is
+    hard-wrapped at 72-78 columns, so a sentence now arrives split across lines.
+
+    THAT BREAKS THE PATTERNS WITHOUT EDITING ONE OF THEM. ``.`` does not match
+    ``\n`` and nothing here sets ``re.DOTALL``, so every bounded gap in
+    ``PATTERNS`` — ``next step.{0,30}(assessment|test)``,
+    ``not to (move|proceed|go) forward.{0,30}(application|candidacy)``, ~60 of
+    them — stops bridging a wrap point the moment one exists. MEASURED over
+    ``tests/corpus`` with every body wrapped at 72 columns: auto-files fell
+    from 244 to 212, almost all of them correct verdicts demoted under the
+    0.85 gate rather than changed. That is a regression on the path
+    ``extract_body_text`` PREFERS, since it takes ``text/plain`` whenever a
+    part exists and multipart ATS mail nearly always carries one.
+
+    So the newlines are spent where they are needed and returned afterwards.
+    ORDER IS THE WHOLE DESIGN, and the caller runs it in exactly this order:
+    extract with the structure intact, strip the quote using it, reflow, then
+    score. After this, ``.`` refusing to cross a ``\n`` means "does not cross a
+    PARAGRAPH", which is the reading every one of those gaps assumed when it
+    was written against a single-line body.
+
+    TWO ALTERNATIVES WERE WEIGHED AND REFUSED. A blanket ``re.DOTALL`` makes
+    the gaps bridge paragraph boundaries, which is strictly wider than they
+    have ever been: ``next step.{0,20}interview`` would then match across
+    "...as a next step.\n\nInterview prep newsletter...", manufacturing wrong
+    auto-files the old shape never produced. Rewriting each gap as
+    ``(?:[^\n]|\n(?!\n)){0,N}`` is correct and is ~60 hand transcriptions with
+    no gate on getting one wrong, and it taxes every future rule author with
+    an idiom. One function at the seam costs neither.
+
+    NOT APPLIED TO THE TEXT THE FLOORS MEASURE. :data:`_MIN_ASSERTED_CHARS` is
+    checked in :func:`strip_quoted_history` and again on ``own_text`` in
+    :meth:`RulesClassifier.classify`, both on the unreflowed span, so "did the
+    sender write enough to speak over their quote" is answered on exactly the
+    string it was answered on before this existed.
+
+    ``tests/test_wrap_invariance.py`` pins the result: the corpus classified
+    unwrapped and hard-wrapped at 72 columns must produce the same verdict and
+    the same confidence for every case.
+    """
+
+    if not text:
+        return text
+    return "\n\n".join(
+        _LINE_INTERIOR_SPACE.sub(" ", para.replace("\n", " ")).strip()
+        for para in _PARAGRAPH_BREAK.split(text)
+    )
+
+
 # =============================================================================
 # Which negatives a strong signal may outrank
 # =============================================================================
@@ -1621,7 +1684,12 @@ class RulesClassifier:
         # is searching what the sender ASSERTS — see :func:`asserted_text`. The
         # subject's TEXT is left alone by design; what changes below is only how
         # much a match in it is worth.
-        body = asserted_text(body)
+        #
+        # REFLOW LAST, and only here. ``asserted_text`` needs the line
+        # structure ``extract_body_text`` now preserves — the quote boundary is
+        # ``^``-anchored — and the patterns below need it gone, or a bounded
+        # gap dies on a 72-column wrap point. See :func:`reflow_paragraphs`.
+        body = reflow_paragraphs(asserted_text(body))
 
         # A REPLY'S SUBJECT IS ABOUT THE THREAD, NOT ABOUT THIS MESSAGE.
         #
@@ -1848,7 +1916,12 @@ class RulesClassifier:
         # in #252. ``min`` and not assignment, so a verdict already below the
         # cap is not RAISED to it.
         if quote_spoke_for_it:
-            refutations = own_text_refutes(own_text or "", winner_name)
+            # Reflowed for the same reason the body is, and separately
+            # because ``own_text`` was read BEFORE the reflow above: the
+            # refutation patterns carry bounded gaps too, and a withdrawal
+            # split across a wrap point refutes nothing. The floor above still
+            # counts the UNREFLOWED span.
+            refutations = own_text_refutes(reflow_paragraphs(own_text or ""), winner_name)
             if refutations:
                 confidence = min(confidence, _REFUTED_CONFIDENCE)
                 matched_patterns.extend(f"[OWN-TEXT-REFUTES] {p}" for p in refutations)
