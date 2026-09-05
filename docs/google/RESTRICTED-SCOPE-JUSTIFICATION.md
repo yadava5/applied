@@ -260,7 +260,7 @@ prominent, user-facing feature the data serves; there is no other use.
   | --- | --- |
   | `SELECT source_account, COUNT(*) FROM emails GROUP BY 1` | `ICLOUD` — 856 rows, one value |
   | `thread_id` populated (a Gmail-only column) | 0 of 856 |
-  | `sync_state` | one row: `icloud`, `aesh_1055@icloud.com`, `gmail_history_id` NULL |
+  | `sync_state` | one row: `icloud`, the owner's own iCloud address, `gmail_history_id` NULL |
   | `user_corrected` messages | 81, all `ICLOUD` |
 
   A Gmail client shipped in that build and the interface exposed it, but it was

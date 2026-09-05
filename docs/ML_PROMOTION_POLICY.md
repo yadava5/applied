@@ -191,7 +191,7 @@ desktop-era store still exists at
 | --- | --- |
 | `SELECT source_account, COUNT(*) FROM emails GROUP BY 1` | `ICLOUD` — 856 rows, and no other value has ever existed |
 | `thread_id` populated (a Gmail-only column) | **0** of 856 |
-| `sync_state` | exactly one row: `icloud`, `aesh_1055@icloud.com`, `gmail_history_id` NULL, `imap_last_uid` 11226 |
+| `sync_state` | exactly one row: `icloud`, the owner's own iCloud address, `gmail_history_id` NULL, a single non-zero `imap_last_uid` |
 | `user_corrected` messages | 81, every one `ICLOUD` |
 | `training_data` where `source='user_correction'` | 81 rows |
 
@@ -201,8 +201,8 @@ therefore never governed this corpus**, and any reasoning that starts from
 "Applied reads Gmail under `gmail.readonly`" is reasoning about today's
 architecture, not about the March tree that produced these weights.
 
-**Whose mail it was.** The developer-owner's own, and no one else's:
-`aesh_1055@icloud.com`, a single-user desktop application over local SQLite,
+**Whose mail it was.** The developer-owner's own, and no one else's — one iCloud
+address, on a single-user desktop application over local SQLite,
 with no hosted deployment and no mechanism by which another person's mail could
 reach the corpus. The project's first two authentication accounts were not
 created until 2026-07-17 and 2026-07-19, four months later.
