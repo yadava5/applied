@@ -8,11 +8,33 @@ and each is a separate code path:
 * a file appearing that the baseline does not list at all   -> red
 * a count going DOWN, or a baselined file going to zero     -> red
 * a SAME-COUNT swap: the set moved, the total did not       -> red
-* a tracked file that cannot be read or decoded             -> red
+* a tracked file that cannot be READ at all                 -> red
 * an address on an RFC-reserved domain                      -> green
 * the same addresses in a different order or case           -> green
 * an address ASSEMBLED at run time on a routable domain     -> red
 * the same assembly with an RFC-reserved literal suffix     -> green
+* an address under `docs/`, which no scan root ever covered -> red
+* the same file at the same path, on a reserved domain      -> green
+* a tracked file whose bytes are not UTF-8                  -> skipped, and red
+  until the skip is recorded — never a zero
+* a file that WAS scanned and stops decoding                -> `--write-baseline`
+  refuses it
+* a path named in `EXCLUDED`                                -> not scanned
+
+The last five are #623. The gate read four scan roots until then, so everything
+else in a public repository was outside it by construction — 239 non-reserved
+addresses across 24 tracked files, including the demo data the product renders
+to every visitor. Widening a gate proves nothing on a green run, which is why
+the `docs/` pair above is written as a pair: the red says the tree is covered
+and the green at the same path says the red came from the address rather than
+from "any new file anywhere reds".
+
+The binary rows are the other half of that change. Scanning everything means
+meeting the first PNG, and a file that cannot be decoded must not read like a
+file that is clean — so it is skipped, the skip is recorded, and the ONE skip
+the write path refuses is a file that used to be scanned. That last row is the
+door the sniff opens: corrupt a byte of a module holding fifty addresses and a
+re-record would launder all fifty into a skip.
 
 The reserved-domain row and the reordering row are not padding. A gate that
 reddened on ``careers@halberd.test``
@@ -184,6 +206,10 @@ def test_a_clean_tree_is_green(tree: Path) -> None:
     }, recorded
     for path, entry in recorded.items():
         assert HEX16.match(entry["digest"]), (path, entry)
+    # Every file in this tree is text, so the skipped map is empty — recorded
+    # as an empty map rather than left out, because an absent key is what the
+    # pre-#623 baseline had and it is refused for that reason.
+    assert json.loads(_baseline(tree).read_text(encoding="utf-8"))["skipped"] == {}
     assert _check(gate, tree) == 0
 
 
@@ -354,43 +380,123 @@ def test_reordering_the_same_addresses_stays_green(tree: Path) -> None:
     assert _check(gate, tree) == 0
 
 
-def test_an_unreadable_file_reds(tree: Path) -> None:
+def test_a_file_that_is_not_text_is_skipped_and_never_a_zero(tree: Path) -> None:
     """A skip that counts as a pass is the same defect as the rest of #615.
 
     ``count_file`` used to swallow ``UnicodeDecodeError`` and ``OSError`` and
-    return 0, so a file nobody could read was recorded as clean.
+    return 0, so a file nobody could read was recorded as clean. Since #623 the
+    two are told apart: a file whose BYTES are not UTF-8 is a sniff with an
+    answer — it is skipped, and the skip is recorded — while a file that cannot
+    be read at all is no answer and still fails the run.
+
+    The property asserted here is that "skipped" and "clean" are never the same
+    thing. The blob is absent from ``findings`` (not a zero), present in
+    ``skipped``, and the run is red until somebody records it on purpose.
     """
 
     gate = _load()
     _write_baseline(gate, tree)
 
-    blob = tree / "backend" / "tests" / "test_blob.py"
-    blob.write_bytes(b"\xff\xfe\x00\x01 not utf-8 \xc3\x28\n")
+    blob = tree / "backend" / "tests" / "logo.png"
+    blob.write_bytes(b"\x89PNG\r\n\x1a\n\xff\xfe\x00\x01 not utf-8 \xc3\x28\n")
     subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
 
     findings, skipped = gate.scan(tree)
-    assert [s.path for s in skipped] == ["backend/tests/test_blob.py"], skipped
+    assert [(s.path, s.kind) for s in skipped] == [
+        ("backend/tests/logo.png", gate.BINARY)
+    ], skipped
+    assert "backend/tests/logo.png" not in findings, findings
     assert _check(gate, tree) == 1
 
+    # Recorded on purpose, and recorded AS A SKIP: it joins `skipped`, never
+    # `files` with a count of zero.
+    _write_baseline(gate, tree)
+    recorded = json.loads(_baseline(tree).read_text(encoding="utf-8"))
+    assert recorded["skipped"] == {"backend/tests/logo.png": gate.BINARY}
+    assert "backend/tests/logo.png" not in recorded["files"]
+    assert _check(gate, tree) == 0
 
-def test_write_baseline_refuses_an_unreadable_file(tree: Path) -> None:
-    """The write path must not launder the skip into a clean baseline.
 
-    If ``--write-baseline`` quietly omitted an unreadable file, the very next
-    check run would be green on a file nobody has read — the skip would have
-    been converted into a recorded pass.
+def test_write_baseline_refuses_a_scanned_file_that_stopped_decoding(
+    tree: Path,
+) -> None:
+    """The door the binary sniff opens, and the one guard that closes it.
+
+    Skipping a font is harmless. Skipping a module that was being SCANNED is
+    how the whole gate gets laundered: one bad byte in a file holding fifty
+    addresses and it stops decoding, and an ordinary re-record would drop all
+    fifty findings and leave every later run green on a file nobody read. That
+    is the #615 defect arriving through the escape hatch instead of the check.
+
+    So the write path takes every skip except this one, and says which file.
     """
 
     gate = _load()
     _write_baseline(gate, tree)
     before = _baseline(tree).read_text(encoding="utf-8")
+    assert _recorded(tree)["backend/tests/test_pair.py"]["count"] == 2
 
-    blob = tree / "backend" / "tests" / "test_blob.py"
-    blob.write_bytes(b"\xff\xfe\x00\x01 not utf-8 \xc3\x28\n")
-    subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
+    path = tree / "backend" / "tests" / "test_pair.py"
+    path.write_bytes(path.read_bytes() + b"\xff\xfe\n")
+
+    findings, skipped = gate.scan(tree)
+    assert "backend/tests/test_pair.py" not in findings, findings
+    assert [(s.path, s.kind) for s in skipped] == [
+        ("backend/tests/test_pair.py", gate.BINARY)
+    ], skipped
+    assert _check(gate, tree) == 1
 
     assert gate.main(["--write-baseline", "--repo-root", str(tree)]) == 1
     assert _baseline(tree).read_text(encoding="utf-8") == before
+
+
+def test_a_tracked_file_that_cannot_be_read_at_all_reds(tree: Path) -> None:
+    """An ``OSError`` is not a sniff with an answer. It is no answer.
+
+    A tracked file that is gone from the working tree — a broken checkout, a
+    half-applied patch — cannot be sniffed, cannot be counted and must not be
+    skipped. It fails the check and it fails the write path, which is the
+    behaviour that predates #623 and survives it unchanged.
+    """
+
+    gate = _load()
+    _write_baseline(gate, tree)
+
+    (tree / "backend" / "tests" / "test_existing.py").unlink()
+
+    findings, skipped = gate.scan(tree)
+    assert [(s.path, s.kind) for s in skipped] == [
+        ("backend/tests/test_existing.py", gate.UNREADABLE)
+    ], skipped
+    assert _check(gate, tree) == 1
+    assert gate.main(["--write-baseline", "--repo-root", str(tree)]) == 1
+
+
+def test_a_baselined_skip_that_goes_missing_is_not_called_readable(
+    tree: Path, capsys
+) -> None:
+    """The failure must not also print something that is untrue.
+
+    A recorded skip that disappears is unreadable, not decodable, and the
+    "no longer skipped — it decodes now" line is measured against every file
+    that produced no findings rather than the binary ones alone. Otherwise a
+    missing font reds for the right reason and explains itself with a sentence
+    that is false, and this gate's own notes are explicit that a message saying
+    things which do not apply is one people stop reading.
+    """
+
+    gate = _load()
+    blob = tree / "backend" / "tests" / "logo.png"
+    blob.write_bytes(b"\x89PNG\r\n\x1a\n\xff\xfe\n")
+    subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
+    _write_baseline(gate, tree)
+
+    blob.unlink()
+    assert _check(gate, tree) == 1
+
+    printed = capsys.readouterr().out
+    assert "unreadable: backend/tests/logo.png" in printed, printed
+    assert "no longer skipped" not in printed, printed
 
 
 def test_a_pre_615_baseline_is_refused_not_half_read(tree: Path) -> None:
@@ -411,6 +517,30 @@ def test_a_pre_615_baseline_is_refused_not_half_read(tree: Path) -> None:
     with pytest.raises(SystemExit) as exc:
         _check(gate, tree)
     assert "pre-#615 format" in str(exc.value)
+
+
+def test_a_pre_623_baseline_is_refused_not_half_read(tree: Path) -> None:
+    """A baseline with no ``skipped`` map cannot say which files nobody read.
+
+    Treating the missing key as "no opinion" would restore the #623 hole on any
+    branch that had not re-recorded: every binary file would read as newly
+    skipped on one side and as nothing at all on the other, and a file that had
+    gone from scanned to unreadable would slip through the difference.
+
+    Checked AFTER the ``files`` key, so a pre-#615 baseline is still named as
+    the older thing it is rather than as this one.
+    """
+
+    gate = _load()
+    _write_baseline(gate, tree)
+
+    data = json.loads(_baseline(tree).read_text(encoding="utf-8"))
+    del data["skipped"]
+    _baseline(tree).write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc:
+        _check(gate, tree)
+    assert "pre-#623 format" in str(exc.value)
 
 
 def test_a_docstring_is_scanned_not_just_a_literal(tree: Path) -> None:
@@ -444,28 +574,94 @@ def test_ml_is_scanned(tree: Path) -> None:
     assert _check(gate, tree) == 1
 
 
-def test_a_root_that_is_not_scanned_stays_green(tree: Path) -> None:
-    """The discriminating half of the test above.
+def test_a_tree_no_scan_root_ever_covered_is_scanned_now(tree: Path) -> None:
+    """#623, and the acceptance control for it. Read with the test below.
 
-    ``assert "ml/" in SCAN_ROOTS`` would be a tautology against the source it
-    checks, and the red above on its own is also consistent with "any new
-    tracked file anywhere reds". The same file under a root the gate does NOT
-    scan has to stay green, or neither result says anything about ``ml/``.
+    This test asserted ``== 0`` until #623 and its docstring said ``docs/`` was
+    out of scope on purpose, "and if a future change puts it in scope, this test
+    is where that decision surfaces". This is that change: the gate no longer
+    has scan roots, it reads every tracked file and names its exclusions, and
+    the exclusion list is empty.
 
-    ``docs/`` is out of scope on purpose — see "What is not scanned" in
-    ``docs/TEST_DATA_POLICY.md``. If a future change puts it in scope, this test
-    is where that decision surfaces.
+    A widening is only ever proved by a red. The green half — the same file, at
+    the same path, carrying a reserved address — is in the next test, and
+    neither half means anything alone: this red on its own is equally consistent
+    with "any new tracked file anywhere reds", which is what a gate that had
+    started matching everything would also do.
     """
 
     gate = _load()
-    assert not any(root.startswith("docs/") for root in gate.SCAN_ROOTS)
-
     _write_baseline(gate, tree)
+
     unscanned = tree / "docs" / "space" / "jobtracker" / "classifier"
     unscanned.mkdir(parents=True)
     (unscanned / "rules.py").write_text(f'RELAY = "{_routable()}"\n', encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
+
+    findings, _ = gate.scan(tree)
+    assert findings["docs/space/jobtracker/classifier/rules.py"].count == 1, findings
+    assert _check(gate, tree) == 1
+
+
+def test_the_same_file_on_a_reserved_domain_stays_green(tree: Path) -> None:
+    """The discriminating half of the test above: same path, same file, one
+    address, and the only difference is that its domain cannot route.
+
+    Without this, the red above is not evidence that ``docs/`` became covered —
+    it is equally the signature of a scanner that had started matching
+    everything. With it, the cause is isolated to the address.
+    """
+
+    gate = _load()
+    _write_baseline(gate, tree)
+
+    unscanned = tree / "docs" / "space" / "jobtracker" / "classifier"
+    unscanned.mkdir(parents=True)
+    (unscanned / "rules.py").write_text(f'RELAY = "{_reserved()}"\n', encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
+
+    findings, _ = gate.scan(tree)
+    assert "docs/space/jobtracker/classifier/rules.py" not in findings, findings
     assert _check(gate, tree) == 0
+
+
+def test_an_excluded_prefix_is_not_scanned(tree: Path, monkeypatch) -> None:
+    """``EXCLUDED`` is empty, so nothing in this repository exercises it.
+
+    An unexercised mechanism is unchecked coverage, which is the defect #623 is
+    about wearing different clothes — so the entry is injected here and both
+    arms are run: scanned by default, skipped once a prefix names it. The
+    default arm comes first on purpose, because it is the one that matters.
+
+    THE ASSERTION BELOW IS A SPEED BUMP, not a tautology dressed as a test. If
+    you added a real exclusion, this line reds and you update it — and the
+    commit that does says which prefix, and why, which is the whole point of
+    inverting the list. The four scan roots were patched twice without either.
+    """
+
+    gate = _load()
+    assert gate.EXCLUDED == (), gate.EXCLUDED
+
+    _write_baseline(gate, tree)
+    vendored = tree / "third_party"
+    vendored.mkdir()
+    (vendored / "sample.py").write_text(f'S = "{_routable()}"\n', encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
+    assert _check(gate, tree) == 1
+
+    monkeypatch.setattr(gate, "EXCLUDED", (("third_party/", "vendored, not ours"),))
+    assert "third_party/sample.py" not in gate.tracked_files(tree)
+    assert _check(gate, tree) == 0
+
+    # AND THE ENTRY IS A PATH, NOT A SUBSTRING. Without the trailing slash it
+    # matches a file called exactly `third_party` and nothing else, so the
+    # subtree stays scanned. A raw `startswith` would make `apps/web/lib` also
+    # cover `apps/web/library/` — coverage removed by a typo, silently, which
+    # is the whole failure mode #623 is about. Forgetting the slash excludes
+    # nothing, which is the direction that fails safe.
+    monkeypatch.setattr(gate, "EXCLUDED", (("third_party", "no trailing slash"),))
+    assert "third_party/sample.py" in gate.tracked_files(tree)
+    assert _check(gate, tree) == 1
 
 
 @pytest.mark.parametrize(

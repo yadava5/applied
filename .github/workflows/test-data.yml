@@ -12,10 +12,12 @@ name: Test data
 # admin. A docs-only change, or one touching `apps/web/components/**`, wedges.
 #
 # So this workflow has NO `paths:` filter, in either block, deliberately. That
-# is not laziness about cost: the gate reads `git ls-files` over four scan roots
-# and compares a checked-in baseline, with no database, no torch, no network and
-# no pip install. It is stdlib Python and finishes in about six seconds. Running
-# it on every pull request costs less than deciding whether to run it.
+# is not laziness about cost: the gate reads `git ls-files` and compares a
+# checked-in baseline, with no database, no torch, no network and no pip
+# install. It is stdlib Python and finishes in about six seconds. Running it on
+# every pull request costs less than deciding whether to run it — and since
+# #623 it reads EVERY tracked file, so there is no longer a set of paths a
+# filter could honestly be written from.
 #
 # The other two required contexts — "README numbers agree with the code" and
 # "Scan for secrets" — are already unfiltered for exactly this reason, and
@@ -50,10 +52,11 @@ jobs:
   # hide among routine traffic; a step budget fails red. Measured in run
   # 33704966798; the full note is in backend-ci.yml.
   gate:
-    # Refuses any change to the set of real sender addresses published in
-    # tracked files under backend/tests/, backend/jobtracker/, apps/web/tests/
-    # and ml/ — fixture, docstring or comment alike. This repository is public
-    # and its fixtures grew by precedent (#593); the rule, and the reason
+    # Refuses any change to the set of real sender addresses published in any
+    # tracked file — fixture, docstring, comment, demo fixture or built bundle
+    # alike. It read four roots until #623 and now reads everything git tracks
+    # that decodes as UTF-8, recording the rest as skipped. This repository is
+    # public and its fixtures grew by precedent (#593); the rule, and the reason
     # nothing already published is being deleted, are in
     # docs/TEST_DATA_POLICY.md.
     #

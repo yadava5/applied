@@ -25,8 +25,10 @@ addressed to you.
 **This repository is public, and a comment is as published as a fixture.** No
 real mailbox content — addresses, subjects, requisition numbers, message ids —
 in fixtures, docstrings, comments, commit messages or issue bodies.
-`scripts/check_test_data.py` catches addresses inside four scan roots and
-nothing else; the rest is on the writer.
+`scripts/check_test_data.py` catches addresses in every tracked file it can
+decode — since #623 it is an exclusion list and the list is empty, not four scan
+roots — but it only ever sees ADDRESSES. Subjects, requisition numbers, role
+titles and names are on the writer.
 
 **A gate that has never been shown to fail has not been tested.** Every check
 in this repository is expected to carry a demonstration that it reds — a
