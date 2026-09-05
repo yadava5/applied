@@ -10,23 +10,30 @@
  * TWO TIERS, AND THE DIFFERENCE IS STATED RATHER THAN BLURRED.
  *
  *   TIER 1 — the surface is RENDERED with hostile bytes and its visible text
- *   is read. `FiledMailList`, `ImportRow`, `VerdictRow` and both halves of
- *   `MailPreview` are here. This is the honest form and it is what #424 asks
- *   for. Five of the seven surfaces reach it.
+ *   is read. `FiledMailList`, `ImportRow`, `VerdictRow`, both halves of
+ *   `MailPreview`, and — with the board half of #424 — `ApplicationRow` and its
+ *   `RowOutcome` tombstone. This is the honest form and it is what #424 asks
+ *   for. Five of the eight files reach it.
  *
  *   TIER 2 — a census of the source. `ReviewQueue`, `ReclassifyControl` and
  *   `ApplicationDetail` are here, NOT by choice: `helpers/renderTsx.mjs`
- *   cannot load them today. Two separate causes, both measured:
+ *   cannot load them without a stub map nobody has written. Two separate
+ *   causes, both measured:
  *     - `ReviewQueue` and `ReclassifyControl` defeat the helper's specifier
  *       rewriter. It rewrites `/(\bfrom\s*|\bimport\s*\(\s*)["']([^"']+)["']/`
  *       over the TRANSPILED output, and both files contain the JSX text
  *       `from {sender}`, which compiles to `"…from ", sender, …` — a literal
  *       `from "` the rewriter reads as an import specifier. The import then
  *       fails with `Cannot find package ', sender, item.role ? …'`.
- *     - `ApplicationDetail` fails the same rewriter differently, on a
- *       truncated `@/lib` specifier.
- *   Fixing either is a change to a helper 77 test files share, which is not
- *   this fix's scope. It is the follow-up, and until it lands those three
+ *     - `ApplicationDetail` fails earlier and for an ordinary reason: only the
+ *       ENTRY module's specifiers are rewritten, so its `.tsx` siblings
+ *       (`Dialog`, `GateMeter`, `MailText`) are handed to Node as `.tsx` and it
+ *       answers `Unknown file extension ".tsx"`. Measured on the current tree —
+ *       an older note here blamed a truncated `@/lib` specifier, which is not
+ *       what it does now. That one is a stub map away rather than a helper fix,
+ *       and it is the first of these three worth doing.
+ *   Fixing the rewriter is a change to a helper 77 test files share, which is
+ *   not this fix's scope. It is the follow-up, and until it lands those three
  *   surfaces are covered by a scan and a scan cannot see everything.
  *
  * WHY THE TIER-2 GATE IS NOT `source.includes("MailText")`. That form is this
@@ -298,6 +305,126 @@ test("the Gmail link's accessible name cannot be reversed by the subject it name
   assert.match(label[1], /Payroll .gpj\.exe. in Gmail/);
 });
 
+/**
+ * The BOARD row — the other half of #424, and the half that is not about a
+ * message at all.
+ *
+ * A card's `company` and `role` are read out of mail by the sync, so they carry
+ * whatever an applicant-tracking system put in a display name. This renders the
+ * real component and reads both, because the two are drawn by different code
+ * paths (an element for the company, an element plus a `title` for the role)
+ * and a fix that wrapped one is indistinguishable from a fix that wrapped both
+ * until you look.
+ */
+test("the board row neutralises and flags a hostile company AND role", async () => {
+  const { ApplicationRow } = await importTsx("components/dashboard/ApplicationRow.tsx", {
+    stubs: {
+      "next/navigation": stubModule({ useRouter: () => ({ refresh() {} }) }),
+      "@/components/dashboard/CardMeta": stubModule({
+        DeadlineTag: stubLeaf("deadline"),
+        FiledStamp: stubLeaf("filed"),
+        SameCompanyChip: stubLeaf("chip"),
+      }),
+      "@/components/dashboard/RowActionsMenu": stubModule({ RowActionsMenu: stubLeaf("menu") }),
+      "@/components/feedback/notify": stubModule({ notifySuccess: () => {} }),
+      "@/lib/dashboard/transport": stubModule({ liveBoardTransport: {} }),
+      ...REAL_MAIL_TEXT,
+    },
+  });
+
+  const html = markup(
+    createElement(ApplicationRow, {
+      app: {
+        id: 1,
+        company: `Harbour${ZWSP}gate`,
+        position: HOSTILE_SUBJECT,
+        position_source: null,
+        status: "applied",
+        source: "gmail",
+        due_at: null,
+        applied_date: "2026-08-01",
+        created_at: "2026-08-01T00:00:00Z",
+        url: "https://mail.google.com/mail/#all/t1",
+      },
+      today: "2026-08-04",
+      onOpenDetail: () => {},
+    }),
+  );
+
+  assert.equal(html.includes(RLO), false, "ApplicationRow: U+202E reached the markup");
+  assert.equal(html.includes(PDF), false, "ApplicationRow: U+202C reached the markup");
+  assert.equal(html.includes(ZWSP), false, "ApplicationRow: U+200B reached the markup");
+
+  const text = visibleText(html);
+  // The role: the bytes say `.exe` and the screen must not say `.jpg`.
+  assert.equal(text.includes("exe.jpg"), false, "the override survived in the role");
+  assert.match(text, /gpj\.exe/, "the role's real bytes are not on the row");
+  // The company: substituted, not stripped — a strip would render the clean
+  // employer name and make a false claim look checked.
+  assert.equal(text.includes("Harbourgate"), false, "the company was stripped, not substituted");
+  assert.match(text, new RegExp(`Harbour${SENTINEL}gate`));
+  // Two flags, because two different fields were hostile. One would mean the
+  // row cleaned a field in silence, which is the half of #424 that gets skipped.
+  assert.equal(
+    html.split('data-testid="hidden-character-flag"').length - 1,
+    2,
+    "the row drew a flag for only one of its two hostile fields",
+  );
+
+  // The attribute half, by execution rather than by the source census: a
+  // `title` and an accessible name are strings and cannot hold an element, so
+  // they take `safeText` — and an unterminated override in one of them rewrites
+  // the rest of the announced name, not just its own part.
+  for (const attribute of ["title", "aria-label"]) {
+    const values = [...html.matchAll(new RegExp(`${attribute}="([^"]*)"`, "g"))].map((m) => m[1]);
+    assert.ok(values.length > 0, `the row rendered no ${attribute} at all`);
+    for (const value of values) {
+      assert.equal(value.includes(RLO), false, `U+202E reached a ${attribute}`);
+      assert.equal(value.includes(ZWSP), false, `U+200B reached a ${attribute}`);
+    }
+  }
+});
+
+/**
+ * The tombstone, which no static render can reach.
+ *
+ * Both outcome lines live behind `useState` (`removalPending`, `removed`), so
+ * `renderToStaticMarkup` only ever sees the row's initial state and neither
+ * branch is on any rendered path here. They are also the sites the source
+ * census cannot see — the row used to draw `{removalPendingMessage(app.company,
+ * …)}`, a call expression the scanner reads straight past. `RowOutcome` is the
+ * component that composition became, and calling it directly is what puts the
+ * line under execution instead of under a scan.
+ */
+test("the removal tombstone neutralises and flags the employer it names", async () => {
+  const { RowOutcome } = await importTsx("components/dashboard/ApplicationRow.tsx", {
+    stubs: {
+      "next/navigation": stubModule({ useRouter: () => ({ refresh() {} }) }),
+      "@/components/dashboard/CardMeta": stubModule({
+        DeadlineTag: stubLeaf("deadline"),
+        FiledStamp: stubLeaf("filed"),
+        SameCompanyChip: stubLeaf("chip"),
+      }),
+      "@/components/dashboard/RowActionsMenu": stubModule({ RowActionsMenu: stubLeaf("menu") }),
+      "@/components/feedback/notify": stubModule({ notifySuccess: () => {} }),
+      "@/lib/dashboard/transport": stubModule({ liveBoardTransport: {} }),
+      ...REAL_MAIL_TEXT,
+    },
+  });
+
+  const html = markup(
+    RowOutcome({ company: `Harbour${ZWSP}gate${RLO}`, tail: " removed from the board · not deleted" }),
+  );
+
+  assert.equal(html.includes(RLO), false, "RowOutcome: U+202E reached the markup");
+  assert.equal(html.includes(ZWSP), false, "RowOutcome: U+200B reached the markup");
+  assert.match(html, /data-testid="hidden-character-flag"/, "cleaned in silence, no flag");
+  // The tail is what the override used to reverse: it follows the name inside
+  // one paragraph, and the name had no element of its own to be isolated in.
+  assert.match(visibleText(html), /removed from the board · not deleted$/);
+  assert.equal(visibleText(html).includes("Harbourgate"), false);
+});
+
 test("a row with ordinary non-ASCII is untouched and unflagged", () => {
   // The regression this fix must not be: a French name is not an attack.
   const snippet = "Bonjour Zoë Lefèvre — nous avons bien reçu votre candidature. 株式会社";
@@ -343,16 +470,30 @@ const MAIL_ROW_FIELDS = [...MESSAGE_FIELDS, "company", "role", "suggested_employ
  * checked into this repo — no attacker reaches them, and wrapping them would
  * spend the reader's attention on a warning that can never fire.
  *
- * WHAT IS OUT OF SCOPE, SAID HERE RATHER THAN LEFT TO INFERENCE. An
- * APPLICATION's `company` and `role` — the board's own identity for a card —
- * are mail-derived too, and they are NOT covered. They are drawn by seven more
- * components (`ApplicationRow`, `PipelineBoard`, `CompanyBand`,
- * `EmployerSetRow`, `CardMeta`, `PulseDetail`, `SyncBar`) plus the header of
- * `ApplicationDetail`, and an unterminated override in a company name would
- * reverse a whole board row. #424 is about the subject and the sender; that is
- * a second issue and it is filed rather than smuggled in here. Hence
- * `ApplicationDetail` is scanned for MESSAGE fields only — its verdict trail
- * is a mail row, its title bar is a board row.
+ * THE BOARD IS IN SCOPE NOW, AND WHAT IS STILL OUT. An APPLICATION's `company`
+ * and `role` — the board's own identity for a card — are mail-derived too, and
+ * this note used to say they were not covered and that closing them was a
+ * second issue. That is the remaining half of #424 and it is closed here for
+ * the two surfaces that draw a whole card: `ApplicationRow` and
+ * `ApplicationDetail`, both now held to `MAIL_ROW_FIELDS`. The value is
+ * attacker-chosen end to end — an ATS display name reaches `company` through
+ * `_clean_sender_display_name` / `_valid_company_token`
+ * (`backend/jobtracker/cloud/pipeline.py`), which reject stopwords, requisition
+ * codes and digits and cap length, and apply no character class at any point.
+ *
+ * `role` is `app.position`, whose `position_source` is `"user"` for a typed
+ * title and NULL when the sync extracted it. Only the NULL rows are
+ * mail-derived, and the components neutralise BOTH — see `ApplicationRow`'s
+ * note on `role`. A provenance branch would leave a raw render path gated on a
+ * flag that is not a trust boundary, which is the shape this gate exists to
+ * remove.
+ *
+ * STILL OUT, AND STILL A SECOND ISSUE: the six other components that draw a
+ * card's identity — `PipelineBoard`, `CompanyBand`, `EmployerSetRow`,
+ * `CardMeta`, `PulseDetail`, `SyncBar`. They take `company` as a PROP from the
+ * two surfaces above, so this gate's `=` exclusion lets it through and their
+ * own renders are unscanned. That is a real gap, not a decision that they are
+ * safe.
  */
 const ATTACKER_FACING = [
   { file: "components/import/ImportMail.tsx", fields: MAIL_ROW_FIELDS },
@@ -361,7 +502,8 @@ const ATTACKER_FACING = [
   { file: "components/mail/ReclassifyControl.tsx", fields: MAIL_ROW_FIELDS },
   { file: "components/gmail/InboxWorkbench.tsx", fields: MAIL_ROW_FIELDS },
   { file: "components/dashboard/ReviewQueue.tsx", fields: MAIL_ROW_FIELDS },
-  { file: "components/dashboard/ApplicationDetail.tsx", fields: MESSAGE_FIELDS },
+  { file: "components/dashboard/ApplicationRow.tsx", fields: MAIL_ROW_FIELDS },
+  { file: "components/dashboard/ApplicationDetail.tsx", fields: MAIL_ROW_FIELDS },
 ];
 
 /** Comments say `{company}` all over this repo and mean nothing by it. */
@@ -370,33 +512,77 @@ function stripComments(source) {
 }
 
 /**
- * Mail-supplied fields interpolated raw — as JSX text or into a template
- * literal — rather than through `MailText` / `safeText`.
+ * Attributes and props whose value is DRAWN or ANNOUNCED on its own.
+ *
+ * The `=` exclusion below used to be unconditional, and this set is the hole it
+ * left. `title={role}` is not a prop handed to a sanitising component — it is a
+ * string the browser paints in a tooltip and a screen reader reads out, and a
+ * bare identifier there was invisible to this gate. It is not a hypothetical:
+ * `ApplicationRow` carried `title={role}` twice and `ApplicationDetail` carried
+ * `title={active.company}`, and a fix that wrapped only the JSX text would have
+ * left all three raw and this file green.
+ *
+ * `description` and `label` are React PROPS rather than HTML attributes, which
+ * is why this is not called an attribute list: `Dialog` renders `description`
+ * as visible text (`components/ui/Dialog.tsx`) and `RowActionsMenu` announces
+ * `label`. What decides membership is whether the STRING reaches a person, not
+ * whether the DOM has an attribute by that name.
+ */
+const RENDERED_ATTRIBUTES = new Set([
+  "title",
+  "alt",
+  "placeholder",
+  "label",
+  "description",
+  "aria-label",
+  "aria-description",
+  "aria-placeholder",
+  "aria-roledescription",
+  "aria-valuetext",
+]);
+
+/** The attribute or prop name an interpolation at `index` is the value of. */
+function attributeAt(source, index) {
+  const before = source.slice(Math.max(0, index - 48), index);
+  const m = /([A-Za-z_$][\w$-]*)=$/.exec(before);
+  return m === null ? null : m[1];
+}
+
+/**
+ * Mail-supplied fields interpolated raw — as JSX text, into a template literal,
+ * or into an attribute that renders — rather than through `MailText` /
+ * `safeText`.
  *
  * An interpolation preceded by `=` is an ATTRIBUTE (`value={subject}`,
  * `subject={subject}`). Those are allowed: the first IS the sanitiser's call
  * site, and the second hands the string to a component that sanitises it, and
- * that component is itself in this list.
+ * that component is itself in this list. `RENDERED_ATTRIBUTES` is the carve-out
+ * from that carve-out — an attribute whose value goes straight to a person is
+ * held to the same bar as JSX text.
  *
- * THAT EXCLUSION IS A KNOWN LIMIT, NOT AN OVERSIGHT. It holds for `value=` and
- * for a prop handed to a listed component, and it does NOT hold for an
- * attribute that renders to the user on its own — `title=`, `alt=`,
- * `placeholder=`, or an `aria-label` that interpolates a bare identifier
- * rather than a template literal. This gate cannot see those. Swept across all
- * seven files at the time of writing and the hole is UNOCCUPIED by any message
- * field: the only dynamic `title=`/`aria-label=` carrying mail-derived text is
- * `ApplicationDetail`'s `active.company`, which is the board's own identity
- * for a card and is out of scope by the same decision recorded below. If a
- * subject or sender ever reaches one of those attributes, tighten this rather
- * than trusting the sweep that was run once.
+ * `||` and `??` both end the expression being read, so `{role || "not set"}`
+ * and `{c.role ?? "none"}` are the same claim about `role` and are treated
+ * alike. Handling only `||` made the nullish form a one-character bypass.
+ *
+ * WHAT THIS STILL CANNOT SEE, so it is written down rather than discovered.
+ * A mail field passed to a FUNCTION and rendered — `{someMessage(app.company)}`
+ * — parses as a call, fails the identifier test and is invisible here. That
+ * shape was real: the row's two tombstones drew
+ * `{removalPendingMessage(app.company, …)}`, one composed string with the
+ * employer name already inside it and no element able to hold a sanitiser. It
+ * is fixed by giving the name its own element (`RowOutcome`), and it is covered
+ * by RENDERING that component in tier 1 above, not by this scan. A scan cannot
+ * see everything, which is why the tier-1 list exists.
  */
 function rawMailInterpolations(source, fields) {
   const wanted = new Set(fields);
   const hits = [];
   const re = /\{([^{}]+)\}/g;
   for (let m = re.exec(source); m !== null; m = re.exec(source)) {
-    if (source[m.index - 1] === "=") continue;
-    const head = m[1].replace(/\|\|[\s\S]*$/, "").trim();
+    if (source[m.index - 1] === "=" && !RENDERED_ATTRIBUTES.has(attributeAt(source, m.index))) {
+      continue;
+    }
+    const head = m[1].replace(/(?:\|\||\?\?)[\s\S]*$/, "").trim();
     if (!/^[A-Za-z_$][\w$]*(?:(?:\?\.|\.)[\w$]+)*$/.test(head)) continue;
     if (!wanted.has(head.split(".").pop())) continue;
     hits.push(m[1].trim());
@@ -406,7 +592,7 @@ function rawMailInterpolations(source, fields) {
 
 test("the census can see a raw render — positive control", () => {
   // A scanner that matches nothing reports "clean" and "never ran" with the
-  // same output. Five shapes it must catch, and three it must not.
+  // same output. Eight shapes it must catch, and five it must not.
   const scan = (s) => rawMailInterpolations(s, MAIL_ROW_FIELDS);
 
   assert.deepEqual(scan(`<p>{item.subject}</p>`), ["item.subject"]);
@@ -414,13 +600,32 @@ test("the census can see a raw render — positive control", () => {
   assert.deepEqual(scan('aria-label={`Open “${subject}”`}'), ["subject"]);
   assert.deepEqual(scan(`<p>{m.subject || "(no subject)"}</p>`), ['m.subject || "(no subject)"']);
   assert.deepEqual(scan("{item.role ? `, ${item.role}` : ''}"), ["item.role"]);
+  // The attribute hole. A bare identifier in a slot that renders was invisible
+  // until `RENDERED_ATTRIBUTES`, and these three were all occupied in the tree.
+  assert.deepEqual(scan(`title={role}`), ["role"]);
+  assert.deepEqual(scan(`title={active.company}`), ["active.company"]);
+  assert.deepEqual(scan(`description={role || "role not captured yet"}`), [
+    'role || "role not captured yet"',
+  ]);
+  // `??` is `||`'s twin and was a one-character bypass.
+  assert.deepEqual(scan(`<li>{c.role ?? "no role named in this mail"}</li>`), [
+    'c.role ?? "no role named in this mail"',
+  ]);
 
   assert.deepEqual(scan(`<MailText value={item.subject} />`), []);
   assert.deepEqual(scan(`<Control subject={subject} />`), []);
   assert.deepEqual(scan(`<p>{safeText(sender)}</p>`), []);
+  // The allowed-attribute exclusion has to SURVIVE the tightening, or every
+  // sanitiser call site in the tree becomes a false positive and the gate is
+  // red for a reason that has nothing to do with a raw render.
+  assert.deepEqual(scan(`<MailText value={company} />`), []);
+  assert.deepEqual(scan(`title={safeText(role)}`), []);
 
-  // And the per-file narrowing has to be real, or `ApplicationDetail`'s entry
-  // below is decoration: a board field must be invisible to the message set.
+  // And the per-file narrowing has to stay real, because it is what lets a
+  // surface be held to the message set alone: a board field must be invisible
+  // to `MESSAGE_FIELDS` and visible to `MAIL_ROW_FIELDS`. No entry uses the
+  // narrow set today; the mechanism is asserted anyway, so the next one that
+  // needs it is not adopting an untested narrowing.
   assert.deepEqual(rawMailInterpolations(`<h1>{active.company}</h1>`, MESSAGE_FIELDS), []);
   assert.deepEqual(rawMailInterpolations(`<h1>{active.company}</h1>`, MAIL_ROW_FIELDS), [
     "active.company",
@@ -430,7 +635,7 @@ test("the census can see a raw render — positive control", () => {
 test("every attacker-facing surface is in the tree and non-empty", () => {
   // A renamed or moved file would otherwise make the sweep below pass by
   // measuring nothing at all.
-  assert.ok(ATTACKER_FACING.length >= 7);
+  assert.ok(ATTACKER_FACING.length >= 8);
   for (const { file } of ATTACKER_FACING) {
     const source = readFileSync(resolve(WEB_ROOT, file), "utf8");
     assert.ok(source.length > 500, `${file} is suspiciously small`);
