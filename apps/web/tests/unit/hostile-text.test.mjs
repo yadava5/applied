@@ -134,7 +134,7 @@ const CENSUS = [
     cp: 0x00ad,
     name: "SOFT HYPHEN",
     disposition: "neutralise",
-    why: "zero advance width except at a line break; the hyphenation hint it costs is argued in the header",
+    why: "zero advance width except at a line break. Its hyphenation-hint use is argued in the header, and the base rate in real mail headers is UNMEASURED — only synthetic corpora were reachable, so the zero we have is not a measured zero",
   },
   {
     cp: 0x034f,
@@ -285,7 +285,7 @@ const CENSUS = [
     to: 0xe007f,
     name: "the tag block",
     disposition: "neutralise",
-    why: "an invisible mirror of printable ASCII, and what emoji flag sequences are built from",
+    why: "an invisible mirror of printable ASCII, and what emoji flag sequences are built from. Base rate in real mail headers UNMEASURED, same as U+00AD: revisit this disposition first if it ever turns out common",
   },
   {
     from: 0xe0080,
@@ -537,7 +537,8 @@ const PASSTHROUGH_ROWS = ROWS.filter((row) => row.disposition === "passthrough")
 const membersOf = (row) => Array.from({ length: row.to - row.from + 1 }, (_, i) => row.from + i);
 /** First, middle, last: what gets RENDERED, since 3,915 renders would not pay. */
 const samplesOf = (row) => [...new Set([row.from, Math.floor((row.from + row.to) / 2), row.to])];
-const span = (row) => (row.from === row.to ? label(row.from) : `${label(row.from)}-${label(row.to)}`);
+const span = (row) =>
+  row.from === row.to ? label(row.from) : `${label(row.from)}-${label(row.to)}`;
 
 const NEUTRALISE_POINTS = NEUTRALISE_ROWS.flatMap(membersOf);
 const CENSUS_POINTS = new Set(ROWS.flatMap(membersOf));
@@ -747,7 +748,10 @@ test("the module covers every code point the census marks for neutralising", () 
       `${missing.slice(0, 8).map(label).join(", ")}. Add them to HOSTILE_RANGES and to the ` +
       "HOSTILE range literal in lib/security/hostileText.ts.",
   );
-  assert.equal(covered.size, NEUTRALISE_POINTS.length);
+  // Deliberately ONE direction. The reverse — a code point the module cleans
+  // that the census has not ruled on — is the next test's job, and asserting
+  // set equality here would make both tests red for either defect and cost the
+  // attribution that makes a failure readable.
 });
 
 test("the module neutralises nothing the census has not ruled on", () => {
@@ -959,13 +963,72 @@ test("null, undefined and the empty string render nothing and never throw", () =
 // 6. The flag. Its own behaviour, and its own reasons to exist.
 // ---------------------------------------------------------------------------
 
-test("the flag names every distinct code point and counts every occurrence", () => {
+test("the flag lists the distinct code points and counts every occurrence", () => {
   const html = render(`${RLO}a${ZWSP}b${ZWSP}c`);
   const note = hostileTextNote(inspectHostileText(`${RLO}a${ZWSP}b${ZWSP}c`).found);
 
   assert.match(note, /^3 hidden characters \(U\+202E, U\+200B\)/);
   assert.equal(note.includes("U+200B, U+200B"), false, "the note repeated a code point");
   assert.equal(html.includes(note), true, "the note is not on the row");
+});
+
+/**
+ * The ceiling the note is held to, and where the number comes from: the fixed
+ * sentence is about 180 characters, eight labels at their widest are 7
+ * characters each (`U+E0FFF`) with ", " between them, and the tail reads
+ * ", and 3907 more". 400 leaves room for a count of any width and no room for
+ * a list — it is a bound with slack, not a passing measurement written down.
+ */
+const NOTE_CEILING = 400;
+
+test("the note caps its label list at eight and still reports the true total", () => {
+  // Sixteen distinct code points, three occurrences each: more distinct labels
+  // than the cap allows, and a count that has to survive the cap.
+  const distinct = [
+    0x00ad, 0x034f, 0x115f, 0x17b4, 0x180b, 0x200b, 0x202a, 0x2060, 0x3164, 0xfeff, 0xffa0, 0xfff0,
+    0x1bca0, 0x1d173, 0xe0001, 0xe0020,
+  ];
+  const value = `x${distinct.map(cp).join("y").repeat(3)}z`;
+  const { found } = inspectHostileText(value);
+  assert.equal(found.length, distinct.length * 3, "the fixture did not carry what it claims");
+
+  const note = hostileTextNote(found);
+  // (a) THE COUNT IS EXACT. This is the half a length-only test would miss: a
+  //     cap that also capped the count would shrink the note and lie.
+  assert.match(note, /^48 hidden characters \(/, `the count is wrong: ${note}`);
+  // (b) eight labels, and the rest summarised as a number.
+  assert.equal((note.match(/U\+[0-9A-F]+/g) ?? []).length, 8, `the list is not capped: ${note}`);
+  assert.match(note, /, and 8 more\)/, `the remainder is not summarised: ${note}`);
+  // (c) and the whole thing fits where it is drawn.
+  assert.ok(note.length < NOTE_CEILING, `the note is ${note.length} characters: ${note}`);
+});
+
+test("the worst case the whole set can produce still fits in a title attribute", () => {
+  // Not a sample. Every member of the set at once — the input the uncapped form
+  // answered with roughly 35 KB, which is the legibility denial the module's
+  // header rejects for the expansion form one screen up.
+  const everyLabel = HOSTILE_CODE_POINTS.map((c) => label(c.codePointAt(0)));
+  const total = everyLabel.length;
+  assert.ok(
+    total > 1000,
+    `the set is ${total} code points — too small to be this test's worst case`,
+  );
+
+  // The expected numbers come from the INPUT this test built, not from a
+  // constant: what is under test is the cap's arithmetic, and pinning the set's
+  // size here would make a deliberate widening red a test about `title` length.
+  // The census gates two screens up are what hold the set to a decision.
+  const note = hostileTextNote(everyLabel);
+  assert.match(
+    note,
+    new RegExp(`^${total} hidden characters \\(`),
+    "the count did not survive the cap",
+  );
+  assert.match(note, new RegExp(`, and ${total - 8} more\\)`), "the remainder is not summarised");
+  assert.ok(note.length < NOTE_CEILING, `the worst case is ${note.length} characters`);
+  // The uncapped form for comparison, so the saving is measured rather than
+  // asserted: it is what this test exists to prevent coming back.
+  assert.ok(everyLabel.join(", ").length > 30000, "the uncapped list is not the size claimed");
 });
 
 test("the flag says it in words and in shape, never in colour alone", () => {

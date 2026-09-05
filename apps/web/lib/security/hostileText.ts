@@ -93,6 +93,15 @@
  * validator is concerned, and blank as far as the reader is concerned — and the
  * reserved default-ignorables are, by definition, not carrying anything.
  *
+ * AND THE BASE RATE IS UNMEASURED, which is not the same as measured-as-zero.
+ * The only corpora reachable when this was written were synthetic — 200 stored
+ * eval records and 887 files in the tree, zero occurrences of either block,
+ * with a positive control proving the scan could see one — and real mail
+ * headers sat behind a credential nobody had. So "rare" below is an expectation
+ * about RFC 2047-decoded headers, not a measurement of them. These two are the
+ * dispositions to revisit first if that expectation ever turns out wrong; the
+ * census rows in the suite say the same thing.
+ *
  * The trade, in both cases: a visible, self-explaining marker on rare
  * legitimate text beats an invisible impersonation on hostile text. The marker
  * announces itself and the row's flag says which code points it stood in for,
@@ -336,29 +345,48 @@ export function hasHostileText(value: string | null | undefined): boolean {
 }
 
 /**
+ * How many DISTINCT code points the note names before it summarises the rest.
+ * Eight is enough to characterise what a sender did — a subject carrying more
+ * than eight distinct invisible code points is not a marginal case a reader
+ * needs itemised — and it is what keeps the note inside a `title`.
+ */
+const MAX_DISTINCT_LABELS = 8;
+
+/**
  * The sentence the flag announces to a screen reader and shows on hover.
  *
  * DISTINCT code points are listed, but the COUNT is of occurrences: an
  * attacker can inject five hundred zero-widths, and a title attribute holding
  * five hundred repetitions of `U+200B` is its own small denial of service.
- * DEDUPLICATION IS WHAT BOUNDS THIS, and the bound is no longer small. There
- * are 3,915 possible labels, so a subject that managed to carry one of every
- * member would produce roughly 35 KB of list in a `title` and in the `sr-only`
- * sentence beside it. That is stated rather than waved at: the earlier version
- * of this comment said "only thirteen possible labels … needs no arbitrary
- * cap", which was true of thirteen and is not true of this. What it still buys
- * is the property that matters — the list is linear in the SET, not in the
- * INPUT, so five hundred injected zero-widths produce one label and a count of
- * 500 rather than five hundred repetitions. Reaching the worst case needs a
- * subject carrying thousands of DISTINCT invisible code points, which no header
- * this product stores could hold; if that ever stops being true, cap the
- * distinct list here rather than dropping the deduplication.
+ * THE COUNT IS EXACT; THE LIST IS CAPPED AT EIGHT, and deduplication is no
+ * longer enough on its own. It used to be: with thirteen possible labels the
+ * whole list fit, and this comment said in so many words that it "needs no
+ * arbitrary cap". The set is 3,915 code points now, so the uncapped form tops
+ * out near 35 KB of `title` and another 35 KB of `sr-only` text — which is the
+ * defect this module already refuses one screen up. The header rejects an
+ * expansion form costing 8 characters per occurrence because it "turns a
+ * legibility defect into a legibility denial, which is a worse bug than the one
+ * being fixed", and 35 KB inside an accessible name is that same bug walking in
+ * through the door the old bound was holding shut.
+ *
+ * WHICH HALF GETS CAPPED IS NOT ARBITRARY. The COUNT is the finding — "this
+ * sender put 48 invisible characters in one subject" is the claim the flag
+ * exists to make, and a cap that rounded it would make the flag lie, which is
+ * strictly worse than a long title. The LABELS are diagnostics, and a reader
+ * who needs all 3,915 of them is not reading a `title` attribute. So the count
+ * stays exact at any size, the first eight distinct labels are named, and the
+ * remainder is summarised as a number. The suite asserts BOTH halves — the
+ * ceiling and the true total — because a cap that quietly capped the count as
+ * well would pass any test that only measured length.
  */
 export function hostileTextNote(found: readonly string[]): string {
   const distinct = [...new Set(found)];
+  const named = distinct.slice(0, MAX_DISTINCT_LABELS);
+  const remaining = distinct.length - named.length;
+  const labels = remaining === 0 ? named.join(", ") : `${named.join(", ")}, and ${remaining} more`;
   const plural = found.length === 1 ? "" : "s";
   return (
-    `${found.length} hidden character${plural} (${distinct.join(", ")}) — ` +
+    `${found.length} hidden character${plural} (${labels}) — ` +
     `invisible or direction-changing code point${plural} the sender put in this text. ` +
     `Each one is drawn as a marker so it cannot rewrite what you read.`
   );
