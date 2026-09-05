@@ -356,6 +356,50 @@ def json_veto_patterns(rel: str) -> int:
     )
 
 
+WEB_MANIFEST = "apps/web/package.json"
+
+
+def web_dependency(name: str) -> str:
+    """The version specifier `apps/web/package.json` pins for `name`, verbatim.
+
+    Verbatim is the point. The caret is part of the claim — `zod 4 (^4.4.3)`
+    asserts a floor and a major, and normalising it away here would let the
+    README publish a bare `4.5.2` under a manifest that actually accepts any
+    4.x. `dependencies` only: a devDependency is not what the app ships, and
+    reading both would make the fact answer a different question depending on
+    where the package happened to be listed.
+
+    Raises on a missing key rather than returning a default. A fact that
+    silently reads "" when the package is renamed or removed would let
+    `--write` rewrite the sentence to nothing and go green — the failure mode
+    `onnxFloat32Bytes` records above.
+    """
+    return _web_manifest_entry("dependencies", name)
+
+
+def web_dev_dependency(name: str) -> str:
+    """The version specifier `apps/web/package.json` pins for a devDependency.
+
+    Separate from `web_dependency` because the two answer different questions:
+    what the app ships, and what builds and tests it. Playwright is the only
+    caller — it is quoted in the same table as the runtime deps and drifted the
+    same way.
+    """
+    return _web_manifest_entry("devDependencies", name)
+
+
+def _web_manifest_entry(section: str, name: str) -> str:
+    entries = json.loads(read(WEB_MANIFEST)).get(section, {})
+    if name not in entries:
+        raise KeyError(
+            f"{WEB_MANIFEST} has no `{section}` entry for {name!r}. If the "
+            f"package was removed, delete the fact; if it moved between "
+            f"`dependencies` and `devDependencies`, that is a change of claim, "
+            f"not a lookup detail."
+        )
+    return entries[name]
+
+
 def rls_tables() -> int:
     """`RLS_TABLES` in the RLS migration, plus user_credentials from its own revision."""
     node = _assigned(RLS_MIGRATION, "RLS_TABLES")
@@ -1651,6 +1695,68 @@ FACTS: dict[str, dict] = {
         "compute": lambda: round(22843695 / 1e6, 1),
         "sites": [r"The ([\d.]+) MB int8 ONNX build"],
     },
+    # ── the web app's shipped dependency versions (#401) ─────────────────
+    # The Tech Stack table said it was "pinned from apps/web/package.json" and
+    # was transcribed by hand, so it drifted every time the manifest moved and
+    # `--check` printed a clean bill throughout: coverage here is set
+    # membership, and an unregistered claim is invisible to its own gate.
+    #
+    # These are the first facts on this checker that are NOT numbers, and they
+    # are the reason `exact` exists. `same_number` coerces with `float()`, so
+    # it answers False for `16.3.3` against `16.3.3` — registering a semver
+    # under the numeric comparator would have shipped three sites that could
+    # never go green. See `same_exact`.
+    #
+    # React is registered even though it is CORRECT today. That is deliberate:
+    # it is the arm that proves the comparator can return True, and without it
+    # a green run would be indistinguishable from three sites nobody reads.
+    "webNext": {
+        "kind": "static",
+        "describe": "the Next.js version apps/web/package.json pins",
+        "compute": lambda: web_dependency("next"),
+        "sites": [{"re": r"Next\.js ([\d.]+) \(App Router", "exact": True}],
+    },
+    "webReact": {
+        "kind": "static",
+        "describe": "the React version apps/web/package.json pins",
+        "compute": lambda: web_dependency("react"),
+        "sites": [{"re": r"Turbopack\), React ([\d.]+)", "exact": True}],
+    },
+    "webZod": {
+        "kind": "static",
+        # The caret is inside the captured group on purpose — the sentence
+        # publishes the specifier, not a resolved version, and dropping it
+        # would turn a floor into a pin the manifest does not assert.
+        "describe": "the zod specifier apps/web/package.json pins",
+        "compute": lambda: web_dependency("zod"),
+        "sites": [{"re": r"zod \d+ \(`(\^?[\d.]+)`\)", "exact": True}],
+    },
+    "webZodMajor": {
+        # "zod 4" and "(`^4.5.2`)" are two claims in one cell, and the
+        # uncaptured-number check is right to refuse the first riding along
+        # inside the second's site. Derived from the same specifier rather than
+        # transcribed, so a major bump moves both or neither.
+        "kind": "static",
+        "describe": "the zod MAJOR apps/web/package.json pins",
+        "compute": lambda: web_dependency("zod").lstrip("^~>=< ").split(".")[0],
+        "sites": [{"re": r"zod (\d+) \(`\^?[\d.]+`\)", "exact": True}],
+    },
+    "webSupabaseSsr": {
+        "kind": "static",
+        "describe": "the @supabase/ssr specifier apps/web/package.json pins",
+        "compute": lambda: web_dependency("@supabase/ssr"),
+        "sites": [{"re": r"`@supabase/ssr` `(\^?[\d.]+)`", "exact": True}],
+    },
+    "webPlaywright": {
+        # Was "Playwright 1.48+" against a manifest pinning ^1.62.1. Not false
+        # — 1.62 IS 1.48-or-later — which is why it survived every reading of
+        # this table. A claim that cannot be wrong cannot be checked either,
+        # so it becomes the specifier, which can.
+        "kind": "static",
+        "describe": "the @playwright/test specifier apps/web/package.json pins",
+        "compute": lambda: web_dev_dependency("@playwright/test"),
+        "sites": [{"re": r"Playwright `(\^?[\d.]+)` \(\d+ spec files under", "exact": True}],
+    },
     # ── the repository itself ──
     "e2eSpecs": {
         "kind": "static",
@@ -2279,8 +2385,32 @@ def same_number(found: str, expected) -> bool:
     return round(float(expected), d) == f if d is not None else float(expected) == f
 
 
-def render(found: str, expected, word: bool) -> str:
+def same_exact(found: str, expected) -> bool:
+    """
+    Compare verbatim, for a fact whose value is not a number.
+
+    `same_number` coerces both sides with `float()`, which is right for a count
+    and a macro-F1 and wrong for anything with two dots in it. A dependency
+    version is the case that forced this: `float("16.3.3")` raises, so
+    `same_number` returns False — and it returns False for the CORRECT value as
+    well as the wrong one.
+
+        same_number("16.3.0", "16.3.3")  -> False
+        same_number("16.3.3", "16.3.3")  -> False   <- the correct value reds
+
+    Registering a semver under the numeric comparator therefore ships a site
+    that can never be green: a check that cannot pass, which is the same defect
+    as a check that cannot fail wearing the other face. Everything here is a
+    string compare, and `render` returns the truth unchanged, so a `--write`
+    puts the manifest's own characters into the sentence.
+    """
+    return found == str(expected)
+
+
+def render(found: str, expected, word: bool, exact: bool = False) -> str:
     """Format `expected` the way the site already formats its number."""
+    if exact:
+        return str(expected)
     if word:
         w = to_word(expected)
         return w.capitalize() if found[:1].isupper() else w
@@ -2627,6 +2757,18 @@ def run(mode: str) -> None:
             site = {"re": raw} if isinstance(raw, str) else raw
             rel = site.get("file", "README.md")
             word = site.get("word", False)
+            # `exact` is mutually exclusive with `word` — one spells a number
+            # out, the other refuses to read it as a number at all — and a site
+            # asking for both is an author error, not a precedence question.
+            exact = site.get("exact", False)
+            if exact and word:
+                problems.append(
+                    f"{fid}: a claim site in {rel} sets both `word` and `exact`.\n"
+                    f"      pattern  {site['re']}\n"
+                    f"      Those contradict: `word` spells the value as English, `exact`\n"
+                    f"      compares it verbatim. Pick one."
+                )
+                continue
             entry = load(rel)
             matches = list(re.finditer(site["re"], entry["text"]))
 
@@ -2644,10 +2786,15 @@ def run(mode: str) -> None:
             # Right-to-left so earlier match offsets stay valid while rewriting.
             for m in reversed(matches):
                 found = m.group(1)
-                ok = (found.lower() == to_word(expected)) if word else same_number(found, expected)
+                if exact:
+                    ok = same_exact(found, expected)
+                elif word:
+                    ok = found.lower() == to_word(expected)
+                else:
+                    ok = same_number(found, expected)
                 if ok:
                     continue
-                want = render(found, expected, word)
+                want = render(found, expected, word, exact)
                 if mode == "write":
                     # By the group's SPAN — see `substitute_at_group`. #468.
                     entry["text"] = substitute_at_group(entry["text"], m, want)
