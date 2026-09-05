@@ -92,6 +92,21 @@ _forced = os.environ.get("{FORCED_SESSION_ENV}")
 if _forced:
     import testcontainers.core.labels as _labels
 
+    # ASSIGNING TO A NAME THAT IS NOT THERE SUCCEEDS SILENTLY, and this file's
+    # safety rests on the assignment landing. If a testcontainers upgrade stops
+    # exposing SESSION_ID as a module global, the plugin would quietly create a
+    # new attribute nothing reads, the child would fall back to its own uuid,
+    # and the measurement would find nothing. That IS caught downstream -- the
+    # directional control asserts the child's leak is visible under the minted
+    # id, so an inert plugin reds it -- but three steps from the cause. Fail
+    # here, where the reason can be stated.
+    if not hasattr(_labels, "SESSION_ID"):
+        raise RuntimeError(
+            "testcontainers.core.labels no longer exposes SESSION_ID, so this "
+            "plugin cannot give the child a session id the parent knows. "
+            "tests/test_postgres_containers_are_reaped.py needs updating."
+        )
+
     _labels.SESSION_ID = _forced
 """
 
