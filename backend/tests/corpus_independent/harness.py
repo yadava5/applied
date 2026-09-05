@@ -206,10 +206,18 @@ def score_classifier(verdicts: list[Verdict]) -> ClassifierScore:
 
 
 #: What the reader can actually derive an identity FROM, character for
-#: character with production. ``gmail_client._extract_body`` ends
-#: ``_WHITESPACE.sub(" ", text)[:_MAX_BODY_CHARS]``, so every whitespace run is
-#: one space and nothing past 4,000 characters exists as far as the server is
-#: concerned.
+#: character with production — because it now CALLS production's own
+#: normalisation instead of restating it.
+#:
+#: IT USED TO RESTATE IT, and #430 is what that cost. This said
+#: ``gmail_client._extract_body`` ends ``_WHITESPACE.sub(" ", text)[:_MAX_BODY_CHARS]``
+#: and derived ``" ".join(case.body.split())`` to match. When the extractor
+#: stopped collapsing newlines — it had to, because the classifier's quote
+#: boundary is ``^``-anchored and a one-line body disabled it — this file went
+#: on collapsing them, and the sentence above became a false claim about
+#: production inside the one file whose whole purpose is parity. Nothing could
+#: have caught it: a hand-copied mirror has no gate, which is exactly why the
+#: normalisation is a named function now.
 #:
 #: BOTH HALVES WERE MEASURED BEFORE BEING COPIED HERE, because a cap nobody
 #: checks is decoration. Collapsing changes the identity of **0** of 17,260
@@ -233,13 +241,18 @@ def score_classifier(verdicts: list[Verdict]) -> ClassifierScore:
 #: drift. If it drifted, the harness would feed the extractor a different window
 #: than both the product and the ground-truth derivation assume, and every role
 #: counter would be quietly wrong.
-from jobtracker.cloud.gmail_client import _MAX_BODY_CHARS  # noqa: E402
+#:
+#: THE CAP IS NO LONGER NAMED HERE AT ALL, which is the same argument carried
+#: one step further: ``normalise_body_text`` applies it, so the harness borrows
+#: the window and the whitespace rule together and cannot hold a right answer
+#: about one and a stale answer about the other.
+from jobtracker.cloud.gmail_client import normalise_body_text  # noqa: E402
 
 
 def _readable(case: Case) -> str:
-    """The message body as the server would hold it."""
+    """The message body as the server would hold it. Production's own function."""
 
-    return " ".join(case.body.split())[:_MAX_BODY_CHARS]
+    return normalise_body_text(case.body)
 
 
 def _item(v: Verdict) -> pipeline.PipelineItem:
