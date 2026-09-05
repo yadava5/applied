@@ -1133,37 +1133,76 @@ ROUTE_MODULE_ROOTS = ("backend/jobtracker/main_cloud.py", "backend/jobtracker/cl
 ROUTE_AUTH_GATE = "backend/tests/test_cloud_routes_carry_auth.py"
 
 
-def _route_decorator_count(rel: str) -> int:
-    """Route decorators in one module, in ROUTE OBJECTS.
+def _router_prefix(tree: ast.Module) -> str:
+    """The `prefix=` on this module's ``APIRouter(...)``, or "".
 
-    THE UNIT IS THE WHOLE POINT (#838). The same app answers three different
-    numbers depending on what you count, and all three are defensible:
+    `applications.py` mounts its router with `prefix="/applications"`, so a
+    decorator's own argument is only half the path. Reading it wrong would
+    make every path in that module miss the `PUBLIC` allowlist and be counted
+    as authed -- silently, and in the safe-looking direction.
+    """
+
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "APIRouter"
+        ):
+            for keyword in node.keywords:
+                if keyword.arg == "prefix" and isinstance(keyword.value, ast.Constant):
+                    return str(keyword.value.value)
+    return ""
+
+
+def _route_paths(rel: str) -> list[str]:
+    """Every route object this module defines, as its full path.
+
+    ONE ENTRY PER DECORATOR, which is the route-OBJECT unit (#838). The same
+    app answers three different numbers depending on what is counted, and all
+    three are defensible:
 
         route objects         29     <- what the docs say
         (method, path) pairs  30
         distinct paths        26
 
-    ``/cron/sync`` is the only object carrying two verbs, which is where the
-    30 comes from -- and it is also why ``PUBLIC`` in the auth gate has SEVEN
-    entries while six routes are public. A reader who checks "6 do not"
-    against that allowlist finds 7 and concludes the docs are wrong. They are
-    not, and this counts the unit that makes both true.
+    `/cron/sync` is the only object carrying two verbs -- one
+    ``@router.api_route(..., methods=["GET", "POST"])`` -- which is where the
+    30 comes from, and why ``PUBLIC`` holds SEVEN entries describing SIX
+    public endpoints.
+
+    PATHS, NOT JUST A COUNT, and that is a correction to how this started.
+    Deriving the authed count as ``objects - len(PUBLIC paths)`` mixes two
+    units: split `/cron/sync` into `@router.get` + `@router.post` -- legal and
+    behaviour-preserving -- and objects go to 30 while the distinct-path count
+    stays 6, so the subtraction publishes 24 authed where the app has 23.
+    Every gate green, the sentence false. Counting the objects whose own path
+    is on the allowlist cannot drift that way.
     """
 
-    found = 0
-    for node in ast.walk(_module(rel)):
+    tree = _module(rel)
+    prefix = _router_prefix(tree)
+    paths: list[str] = []
+    for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         for decorator in node.decorator_list:
-            call = decorator.func if isinstance(decorator, ast.Call) else decorator
-            if (
-                isinstance(call, ast.Attribute)
-                and call.attr in ROUTE_VERBS
-                and isinstance(call.value, ast.Name)
-                and call.value.id in {"router", "app"}
+            if not isinstance(decorator, ast.Call):
+                continue
+            func = decorator.func
+            if not (
+                isinstance(func, ast.Attribute)
+                and func.attr in ROUTE_VERBS
+                and isinstance(func.value, ast.Name)
+                and func.value.id in {"router", "app"}
             ):
-                found += 1
-    return found
+                continue
+            if not decorator.args or not isinstance(decorator.args[0], ast.Constant):
+                fail(f"  ✗ {rel}: a route decorator's path is not a literal")
+            own = str(decorator.args[0].value)
+            # `app.get` in main_cloud takes no router prefix; `router.get`
+            # inside a prefixed router does.
+            paths.append((prefix if func.value.id == "router" else "") + own)
+    return paths
 
 
 def route_modules() -> list[str]:
@@ -1181,29 +1220,65 @@ def route_modules() -> list[str]:
         for name in tracked_in_dir(ROUTE_MODULE_ROOTS[1])
         if name.endswith(".py")
     ]
-    return [rel for rel in candidates if _route_decorator_count(rel) > 0]
+    return [rel for rel in candidates if _route_paths(rel)]
+
+
+def all_route_paths() -> list[str]:
+    """Every route object in the app, as its full path. One entry per object."""
+
+    return [path for rel in route_modules() for path in _route_paths(rel)]
 
 
 def backend_routes() -> int:
-    return sum(_route_decorator_count(rel) for rel in route_modules())
+    return len(all_route_paths())
 
 
-def public_routes() -> int:
-    """Distinct PATHS on the auth gate's ``PUBLIC`` allowlist.
+def public_allowlist_paths() -> set[str]:
+    """The distinct PATHS on the auth gate's ``PUBLIC`` allowlist.
 
     Paths, not entries: the dict is keyed on ``(method, path)`` and
     ``/cron/sync`` appears as both GET and POST, so seven entries describe six
-    route objects. This is the conversion between the two units, written once.
+    endpoints. This is the conversion between the two units, written once.
     """
 
     node = _assigned(ROUTE_AUTH_GATE, "PUBLIC")
     if not isinstance(node, ast.Dict):
         fail(f"  ✗ {ROUTE_AUTH_GATE}: PUBLIC is not a dict literal")
-    paths = set()
-    for key in node.keys:
-        pair = ast.literal_eval(key)
-        paths.add(pair[1])
-    return len(paths)
+    return {ast.literal_eval(key)[1] for key in node.keys}
+
+
+def public_routes() -> int:
+    """Route OBJECTS whose path is on the allowlist -- the total's own unit."""
+
+    allowlisted = public_allowlist_paths()
+    return sum(1 for path in all_route_paths() if path in allowlisted)
+
+
+def authed_routes() -> int:
+    """Route OBJECTS whose path is NOT on the allowlist. Counted, not subtracted.
+
+    A SUBTRACTION HERE WOULD BE ALGEBRA, NOT A MEASUREMENT. `authed + public
+    == routes` is then `(x - y) + y == x`, which no state of the tree can
+    falsify -- a check that cannot fail, shipped inside a change whose whole
+    subject is numbers nothing checks. Both sides are counted from the same
+    census now, so the published split is two measurements rather than one
+    measurement and its complement.
+    """
+
+    allowlisted = public_allowlist_paths()
+    return sum(1 for path in all_route_paths() if path not in allowlisted)
+
+
+def allowlist_paths_with_no_route() -> list[str]:
+    """Allowlisted paths the census cannot find: a stale entry, or a rename.
+
+    THIS is the invariant that can fail, and it is the static twin of
+    ``test_every_public_route_on_the_allowlist_still_exists``. It puts a
+    version of that guarantee inside the REQUIRED check for the first time.
+    """
+
+    census = set(all_route_paths())
+    return sorted(path for path in public_allowlist_paths() if path not in census)
 
 
 def routers_registered() -> int:
@@ -2322,16 +2397,18 @@ FACTS: dict[str, dict] = {
     "backendAuthedRoutes": {
         "kind": "static",
         "describe": "route objects NOT on the auth gate's PUBLIC allowlist",
-        "compute": lambda: backend_routes() - public_routes(),
+        "compute": authed_routes,
         "sites": [
             {"re": r"\*\*(\d+) require a Supabase", "file": ARCHITECTURE},
             {"re": r"required on (\d+) of the \d+ routes", "file": API_SPEC},
         ],
     },
     "backendPublicRoutes": {
-        # SIX, from an allowlist holding SEVEN entries. See `public_routes`.
+        # SIX route OBJECTS, from an allowlist holding SEVEN entries. Counted
+        # in the total's own unit -- see `authed_routes` for why a subtraction
+        # here would have been algebra rather than a measurement.
         "kind": "static",
-        "describe": "distinct paths on PUBLIC in the cloud-route auth gate",
+        "describe": "route objects whose path is on the PUBLIC allowlist",
         "compute": public_routes,
         "sites": [
             {"re": r"and \*\*(\d+) do not\*\*", "file": ARCHITECTURE},
@@ -2376,7 +2453,7 @@ FACTS: dict[str, dict] = {
         # this repo's recorded count-noun defect.
         "kind": "static",
         "describe": "route decorators in main_cloud itself",
-        "compute": lambda: _route_decorator_count(ROUTE_MODULE_ROOTS[0]),
+        "compute": lambda: len(_route_paths(ROUTE_MODULE_ROOTS[0])),
         "sites": [
             {"re": r"`main_cloud` owns (\w+) itself", "file": ARCHITECTURE, "word": True},
             {"re": r"`main_cloud` owns (\w+) routes itself", "file": API_SPEC, "word": True},
@@ -2448,23 +2525,18 @@ INVARIANTS = [
         # two numbers, so `--write` refreshed the digit twice and left the
         # word "all" alone each time. Collected is the SUM of its parts; a
         # sentence may quote any of them and this is what keeps them a set.
-        "name": "the authed/public split accounts for every route",
-        "holds": lambda f: f["backendAuthedRoutes"] + f["backendPublicRoutes"] == f["backendRoutes"],
+        # WHAT THIS REPLACES, AND WHY IT WAS DELETED. The first version of
+        # this block asserted `authed + public == routes` while `authed` was
+        # computed as `routes - public`. That is `(x - y) + y == x`: no state
+        # of the tree can falsify it, and none of the seven controls redded
+        # it. A check that cannot fail, shipped inside a change about numbers
+        # nothing checks. Both counts are measured from the census now, and
+        # the invariant asks a question the census can actually get wrong.
+        "name": "every allowlisted public path is a route the census can find",
+        "holds": lambda f: not allowlist_paths_with_no_route(),
         "explain": lambda f: (
-            f"{f['backendAuthedRoutes']} authed + {f['backendPublicRoutes']} public = "
-            f"{f['backendAuthedRoutes'] + f['backendPublicRoutes']}, not {f['backendRoutes']}."
-        ),
-    },
-    {
-        # A ROUTE MUST LIVE IN A MODULE THAT DEFINES ROUTES. Trivial-looking,
-        # and it is the guard on `route_modules()` being a DISCOVERY rather
-        # than a list: if the discovery ever stops finding a module, the route
-        # total falls and this catches the drop against the mounted routers.
-        "name": "every mounted router's module is found by the route census",
-        "holds": lambda f: f["routeDefiningModules"] >= f["routersRegistered"],
-        "explain": lambda f: (
-            f"{f['routersRegistered']} routers are mounted but only "
-            f"{f['routeDefiningModules']} modules were found to define routes."
+            "on PUBLIC but not among the census's route paths: "
+            + ", ".join(allowlist_paths_with_no_route())
         ),
     },
     {

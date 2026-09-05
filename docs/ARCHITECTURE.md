@@ -44,18 +44,25 @@ stale entry. Of the 29 routes, **23 require a Supabase
 JWT** and **6 do not**.
 
 A route here is **one entry in the walked route table**, which is the unit
-`API_SPEC.md` counts in too: the two-method `/cron/sync` is one route object
-and counts once. Counting `(method, path)` pairs or distinct paths instead
-gives different totals, so a figure quoted here cannot be checked by counting
-either of those. The visible consequence is that the `PUBLIC` allowlist in
-`backend/tests/test_cloud_routes_carry_auth.py` holds **7 entries** for those
-six public routes: it is keyed on `(method, path)` and `/cron/sync` appears
-under both verbs. Six objects, seven keys, one endpoint — and a reader who
-checks "6 do not" against the allowlist and finds 7 has counted the other
-noun, not found an error.
+`API_SPEC.md` counts in too: `/cron/sync` declares both its verbs on one
+handler, so it is one route object and counts once. Counting `(method, path)`
+pairs or distinct paths instead gives different totals, so a figure quoted
+here cannot be checked by counting either of those.
 
-Every number in this paragraph is a registered fact (`scripts/readme_facts.py`),
-so the arithmetic reds when a route is added rather than going quietly stale:
+The visible consequence is that the `PUBLIC` allowlist in
+`backend/tests/test_cloud_routes_carry_auth.py` holds **7 entries** while the
+count above says six, because it is keyed on `(method, path)` and
+`/cron/sync` appears under both verbs. A reader who checks the public count
+against the allowlist and finds one more has counted the other noun, not
+found an error.
+
+The bold figures above and the **7** here are registered facts
+(`scripts/readme_facts.py`), each computed by an AST census of the route
+decorators, so they red when a route is added rather than going quietly
+stale. The census agrees with the live route table on this tree and counts in
+the same unit; it is a syntactic proxy for that walk rather than the walk
+itself, and `backend/tests/test_cloud_routes_carry_auth.py` is what ties the
+two together:
 
 | Public route | What stands in for the JWT |
 | --- | --- |

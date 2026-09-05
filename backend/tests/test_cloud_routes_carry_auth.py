@@ -51,6 +51,7 @@ MUTATION-TESTED AT INTRODUCTION (2026-08-21), each break run and reverted:
 from __future__ import annotations
 
 import importlib
+import sys
 from typing import Any, Iterator
 
 import pytest
@@ -259,4 +260,88 @@ def test_every_route_that_is_not_deliberately_public_requires_a_user(cloud_app):
         "file with a written reason. If one of these is meant to be public, add "
         "it there and say why; if it is not, it is serving user data to anonymous "
         "callers right now."
+    )
+
+
+# --- the census that the docs publish, tied to the app that is served --------
+
+
+def _census():
+    """`scripts/readme_facts.py`'s route census, loaded by path.
+
+    It is a script, not a package module -- the same `spec_from_file_location`
+    loader `test_readme_facts_writer.py` uses, and for the same reason.
+    """
+
+    import importlib.util
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[2] / "scripts" / "readme_facts.py"
+    spec = importlib.util.spec_from_file_location("readme_facts_for_routes", script)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_published_route_census_agrees_with_the_app_that_is_served(cloud_app):
+    """The docs' route arithmetic is an AST count. This is what ties it to reality.
+
+    WHY THIS EXISTS (#838). `scripts/readme_facts.py` counts route decorators
+    by parsing source, because the required "README numbers agree with the
+    code" workflow is stdlib-only and cannot import the app. That census is a
+    SYNTACTIC PROXY for the walk below, and it is blind in one direction that
+    no site mutation can expose: it reds when it LOSES sight of routes it
+    already counted (the docs say 29, the census says 28), and it can never
+    red when the app GAINS routes the census cannot see, because then there is
+    nothing for the sites to disagree with.
+
+    Four constructions are in that blind spot, none of them present today and
+    all of them legal:
+
+      * ``app.add_api_route(...)`` -- a call, not a decorator;
+      * a second or differently-named router in a scanned module;
+      * a route registered inside an ``if``, which the census OVER-counts;
+      * a routed module outside the two scanned roots.
+
+    ``MIN_ROUTES`` is a floor and never fires on growth, so an AUTHENTICATED
+    route added any of those ways moves the app and moves nothing else. This
+    test is the reconciliation, and it is why the floor can stay a floor:
+    census and walk move together on an addition, and only DIVERGENCE reds.
+
+    It also closes a unit trap. The published authed count used to be
+    ``objects - len(PUBLIC paths)``, mixing route objects with distinct paths.
+    Splitting ``/cron/sync``'s two verbs onto two decorators -- legal and
+    behaviour-preserving -- would have made that subtraction publish 24 authed
+    against an app serving 23, with every gate green.
+    """
+
+    census = _census()
+    served = _endpoints(cloud_app)
+
+    assert len(served) == census.backend_routes(), (
+        f"the app serves {len(served)} route objects and the census counts "
+        f"{census.backend_routes()}. The docs publish the census, so they now "
+        "describe an app that is not this one."
+    )
+
+    allowlisted = census.public_allowlist_paths()
+    served_public = [r for r in served if r.path in allowlisted]
+    served_authed = [r for r in served if r.path not in allowlisted]
+
+    assert len(served_public) == census.public_routes(), (
+        f"served public objects {len(served_public)} vs census "
+        f"{census.public_routes()}"
+    )
+    assert len(served_authed) == census.authed_routes(), (
+        f"served authed objects {len(served_authed)} vs census "
+        f"{census.authed_routes()}"
+    )
+
+    # The sets, not just the sizes: two errors that cancel would pass every
+    # count above and leave the docs describing a different set of routes.
+    assert sorted(r.path for r in served) == sorted(census.all_route_paths()), (
+        "the census and the app agree on how many routes there are and "
+        "disagree about which"
     )
