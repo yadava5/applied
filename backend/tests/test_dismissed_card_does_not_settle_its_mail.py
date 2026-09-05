@@ -11,12 +11,17 @@ linked to a card that was dismissed: dismissal takes the row off the board, off
 the funnel and out of every tile, so nothing about its mail is settled from the
 user's side.
 
-Issue #481 found the state on the owner's production account. Email 108
-(``donotreply@email.careers.microsoft.com``, "Thank you for your application!")
-sits at ``NEEDS_REVIEW`` linked to application 115, which a re-sync dismissed
-minutes before the same pass re-classified the message below the auto-file gate.
-The board showed zero Microsoft cards, the queue showed 7 items instead of 8,
-and there was no screen from which that message could be acted on.
+Issue #481 found the state on the owner's production account. One stored
+message from an employer's ATS careers relay sat at ``NEEDS_REVIEW`` linked to
+an application which a re-sync had dismissed minutes before the same pass
+re-classified that message below the auto-file gate. The board showed zero
+cards for that employer, the queue showed 7 items instead of 8, and there was
+no screen from which that message could be acted on.
+
+The employer, the relay address, the subject line and the two row ids were
+named here until #593. None of them is load-bearing: what the case turns on is
+the ORDERING — dismissed, then re-classified below the gate — and the 7-vs-8
+that ordering produced. Shapes are kept, identifiers are not.
 
 The predicate this asserts
 --------------------------
@@ -116,7 +121,10 @@ OWNER = "b1b1b1b1-b1b1-4b1b-8b1b-b1b1b1b1b1b1"
 RECEIVED_AT = datetime(2026, 8, 13, 14, 5, 0)
 
 LIVE_COMPANY = "Northwind Systems"
-DISMISSED_COMPANY = "Microsoft"
+# Invented, and dismissed by a RESYNC. This held a real employer's name until
+# #593 — the only one left in this module, and the sibling below already said
+# "Invented" about itself, which made the pair read as though both were.
+DISMISSED_COMPANY = "Ravenhurst Analytics"
 # Invented, and dismissed BY HAND. Separate from the resync card on purpose:
 # one employer holding both reasons would make every assertion below depend on
 # which row `_company_rows` happened to return first.
