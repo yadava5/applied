@@ -76,7 +76,7 @@ const ATS_BOOSTED = new Set(["applied", "rejection", "interview", "offer"]);
  *  `pending_application` is in it on the same reasoning the pipeline already
  *  uses: "please verify your email before we can review your application" is
  *  an outstanding STEP in an application that exists, so it reports. */
-const REPORTS_ON_AN_APPLICATION = new Set([
+export const REPORTS_ON_AN_APPLICATION = new Set([
   "rejection",
   "interview",
   "assessment",
