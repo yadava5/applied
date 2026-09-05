@@ -69,10 +69,13 @@ class CategoryPatterns:
 #     port, so it can never agree with a count that hides some of them.
 # Keep them in step by hand, and keep them in step with those three files.
 #
-# The mail that forced this is a real rejection from Anthropic, subject
-# "Anthropic Follow-Up for TPU Kernel Engineer | Ayush Yadav", body "…we have
-# decided not to move forward with your application". The word "Follow-Up" in
-# the subject scored follow_up +6 and the rejection sentence scored NOTHING, so
+# The mail that forced this is a real rejection whose subject followed the
+# common ATS template `<Company> Follow-Up for <Role> | <Candidate>`, with the
+# decision in the body: "…we have decided not to move forward with your
+# application". The employer, role and candidate are left out on purpose -- the
+# shape is the fact, and the particulars were one person's job search (#593).
+# The word "Follow-Up" in the subject scored follow_up +6 and the rejection
+# sentence scored NOTHING, so
 # it classified as follow_up at 0.90 — and ``follow_up`` reaches neither
 # ``pipeline._qualifies_for_hard_row`` nor ``pipeline.collect_review_items``, so
 # the message was never persisted at all.
