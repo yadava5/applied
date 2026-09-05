@@ -573,15 +573,35 @@ test("the answer the reader picks is the id the request carries", async () => {
   await view.choose(`select#reclass-${message.message_id}`, "rejection");
 
   const apply = view.queryAll("button").find((b) => b.textContent.trim() === "apply");
+  // STATED with `aria-disabled`, never with the DOM's `disabled` (#425): a
+  // focused element that becomes disabled is blurred by the browser to <body>
+  // and does not get the focus back, and this button is where the reader is
+  // standing when they submit. `aria-disabled` is ADVISORY — the click still
+  // arrives — so the refusal has to be real in the handler, which is what the
+  // click below measures rather than the attribute.
   assert.equal(
-    apply.disabled,
-    true,
+    apply.getAttribute("aria-disabled"),
+    "true",
     "an unanswered question must not be submittable — a click here files the " +
       "correction against a row nobody named",
   );
+  assert.equal(
+    apply.disabled,
+    false,
+    "the lock must not be the attribute that blurs the button (#425)",
+  );
+  await view.click(apply);
+  assert.equal(
+    sent.length,
+    0,
+    "the click on an unanswered question reached the handler and was NOT dropped — " +
+      "with an advisory lock, a gate that only writes an attribute is no gate",
+  );
 
   await view.click('input[type="radio"][value="52"]');
-  assert.equal(apply.disabled, false);
+  assert.equal(apply.getAttribute("aria-disabled"), "false");
+  // The same dispatch, un-refused, DOES send — so the zero above is the
+  // component's decision and not a dead click.
   await view.click(apply);
 
   assert.equal(sent.length, 1);
@@ -591,5 +611,81 @@ test("the answer the reader picks is the id the request carries", async () => {
     "the row the reader picked did not reach the wire — the picker is decoration",
   );
   assert.equal(sent[0].body.category, "rejection");
+  await view.unmount();
+});
+
+test("a second apply while the first is still in flight is dropped", async () => {
+  // #425's other half. The in-flight lock on this control is `aria-disabled`
+  // now, because the DOM's `disabled` blurs the focused button to <body> and
+  // never gives the focus back — measured on /demo/scan at t=8ms, with the node
+  // still in the document, and asserted over a whole trace in
+  // `tests/e2e/stage-focus.spec.ts`. But `aria-disabled` does not stop the
+  // event: the browser delivers the second click, so a lock written only as an
+  // attribute would be weaker than the one it replaced.
+  //
+  // This is where that is COUNTED. The e2e can press mid-write but cannot count
+  // applies — a second one sends the same body and lands on the same verdict,
+  // so the surface looks identical either way. Here the transport is held open
+  // and `sent.length` is the measurement.
+  const { ReclassifyControl } = await importApp("components/mail/ReclassifyControl.tsx");
+
+  const sent = [];
+  let release;
+  const inFlight = new Promise((resolve) => {
+    release = resolve;
+  });
+  const view = await mount(
+    React.createElement(ReclassifyControl, {
+      messageId: "m-inflight",
+      subject: "Update on your application",
+      company: "Northwind",
+      // Linked, and no candidates: this test is about the write, so the
+      // question must not be on the page to answer first.
+      candidates: [],
+      linkedApplicationId: 51,
+      classify: async (messageId, body) => {
+        sent.push({ messageId, body });
+        await inFlight;
+        return { ok: true, body: { application_id: 51 } };
+      },
+    }),
+  );
+  await view.click('button[aria-label^="Reclassify"]');
+  await view.choose("select#reclass-m-inflight", "rejection");
+
+  const apply = view.query("button#reclass-apply-m-inflight");
+  const select = view.query("select#reclass-m-inflight");
+  await view.click(apply);
+  assert.equal(sent.length, 1, "the first press has to send, or there is no write to be in flight");
+  assert.equal(apply.getAttribute("aria-busy"), "true", "the write is announced, not just drawn");
+  assert.equal(apply.getAttribute("aria-disabled"), "true");
+  assert.equal(
+    apply.disabled,
+    false,
+    "the in-flight lock must NOT be the DOM disabled property — that is defect #425",
+  );
+  assert.equal(select.getAttribute("aria-disabled"), "true");
+  assert.equal(select.disabled, false, "and the category select is locked the same way");
+
+  await view.click(apply);
+  assert.equal(
+    sent.length,
+    1,
+    "a second press while the write was in flight fired a second correction — " +
+      "`aria-disabled` does not stop the event, so the handler has to",
+  );
+
+  await view.choose(select, "offer");
+  assert.equal(
+    select.value,
+    "rejection",
+    "a category picked mid-write is ignored and the controlled value snaps back",
+  );
+
+  await React.act(async () => {
+    release();
+    await inFlight;
+  });
+  assert.match(view.html(), /your call is the verdict now/);
   await view.unmount();
 });
