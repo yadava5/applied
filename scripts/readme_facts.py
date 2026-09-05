@@ -771,6 +771,123 @@ def _package_modules(rel: str) -> set[str]:
     return {n for n in names if n != "__pycache__" and not n.endswith(".pyc")}
 
 
+WEB_COMPONENTS = "apps/web/components"
+
+#: The two documents that enumerate the component directories BY NAME. Both were
+#: written by hand from a tree read on 2026-08-21, both said 16, and the tree
+#: held 18 for weeks with nothing able to notice: the count was not a registered
+#: fact and the names were not checked by anything at all. #401.
+COMPONENT_ENUMERATIONS = (
+    ("docs/WEB_ARCHITECTURE.md", r"components/\s+#\s*(\d+) directories:\s*(.*)$"),
+    ("apps/web/README.md", r"components/\s+#\s*(\d+) directories:\s*(.*)$"),
+)
+
+def _min_plausible_names(actual: int) -> int:
+    """The floor under which a parse is a broken parse, not a shrunken tree.
+
+    DERIVED from the tree rather than fixed at 10. A constant does the job
+    today, and the day `apps/web/components` legitimately holds nine
+    directories it would call a CORRECT enumeration "a broken parse" — a gate
+    whose diagnosis becomes false as the tree changes. Half the real count,
+    never below three.
+    """
+
+    return max(3, actual // 2)
+
+
+def component_dirs() -> set[str]:
+    """Directory names DIRECTLY under `apps/web/components`, FROM THE INDEX.
+
+    A directory is a first segment that some tracked path continues past:
+    `applications/ApplicationRow.tsx` contributes `applications`, and a loose
+    `components/foo.tsx` contributes nothing, because a file is not a directory
+    however much `ls -1` counts it as an entry.
+
+    From `tracked()` rather than a filesystem walk for the #621 reason the block
+    above `_package_modules` gives: a file that is not in the index is not in
+    the repository, however present it is on this disk. `ls` here would also
+    count `.DS_Store` and any scratch directory as a component.
+
+    Raises rather than returning an empty set when the directory is missing, for
+    the same reason `_package_modules` does — `git ls-files` on a deleted path
+    returns nothing with a zero exit code, so the index alone cannot tell "moved"
+    from "empty".
+    """
+
+    root = REPO / WEB_COMPONENTS
+    if not root.is_dir():
+        raise SystemExit(
+            f"  ✗ {WEB_COMPONENTS}: not a directory. It moved or was deleted — "
+            f"update WEB_COMPONENTS in scripts/readme_facts.py."
+        )
+    prefix = WEB_COMPONENTS + "/"
+    names = set()
+    for path in tracked(WEB_COMPONENTS):
+        if not path.startswith(prefix):
+            continue
+        rest = path[len(prefix) :]
+        if "/" in rest:
+            names.add(rest.split("/", 1)[0])
+    return names
+
+
+def _enumerated_components(rel: str, head: str) -> list[str]:
+    """The names one document lists, read out of its fenced tree diagram.
+
+    The enumeration wraps across continuation lines that carry the box-drawing
+    gutter, and adding two names re-flows all of them, so the parser follows the
+    wrap instead of pinning line offsets that any edit would move.
+    """
+
+    text = (REPO / rel).read_text(encoding="utf-8")
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        m = re.search(head, line)
+        if not m:
+            continue
+        tail = [m.group(2)]
+        for cont in lines[i + 1 :]:
+            c = re.match(r"^[\u2502|]\s*#\s*(.*)$", cont)
+            if not c:
+                break
+            tail.append(c.group(1))
+        return [n.strip() for n in " ".join(tail).split(",") if n.strip()]
+    return []
+
+
+def component_enumeration_drift() -> list[str]:
+    """Every disagreement between the two enumerations and the index.
+
+    Empty when both documents name exactly the directories that exist. This is
+    an INVARIANT rather than a count because a count cannot see a rename: swap
+    `review` for `reviews` and 18 is still 18.
+    """
+
+    actual = component_dirs()
+    problems = []
+    for rel, head in COMPONENT_ENUMERATIONS:
+        listed = _enumerated_components(rel, head)
+        if not listed:
+            problems.append(
+                f"{rel}: found no component enumeration to check. The sentence "
+                f"was reworded — update COMPONENT_ENUMERATIONS."
+            )
+            continue
+        if len(listed) < _min_plausible_names(len(actual)):
+            problems.append(
+                f"{rel}: parsed only {len(listed)} names ({', '.join(listed)}). "
+                f"That is a broken parse, not a shrunken tree."
+            )
+            continue
+        missing = sorted(actual - set(listed))
+        extra = sorted(set(listed) - actual)
+        if missing:
+            problems.append(f"{rel}: does not list {', '.join(missing)}")
+        if extra:
+            problems.append(f"{rel}: lists {', '.join(extra)}, which is not a directory")
+    return problems
+
+
 def ts_gate_definitions() -> dict[str, float]:
     """Census every SCREAMING_CASE gate-named float constant in the TS trees.
 
@@ -1793,6 +1910,35 @@ FACTS: dict[str, dict] = {
             {"file": "apps/web/README.md", "re": r"(\d+) spec files live under"},
         ],
     },
+    "webComponentDirs": {
+        "kind": "static",
+        "describe": "directories under apps/web/components/",
+        "compute": lambda: len(component_dirs()),
+        # NEITHER SITE IS IN README.md, so neither is a bare string. A bare
+        # pattern is checked against README.md alone, which is how `e2eSpecs`
+        # came to have four green sites that were all the same file. #401 is
+        # this fact's own issue; registering it with the file named is the
+        # whole point.
+        #
+        # WEB_ARCHITECTURE.md used to read "16 directories, not 2:". The
+        # trailing "not 2" was a fossil of a correction to a document state no
+        # reader can see, and it put an UNOWNED number inside a claim site --
+        # #608's gate flagged it the moment this fact registered the sentence.
+        # It is gone rather than excused: an excused number is still one nobody
+        # checks.
+        #
+        # ANCHORED TO `components/`, like the parser above. Unanchored, any
+        # future tree comment of the same shape -- `# 12 directories:` for
+        # `lib/`, say -- matches first and the fact reports 12 against a
+        # components count of 18. That is a red, so nothing ships broken, but
+        # it is a MISATTRIBUTED red that names the wrong line and invites
+        # someone to "fix" a sentence that was correct. Measured: inserting a
+        # decoy row above this one produced exactly that before the anchor.
+        "sites": [
+            {"file": "docs/WEB_ARCHITECTURE.md", "re": r"components/\s+# (\d+) directories:"},
+            {"file": "apps/web/README.md", "re": r"components/\s+# (\d+) directories:"},
+        ],
+    },
     "workflows": {
         "kind": "static",
         "describe": "workflow files in .github/workflows/",
@@ -2036,6 +2182,15 @@ FACTS: dict[str, dict] = {
 # copies of rules.py and two JavaScript ports of the same pattern table.
 
 INVARIANTS = [
+    {
+        # A COUNT CANNOT SEE A RENAME. Rename `review` to `reviews` and the
+        # count stays 18 while both documents name a directory that is gone and
+        # miss one that exists. The registered count and this invariant are two
+        # different questions, and #401 is what happens when only one is asked.
+        "name": "both component enumerations name exactly the directories that exist",
+        "holds": lambda f: not component_enumeration_drift(),
+        "explain": lambda f: "\n      ".join(component_enumeration_drift()),
+    },
     {
         "name": "the strong/weak/negative split accounts for every scored pattern",
         "holds": lambda f: f["rulesStrong"] + f["rulesWeak"] + f["rulesNegative"] == f["rulesPatterns"],

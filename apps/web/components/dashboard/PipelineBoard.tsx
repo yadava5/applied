@@ -3,7 +3,15 @@
 import { Search } from "lucide-react";
 import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FocusEvent,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
 
 import { ApplicationRow, NO_ROLE_LABEL } from "@/components/dashboard/ApplicationRow";
@@ -378,6 +386,20 @@ type BoardScope =
     }
   | { total?: undefined; stageTotals?: undefined };
 
+/**
+ * The application id behind a ROW's stage select, or null for anything else.
+ *
+ * Deliberately anchored: the detail pane's own select is `detail-status-<id>`
+ * and must not match. The pane outlives a regroup, so it needs none of the
+ * restore below — matching it here would remember a row whose control never
+ * went anywhere.
+ */
+function rowSelectId(node: EventTarget | null): number | null {
+  if (!(node instanceof HTMLElement)) return null;
+  const match = /^status-(\d+)$/.exec(node.id);
+  return match === null ? null : Number(match[1]);
+}
+
 export function PipelineBoard({
   applications,
   total,
@@ -727,6 +749,78 @@ export function PipelineBoard({
     .filter(({ column, items }) =>
       stageFilter === "all" ? items.length > 0 : column.key === stageFilter,
     );
+
+  /**
+   * WHERE THE READER GOES WHEN A CORRECTION TAKES THEIR ROW AWAY (#425).
+   *
+   * The other half of that issue, and a different defect from the `disabled`
+   * blur #777 repaired on the row itself. A stage-CHANGING correction moves
+   * the row to another group, which unmounts the `<li>` and everything under
+   * it — measured on /demo at 1024x768 with the sampler in
+   * `tests/e2e/stage-focus.spec.ts`: the select detaches at 362-467ms across
+   * runs, focus is on `<body>` from there to the end of the trace (t=2505),
+   * and the write landed — so this is the SUCCESSFUL path losing the reader. Nothing inside the row survives to hold a place, so the repair
+   * cannot live there; this component is the nearest thing that outlives the
+   * move, and `#status-<id>` is a stable anchor that exists again in the NEW
+   * section the instant the board regroups.
+   *
+   * THREE CONDITIONS, and each one is a way for this to be wrong if dropped:
+   *
+   *  - the reader was standing on THAT row's select (`focusedRowId`, fed by
+   *    `focusin` on the pane). Without it a mouse drag-drop — which regroups a
+   *    row nobody focused — would pull focus onto a control the reader never
+   *    touched and paint a ring there.
+   *  - the row's stage changed in THIS commit. A filter, a re-date or a
+   *    sibling's move regroups nothing about this row and must not fire.
+   *  - focus is on `<body>`. The same conditional contract `ApplicationDetail`
+   *    uses for its pane restore: this claims only focus that has been
+   *    DROPPED, never focus the reader has since put somewhere else.
+   *
+   * A LAYOUT effect, not a passive one: it runs after the commit's DOM
+   * mutations and before paint, so there is no frame in which the ring is
+   * missing and nothing to flicker. React 19 renders `useLayoutEffect` as a
+   * noop on the server (checked in react-dom 19.2.8's server build), so the
+   * SSR pass costs nothing and warns about nothing.
+   *
+   * NOTHING TESTS THAT CHOICE, said plainly so nobody assumes otherwise: the
+   * e2e sampler reads every 8ms and the restore lands inside one sample either
+   * way — swapping this for `useEffect` keeps `stage-focus.spec.ts` green 3/3
+   * (measured). It is a decision about paint, held by this comment.
+   *
+   * ONE CASE IT DELIBERATELY DOES NOT REPAIR: a row that lands inside a
+   * COLLAPSED employer set has no `#status-<id>` to return to. The lookup
+   * fails, nothing is focused, and the reader is where today's code leaves
+   * them — no regression, and no pretending.
+   */
+  const focusedRowId = useRef<number | null>(null);
+  const stageById = useRef<Map<number, StageKey> | null>(null);
+  const noteRowFocus = (event: FocusEvent<HTMLDivElement>) => {
+    const id = rowSelectId(event.target);
+    if (id !== null) focusedRowId.current = id;
+  };
+  useLayoutEffect(() => {
+    const next = new Map<number, StageKey>();
+    for (const app of applications) next.set(app.id, stageOf(shownStatus(app)));
+    const previous = stageById.current;
+    stageById.current = next;
+    // The first commit is a baseline, not a move: every row is "new" to the
+    // map and nothing has changed group yet.
+    if (previous === null) return;
+    const id = focusedRowId.current;
+    if (id === null) return;
+    const before = previous.get(id);
+    const after = next.get(id);
+    if (before === undefined || after === undefined || before === after) return;
+    if (document.activeElement !== document.body) return;
+    const control = document.getElementById(`status-${id}`);
+    if (control === null) return;
+    // Consumed, so one correction restores focus once. Not cleared on
+    // `focusout`: the unmount ITSELF blurs the select, and clearing there
+    // would erase the one thing this needs to know at exactly the moment it
+    // needs to know it.
+    focusedRowId.current = null;
+    control.focus({ preventScroll: true });
+  });
 
   const locked = variant === "locked";
 
@@ -1228,6 +1322,12 @@ export function PipelineBoard({
                 depends on the row-mates, and the pane is the row-mate. */}
             <div
               data-testid="worklist-pane"
+              // React's `onFocus` IS `focusin` (React 17+), so it hears the
+              // rows' selects from up here — one listener for the whole list
+              // instead of a prop threaded through `ApplicationRow`, whose
+              // `onChange` referential stability is the memo contract
+              // `StageSelect` depends on.
+              onFocus={noteRowFocus}
               className={cn(
                 "space-y-4 @container",
                 locked && "relative lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1",

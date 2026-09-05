@@ -241,7 +241,8 @@ prominent, user-facing feature the data serves; there is no other use.
   than deleted, so a reviewer reading the tree finds it described rather than
   hidden. No hosted path reaches it: no route defines `POST /classify/retrain`
   — the four routers the production app registers are applications, Gmail,
-  account and cron (`backend/jobtracker/main_cloud.py:667-684`) — and the
+  account and cron (the `include_router` calls in
+  `backend/jobtracker/main_cloud.py`) — and the
   retraining entry points are refused by default in any case. Training requires
   the corpus to be either wholly synthetic or owned by a user on an explicit
   allowlist that is **empty by default and set by nothing in the hosted
@@ -434,7 +435,7 @@ prominent, user-facing feature the data serves; there is no other use.
 | Training is default-deny: allowlist empty, nothing in the deployment sets it | `backend/jobtracker/classifier/setfit_model.py:38-75` |
 | A training corpus spanning two users raises rather than trains | `backend/tests/test_training_is_single_user.py` |
 | One user's corpus still refuses unless that user is allowlisted | `backend/tests/test_training_is_owner_only.py` |
-| No `POST /classify/retrain` route exists — the four routers the app registers | `backend/jobtracker/main_cloud.py:667-684` |
+| No `POST /classify/retrain` route exists — the four routers the app registers | the `include_router` calls in `backend/jobtracker/main_cloud.py` |
 | Account deletion revokes at Google, then purges | `backend/jobtracker/cloud/account.py` |
 | Encryption, key management | [`../casa/CRYPTOGRAPHY.md`](../casa/CRYPTOGRAPHY.md) |
 | Architecture, data flow, tenant isolation | [`../casa/ARCHITECTURE-AND-TENANT-ISOLATION.md`](../casa/ARCHITECTURE-AND-TENANT-ISOLATION.md) |

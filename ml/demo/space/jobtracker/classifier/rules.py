@@ -731,6 +731,11 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
     EmailCategory.ASSESSMENT: CategoryPatterns(
         strong=[
             r"(technical|coding|take.?home).{0,20}(assessment|challenge|test|exercise)",
+            # The narrower twin of the line above (#758): that pattern with
+            # `complete.{0,30}` in front, so it can only fire where its partner
+            # already did. What it adds is the imperative — an employer tells you
+            # to complete the exercise, a candidate says they submitted one.
+            r"\bcomplete\b.{0,30}take.?home.{0,20}(assessment|challenge|test|exercise)",
             r"complete.{0,30}(assessment|challenge|test)",
             r"hackerrank",
             r"codility",
@@ -740,7 +745,10 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             # on ApplicationStatus.INTERVIEWING, so the vendor name is safe to
             # treat the way hackerrank/codility already are.
             r"hirevue",
-            r"take.?home (assignment|project|exercise|task|round)",
+            # `exercise` removed (#758): `take.?home exercise` is a strict subset
+            # of the first pattern in this list, so carrying it here scored one
+            # phrase twice and bought no reach.
+            r"take.?home (assignment|project|task|round)",
             r"coding (exercise|test|challenge)",
             r"online (assessment|test)",
             r"skills (assessment|test)",
@@ -760,7 +768,11 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"assessments?\s+(is|are)\s+(ready|available|waiting|live|open)\b",
             # The bare noun, hyphenated only: "take home" unhyphenated is a
             # verb phrase ("take home a free gift") and far too common.
-            r"\btake-home\b(?!\s+(pay|message|gift|dose|salary))",
+            # The eight nouns after `salary` are the ones the two qualified
+            # take-home patterns above already claim (#758), so this pattern is
+            # what its heading says — the noun ON ITS OWN — rather than a second
+            # reading of a phrase this category has already scored.
+            r"\btake-home\b(?!\s+(pay|message|gift|dose|salary|assignment|project|task|round|assessment|challenge|test|exercise))",
         ],
         weak=[
             r"next step.{0,30}(assessment|test)",

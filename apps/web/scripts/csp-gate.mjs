@@ -53,6 +53,83 @@ const REDIRECTS = ["/dashboard", "/inbox", "/settings", "/callback"];
  */
 const CLASSIC = ["/system-card"];
 
+/**
+ * THE WHOLE POLICY this route is supposed to serve, written out here.
+ *
+ * Until #802 this gate asserted `script-src` and nothing else, so eight of the
+ * nine directives were checked by no test in the repository. The two that
+ * matter most were among them: `frame-ancestors 'none'` is the clickjacking
+ * control, and `form-action 'self'` is what stops a form on this page posting
+ * off-origin. Either could have been deleted and everything stayed green.
+ *
+ * NOT IMPORTED FROM `next.config.ts`, deliberately. An expectation read from
+ * the file it is checking compares the config to itself: it catches drift
+ * between the config and the wire, and is green on every edit to the config —
+ * including the edit that removes a directive. That is not hypothetical here;
+ * `tests/e2e/security-headers.spec.ts:29-35` records the same shape measured
+ * green through 5 of 5 mutations. So this literal is a SECOND copy on purpose,
+ * and the duplication is the mechanism: when the two disagree, someone has to
+ * decide which is right, which is exactly the review a security header change
+ * deserves.
+ */
+const CLASSIC_POLICY = new Map([
+  ["default-src", "'self'"],
+  ["script-src", "'self'"],
+  ["style-src", "'self' 'unsafe-inline'"],
+  ["img-src", "'self' data:"],
+  ["font-src", "'self'"],
+  ["connect-src", "'self'"],
+  ["frame-ancestors", "'none'"],
+  ["base-uri", "'self'"],
+  ["form-action", "'self'"],
+]);
+
+/**
+ * A served CSP as `name -> value`, with runs of whitespace collapsed so that
+ * re-wrapping the header cannot read as a policy change.
+ *
+ * Directive names are case-insensitive per CSP3; values are not, and are
+ * compared verbatim. A repeated directive keeps the FIRST occurrence, which is
+ * what a browser enforces — taking the last would let an appended duplicate
+ * read as a relaxation the browser never applies.
+ */
+function directivesOf(csp) {
+  const out = new Map();
+  for (const part of csp.split(";")) {
+    const trimmed = part.trim();
+    if (trimmed === "") continue;
+    const [name, ...value] = trimmed.split(/\s+/);
+    const key = name.toLowerCase();
+    if (!out.has(key)) out.set(key, value.join(" "));
+  }
+  return out;
+}
+
+/** Every way a served policy differs from the expected one. */
+function policyProblems(csp) {
+  const served = directivesOf(csp);
+  const problems = [];
+  for (const [name, expected] of CLASSIC_POLICY) {
+    if (!served.has(name)) {
+      problems.push(`missing \`${name}\` (expected \`${name} ${expected}\`)`);
+    } else if (served.get(name) !== expected) {
+      problems.push(
+        `\`${name}\` is \`${served.get(name)}\`, expected \`${expected}\``,
+      );
+    }
+  }
+  // An EXTRA directive is a finding too. A policy is not only weakened by
+  // removal: adding `report-uri` sends violation reports off-origin, and a
+  // directive nobody expected is one nobody reviewed.
+  for (const name of served.keys()) {
+    if (!CLASSIC_POLICY.has(name)) {
+      problems.push(`unexpected directive \`${name} ${served.get(name)}\``);
+    }
+  }
+  return problems;
+}
+
+
 let failures = 0;
 const fail = (route, msg) => {
   failures += 1;
@@ -143,12 +220,13 @@ async function checkClassic(route) {
   const csp = checkSingle(route, res);
   if (csp === null) return;
 
-  if (!/script-src\s+'self'\s*(;|$)/.test(csp)) {
-    fail(route, `expected exactly \`script-src 'self'\`, got: ${csp}`);
+  for (const problem of policyProblems(csp)) {
+    fail(route, problem);
   }
-  if (/script-src[^;]*'unsafe-inline'/.test(csp)) {
-    fail(route, "script-src grants 'unsafe-inline'");
-  }
+  // Kept alongside the whole-policy comparison rather than folded into it:
+  // `'strict-dynamic'` anywhere in the header would neutralise the `'self'`
+  // this route depends on, and saying so in those words is worth more to
+  // whoever reads the failure than a directive-level diff.
   if (/'strict-dynamic'/.test(csp)) {
     fail(route, "'strict-dynamic' would disable the 'self' this route relies on");
   }
@@ -162,7 +240,10 @@ async function checkClassic(route) {
         `it would be blocked. Either nonce this route or hash the script.`,
     );
   }
-  console.log(`  ${route} -> ${res.status}  classic 'self' policy, inline scripts=${inline.length}`);
+  console.log(
+    `  ${route} -> ${res.status}  ${CLASSIC_POLICY.size} directives checked, ` +
+      `inline scripts=${inline.length}`,
+  );
 }
 
 console.log(`CSP wire gate against ${base}\n`);

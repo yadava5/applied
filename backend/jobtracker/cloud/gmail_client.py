@@ -484,6 +484,52 @@ _SCRIPT_OR_STYLE = re.compile(
     r"<(script|style)\b[^>]*>.*?</\1(?:[\s/][^>]*)?>", re.DOTALL | re.IGNORECASE
 )
 _TAG = re.compile(r"<[^>]+>")
+
+# BLOCK-LEVEL MARKUP IS THE ONLY LINE STRUCTURE HTML MAIL HAS (#430).
+#
+# The first half of #430 kept the newlines a ``text/plain`` part already
+# carries. An HTML-only message carries none: its line structure is spelled
+# ``<br>`` and ``</div>``, and ``_TAG.sub(" ", …)`` turns every one of them
+# into a space. So the newline-preserving normalisation downstream had
+# nothing left to preserve and ``extract_body_text`` still handed the
+# classifier one line — for exactly the messages that have no plain part,
+# which is the case that motivated reading bodies at all.
+#
+# MEASURED one variable at a time, on a reply whose quoted acknowledgement
+# is carried by ``<div>``/``<br>``/``<blockquote>``, through the real
+# ``extract_body_text``:
+#
+#     neither half (``_WHITESPACE`` collapse)   newlines 0   NO MATCH
+#     horizontal-only collapse alone            newlines 0   NO MATCH
+#     this substitution alone                   newlines 0   NO MATCH
+#     both                                      newlines 4   boundary @120
+#
+# Neither half is sufficient and the reasons differ: alone, this pattern
+# inserts newlines that the ``\s+`` collapse erases two calls later; alone,
+# the horizontal-only collapse preserves a line structure that ``_TAG`` has
+# already replaced with spaces. ``tests/test_the_quote_survives_the_html_body.py``
+# pins all four rows, so reverting EITHER half on its own goes red.
+#
+# ORDER is load-bearing: after ``_SCRIPT_OR_STYLE`` so a stylesheet's
+# braces are already gone, and BEFORE ``_TAG``, which is the whole point.
+# ``<br[^>]*>`` and not ``<br\s*/?>`` because Gmail and Outlook both emit
+# ``<br clear="all">``. END tags only for the containers: an opening
+# ``<div>`` becomes the space ``_TAG`` gives it, so a line begins with one
+# — every ``_QUOTE_BOUNDARY`` alternative tolerates leading ``[ \t]``, and
+# stripping it as well would be a third variable nothing has measured.
+# ``</td>`` is deliberately NOT here: a newline per CELL is a different
+# claim from one per ROW, table-based mailers lay single sentences across
+# cells, and it was not part of what was measured. Recorded as uncovered
+# rather than guessed at.
+_BLOCK_LEVEL = re.compile(r"<br[^>]*>|</(?:p|div|li|tr|blockquote|h[1-6])\s*>", re.IGNORECASE)
+
+# THE SHAPE THAT CAUSED #430, kept for the tests that control against it.
+# It has no production caller any more: ``extract_body_text`` normalises
+# through ``normalise_body_text`` and ``_html_to_text`` collapses only
+# horizontal runs. It stays defined here so the tests that assert "this is
+# what the broken path did" can use production's own spelling of the
+# collapse instead of transcribing ``\s+`` into a test file, where it would
+# be free to drift away from the thing it is a control for.
 _WHITESPACE = re.compile(r"\s+")
 
 # LINE STRUCTURE IS SIGNAL HERE, NOT FORMATTING (#430).
@@ -511,10 +557,13 @@ _WHITESPACE = re.compile(r"\s+")
 # So collapse HORIZONTAL runs only, and normalise the vertical ones instead of
 # erasing them: trailing spaces go (a horizontal collapse would otherwise leave
 # one sitting before each newline), and 3+ consecutive newlines become the two
-# that mean "paragraph break". ``_WHITESPACE`` is deliberately left alone and
-# is still right at its own call site in ``_html_to_text``, which runs AFTER
-# ``_TAG.sub(" ", …)`` — by then the markup that carried the line structure has
-# been replaced by spaces and there is nothing left to preserve.
+# that mean "paragraph break". ``_html_to_text`` collapses horizontally too,
+# and it has to do one thing more first: by the time it calls ``_TAG`` the
+# markup that CARRIED the line structure is about to become spaces, so the
+# structure is written down as newlines before that happens. See
+# ``_BLOCK_LEVEL`` — "``_TAG`` already ate it, so there is nothing to
+# preserve" was true, and was the second half of this defect rather than a
+# reason not to fix it.
 #
 # ``tests/test_the_quote_survives_the_body_extractor.py`` pins this against the
 # string production delivers rather than against a hand-written fixture, which
@@ -549,10 +598,21 @@ def _html_to_text(html: str) -> str:
     contents survive as text and a CSS block reads to the classifier as prose.
     An element whose end tag carries whitespace used to survive anyway; see the
     note on ``_SCRIPT_OR_STYLE``.
+
+    Block-level markup becomes a newline BEFORE tags are stripped, and only
+    horizontal runs are collapsed afterwards. Both are required and neither
+    is sufficient: the classifier's quote detection is line-oriented, and an
+    HTML-only message spells its lines in markup. See ``_BLOCK_LEVEL`` for
+    the measurement.
+
+    Returns text whose LINE STRUCTURE is meaningful but whose blank-line runs
+    are not yet normalised — the sole caller, ``extract_body_text``, finishes
+    that through ``normalise_body_text``.
     """
 
     html = _SCRIPT_OR_STYLE.sub(" ", html)
-    return _WHITESPACE.sub(" ", _TAG.sub(" ", html)).strip()
+    html = _BLOCK_LEVEL.sub("\n", html)
+    return _HORIZONTAL_WHITESPACE.sub(" ", _TAG.sub(" ", html)).strip()
 
 
 def normalise_body_text(text: str) -> str:

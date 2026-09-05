@@ -676,9 +676,20 @@ app.include_router(gmail_cloud_router)
 # Router declares its own ``require_user()``. See jobtracker.cloud.account.
 app.include_router(account_cloud_router)
 
-# Scheduled sync (GET/POST /cron/sync) — issue #23 (C7). The ONE router here
-# with no ``require_user()``, deliberately: Vercel Cron carries no JWT. It is
-# gated instead on a shared secret compared in constant time, and every unit of
-# work inside runs under an explicit per-user RLS identity, so "no caller
-# identity" never becomes "no scoping". See jobtracker.cloud.cron.
+# Scheduled sync (GET/POST /cron/sync) — issue #23 (C7). No router-level
+# ``require_user()`` here, deliberately: Vercel Cron carries no JWT.
+#
+# This used to read "the ONE router here with no ``require_user()``", which was
+# false and was cited by three documents as the reason BOTH unguarded routers
+# are unguarded (#401). ``gmail_oauth`` also mounts without a router-level
+# dependency; the difference is one line down, not at the mount. What is true
+# of cron and of nothing else is that no handler inside it resolves a user
+# identity at all — ``gmail_oauth``'s handlers each take
+# ``Depends(current_user)`` except the deliberately public callback. The count
+# is gone rather than corrected: a corrected count is a fresh number in a
+# comment that nothing checks.
+#
+# Cron is gated instead on a shared secret compared in constant time, and
+# every unit of work inside runs under an explicit per-user RLS identity, so
+# "no caller identity" never becomes "no scoping". See jobtracker.cloud.cron.
 app.include_router(cron_cloud_router)

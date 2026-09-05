@@ -739,6 +739,57 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
     EmailCategory.ASSESSMENT: CategoryPatterns(
         strong=[
             r"(technical|coding|take.?home).{0,20}(assessment|challenge|test|exercise)",
+            # THE IMPERATIVE TWIN OF ONE BRANCH OF THE LINE ABOVE, derived in
+            # two containment-preserving steps: select the `take.?home` branch
+            # of its leading alternation, then prefix `\bcomplete\b.{0,30}`. So
+            # it can only fire where its partner already did.
+            #
+            # IT CARRIES ONLY `take.?home`, AND THE OMISSION IS THE POINT. The
+            # `technical` and `coding` branches already have an imperative
+            # sibling in `complete.{0,30}(assessment|challenge|test)` five lines
+            # down, so a twin carrying them scored one phrase a THIRD time —
+            # this issue's own mechanism, reintroduced by its own fix. Measured:
+            # 330 corpus messages went from assessment 10 to 13 with the wide
+            # form. Narrowing costs nothing measurable — 26 (expected,
+            # predicted, confidence) cells across 18,200 cases, none of which
+            # moved — and the one wording it gives up, an imperative
+            # "complete … technical exercise", has no corpus witness and lands
+            # in the review queue rather than auto-filing. That is the safe
+            # direction, and it is the honest cost of the narrowing.
+            #
+            # What it adds is not a second
+            # reading of the same phrase — it is the IMPERATIVE. An employer
+            # tells you to complete the exercise; a candidate writing about one
+            # says they submitted it. That verb is the only thing in this
+            # category that separates a report from a reference, and it is read
+            # off the mail rather than invented (#758).
+            #
+            # It carries the `update-in-thread` messages whose whole
+            # assessment evidence is "Please complete the take-home exercise…"
+            # over AUTO_FILE_GATE. Without it they score 3, fall to 0.70, and
+            # the corpus replay puts every one of them in SUPPRESSED-AS-SETTLED
+            # rather than the review queue: `addressed_on_a_card` 13987 -> 13687
+            # and `suppressed_as_settled` 0 -> 300, measured by REMOVING the
+            # twin from this branch. Those are not a main-to-branch delta —
+            # both trees read 13987 / 0 — and the family the replay counts at
+            # this pattern is 296, not 300; the two numbers describe different
+            # cuts and neither is the other's correction.
+            # ANCHORED, and the anchor is the whole difference between fixing
+            # this defect and re-importing it. Unanchored, `complete` matches
+            # inside "completed", so "I completed the take-home exercise — any
+            # update?" fires this AND its partner: two strong body hits, 6
+            # points, margin >= 3, confidence 0.90, and the cascade
+            # short-circuits on exactly the wording #758 was filed about. The
+            # candidate's report would have been read as the employer's
+            # imperative. Measured on this branch before the anchor went in:
+            # that sentence scored ASSESSMENT 0.90; with `\b` it scores 0.70
+            # and reaches the queue, while "Please complete the take-home
+            # exercise by Friday" holds at 0.90 and "Complete the coding
+            # challenge" at 0.95.
+            #
+            # "completing" and "completion" never contained the substring, so
+            # `\bcomplete\b` costs nothing and closes the only hole there was.
+            r"\bcomplete\b.{0,30}take.?home.{0,20}(assessment|challenge|test|exercise)",
             r"complete.{0,30}(assessment|challenge|test)",
             r"hackerrank",
             r"codility",
@@ -748,7 +799,13 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             # on ApplicationStatus.INTERVIEWING, so the vendor name is safe to
             # treat the way hackerrank/codility already are.
             r"hirevue",
-            r"take.?home (assignment|project|exercise|task|round)",
+            # `exercise` IS NOT IN THIS ALTERNATION, and its absence is the
+            # point. `take.?home exercise` is a strict subset of the first
+            # pattern in this list — one space fits inside its `.{0,20}` gap
+            # and `exercise` is in its tail alternation — so carrying it
+            # here scored one phrase twice and bought no reach. What this
+            # pattern is FOR is the nouns that pattern lacks.
+            r"take.?home (assignment|project|task|round)",
             r"coding (exercise|test|challenge)",
             r"online (assessment|test)",
             r"skills (assessment|test)",
@@ -768,7 +825,24 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"assessments?\s+(is|are)\s+(ready|available|waiting|live|open)\b",
             # The bare noun, hyphenated only: "take home" unhyphenated is a
             # verb phrase ("take home a free gift") and far too common.
-            r"\btake-home\b(?!\s+(pay|message|gift|dose|salary))",
+            #
+            # THE LOOKAHEAD NAMES TWO DIFFERENT THINGS AND ONLY ONE OF THEM
+            # IS ABOUT MEANING. `pay|message|gift|dose|salary` are senses of
+            # "take-home" that are not a candidate test at all. The eight
+            # after them are the nouns the two QUALIFIED take-home patterns
+            # above already claim, and they are here so this pattern is what
+            # its own heading says — the noun ON ITS OWN — rather than a
+            # second, broader reading of a phrase this category has already
+            # scored. Without them "take-home exercise" earned +9 from one
+            # 18-character phrase (#758): the score is meant to count
+            # evidence, and three readings of one phrase is one piece of it.
+            #
+            # KEEP THEM IN STEP with the two patterns above, by hand, for the
+            # reason this file records at the top: PATTERNS is read as
+            # literals by three static consumers. `tests/test_the_bare_noun_sits_under_its_siblings_758.py`
+            # derives the list from those patterns at runtime and fails when
+            # they drift, so the copy cannot rot silently.
+            r"\btake-home\b(?!\s+(pay|message|gift|dose|salary|assignment|project|task|round|assessment|challenge|test|exercise))",
         ],
         weak=[
             r"next step.{0,30}(assessment|test)",

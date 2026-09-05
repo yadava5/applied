@@ -2,7 +2,7 @@
 
 import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { MailText } from "@/components/mail/MailText";
 import { ApplicationPicker } from "@/components/review/ApplicationPicker";
@@ -162,6 +162,9 @@ export function ReclassifyControl({
    * pre-selected, and that is the defect #554 measured — see `ReviewAssignment`.
    */
   const [assignment, setAssignment] = useState<ReviewAssignment>(null);
+  /** The two nodes the focus effects below hand the reader's place to. */
+  const categoryRef = useRef<HTMLSelectElement | null>(null);
+  const doneRef = useRef<HTMLParagraphElement | null>(null);
 
   const showPicker = asksWhichApplication({ category, candidates, linkedApplicationId });
   const canSend = canSubmitReview(category, showPicker, assignment);
@@ -178,8 +181,12 @@ export function ReclassifyControl({
    * swaps the panel for "corrected" is a downstream event at t=170ms. So the
    * blur is caused by the attribute, not by the reparent — character for
    * character the defect #777 fixed on `ApplicationRow` / `ApplicationDetail`,
-   * whose `StageSelect` header carries that measurement. Restoring focus
-   * afterwards is NOT the repair: it races the unmount and flickers.
+   * whose `StageSelect` header carries that measurement. For THAT defect,
+   * restoring focus afterwards is not the repair: the node never leaves the
+   * page, so a restore would be racing a blur it cannot see coming. It says
+   * nothing about the case where this control removes the focused node
+   * ITSELF — there is no race to lose then, and a deliberate move is the only
+   * place focus can come from. See the two focus effects below.
    *
    * It also blurred a SECOND time, at the far end of the same correction: a
    * `needs_employer` answer clears `busy` and sets `employerPrompt`, and the
@@ -256,9 +263,60 @@ export function ReclassifyControl({
     }
   }
 
+  /**
+   * THE OTHER HALF OF #425: focus after an UNMOUNT, which is a different
+   * defect from the `disabled` blur above and takes the opposite repair.
+   *
+   * That one was an ATTRIBUTE on a node still in the document, so the fix was
+   * to stop setting it. These two are the case where the focused node is
+   * REMOVED — by this component, in the commit its own state change causes.
+   * Nothing is racing anything: React has replaced the tree by the time an
+   * effect runs and the browser has already parked focus on `<body>`.
+   *
+   * Measured on /demo/scan at 1024x768 with the 8ms sampler in
+   * `tests/e2e/stage-focus.spec.ts`, before this fix:
+   *
+   *   - pressing `reclassify`: the trigger detaches at t=8-9ms and
+   *     `document.activeElement` reads BODY for the whole 1200ms window.
+   *   - an apply that FILES: detached at t=171-183ms, BODY through t=2505, and
+   *     the correction landed — so the reader loses their place on the
+   *     SUCCESSFUL path.
+   *
+   * The two are guarded differently, on purpose. Opening the panel is a
+   * DISCLOSURE the reader asked for, so focus follows their gesture into it.
+   * "Corrected" is an OUTCOME the write brought back, so it only claims focus
+   * that has been DROPPED — `activeElement === document.body`, the same
+   * conditional contract `ApplicationDetail`'s pane restore uses (:484-490) —
+   * and never pulls a reader who has already moved to another row.
+   */
+  useEffect(() => {
+    if (!open) return;
+    // `preventScroll`, here and below: the panel is already where the reader
+    // clicked, and a reveal scroll on a long scan list would move the page
+    // under them for nothing.
+    categoryRef.current?.focus({ preventScroll: true });
+  }, [open]);
+
+  useEffect(() => {
+    if (!done) return;
+    if (document.activeElement !== document.body) return;
+    doneRef.current?.focus({ preventScroll: true });
+  }, [done]);
+
   if (done) {
     return (
-      <p role="status" className="text-xs text-live">
+      // `tabIndex={-1}` so the note that REPLACED the panel can hold the focus
+      // the panel took with it: programmatically focusable, never in the tab
+      // order. `role="status"` is unchanged — it is still the live region that
+      // announces the outcome; focusing it is what makes the announcement
+      // reach a reader whose place would otherwise be `<body>`.
+      <p
+        id={`reclass-done-${messageId}`}
+        ref={doneRef}
+        role="status"
+        tabIndex={-1}
+        className="text-xs text-live"
+      >
         corrected — your call is the verdict now
       </p>
     );
@@ -268,6 +326,11 @@ export function ReclassifyControl({
     return (
       <button
         type="button"
+        // Addressable for the same reason `apply` is: one of these per scan
+        // row, and the focus probe cannot say WHICH trigger the reader was
+        // standing on without an id. It is also the node that unmounts the
+        // instant it is pressed, which is the defect it is read for.
+        id={`reclass-open-${messageId}`}
         onClick={() => setOpen(true)}
         aria-label={`Reclassify “${safeText(subject)}”`}
         className="rounded border border-line px-2 py-1 text-xs font-medium text-muted transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong"
@@ -294,6 +357,7 @@ export function ReclassifyControl({
       </label>
       <select
         id={`reclass-${messageId}`}
+        ref={categoryRef}
         value={category}
         // Never the DOM's `disabled`, for the reason on `applyLocked` above
         // (#425). This control is one Shift+Tab from being the focused one
