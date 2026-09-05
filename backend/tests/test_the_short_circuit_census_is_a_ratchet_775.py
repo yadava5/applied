@@ -37,14 +37,26 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from jobtracker.classifier.hybrid import RULES_SHORT_CIRCUIT
 from jobtracker.classifier.rules import PATTERNS, EmailCategory, RulesClassifier
 
-#: ``hybrid.classify``'s earliest return. Not imported from ``hybrid`` on
-#: purpose: importing the threshold from the module under discussion would
-#: compare it to itself and stay green through an edit to it. If the two ever
-#: disagree, somebody has to decide which is right, which is the review a
-#: routing change deserves.
-RULES_SHORT_CIRCUIT = 0.90
+# IMPORTED, not typed again, and the reasoning is worth stating because the
+# opposite call is usually right in this repository.
+#
+# The usual rule is that an expectation read from the module under test compares
+# the config to itself. That rule does not apply here, because 0.90 is not the
+# expectation -- THE RECORDED SET IS. This file asks "which items does the rules
+# layer answer before the cascade continues", and if somebody retunes the
+# boundary the answer to that question genuinely changes; the ratchet below then
+# reds and names every item that crossed, which is exactly the notification a
+# threshold change should produce.
+#
+# Typing it a second time buys nothing and costs correctness in both directions:
+# at a retuned 0.65 a test asserting `< 0.90` certifies reachability that no
+# longer exists, and at 0.95 a test asserting `>= 0.90` certifies rules
+# ownership that has ended. The boundary is live tuning surface -- that is the
+# whole premise of #775 -- so a frozen copy of it decouples precisely when it
+# matters.
 
 EVAL_SET = (
     Path(__file__).resolve().parents[1] / "data" / "evaluation" / "classifier_eval_v3.jsonl"
