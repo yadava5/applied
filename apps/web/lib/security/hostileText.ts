@@ -20,10 +20,11 @@
  * THE ADDRESS ABOVE IS INVENTED AND THE MEASUREMENT IS NOT. #424 measured this
  * against a real applicant-tracking system's no-reply address; the shape is
  * that one, the particulars are invented on a domain RFC 2606 reserves, per
- * `docs/TEST_DATA_POLICY.md`. `scripts/check_test_data.py` does not scan
- * `apps/web/lib/`, so nothing forced this — the policy covers a docstring as
- * much as a fixture, and an address a gate cannot see is exactly the one worth
- * getting right by hand.
+ * `docs/TEST_DATA_POLICY.md`. `scripts/check_test_data.py` did not scan
+ * `apps/web/lib/` when this was written — #623 inverted its scope and it does
+ * now — so nothing forced this: the policy covers a docstring as much as a
+ * fixture, and an address a gate cannot see is exactly the one worth getting
+ * right by hand.
  *
  * NOTE THAT NEITHER EXAMPLE IS WRITTEN OUT LITERALLY ABOVE, and no literal
  * member of the set appears anywhere in this file. Every one is spelled with a

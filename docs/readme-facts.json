@@ -1,13 +1,13 @@
 {
   "$comment": "Recorded facts for README.md \u2014 figures that require executing something. Regenerate with `python3 scripts/readme_facts.py --record`, then apply with `--write`. Do not hand-edit: the point of this file is that these numbers have a command behind them.",
-  "recordedAt": "2026-09-03",
+  "recordedAt": "2026-09-05",
   "machine": "Darwin-arm64, 3.11.14",
-  "recordedCommit": "dc42b445ae4ffeb21861a320ee751bc0934d641a",
-  "testFunctionsAtRecord": 1604,
-  "testModulesAtRecord": 136,
+  "recordedCommit": "36474fd597ad745a25b19f2eca2df702614a2d85",
+  "testFunctionsAtRecord": 1725,
+  "testModulesAtRecord": 150,
   "facts": {
     "testsCollected": {
-      "value": 2939,
+      "value": 3163,
       "command": "cd backend && pytest tests -q --cov=jobtracker --cov-report=json:.readme-facts-coverage.json --cov-report=term"
     },
     "testsSkipped": {
@@ -15,19 +15,19 @@
       "command": "cd backend && pytest tests -q --cov=jobtracker --cov-report=json:.readme-facts-coverage.json --cov-report=term"
     },
     "coveragePercent": {
-      "value": 65.66,
+      "value": 66.31,
       "command": "cd backend && pytest tests -q --cov=jobtracker --cov-report=json:.readme-facts-coverage.json --cov-report=term"
     },
     "coverageStatements": {
-      "value": 9347,
+      "value": 9543,
       "command": "cd backend && pytest tests -q --cov=jobtracker --cov-report=json:.readme-facts-coverage.json --cov-report=term"
     },
     "coverageMissed": {
-      "value": 3210,
+      "value": 3215,
       "command": "cd backend && pytest tests -q --cov=jobtracker --cov-report=json:.readme-facts-coverage.json --cov-report=term"
     },
     "coverageCloud": {
-      "value": 92.2,
+      "value": 92.5,
       "command": "cd backend && pytest tests -q --cov=jobtracker --cov-report=json:.readme-facts-coverage.json --cov-report=term"
     },
     "coverageAuth": {
@@ -39,11 +39,11 @@
       "command": "cd backend && pytest tests -q --cov=jobtracker --cov-report=json:.readme-facts-coverage.json --cov-report=term"
     },
     "coverageScriptsStatements": {
-      "value": 2357,
+      "value": 2363,
       "command": "cd backend && pytest tests -q --cov=jobtracker --cov-report=json:.readme-facts-coverage.json --cov-report=term"
     },
     "coverageScripts": {
-      "value": 33.6,
+      "value": 33.7,
       "command": "cd backend && pytest tests -q --cov=jobtracker --cov-report=json:.readme-facts-coverage.json --cov-report=term"
     },
     "scriptsZeroModules": {
@@ -56,10 +56,12 @@
     }
   },
   "suiteOutcome": {
-    "passed": 2929,
+    "passed": 3153,
     "failed": 0,
     "skipped": 0,
     "errors": 0,
+    "xfailed": 10,
+    "xpassed": 0,
     "exitCode": 0,
     "allGreen": true,
     "dockerAvailable": true

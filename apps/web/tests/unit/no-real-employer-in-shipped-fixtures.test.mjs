@@ -22,13 +22,20 @@
  *
  * WHY IT SURVIVED, and why the fix is here rather than there.
  * `scripts/check_test_data.py` is the repository's address gate and it is a
- * good one, but its `SCAN_ROOTS` are `backend/tests/`, `backend/jobtracker/`,
- * `apps/web/tests/` and `ml/`. NOTHING covers `apps/web/components/`,
- * `apps/web/app/`, `apps/web/lib/` or `booklet/`. The most public surface in
- * the product — the landing page a stranger sees first — was the one directory
- * tree with no scan over it at all. Widening those roots is issue #623 and
- * carries its own allowance design; this file covers the gap meanwhile, from
- * the suite that already runs on every PR (`npm run test:unit`).
+ * good one, but when this file was written its `SCAN_ROOTS` were
+ * `backend/tests/`, `backend/jobtracker/`, `apps/web/tests/` and `ml/`, and
+ * NOTHING covered `apps/web/components/`, `apps/web/app/`, `apps/web/lib/` or
+ * `booklet/`. The most public surface in the product — the landing page a
+ * stranger sees first — was the one directory tree with no scan over it at all.
+ * #623 inverted that gate to an exclusion list, so those trees are scanned now.
+ *
+ * THIS FILE IS NOT REDUNDANT AFTER IT. The two ask different questions. The
+ * address gate RECORDS: it ratchets a per-file count and digest and refuses a
+ * silent change, deliberately without judging whether a given non-reserved
+ * domain is acceptable — its own docs say it "cannot tell a better address from
+ * a worse one". This file JUDGES: three named allowances, everything else
+ * fails. A domain moved into the baseline on purpose still has to fall under
+ * one of them here.
  *
  * AND THE SUITE HAS TO ACTUALLY RUN ON EVERY ROOT THIS FILE NAMES. The only
  * workflow that invokes `pnpm test:unit` is `.github/workflows/frontend-ci.yml`,
@@ -74,11 +81,11 @@
  *  · `backend/`. `jobtracker/tracking/extractor.py` maps `"stripe.com"` to
  *    `"Stripe"` — a real-domain-to-employer-name table is product logic that
  *    only works because the domains are real, the opposite of a fabricated
- *    fixture. It is also already under `check_test_data.py`'s roots.
+ *    fixture. It is also already read by `check_test_data.py`.
  *
  * A NOTE ON THIS FILE'S OWN PROSE. It names domains, never addresses. This
- * file sits under `apps/web/tests/`, which IS one of `check_test_data.py`'s
- * scan roots, and writing the examples out in `local@domain` form would add
+ * file is read by `check_test_data.py` — as every tracked file now is — and
+ * writing the examples out in `local@domain` form would add
  * four non-reserved addresses to that gate's baseline — a gate about not
  * republishing material, moved in order to explain a gate about not
  * republishing material. The bare domains carry the whole argument anyway.

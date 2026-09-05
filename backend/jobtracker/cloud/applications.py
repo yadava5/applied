@@ -5121,11 +5121,26 @@ def _filed_on_an_application_that_answers(user_id: uuid.UUID):
     side, and the anti-join probes the applications PRIMARY KEY once per row it
     keeps. Five buffers, on tables holding 52 and 65 rows in production. Left
     as it is rather than re-cut, and recorded here because
-    ``tests/test_read_path_indexes_postgres.py`` will NOT tell the next reader:
-    it retypes the handlers' predicates as literals instead of importing them,
-    so it still measures the old query and stays green. (It has drifted once
-    already — its ``SUMMARY_TILE`` literal is a ``count(DISTINCT coalesce(…))``
-    the tile stopped issuing in #454.)
+    ``tests/test_read_path_indexes_postgres.py`` could NOT tell the next reader:
+    it retyped the handlers' predicates as literals instead of importing them,
+    so it measured the old query and stayed green — through this change, through
+    #597's rename, and through a mutation that deleted the readers' application
+    filter outright. (It had drifted the same way a second time: its summary-tile
+    literal was a ``count(DISTINCT coalesce(…))`` the tile stopped issuing in
+    #454.)
+
+    ADDRESSED IN #590, so that paragraph is history rather than a live warning.
+    The module imports :func:`_not_filed_on_an_application_that_answers` now,
+    expects the anti join this predicate actually plans as instead of the partial
+    index, and keeps the two old literals under names saying they are the shapes
+    the index was CUT for. Replacing the ``return`` below with something
+    trivially different reds that module on both review cases — demonstrated by
+    hand under #590 and NOT gated: nothing in this repo mutates this line, so
+    read that as a property measured once, not as a check standing guard over
+    it. What that also establishes is that no statement the product compiles
+    can use ``ix_emails_review_queue`` any more — a fact about the index, and
+    stronger ground than the "the queue stopped using it" this note was written
+    on.
 
     THOSE NUMBERS ARE #587'S, MEASURED ON THE ONE-CLAUSE FORM, AND #597 DID NOT
     RE-RUN THEM. Saying so rather than re-presenting them as a measurement of
