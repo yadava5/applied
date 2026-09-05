@@ -450,15 +450,32 @@ them at all.
   a real role title carries no `@` and is invisible to it. The gate measures one
   shape well; the rule above is wider than the gate, on purpose, and review is
   what covers the difference.
+- **An interpolated local part over a literal domain is read now** (#619). A
+  template whose local part interpolates over a spelled-out domain used to be
+  invisible from both sides at once: the run after the `@` holds no marker, so
+  the template reader did not fire, and the `}` in front of it stopped the
+  literal one. The domain is the part that routes, so this was the half worth
+  having.
+
+  It is judged on that literal domain exactly as a written-out address is, so
+  the same shape over `halberd.test` stays silent and over a routable domain
+  counts. Written as domains here rather than as addresses, per the rule this
+  document sets for itself in [The document is not
+  exempt](#the-document-is-not-exempt) — the shape is the point and spelling a
+  routable one out would put this file in the baseline it governs.
+
+  Two **non-addresses** are now recorded rather than avoided, and that is a
+  decision rather than an oversight: `corpus/mail.py`'s iCalendar `UID:` field
+  on `google.com`, and `conftest.py`'s synthetic Message-ID on `test.com`.
+  Neither is a sender. The baseline is a ledger of address-shaped runs, not an
+  accusation — no text scan can tell those shapes from a sender, and a *run*
+  that scored zero could never red on an edit. One declared line buys a digest
+  that moves when the file's addresses do.
 - **An assembled address still has edges it cannot reach**, named here so they
-  are a decision rather than another blind spot. An interpolated *local* part
-  over a literal routable domain — `f"{i}@corp.com"` — is invisible: the run
-  after the `@` holds no marker, and the `}` in front of it stops the literal
-  pattern too. Three sites in the tree, one of which is an iCalendar `UID:`
-  field and not an address at all, which is why closing it is a judgement about
-  false positives and not a free widening. A domain concatenated out of literals
-  only is invisible, and so is anything assembled through a call — `"@".join`, a
-  format string held in a constant. A text scan ends where dataflow begins.
+  are a decision rather than another blind spot. A domain concatenated out of
+  literals only is invisible, and so is anything assembled through a call —
+  `"@".join`, a format string held in a constant. A text scan ends where
+  dataflow begins.
 - **It sees the set, not the string.** Since #615 a same-count swap fails,
   because the digest is over the set. But the gate still cannot tell a *better*
   address from a worse one — replacing one non-reserved address with a different

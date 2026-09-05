@@ -98,12 +98,21 @@ WHAT IT STILL CANNOT SEE
 
 Named here so the next reader inherits a decision rather than another blind spot.
 
-* An interpolated LOCAL part over a literal, routable domain — `f"{i}@corp.com"`.
-  The run after the `@` holds no marker so `TEMPLATE` does not fire, and the `}`
-  in front of the `@` keeps `EMAIL` from firing either. Three sites in the tree,
-  and one of them is `corpus/mail.py`'s iCalendar `UID:{uid}@google.com`, which
-  is not an address at all — which is why closing this is a separate judgement
-  about false positives and not a free widening.
+* (CLOSED by #619. `LOCAL_TEMPLATE` reads it now — an interpolated local part
+  over a literal domain, judged on that domain exactly as a literal address is.
+  The judgement this paragraph deferred was made rather than inherited:
+  measured on a pristine tree, the widening surfaces 9 runs across 5 files.
+  TWO of them are non-addresses, not one — the iCalendar `UID:` field named
+  here, and `conftest.py`'s synthetic Message-ID, which is the same shape and
+  was not noticed until review. Both are recorded anyway.
+  The baseline is a ledger of address-SHAPED runs, not an accusation, and the
+  ratchet is the point: `google.com` routes, the shape is indistinguishable
+  from a sender by any text scan, and the RUN contributed zero before, so no
+  edit to it could ever red. (The run, not the file: all five of these files
+  already carried baseline entries. The claim is about the hazard class, and
+  saying "file" overstated it.) One declared line buys a digest that moves
+  when the file's addresses do. The same trade is already accepted
+  in `test_test_data_gate.py`, whose own `_reserved()` probe is counted.)
 * A domain concatenated out of literals only, `"careers@" + "north" + "wind.com"`,
   or built by adjacent-literal concatenation. Evasions rather than natural
   style; neither occurs here.
@@ -252,6 +261,42 @@ _LOCAL_SEGMENT = f"(?:{_LOCAL_CHAR}|{MARKER})+"
 #: is whether the address could RESOLVE anywhere; see `sealed_suffix`.
 TEMPLATE = re.compile(
     _LOCAL_SEGMENT + "@" + f"{_DOMAIN_CHAR}*{MARKER}(?:{_DOMAIN_CHAR}|{MARKER})*"
+)
+
+#: An address whose LOCAL part is interpolated and whose DOMAIN is a complete
+#: literal: `f"{prefix}@brackenhill-real.com"`. #619 calls this "the case that
+#: matters" and it was invisible to both readers above, from opposite sides —
+#: `EMAIL`'s local class holds no markers, and `TEMPLATE` requires a marker in
+#: the DOMAIN. A run with a literal domain and an interpolated local fell
+#: between them and contributed nothing, so the file never entered the
+#: baseline and gained no ratchet at all.
+#:
+#: It is the highest-value half because the domain is the part that routes. A
+#: real employer's mail domain sits there in full while only the local part
+#: varies, which is the idiomatic shape when a fixture builds a sender from a
+#: loop counter or a generated id.
+#:
+#: DISJOINT FROM `EMAIL` BY CONSTRUCTION: at least one marker is REQUIRED in
+#: the local part, and `EMAIL`'s local class holds none. Dropping that
+#: requirement makes the two overlap and reds six tests.
+#:
+#: DISJOINT FROM `TEMPLATE` BY ORDERING **AND** BY THIS PATTERN, and the split
+#: matters. For runs separated by anything neither reader consumes — every
+#: probe, and every site in this tree — ordering alone is enough: `TEMPLATE`
+#: runs first and the span guard drops the nested match, so letting markers
+#: into the domain here changes no output.
+#:
+#: It is NOT enough for ADJACENT runs. Measured on `{a}@{b}.com{c}@{d}.com`:
+#: shipped finds 1, and with markers admitted here it finds 2. `TEMPLATE`
+#: greedily swallows `{c}`, this reader then resumes past it and matches a run
+#: that STARTS inside `TEMPLATE`'s span and ENDS outside it — and the span
+#: guard tests containment, not overlap. So the literal domain is load-bearing
+#: in that corner. An earlier version of this note claimed the equivalence
+#: without qualification; the test suite now carries that input.
+LOCAL_TEMPLATE = re.compile(
+    f"(?:{_LOCAL_CHAR}|{MARKER})*{MARKER}(?:{_LOCAL_CHAR}|{MARKER})*"
+    "@"
+    rf"{_DOMAIN_CHAR}+\.[A-Za-z]{{2,}}"
 )
 
 #: Concatenation, the form no marker can describe: `"careers@" + domain` ends
@@ -486,6 +531,18 @@ def matches_in(text: str) -> list[Match]:
         local, domain, end = read
         spans.append((head.start(), end))
         if not is_allowed(sealed_suffix(domain)):
+            found.append(Match(f"{local}@{domain}", True))
+
+    for match in LOCAL_TEMPLATE.finditer(text):
+        if any(start <= match.start() and match.end() <= end for start, end in spans):
+            continue
+        if _inside_url(text, match.start()):
+            continue
+        spans.append(match.span())
+        # The domain is a literal here, so it is judged exactly as `EMAIL`
+        # judges one -- `sealed_suffix` has nothing to seal.
+        local, domain = canonical(match.group(0)).split("@", 1)
+        if not is_allowed(domain):
             found.append(Match(f"{local}@{domain}", True))
 
     for match in EMAIL.finditer(text):
