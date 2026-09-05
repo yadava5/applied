@@ -1114,6 +1114,33 @@ def file_bytes(rel: str) -> int:
     return (REPO / rel).stat().st_size
 
 
+def suite_outcome(key: str) -> int:
+    """One number out of the artifact's ``suiteOutcome`` block.
+
+    STATIC, not ``recorded``, and the distinction is the point. A recorded
+    fact needs ``--record`` and therefore a whole pytest run; this reads a
+    block ``--record`` ALREADY writes and no rerun can move. Same shape as
+    ``corpus_recorded`` above: the artifact is the source, and this only
+    proves the prose still describes it.
+
+    It exists because ``collected`` was gated and ``passed`` was not, so
+    "3,163 tests, all passing" carried a checked number inside an unchecked
+    claim -- and ``--write`` refreshed the digits twice without ever touching
+    the word "all". A gated number inside an ungated sentence gets more
+    convincing, not more correct (#833).
+    """
+
+    outcome = (load_artifact().get("suiteOutcome") or {})
+    if key not in outcome:
+        fail(
+            f"{_rel(ARTIFACT)}'s suiteOutcome has no `{key}`.\n"
+            f"      Run: python3 scripts/readme_facts.py --record"
+        )
+    return int(outcome[key])
+
+
+
+
 # ── the facts ────────────────────────────────────────────────────────────
 #
 # Each `sites` regex MUST contain exactly one capture group, around the number.
@@ -2054,6 +2081,14 @@ FACTS: dict[str, dict] = {
             {"re": r"(\w+) tests drive the real connection machinery", "word": True},
             r"and \*\*(\d+) tests\*\* now exercise it",
             r"(\d+) RLS enforcement tests",
+            # ── printed in the System Card booklet, §04 (#833) ──
+            #
+            # Both were the WORD "twenty-one" and both sat beside a digit this
+            # fact already gated, so `--check` stayed green over them while the
+            # module grew to 24. A word form is invisible to a `(\d+)` site;
+            # spelling them as digits is what put them inside the gate.
+            {"re": r"including the (\d+) Postgres row-level-security tests", "file": BOOKLET_CONTENT},
+            {"re": r"the (\d+) row-level-security tests skip", "file": BOOKLET_CONTENT},
         ],
     },
     # ── recorded: these need a run ──
@@ -2109,7 +2144,12 @@ FACTS: dict[str, dict] = {
             # digits. The card now names the recorded command, so the sentence
             # and the source agree.
             {"re": r'headline: "([\d,]+) tests, and [\d,]+ messages', "file": BOOKLET_CONTENT},
-            {"re": r"The backend suite runs ([\d,]+) tests, all passing", "file": BOOKLET_CONTENT},
+            # REWORDED BY #833, and the site moved with it. The sentence used
+            # to read "runs 3,163 tests, all passing", which was wrong by the
+            # ten strict xfails -- a checked number inside an unchecked claim.
+            # `testsPassing` and `testsXfailed` now gate the other two halves,
+            # so the whole sentence is sourced rather than just its first digit.
+            {"re": r"The backend suite runs ([\d,]+) tests, [\d,]+ of them passing", "file": BOOKLET_CONTENT},
             {"re": r'value: "([\d,]+)", label: "tests · backend suite"', "file": BOOKLET_CONTENT},
             {"re": r"Provenance: ([\d,]+) is what `cd backend", "file": BOOKLET_CONTENT},
         ],
@@ -2120,6 +2160,32 @@ FACTS: dict[str, dict] = {
         "sites": [
             r"%C2%B7%20(\d+)%20skipped",
             r"\*\*\d+ tests collected, (\d+) skipped\.\*\*",
+        ],
+    },
+    "testsPassing": {
+        # NOT the same number as `testsCollected`, and the gap is the issue.
+        # 3163 collected, 3153 passed, 10 xfailed -- strict xfails in
+        # test_the_trailing_segments_right_edge_is_structural.py, which are the
+        # correct state and are not passes.
+        "kind": "static",
+        "describe": "suiteOutcome.passed in docs/readme-facts.json",
+        "compute": lambda: suite_outcome("passed"),
+        "sites": [
+            {
+                "re": r"runs [\d,]+ tests, ([\d,]+) of them passing",
+                "file": BOOKLET_CONTENT,
+            },
+        ],
+    },
+    "testsXfailed": {
+        "kind": "static",
+        "describe": "suiteOutcome.xfailed in docs/readme-facts.json",
+        "compute": lambda: suite_outcome("xfailed"),
+        "sites": [
+            {
+                "re": r"of them passing and (\d+) expected failures",
+                "file": BOOKLET_CONTENT,
+            },
         ],
     },
     "coveragePercent": {
@@ -2182,6 +2248,30 @@ FACTS: dict[str, dict] = {
 # copies of rules.py and two JavaScript ports of the same pattern table.
 
 INVARIANTS = [
+    {
+        # THE ARITHMETIC THE BOOKLET GOT WRONG (#833). "3,163 tests, all
+        # passing" is false by exactly the xfails, and nothing connected the
+        # two numbers, so `--write` refreshed the digit twice and left the
+        # word "all" alone each time. Collected is the SUM of its parts; a
+        # sentence may quote any of them and this is what keeps them a set.
+        "name": "collected reconciles with passed, failed, skipped and the xfails",
+        "holds": lambda f: (
+            f["testsCollected"]
+            == f["testsPassing"]
+            + f["testsSkipped"]
+            + f["testsXfailed"]
+            + suite_outcome("failed")
+            + suite_outcome("errors")
+            + suite_outcome("xpassed")
+        ),
+        "explain": lambda f: (
+            f"{f['testsPassing']} passed + {f['testsSkipped']} skipped + "
+            f"{f['testsXfailed']} xfailed + {suite_outcome('failed')} failed + "
+            f"{suite_outcome('errors')} errors + {suite_outcome('xpassed')} xpassed = "
+            f"{f['testsPassing'] + f['testsSkipped'] + f['testsXfailed'] + suite_outcome('failed') + suite_outcome('errors') + suite_outcome('xpassed')}, "
+            f"not {f['testsCollected']}."
+        ),
+    },
     {
         # A COUNT CANNOT SEE A RENAME. Rename `review` to `reviews` and the
         # count stays 18 while both documents name a directory that is gone and
@@ -2601,7 +2691,10 @@ DATE_SITES: list[tuple[str, "re.Pattern[str]"]] = [
     ),
     (
         BOOKLET_CONTENT,
-        re.compile(r"is what `[^`]+` collects and passes, recorded (\d{4}-\d{2}-\d{2})"),
+        # "and passes" was deleted by #833: the command collects 3,163 and
+        # passes 3,153, so the provenance line was making the same wrong claim
+        # the body sentence was. The date this anchors is unaffected.
+        re.compile(r"is what `[^`]+` collects, recorded (\d{4}-\d{2}-\d{2})"),
     ),
 ]
 
