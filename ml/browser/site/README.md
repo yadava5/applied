@@ -17,7 +17,7 @@ output-identical to the Python pipeline.
 > private.** The checkpoint was fitted partly on a real mailbox — iCloud
 > IMAP, not Gmail — and published weights trained on anyone's real mail
 > should not be redistributed. What remains here is the loader,
-> the 218 rules and the tokenizer — no weights. To run it again:
+> the 219 rules and the tokenizer — no weights. To run it again:
 > `ml/browser/export_onnx.py` writes to `ml/browser/artifacts/`, so copy
 > `head.json` and `examples.json` into this directory and
 > `model_quantized.onnx` to `model/onnx/model.onnx`. Restoring this as a

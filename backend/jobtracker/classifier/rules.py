@@ -739,6 +739,22 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
     EmailCategory.ASSESSMENT: CategoryPatterns(
         strong=[
             r"(technical|coding|take.?home).{0,20}(assessment|challenge|test|exercise)",
+            # THE NARROWER TWIN OF THE LINE ABOVE, and `4c68e1a`'s shape: it is
+            # that pattern with `complete.{0,30}` in front, so it can only fire
+            # where its partner already did. What it adds is not a second
+            # reading of the same phrase — it is the IMPERATIVE. An employer
+            # tells you to complete the exercise; a candidate writing about one
+            # says they submitted it. That verb is the only thing in this
+            # category that separates a report from a reference, and it is read
+            # off the mail rather than invented (#758).
+            #
+            # It carries the 300 `update-in-thread` messages whose whole
+            # assessment evidence is "Please complete the take-home exercise…"
+            # over AUTO_FILE_GATE. Without it they score 3, fall to 0.70, and
+            # the corpus replay puts every one of them in SUPPRESSED-AS-SETTLED
+            # — not the review queue: `addressed_on_a_card` 13987 -> 13687 and
+            # `suppressed_as_settled` 0 -> 300, measured.
+            r"complete.{0,30}(technical|coding|take.?home).{0,20}(assessment|challenge|test|exercise)",
             r"complete.{0,30}(assessment|challenge|test)",
             r"hackerrank",
             r"codility",
@@ -748,7 +764,13 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             # on ApplicationStatus.INTERVIEWING, so the vendor name is safe to
             # treat the way hackerrank/codility already are.
             r"hirevue",
-            r"take.?home (assignment|project|exercise|task|round)",
+            # `exercise` IS NOT IN THIS ALTERNATION, and its absence is the
+            # point. `take.?home exercise` is a strict subset of the first
+            # pattern in this list — one space fits inside its `.{0,20}` gap
+            # and `exercise` is in its tail alternation — so carrying it
+            # here scored one phrase twice and bought no reach. What this
+            # pattern is FOR is the nouns that pattern lacks.
+            r"take.?home (assignment|project|task|round)",
             r"coding (exercise|test|challenge)",
             r"online (assessment|test)",
             r"skills (assessment|test)",
@@ -768,7 +790,24 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"assessments?\s+(is|are)\s+(ready|available|waiting|live|open)\b",
             # The bare noun, hyphenated only: "take home" unhyphenated is a
             # verb phrase ("take home a free gift") and far too common.
-            r"\btake-home\b(?!\s+(pay|message|gift|dose|salary))",
+            #
+            # THE LOOKAHEAD NAMES TWO DIFFERENT THINGS AND ONLY ONE OF THEM
+            # IS ABOUT MEANING. `pay|message|gift|dose|salary` are senses of
+            # "take-home" that are not a candidate test at all. The eight
+            # after them are the nouns the two QUALIFIED take-home patterns
+            # above already claim, and they are here so this pattern is what
+            # its own heading says — the noun ON ITS OWN — rather than a
+            # second, broader reading of a phrase this category has already
+            # scored. Without them "take-home exercise" earned +9 from one
+            # 18-character phrase (#758): the score is meant to count
+            # evidence, and three readings of one phrase is one piece of it.
+            #
+            # KEEP THEM IN STEP with the two patterns above, by hand, for the
+            # reason this file records at the top: PATTERNS is read as
+            # literals by three static consumers. `tests/test_the_bare_noun_sits_under_its_siblings_758.py`
+            # derives the list from those patterns at runtime and fails when
+            # they drift, so the copy cannot rot silently.
+            r"\btake-home\b(?!\s+(pay|message|gift|dose|salary|assignment|project|task|round|assessment|challenge|test|exercise))",
         ],
         weak=[
             r"next step.{0,30}(assessment|test)",
