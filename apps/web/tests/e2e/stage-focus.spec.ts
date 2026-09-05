@@ -1110,3 +1110,69 @@ test.describe("a scan correction keeps the reader's place", () => {
     await expect(page.getByRole("button", { name: /^assessment 1$/ })).toBeVisible();
   });
 });
+
+test.describe("a correction into a COLLAPSED employer set (#425)", () => {
+  test("the reader lands on the set that now holds their row, not on <body>", async ({
+    page,
+  }) => {
+    // THE RESIDUAL #425 RECORDED AND LEFT OPEN, in its own words: "a row that
+    // lands inside a COLLAPSED employer set has no `#status-<id>` to return
+    // to, so the lookup fails and the reader is left where today's code
+    // leaves them" — at `<body>`, with every subsequent Tab restarting from
+    // the top of the document.
+    //
+    // The demo has exactly the shape: Northstar Systems holds one row in
+    // `interviewing` and three in `applied`, and three rows render as a
+    // COLLAPSED set whose members have no stage select at all. Correcting the
+    // interviewing row to `applied` moves it into that set.
+    await page.goto("/demo");
+
+    const setHeader = page.locator('[data-set-toggle="applied:Northstar Systems"]');
+    await expect(
+      setHeader,
+      "the applied-side Northstar set is the thing the row moves INTO; without it this test proves nothing",
+    ).toHaveCount(1);
+    await expect(
+      setHeader,
+      "the set must be COLLAPSED, or the row keeps a select and this is the other branch",
+    ).toHaveAttribute("aria-expanded", "false");
+
+    const select = page.getByLabel("Change stage for Northstar Systems");
+    await expect(
+      select,
+      "while the applied set is collapsed, the interviewing row is the only Northstar stage control on the page",
+    ).toHaveCount(1);
+    const selectId = (await select.getAttribute("id"))!;
+
+    await select.focus();
+    expect(
+      await activeElementId(page),
+      "the reader is standing on the control before they correct it",
+    ).toBe(selectId);
+
+    await select.selectOption("applied");
+
+    // The row is gone from the page — folded into the collapsed set — so the
+    // control it was corrected with is genuinely unmounted. That is the
+    // precondition; without it the fixed branch is never reached.
+    await expect(
+      page.getByLabel("Change stage for Northstar Systems"),
+      "the corrected row must have folded into the set, or the fallback is not the path under test",
+    ).toHaveCount(0);
+
+    // --- The defect -------------------------------------------------------
+    const landed = await page.evaluate(
+      () => (document.activeElement as HTMLElement | null)?.dataset?.setToggle ?? null,
+    );
+    expect(
+      landed,
+      "focus was dropped instead of being handed to the set the row moved into",
+    ).toBe("applied:Northstar Systems");
+    await expect(setHeader).toBeFocused();
+
+    // …and it is a real way back: the header opens the set the row is in.
+    await setHeader.press("Enter");
+    await expect(setHeader).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByLabel("Change stage for Northstar Systems")).toHaveCount(4);
+  });
+});
