@@ -144,6 +144,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import codecs
 import json
 import re
 import subprocess
@@ -553,6 +554,102 @@ def tracked_files(repo_root: Path) -> list[str]:
     )
 
 
+#: Byte-order marks whose files are text this gate can READ, longest first.
+#:
+#: ORDER IS LOAD-BEARING. `BOM_UTF32_LE` is `FF FE 00 00` and begins with
+#: `BOM_UTF16_LE` (`FF FE`), so testing UTF-16 first would decode a UTF-32
+#: file as UTF-16 and produce mojibake that scans clean -- the same failure
+#: this constant exists to close, one encoding over.
+BOM_CODECS: tuple[tuple[bytes, str], ...] = (
+    (codecs.BOM_UTF32_LE, "utf-32"),
+    (codecs.BOM_UTF32_BE, "utf-32"),
+    (codecs.BOM_UTF16_LE, "utf-16"),
+    (codecs.BOM_UTF16_BE, "utf-16"),
+    (codecs.BOM_UTF8, "utf-8-sig"),
+)
+
+#: Proportion of NUL bytes above which a file that DECODED as UTF-8 is re-read
+#: as UTF-16. Measured rather than guessed: BOM-less UTF-16 holding ASCII text
+#: runs at 0.50 (every second byte), and this repo's only NUL-carrying UTF-8
+#: source, `apps/web/lib/feedback/coalesce.ts`, holds ONE in several kilobytes.
+#: 0.30 sits far from both.
+NUL_DENSITY_LIMIT = 0.30
+
+
+def decode_text(raw: bytes) -> str | None:
+    """The file's text, or None when these bytes are not text this can read.
+
+    WHY THIS IS NOT JUST `.decode("utf-8")` (#832). **NUL bytes are valid
+    UTF-8**, so a BOM-less UTF-16 file decodes cleanly with every letter
+    interleaved with a U+0000, the `EMAIL` regex matches nothing, and the file
+    is recorded as SCANNED AND CLEAN -- present in neither `findings` nor
+    `skipped`. That is worse than a skip: this gate's design is that a file
+    which cannot be read must never read the same as a file that is clean, and
+    skips are counted in the headline and baselined precisely to keep
+    unscannable visible.
+
+    THE ISSUE PROPOSED THE BOM SNIFF AND CALLED THE DENSITY GUARD OPTIONAL.
+    Measured, it is the other way round:
+
+        "…recruiter@…" encoded utf-16  (with BOM)  -> UTF-8 decode RAISES
+        the same text encoded utf-16-le (BOM-less) -> decodes, 0.50 NUL density
+        the same text encoded utf-16-be (BOM-less) -> decodes, 0.50 NUL density
+
+    A BOM begins `FF FE`, which is not valid UTF-8 at all, so a BOM'd file was
+    already being skipped and RECORDED -- safe, if unread. The unsafe class is
+    exactly the BOM-less one, and only the density guard sees it. The BOM sniff
+    is kept because it upgrades those skips into real scans, but it is the
+    smaller half, and the issue's own ordering of the two was backwards.
+
+    The density rule is deliberately chosen over git's "NUL in the first 8000
+    bytes means binary", and the reason must not be undone:
+    `apps/web/lib/feedback/coalesce.ts` is product source whose field delimiter
+    is a literal NUL. A presence test would drop real source out of the scan;
+    a density test leaves it comfortably inside.
+    """
+
+    for bom, codec in BOM_CODECS:
+        if raw.startswith(bom):
+            try:
+                return raw.decode(codec)
+            except UnicodeDecodeError:
+                # A declared BOM whose body does not decode is unreadable, and
+                # unreadable is a skip.
+                #
+                # THIS IS DEFENSIVE, NOT LOAD-BEARING, and saying so is better
+                # than implying otherwise. Falling through to the UTF-8 attempt
+                # below would give the identical answer: measured, all four
+                # UTF-16/32 BOMs are themselves invalid UTF-8 (`ff fe`,
+                # `fe ff`, `ff fe 00 00`, `00 00 fe ff`), so that attempt
+                # cannot succeed on a file that reached here; and a `ef bb bf`
+                # body that fails `utf-8-sig` fails plain `utf-8` too. A
+                # mutation replacing this `return` with a fall-through
+                # survives the whole suite for exactly that reason.
+                return None
+
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+    if not raw or raw.count(0) / len(raw) <= NUL_DENSITY_LIMIT:
+        return text
+
+    # Dense NULs in something that decoded: BOM-less UTF-16. Endianness from
+    # where the NULs sit -- ASCII in UTF-16LE puts them at odd indices.
+    odd_nuls = sum(1 for i in range(1, len(raw), 2) if raw[i] == 0)
+    even_nuls = sum(1 for i in range(0, len(raw), 2) if raw[i] == 0)
+    for codec in ("utf-16-le", "utf-16-be") if odd_nuls >= even_nuls else ("utf-16-be", "utf-16-le"):
+        try:
+            return raw.decode(codec)
+        except UnicodeDecodeError:
+            continue
+    # Dense NULs that are not UTF-16 either. Not text this can read, and a
+    # skip is the honest answer -- returning the interleaved UTF-8 reading
+    # would be the defect.
+    return None
+
+
 def scan_file(path: Path) -> Finding | None:
     """Non-reserved addresses in one file, or None when the file is not text.
 
@@ -577,9 +674,9 @@ def scan_file(path: Path) -> Finding | None:
     one address for another moves the digest and not the count. Either fails.
     """
 
-    try:
-        text = path.read_bytes().decode("utf-8")
-    except UnicodeDecodeError:
+    raw = path.read_bytes()
+    text = decode_text(raw)
+    if text is None:
         return None
     matched = matches_in(text)
     return Finding(len(matched), digest_of(match.text for match in matched))

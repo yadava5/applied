@@ -1036,3 +1036,161 @@ def test_a_nearby_url_does_not_hide_a_real_address(source: str) -> None:
     gate = _load()
     address = _routable()
     assert gate.matches_in(source.replace("ADDRESS", address)) == [gate.Match(address, False)]
+
+
+def test_a_bomless_utf16_file_is_read_rather_than_scanned_empty(tree: Path) -> None:
+    """A BOM-less UTF-16 file was SCANNED AND CLEAN, which is worse than a skip (#832).
+
+    **NUL bytes are valid UTF-8.** BOM-less UTF-16 therefore decodes without
+    raising, every letter interleaved with a U+0000, ``EMAIL`` matches nothing,
+    and the file joins neither ``findings`` nor ``skipped`` -- while the gate's
+    headline claims every tracked file is scanned or named.
+
+    THE ISSUE PROPOSED A BOM SNIFF AND CALLED THE DENSITY GUARD OPTIONAL, and
+    that is backwards. A BOM begins ``FF FE``, which is not valid UTF-8, so a
+    BOM'd file already failed to decode and was already recorded as a skip --
+    unread, but safe and visible. The unsafe class is exactly the BOM-LESS one
+    asserted here, and only the density guard sees it.
+
+    The first assertion is the MECHANISM, not decoration: it proves these exact
+    bytes still decode as UTF-8, so the old path really did read an empty
+    string rather than raise. Without it this would pass on a tree where
+    UTF-16 simply failed to decode, which is a different bug.
+    """
+
+    gate = _load()
+    _write_baseline(gate, tree)
+
+    raw = f"contact {_routable()} about the role\n".encode("utf-16-le")
+
+    # THE MECHANISM. Valid UTF-8, and carrying no address when read that way.
+    assert not gate.matches_in(
+        raw.decode("utf-8")
+    ), "the premise is gone: BOM-less UTF-16 no longer decodes as UTF-8"
+
+    decoded = gate.decode_text(raw)
+    assert decoded is not None and _routable() in decoded
+
+    utf16 = tree / "backend" / "tests" / "fixture_utf16.py"
+    utf16.write_bytes(raw)
+    subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
+
+    findings, skipped = gate.scan(tree)
+    assert "backend/tests/fixture_utf16.py" in findings, findings
+    assert findings["backend/tests/fixture_utf16.py"].count == 1
+    assert [s.path for s in skipped] == [], skipped
+    assert _check(gate, tree) == 1
+
+
+def test_a_bomless_utf16be_file_is_read_too(tree: Path) -> None:
+    """Both endiannesses, because the guess is made from where the NULs sit.
+
+    A fix that read only UTF-16LE would pass the test above and leave the
+    other half of the file class scanning empty. This is the arm that makes
+    the endianness decision a decision rather than an assumption.
+    """
+
+    gate = _load()
+    _write_baseline(gate, tree)
+
+    raw = f"contact {_routable()} about the role\n".encode("utf-16-be")
+    decoded = gate.decode_text(raw)
+    assert decoded is not None and _routable() in decoded, decoded
+
+
+def test_a_bomd_utf16_file_is_read_instead_of_skipped(tree: Path) -> None:
+    """The smaller half: a BOM'd file was a recorded skip, and is now scanned.
+
+    Safe before, because it could not decode and the skip was baselined. Read
+    now, which is strictly better -- an address inside it is found rather than
+    merely named as unread.
+    """
+
+    gate = _load()
+    _write_baseline(gate, tree)
+
+    raw = f"contact {_routable()} about the role\n".encode("utf-16")  # BOM'd
+    assert raw[:2] == b"\xff\xfe", "utf-16 stopped emitting a BOM"
+
+    utf16 = tree / "backend" / "tests" / "fixture_utf16_bom.py"
+    utf16.write_bytes(raw)
+    subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
+
+    findings, skipped = gate.scan(tree)
+    assert "backend/tests/fixture_utf16_bom.py" in findings, findings
+    assert [s.path for s in skipped] == [], skipped
+    assert _check(gate, tree) == 1
+
+
+def test_a_utf16_file_with_only_reserved_addresses_stays_green(tree: Path) -> None:
+    """Decoding it must not make it noisy.
+
+    The positive control: reading a file the gate could not read before is
+    only an improvement if a COMPLIANT one still passes. A fix that reddened
+    every UTF-16 file regardless of content would satisfy the red arms above
+    and be worthless.
+    """
+
+    gate = _load()
+
+    raw = f"write to {_reserved()} about the role\n".encode("utf-16-le")
+    utf16 = tree / "backend" / "tests" / "fixture_utf16_clean.py"
+    utf16.write_bytes(raw)
+    subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
+
+    _write_baseline(gate, tree)
+    findings, skipped = gate.scan(tree)
+    assert "backend/tests/fixture_utf16_clean.py" not in findings, findings
+    assert [s.path for s in skipped] == [], skipped
+    assert _check(gate, tree) == 0
+
+
+def test_a_literal_nul_in_utf8_source_is_still_scanned(tree: Path) -> None:
+    """The reason git's NUL-presence heuristic was rejected, pinned so it stays rejected.
+
+    ``apps/web/lib/feedback/coalesce.ts`` is product source whose field
+    delimiter is a literal NUL byte. It decodes as UTF-8 perfectly well, and a
+    "NUL in the first 8000 bytes means binary" rule -- the obvious way to
+    catch #832 -- would drop real source out of the scan to fix a file class
+    that has never appeared. The density rule leaves it inside, and this is
+    the arm that proves the cure was not worse than the disease.
+    """
+
+    gate = _load()
+    _write_baseline(gate, tree)
+
+    source = tree / "backend" / "tests" / "fixture_nul.py"
+    source.write_bytes(
+        f'DELIM = "\x00"\n# reach {_routable()} for the role\n'.encode("utf-8")
+    )
+    subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
+
+    findings, skipped = gate.scan(tree)
+    assert "backend/tests/fixture_nul.py" in findings, findings
+    assert [s.path for s in skipped] == [], skipped
+    assert _check(gate, tree) == 1
+
+
+def test_a_declared_bom_whose_body_is_not_that_encoding_is_a_skip(tree: Path) -> None:
+    """A BOM is a claim, and a false claim is unreadable -- never a fallback.
+
+    Falling back to UTF-8 when the declared codec fails would put the file
+    straight back into the NUL-interleaved reading #832 is about, and would do
+    it while looking like robustness.
+    """
+
+    gate = _load()
+    _write_baseline(gate, tree)
+
+    broken = tree / "backend" / "tests" / "fixture_bad_bom.py"
+    # A UTF-16 BOM followed by an odd number of trailing bytes: a declared
+    # encoding the body does not satisfy.
+    broken.write_bytes(b"\xff\xfe" + b"\x61\x00\x62")
+    subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
+
+    findings, skipped = gate.scan(tree)
+    assert "backend/tests/fixture_bad_bom.py" not in findings, findings
+    assert [(s.path, s.kind) for s in skipped] == [
+        ("backend/tests/fixture_bad_bom.py", gate.BINARY)
+    ], skipped
+    assert _check(gate, tree) == 1
