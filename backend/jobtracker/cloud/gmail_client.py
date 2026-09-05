@@ -501,8 +501,9 @@ _WHITESPACE = re.compile(r"\s+")
 # boundary is found at offset 121 and ``own_text_span`` returns the reply's own
 # 119 characters; collapsed, NO MATCH, and the whole quoted "thank you for
 # applying" is scored as words this sender wrote. The verdict moves from
-# ``applied`` 0.75 — under the auto-file gate, so a person sees it — to
-# ``applied`` 0.95, filed silently. ``strip_quoted_history``, ``own_text_span``
+# ``applied`` 0.70 — under the auto-file gate, so a person sees it — to
+# ``applied`` 0.90, filed silently (0.75 and 0.95 from an ATS relay, which
+# adds 0.05; the test fixture uses a reserved domain and so does not). ``strip_quoted_history``, ``own_text_span``
 # and the refutation cap were all dead code on the request path, and no test
 # could see it: they hand those functions ``\n``-bearing fixtures directly and
 # never cross this extractor.

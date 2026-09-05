@@ -47,18 +47,31 @@ from jobtracker.cloud.gmail_client import (
 )
 from jobtracker.cloud.pipeline import AUTO_FILE_GATE, role_from_message
 
-from .corpus.mail import hard_wrap
+from .corpus.mail import CANDIDATE, hard_wrap
 
-ATS = "no-reply@greenhouse.io"
+#: A reserved domain (RFC 2606), per ``docs/TEST_DATA_POLICY.md``: nothing here
+#: may name an address that could actually route.
+#:
+#: IT COSTS THE ATS PATH, and that was checked rather than assumed. No reserved
+#: address can satisfy ``is_ats_sender`` — ``ATS_DOMAINS`` is a closed list of
+#: real relays — so this sender forgoes the +0.05 bonus and every confidence in
+#: this file reads 0.05 lower than it would from ``greenhouse.io``. Measured on
+#: ``QUOTED_INVITE``: 0.90 -> 0.70 here against 0.95 -> 0.75 there. The gate is
+#: 0.85, so the one assertion that reads a confidence still separates the
+#: broken shape from the fixed one by the same margin, and none of the claims
+#: in this file are about ATS handling. If one ever is, it needs the bonus and
+#: cannot get it from a reserved domain — say so rather than reaching for a
+#: routable address.
+ATS = "no-reply@us.greenhouse-mail.example"
 SUBJECT = "Re: Thank you for applying to Cedarhollow Systems"
 
 #: A recruiter replying to their own acknowledgement — the #441 family, in the
 #: shape Gmail hands it over rather than the shape a test would write it in.
 QUOTED_INVITE = (
-    "Hi Ayush, Following up on the below — we would love to set up a "
+    f"Hi {CANDIDATE}, Following up on the below — we would love to set up a "
     "conversation with you next week. Are you free Thursday?\n\n"
     "On Tuesday, Cedarhollow Systems Recruiting wrote:\n"
-    "> Hi Ayush, Thank you for applying to the Backend Engineer position at\n"
+    f"> Hi {CANDIDATE}, Thank you for applying to the Backend Engineer position at\n"
     "> Cedarhollow Systems. Your application has been received.\n"
 )
 
@@ -67,10 +80,10 @@ QUOTED_INVITE = (
 #: so the extractor is doing visible WORK in these tests and not merely handing
 #: back what it was given.
 UNTIDY_INVITE = (
-    "Hi Ayush,   Following   up on the below — we would love to set up a  \n"
+    f"Hi {CANDIDATE},   Following   up on the below — we would love to set up a  \n"
     "conversation with you next week.\tAre you free Thursday?   \n\n\n\n"
     "On Tuesday, Cedarhollow Systems Recruiting wrote:\n"
-    "  > Hi Ayush, Thank you for applying to the Backend Engineer position at\n"
+    f"  > Hi {CANDIDATE}, Thank you for applying to the Backend Engineer position at\n"
     "  > Cedarhollow Systems. Your application has been received.\n"
 )
 
@@ -182,11 +195,11 @@ def test_the_outlook_header_block_could_not_have_matched_a_collapsed_body(
     """
 
     body = (
-        "Hi Ayush, We would love to set up a conversation with you next week. "
+        f"Hi {CANDIDATE}, We would love to set up a conversation with you next week. "
         "Please let me know what suits.\n\n"
         "From: Cedarhollow Systems Recruiting\n"
         "Sent: Tuesday, 12 August 2026 09:14\n"
-        "To: Ayush\n"
+        f"To: {CANDIDATE}\n"
         "Subject: Thank you for applying to the Backend Engineer position\n"
     )
     delivered = _delivered(body, shape)
@@ -205,8 +218,9 @@ def test_a_reply_in_its_own_confirmation_thread_is_not_auto_filed(rules, shape: 
     STATED AS "NOT AUTO-FILED", never as "read as an interview". The reply's
     own words name no interview vocabulary the rules have and its ``Re:``
     subject still argues for ``applied``, so it remains WRONG — it just stops
-    being wrong silently. Measured on this body: ``applied`` 0.95 auto-filed
-    before, ``applied`` 0.75 held for review after.
+    being wrong silently. Measured on this body with this file's reserved
+    sender: ``applied`` 0.90 auto-filed before, ``applied`` 0.70 held for
+    review after. From an ATS relay both read 0.05 higher; see ``ATS``.
     """
 
     result = rules.classify(SUBJECT, _delivered(QUOTED_INVITE, shape), ATS)
@@ -259,7 +273,7 @@ def test_the_cap_is_still_applied_after_normalising(shape: bool) -> None:
 
 
 def test_a_body_with_no_quote_survives_intact(shape: bool) -> None:
-    plain = "Hi Ayush, Unfortunately we will not be moving forward. Best of luck."
+    plain = f"Hi {CANDIDATE}, Unfortunately we will not be moving forward. Best of luck."
     assert _delivered(plain, shape) == plain
     assert own_text_span(_delivered(plain, shape)) is None
 
