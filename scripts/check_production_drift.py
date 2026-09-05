@@ -90,10 +90,30 @@ is the negative control, and the reason the comparison lives in a script
 instead of in YAML: it can be aimed at a commit that genuinely did not deploy
 and required to go red. `scripts/test_production_drift.py` pins those cases.
 
+IS THE PROBED HOST EVEN OURS
+
+Everything above compares two SHAs and none of it means anything if the host
+answering is not the project's. `jobtracker-web.vercel.app` was this project's
+committed `health_url` for ten minutes on 2026-08-23 -- 2239a639 01:55 to
+72be38ca 02:05 -- and it serves a different application (see the `web` Project
+below). It was caught by luck, because it happened to 404 a route that had
+just shipped; had it answered a sha at all nothing here would have noticed. A
+foreign host reporting main's tip is not a red, it is a GREEN over a page
+nobody visits.
+
+So when a token is available the probed hostname is required to appear in the
+alias list of the project's OWN newest READY production deployment -- the same
+deployment whose sha this check is about to trust. A miss is DRIFT, not
+UNKNOWN: UNKNOWN is for "could not be determined", and this was determined and
+is wrong. Without a token the gate cannot run and says so in its evidence
+rather than failing closed, which would red every unauthenticated run over
+something it never measured.
+
 EXIT CODES
 
     0  every project agrees with main, or differs for a reason listed above
-    1  DRIFT -- production is behind main and a deployment was owed
+    1  DRIFT -- production is behind main and a deployment was owed, or the
+       host this check probes is not the project's at all
     2  UNKNOWN -- the check could not be made (no token, API error, a SHA
        missing from the clone). NOT green. A check that cannot run must not
        look like a check that passed; that is the defect this file exists to
@@ -202,10 +222,37 @@ PROJECTS = (
         # had just shipped, which is the only reason it was caught before this
         # check went permanently UNKNOWN on a host nobody uses.
         #
-        # Whether that hostname is a frozen alias or belongs to something else
-        # is NOT established here: the Vercel token is dead (#472) so the alias
-        # list cannot be read, and a mechanism nobody has observed does not go
-        # in a comment. Filed separately.
+        # Whether that hostname belongs to something else IS established now.
+        # It is not ours. Read off the live API on 2026-09-05, the alias set of
+        # this project's newest READY production deployment (dpl_6u34tHrE...)
+        # is exactly:
+        #
+        #     getapplied.vercel.app
+        #     jobtracker-web-five.vercel.app
+        #     jobtracker-web-aesh0323-7401s-projects.vercel.app
+        #     jobtracker-web-git-main-aesh0323-7401s-projects.vercel.app
+        #
+        # `jobtracker-web.vercel.app` is not among them, and `-five` is the
+        # collision suffix Vercel appends when the bare name is taken -- so the
+        # bare name was somebody else's before this project existed.
+        #
+        # And what it serves is a different codebase. That app ships
+        # `AuthProvider`, `ModalProvider`, `SidebarProvider` and an
+        # `app/(dashboard)/layout` chunk; a pickaxe across every ref of this
+        # repository finds 0 of the four, while `role_from_message` (54) and
+        # `PipelineItem` (74) answer in the same sweep, so the search works.
+        #
+        # One thing that measurement does NOT support, and it matters: this
+        # cannot be checked against history. An alias MOVES, so a superseded
+        # deployment's alias list comes back empty rather than historical --
+        # every READY production deployment from 2026-08-11 returns no aliases
+        # at all today. Only the newest deployment can answer the question,
+        # which is why host_provenance is handed ready[0] and not a search.
+        #
+        # A hostname belonging to somebody else can answer with any sha,
+        # main's tip included, and this check would pass while certifying a
+        # page nobody visits. `host_provenance` below is what stops that, and
+        # the reason it is DRIFT rather than UNKNOWN.
         "https://getapplied.vercel.app/api/version",
     ),
     Project(
@@ -600,6 +647,85 @@ def production_deployments(
     return vercel_get("/v7/deployments", params, token).get("deployments", [])
 
 
+def deployment_aliases(
+    deployment_id: str, token: str, scope: dict[str, str]
+) -> list[str]:
+    """Every hostname the given deployment answers on.
+
+    A second call, because the list endpoint does not carry them: checked
+    against the live API on 2026-09-05, a `/v7/deployments` item has
+    `aliasAssigned` and `aliasError` and no alias array at all. `/v2` is the
+    alias endpoint's only version -- there is no `/v13/.../aliases` -- and it
+    answers `{"aliases": [{"alias": "getapplied.vercel.app", ...}, ...]}`,
+    bare hostnames with no scheme.
+
+    Raises VercelError like every other call here. The caller turns that into
+    a note, never a verdict: an unread alias list is not a wrong host.
+    """
+    payload = vercel_get(
+        f"/v2/deployments/{deployment_id}/aliases", dict(scope), token
+    )
+    return [
+        alias.lower()
+        for alias in (entry.get("alias") for entry in payload.get("aliases", []))
+        if alias
+    ]
+
+
+def host_provenance(
+    project: Project, aliases: list[str], deployment_id: str
+) -> tuple[Finding | None, str]:
+    """(a failure, or None; and a note either way).
+
+    Nothing tied the probed URL to the project. `health_url` was a string
+    nobody compared to anything, and for a day it named a host serving
+    somebody else's application -- which is not a hypothetical, it is what
+    this project shipped and only noticed because the foreign host 404'd a
+    route that had just deployed.
+
+    Pure, so the cases in test_production_drift.py can stub the alias list
+    instead of reaching the network.
+    """
+    host = urllib.parse.urlparse(project.health_url or "").hostname
+    if not aliases:
+        # Nothing to compare against is not a wrong host, and the difference
+        # is reachable: an alias MOVES, so a deployment that is not the
+        # current target answers with an empty list -- measured on this
+        # project's 2026-08-11 deployments, which return none today. `ready[0]`
+        # is newest-by-creation and an instant rollback leaves the aliases on
+        # an older promoted deployment, so this shape means rollback, not
+        # misconfiguration. `alias-stale` and `off-main` are its codes; sending
+        # somebody to edit health_url would be the wrong fix.
+        return None, (
+            f"{deployment_id} reports no aliases at all, so there was nothing "
+            f"to check {host} against; this gate did not run."
+        )
+    if host in aliases:
+        return None, (
+            f"{host} is an alias of {deployment_id}, so it is this project's "
+            f"own host and not somebody else's"
+        )
+    return (
+        Finding(
+            project.vercel_name,
+            DRIFT,
+            "config-host-not-an-alias",
+            f"{host} is not an alias of {project.vercel_name}'s newest READY "
+            f"production deployment",
+            [
+                f"this check probes {project.health_url} and treats whatever it",
+                f"answers as production. {deployment_id} answers on: "
+                + ", ".join(aliases),
+                "A host that is not the project's can report any sha, main's",
+                "tip included, and this check would pass while certifying a",
+                "page nobody visits. DRIFT and not UNKNOWN: this is not",
+                "'could not determine', it is determined and wrong.",
+            ],
+        ),
+        "",
+    )
+
+
 def deployment_sha(deployment: dict) -> str | None:
     meta = deployment.get("meta") or {}
     return meta.get("githubCommitSha")
@@ -651,11 +777,24 @@ def live_findings(head_sha: str, now: datetime, grace: timedelta) -> list[Findin
         vercel_sha: str | None = None
         in_flight: str | None = None
         vercel_note = ""
+        alias_note = ""
+        provenance: Finding | None = None
+        probed_host = (
+            urllib.parse.urlparse(project.health_url).hostname
+            if project.health_url
+            else None
+        )
 
         if not token:
             vercel_note = (
                 "VERCEL_TOKEN is not set, so the Vercel API was not consulted."
             )
+            if probed_host:
+                alias_note = (
+                    f"VERCEL_TOKEN is not set, so {probed_host} was not checked "
+                    f"against {project.vercel_name}'s alias list either. An "
+                    "unverified host is not a failed one; this gate did not run."
+                )
         else:
             deployments, answering, failure = production_for(
                 project, token, scopes, scope
@@ -679,6 +818,25 @@ def live_findings(head_sha: str, now: datetime, grace: timedelta) -> list[Findin
                         f"newest READY production deployment "
                         f"{ready[0].get('uid')} is {built_from}"
                     )
+                    # The provenance gate, against THAT deployment: the one
+                    # whose sha we are about to trust is the one whose aliases
+                    # decide whether the host we probe is ours.
+                    if probed_host:
+                        uid = str(ready[0].get("uid") or "")
+                        try:
+                            aliases = deployment_aliases(
+                                uid, token, answering or {}
+                            )
+                        except VercelError as exc:
+                            alias_note = (
+                                f"the alias list for {uid} could not be read "
+                                f"({exc}), so {probed_host} was not checked "
+                                "against it."
+                            )
+                        else:
+                            provenance, alias_note = host_provenance(
+                                project, aliases, uid
+                            )
                 else:
                     vercel_note = (
                         "the Vercel API reports no READY production deployment "
@@ -721,9 +879,37 @@ def live_findings(head_sha: str, now: datetime, grace: timedelta) -> list[Findin
             grace=grace,
             source=source,
         )
-        for note in (health_note, vercel_note):
+        # Every remaining way to skip the gate: no scope answered, or no READY
+        # deployment to read aliases from. Placed after the whole block rather
+        # than inside each branch because the failure being fixed here IS a
+        # check that quietly did not run, and a per-branch note is one `else`
+        # away from going silent again. Not applied when the gate DID run and
+        # found a wrong host -- that finding is not "unverified".
+        if probed_host and not alias_note and provenance is None:
+            alias_note = (
+                f"{probed_host} was not checked against {project.vercel_name}'s "
+                "alias list: the Vercel API named no deployment to read aliases "
+                "from. An unverified host is not a failed one; this gate did "
+                "not run."
+            )
+
+        for note in (health_note, vercel_note, alias_note):
             if note:
                 finding.evidence.append(note)
+
+        # A wrong host does not add to the comparison, it REPLACES it: every
+        # line above was measured against a page that is not this project's,
+        # so reporting it as this project's verdict is the defect. The
+        # comparison is kept as evidence rather than dropped, because a real
+        # drift and a wrong host can be true at once.
+        if provenance is not None:
+            provenance.evidence.append(
+                f"the comparison this replaces, made against {probed_host} and "
+                f"so not evidence about {project.vercel_name}: {finding.status} "
+                f"{finding.code} -- {finding.headline}"
+            )
+            provenance.evidence.extend(finding.evidence)
+            finding = provenance
 
         # The stale-alias check: Vercel believing one commit is deployed while
         # the live domain serves another has happened twice in this estate.
