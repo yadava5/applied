@@ -10,7 +10,7 @@
  * unaffected — it carries no weights and never did.
  * Same 218 patterns, same weights (strong +3 / +6-in-subject, weak +1 / +2,
  * negative −5), same veto cap, same margin→confidence tiers, same ATS-domain
- * boost.
+ * boost, same #417 cap on a verdict its own sender contradicted.
  *
  * It is pure JavaScript — no model, no network, no WASM — so it runs live in
  * the visitor's tab under the app's strict CSP. The `/demo/inbox` sample view
@@ -237,29 +237,12 @@ const MIN_ASSERTED_CHARS = 40;
  * The quote is often the only place the ROLE appears, so this must never sit
  * in front of identity extraction: only scoring loses the history.
  *
+ * THE FLOOR IS NOT THE ONLY READER OF THAT SPAN, and that is the whole of
+ * #417's short-reply half: `ownTextSpan` below returns the span whether or not
+ * it clears the floor, because "which words get SCORED" and "which words did
+ * the sender WRITE" are different questions.
+ *
  * Mirrors `strip_quoted_history` in the Python original.
- *
- * ---------------------------------------------------------------------------
- * A KNOWN, DELIBERATE DIVERGENCE FROM PYTHON LIVES HERE — the rest of #417.
- *
- * The server no longer stops where this function stops. `own_text_span` in
- * `backend/jobtracker/classifier/rules.py` reads the span before the boundary
- * EVEN WHEN it is under `MIN_ASSERTED_CHARS`, and `classify` caps the verdict
- * below the auto-file gate when those words refute the category the quote won
- * with. So "We must withdraw the offer." above a quoted offer — 27 characters,
- * under the floor — is held for review by the server and is still returned as
- * `offer` at 0.95 BY THIS FILE.
- *
- * That is the demo confidently filing a rescinded offer as an offer, which is
- * the defect #417 was opened about, in the engine #417 measured second.
- *
- * NOT AN OVERSIGHT, AND SAID OUT LOUD BECAUSE NO GATE CAN SAY IT. The backend
- * change added no pattern, so every check that keeps the two engines honest is
- * blind to it: `scripts/readme_facts.py` compares pattern COUNTS, the vendored
- * Space copy is Python, and `rules.json` enumerates patterns rather than
- * behaviour. `tests/unit/rescission-divergence-417.test.mjs` pins the gap at
- * its measured size instead. That file is written to go RED when this is
- * ported, and red there means "delete the pin", not "revert the port".
  */
 export function stripQuotedHistory(body: string): string {
   if (!body) return body;
@@ -267,6 +250,34 @@ export function stripQuotedHistory(body: string): string {
   if (marker === null) return body;
   const own = body.slice(0, marker.index).trim();
   return own.length < MIN_ASSERTED_CHARS ? body : own;
+}
+
+/**
+ * The words this message wrote ABOVE its quoted history — floor or no floor.
+ *
+ * `null` when there is no quote at all, which is a different answer from `""`
+ * (a reply that quoted something and wrote nothing above it), and both are
+ * different from a span too short to be scored.
+ *
+ * ISSUE #417. `stripQuotedHistory` refuses to strip below
+ * `MIN_ASSERTED_CHARS`, so the whole body — quote included — goes to the
+ * scorer. That is right for "fyi" over a forwarded rejection and wrong for "We
+ * must withdraw the offer.", which is 27 characters. The floor cannot tell
+ * those apart because it counts characters, and nothing else was looking at
+ * the span at all. This is what looks.
+ *
+ * Deliberately NOT a lower floor: the floor is doing its job, which is to stop
+ * a substanceless reply from being reduced to nothing. Lowering it moves every
+ * short reply there is; this moves only the ones whose own words contradict
+ * the verdict their quote produced.
+ *
+ * Mirrors `own_text_span` in the Python original.
+ */
+export function ownTextSpan(body: string): string | null {
+  if (!body) return null;
+  const marker = QUOTE_BOUNDARY_RE.exec(body);
+  if (marker === null) return null;
+  return body.slice(0, marker.index).trim();
 }
 
 /**
@@ -321,6 +332,137 @@ export function assertedText(body: string): string {
 }
 
 /**
+ * When a reply's own words contradict the verdict its quote produced — #417.
+ *
+ * A reply under `MIN_ASSERTED_CHARS` keeps its quote, so the quote is what
+ * gets scored. For "fyi" over a forwarded offer that is correct and everything
+ * below stays out of the way. For "We must withdraw the offer." it is the
+ * defect: 27 characters of the sender's own words are discarded, the quoted
+ * "we are pleased to offer you the position" wins at 0.95, and the demo
+ * asserts an offer the person does not hold.
+ *
+ * THE FIX MAY NOT BE "DISTRUST THE FALLBACK". "Thursday works for me." over a
+ * quoted interview invitation is also under the floor, also scores its quote,
+ * and is RIGHT to: the card should advance. Capping every fallback sends that
+ * correct auto-file to the review queue. So the span is read, and the verdict
+ * is capped only when the span REFUTES the category the quote won with.
+ */
+
+/** The categories whose mail says nothing about an application of yours at
+ *  all. Mirrors `_SAYS_NOTHING_ABOUT_AN_APPLICATION`; `needs_review` and
+ *  `other` are named even though `rules.json` carries no patterns for either,
+ *  so the subtraction below reads the same on both sides. */
+const SAYS_NOTHING_ABOUT_AN_APPLICATION = new Set(["follow_up", "needs_review", "other"]);
+
+/** The categories a retraction can refute: everything that claims an
+ *  application is ALIVE.
+ *
+ *  DERIVED rather than listed, so it cannot drift from the rules the walk
+ *  reads: Python subtracts from `EmailCategory`, this subtracts from
+ *  `rules.json`'s categories, and the two land on the same five members
+ *  (`applied`, `pending_application`, `interview`, `offer`, `assessment`).
+ *
+ *  `rejection` is subtracted by hand and is the only judgement in this
+ *  constant: "we have withdrawn your application from consideration" is a
+ *  rejection written in retraction words, and the classifier is already too shy
+ *  about asserting a negative outcome to have that one pushed back into the
+ *  queue. */
+const RETRACTABLE: ReadonlySet<string> = new Set(
+  Object.keys(CATS).filter(
+    (cat) => !SAYS_NOTHING_ABOUT_AN_APPLICATION.has(cat) && cat !== "rejection",
+  ),
+);
+
+/**
+ * A sender taking back the thing their quote is about.
+ *
+ * The one vocabulary here that `rules.json` does not already carry, and it is
+ * deliberately the smallest thing that can be true: it never scores and never
+ * names a verdict — there is no `rescinded` category — so all it can do is stop
+ * a verdict from being asserted.
+ *
+ * SCOPED TO THE OPPORTUNITY AND NOT TO A DIARY. "no longer" and "closed" are
+ * required to land near the role, the offer or the opening, because "Thursday
+ * no longer works for me" above a quoted invitation is a rescheduling note and
+ * the interview it belongs to still exists.
+ *
+ * Bounded on every quantifier and applied only to a span shorter than
+ * `MIN_ASSERTED_CHARS`, so the ReDoS reasoning that shaped `REPLY_SUBJECT_RE`
+ * has nothing to bite on: the alternatives are disjoint and the two gaps are
+ * capped at 30 characters of a class that excludes the sentence delimiter.
+ *
+ * SOURCE-IDENTICAL to `_RETRACTION` in the Python original — it uses no
+ * lookbehind, no inline flags and nothing else `RegExp` lacks, so the pattern
+ * is the same bytes on both sides and `tests/unit/rescission-cap-417.test.mjs`
+ * asserts that against `rules.py` itself rather than against a copy.
+ *
+ * ONE SEMANTIC DIFFERENCE SURVIVES THAT EQUALITY and is named rather than
+ * approximated, the way the Outlook `From:`/`Sent:` gap above is named:
+ * Python's `\b` is Unicode-aware on `str` patterns and JavaScript's is
+ * ASCII-only, so a word like `withdrawé` has a boundary here and none there —
+ * this engine caps a message Python would not. The `u` flag does not close it
+ * (`\w` stays ASCII under it); only rewriting the family in `\p{…}` classes
+ * would, and that is a different pattern than the one this mirrors.
+ */
+const RETRACTION_RE =
+  /\b(?:withdraw|withdrawn|withdrawing|withdrawal|rescind(?:ed|ing)?|revok(?:e|ed|ing)|retract(?:ed|ing)?)\b|\bno longer\b[^.\n]{0,30}\b(?:available|able|open|hiring|proceeding|moving)\b|\b(?:role|position|offer|opportunity|req|requisition|opening)\b[^.\n]{0,30}\b(?:closed|cancell?ed|frozen|filled|eliminated|on hold)\b|\b(?:hiring freeze|headcount freeze|put on hold)\b/i;
+
+/** The semantic half of each category's negatives.
+ *
+ *  DERIVED from the very RegExps the scoring walk uses, through the same
+ *  `NOISE_NEGATIVES` split, so no second copy of the vocabulary can rot —
+ *  `_SEMANTIC_REFUTATIONS` is built exactly this way from `PATTERNS`. The split
+ *  is the one `NOISE_NEGATIVES` already names: a genre filter ("this is not job
+ *  mail") says nothing about which category is right and must not cap anything,
+ *  while a semantic refutation ("regret to inform" against `offer`) is the
+ *  sender contradicting the verdict in so many words. */
+const SEMANTIC_REFUTATIONS: Record<string, RegExp[]> = Object.fromEntries(
+  Object.entries(CATS).map(([cat, g]) => [
+    cat,
+    g.negative.filter((re) => !NOISE_NEGATIVES.has(re.source)),
+  ]),
+);
+
+/** What a verdict is worth once the sender's own words have contradicted it.
+ *
+ *  BETWEEN the review floor (0.70) and the auto-file gate (0.85), and both
+ *  bounds are load-bearing. At or over the gate this is the bug. Under the
+ *  floor the message is DROPPED rather than queued, which is why the
+ *  alternative shape — letting the refutation flip the category to `other` — is
+ *  worse: `other` lands at 0.50, so the mail that corrects the board would be
+ *  destroyed instead of shown to the reader. Capping asks a question; flipping
+ *  deletes the evidence.
+ *
+ *  Mirrors `_REFUTED_CONFIDENCE` in the Python original. */
+const REFUTED_CONFIDENCE = 0.8;
+
+/**
+ * Which of `own`'s words argue AGAINST `category`.
+ *
+ * Empty when the sender wrote nothing readable against it, which is the common
+ * case and the one that must stay cheap. The pattern sources are returned
+ * rather than a boolean so a caller can say WHY: a cap nobody can trace back to
+ * a phrase is a magic number in the making.
+ *
+ * THE TWO CLAUSES ARE INDEPENDENT, exactly as in Python, and the asymmetry is
+ * not an oversight. Every category is checked against its own semantic
+ * negatives; only the retraction family is gated on `RETRACTABLE`. So a
+ * `rejection` winner can still be refuted by its own negatives — it just
+ * cannot be refuted by withdrawal vocabulary, because a withdrawal from
+ * consideration IS a rejection.
+ *
+ * Mirrors `own_text_refutes` in the Python original.
+ */
+export function ownTextRefutes(own: string, category: string): string[] {
+  if (!own) return [];
+  const hits = (SEMANTIC_REFUTATIONS[category] ?? [])
+    .filter((re) => re.test(own))
+    .map((re) => re.source);
+  if (RETRACTABLE.has(category) && RETRACTION_RE.test(own)) hits.push(RETRACTION_RE.source);
+  return hits;
+}
+
+/**
  * The one scoring walk. `classifyWithRules` runs it bare; `traceRules` passes
  * a recorder. Splitting the walk from the wrappers is what keeps the trace
  * honest by construction: there is no second reading of the rules that could
@@ -361,6 +503,18 @@ function score(
   record?: (hit: RuleHit) => void,
 ): RulesVerdict {
   const scores: Record<string, number> = {};
+
+  // READ BEFORE `assertedText` DESTROYS IT. When the span clears the floor it
+  // IS what gets scored and there is no second reading to do; when it does
+  // not, the quote is scored on its behalf and this is the only remaining
+  // record of what the sender actually wrote. #417.
+  //
+  // `null` (no quote) and `""` (quoted and wrote nothing above it) are both
+  // excluded here rather than left to falsiness: there is nothing of the
+  // sender's to read in either, so nothing to contradict the quote with.
+  const ownText = ownTextSpan(body);
+  const quoteSpokeForIt =
+    ownText !== null && ownText.length > 0 && ownText.length < MIN_ASSERTED_CHARS;
 
   // ONCE, before any pattern sees it. Every `re.test(body)` below is testing
   // what the sender ASSERTS. The subject's TEXT is left alone by design: it is
@@ -488,6 +642,29 @@ function score(
 
   if (isAts && ATS_BOOSTED.has(winner)) {
     confidence = Math.min(confidence + 0.05, 0.95);
+  }
+
+  // THE QUOTE SPOKE, AND THE SENDER'S OWN WORDS CONTRADICT IT. #417.
+  //
+  // Only reachable when the floor refused to strip, so a message whose own
+  // words WERE scored can never land here — that verdict already came from the
+  // sender and there is nothing to distrust. And only when those words refute
+  // this particular winner, which is what keeps "Thursday works for me." over a
+  // quoted invitation auto-filing as it should.
+  //
+  // AFTER THE ATS BONUS, not before. The bonus is +0.05 and the cap is 0.05
+  // under the gate, so capping first hands every withdrawal from a Greenhouse
+  // relay straight back over 0.85 — the same arithmetic that makes the anchored
+  // sender match above load-bearing. `Math.min` and not assignment, so a
+  // verdict already below the cap is not RAISED to it.
+  //
+  // The refuting patterns are not recorded on the trace. Python appends them to
+  // `matched_patterns`; `RulesVerdict` has no counterpart — negatives and vetoes
+  // do not surface there either — and `RuleHit` describes the SCORING walk,
+  // which a refutation adds no points to. `ownTextRefutes` is exported instead,
+  // so the reason is available to a caller that wants it.
+  if (quoteSpokeForIt && ownTextRefutes(ownText ?? "", winner).length > 0) {
+    confidence = Math.min(confidence, REFUTED_CONFIDENCE);
   }
 
   return { category: winner, confidence, scores };
