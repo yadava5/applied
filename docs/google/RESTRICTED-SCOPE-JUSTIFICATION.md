@@ -358,9 +358,14 @@ prominent, user-facing feature the data serves; there is no other use.
      (`gmail_client.py:785`, `:885-886`).
    - **`range` is not a closed set, and "All time" is a choice the product
      offers.** `_parse_range_months` accepts 3, 6, 9 and 12
-     (`_ALLOWED_RANGE_MONTHS`, `gmail_oauth.py:1544`, `:1547-1564`); any other
-     value, including `all` and an unrecognised one, yields no age bound at all,
-     and `build_gmail_query` then emits the base query alone. An earlier revision
+     (`_ALLOWED_RANGE_MONTHS`). `all`, `any`, `0`, an empty value and an
+     absent parameter each yield no age bound, and `build_gmail_query` then
+     emits the base query alone. **An UNRECOGNISED value no longer does**
+     (#755): it now resolves to the same 12-month default the sync path
+     already used, so `?range=24`, `?range=13` and `?range=xyz` are bounded
+     reads rather than unbounded ones. The no-error property is unchanged — a
+     stray parameter still cannot fail the request; what changed is that the
+     fallback bounds instead of widening. An earlier revision
      of this document said the hosted UI only ever sends an allowed window. That
      was not true when it was written. **Both hosted surfaces offer an "All
      time" option, and choosing it produces a read with no age bound at all:**
