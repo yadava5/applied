@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { RowActionsMenu } from "@/components/dashboard/RowActionsMenu";
+import { SyncFailureNote } from "@/components/dashboard/SyncFailureNote";
 import { LastSynced } from "@/components/gmail/LastSynced";
 import { useSignOut } from "@/components/shell/SessionControls";
 import { Dialog } from "@/components/ui/Dialog";
@@ -15,6 +16,7 @@ import { selectClass } from "@/components/ui/formStyles";
 import { onScanRequest, requestScan } from "@/lib/dashboard/scan-bus";
 import { liveSyncTransport, type SyncTransport } from "@/lib/dashboard/transport";
 import { publishAmbientPulse } from "@/lib/shell/ambient-bus";
+import { backendSyncDetail } from "@/lib/gmail/sync-detail";
 import {
   SCAN_DEFAULT_DEPTH,
   SCAN_DEFAULT_DISPOSITION,
@@ -190,7 +192,13 @@ type SyncPhase =
   | { kind: "receipt"; op: SyncOp; outcome: ScanOutcome }
   /** Additive scan broke mid-flight (disconnected / unexpected mode). */
   | { kind: "interrupted"; end: ScanEnd }
-  | { kind: "failed"; op: SyncOp; notConnected: boolean };
+  /**
+   * `detail` is the BACKEND's own sentence when it sent one (#848) — e.g. "3
+   * filed and 1 queued of 4 scanned before it failed; sync again to finish".
+   * `null` whenever the response carried no usable body, which is the common
+   * case and must render as nothing rather than as the word "null".
+   */
+  | { kind: "failed"; op: SyncOp; notConnected: boolean; detail: string | null };
 
 /** Cooldown so the staleness auto-sync runs at most once per window per tab. */
 const AUTOSYNC_KEY = "applied:dashboard:autosync:lastAt";
@@ -383,6 +391,7 @@ export function SyncBar({
         kind: "failed",
         op: "sync",
         notConnected: res.status === 409,
+        detail: backendSyncDetail(res.body),
       });
       return;
     }
@@ -475,6 +484,7 @@ export function SyncBar({
           kind: "failed",
           op,
           notConnected: res.status === 409,
+          detail: backendSyncDetail(res.body),
         });
         return;
       }
@@ -750,11 +760,14 @@ export function SyncBar({
             So the line says the one thing that is true on every path and at
             every failure point, and the button beside it carries the action.
             The `409` branch above keeps its stronger claim, and may: the
-            backend returns it before any scan or merge begins. */}
-        {phase.op} failed · anything it filed or removed before stopping stays that way{" "}
-        <button
-          type="button"
-          onClick={() => {
+            backend returns it before any scan or merge begins.
+            The sentence itself and the retry now live in `SyncFailureNote`,
+            a leaf this file's `next/*` imports kept out of the unit suite
+            (#848) — the copy is asserted by execution there. */}
+        <SyncFailureNote
+          op={phase.op}
+          detail={phase.detail}
+          onRetry={() => {
             // A retry re-issues the SAME request, disposition included —
             // never a different operation under the same word.
             if (phase.op !== "sync" && lastWindowed.current) {
@@ -764,10 +777,7 @@ export function SyncBar({
               void runSync();
             }
           }}
-          className="text-muted underline-offset-2 hover:text-strong hover:underline"
-        >
-          try again
-        </button>
+        />
       </>
     );
   }
