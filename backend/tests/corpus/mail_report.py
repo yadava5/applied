@@ -65,7 +65,7 @@ from jobtracker.cloud.gmail_client import extract_body_text
 from jobtracker.cloud.pipeline import AUTO_FILE_GATE
 from jobtracker.database.models import EmailCategory
 
-from .mail import CATEGORIES, METADATA, MailCase, generate
+from .mail import CATEGORIES, METADATA, MailCase, generate, generate_wrapped
 
 #: The verdicts that mean "I have nothing to say", as opposed to a category.
 ABSTAIN_CATEGORIES = {EmailCategory.OTHER.value, EmailCategory.NEEDS_REVIEW.value}
@@ -156,9 +156,16 @@ def score_one(case: MailCase, clf: RulesClassifier) -> Outcome:
     )
 
 
-def run() -> list[Outcome]:
+def run(wrapped: bool = False) -> list[Outcome]:
+    """Score the corpus. ``wrapped`` hard-wraps every text/plain body first.
+
+    The two runs must agree case for case — see ``tests/test_wrap_invariance``.
+    They did not before #430's reflow: wrapped, auto-files fell 244 -> 212.
+    """
+
     clf = RulesClassifier()
-    return [score_one(c, clf) for c in generate()]
+    cases = generate_wrapped() if wrapped else generate()
+    return [score_one(c, clf) for c in cases]
 
 
 # ── printing ─────────────────────────────────────────────────────────────────
@@ -305,8 +312,14 @@ def print_report(outcomes: list[Outcome]) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--json", metavar="PATH", help="also write every row as JSONL")
+    ap.add_argument(
+        "--wrap72",
+        action="store_true",
+        help="hard-wrap every text/plain body at 72 columns first, the way a "
+        "mailer sends it. Should change nothing; see test_wrap_invariance.",
+    )
     args = ap.parse_args()
-    outcomes = run()
+    outcomes = run(wrapped=args.wrap72)
     print_report(outcomes)
     if args.json:
         with open(args.json, "w", encoding="utf-8") as fh:
