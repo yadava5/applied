@@ -44,7 +44,52 @@ import { expect, test, type Page } from "@playwright/test";
  * /demo is the surface: it mounts the REAL `ApplicationRow` and
  * `ApplicationDetail` over an in-memory store (only the transport is
  * simulated), and it is the one board CI can reach without a Supabase session.
+ *
+ * AND THE SAME DEFECT ON /demo/scan, which is the surface #425 NAMES FIRST and
+ * which the repair above did not reach. `ReclassifyControl` carried the
+ * identical mechanism on two nodes — `disabled={busy}` on the category select
+ * and on the apply button — and the reader is standing on the button, because
+ * pressing it is how the write starts. Measured there before the fix, with the
+ * probe below: focus on the button, Enter, `document.activeElement` is `<body>`
+ * at t=8ms with the node still in the document; the panel is not replaced by
+ * "corrected" until t=170ms. Attribute, not reparent, again.
+ *
+ * The scan cases differ from the board's in three ways worth knowing before
+ * reading them. The focused node is a BUTTON, not the select, so the select's
+ * half of the fix is asserted through `companion` sampling instead of through
+ * focus. The panel draws no chevron, so the probe is armed without one and says
+ * so. And a correction that files ends by REPLACING the panel with "corrected",
+ * so — exactly as in the stage-changing case — what that case can honestly
+ * assert ends at the unmount; the `needs_employer` case beside it is the one
+ * that carries the settle, because its panel stays.
+ *
+ * WHAT NONE OF THESE CASES COVER, said plainly: focus after an unmount. A
+ * stage-CHANGING board correction reparents its row, and a scan correction that
+ * files swaps its panel; in both, focus goes to `<body>` WITH the node and does
+ * not come back. That is a different repair (put focus somewhere deliberate
+ * after the regroup) and a separate line item on #425. Nothing here should be
+ * read as covering it.
  */
+
+/**
+ * A SECOND control read off the same trace, at the same instants.
+ *
+ * The scan's correction panel locks two nodes with one write, and only one of
+ * them can hold focus: the reader presses Enter on `apply`, so the category
+ * select's half of the defect is invisible to a focus assertion. It is not
+ * invisible to this — the select is one Shift+Tab away from being the focused
+ * node, and `disabled` is what would take it out of the focus order at exactly
+ * the moment the reader reaches for it. Sampling it here is what makes
+ * reverting ONE of the two attributes red on its own.
+ */
+interface CompanionSample {
+  ariaBusy: string | null;
+  ariaDisabled: string | null;
+  /** The DOM property, not the attribute: the thing that blurs the element. */
+  disabledProp: boolean;
+  opacity: string;
+  inDocument: boolean;
+}
 
 /** One reading of the control and of where focus is, stamped in the page. */
 interface FocusSample {
@@ -72,6 +117,8 @@ interface FocusSample {
   value: string;
   /** False once React has unmounted the control (a reparented row). */
   inDocument: boolean;
+  /** The second locked control, when the case armed one. */
+  companion: CompanionSample | null;
 }
 
 interface FocusTrace {
@@ -106,63 +153,99 @@ declare global {
  * runs out. Nothing here waits on a hardcoded latency: the probe follows
  * `aria-busy`, and the test asserts it actually saw both edges.
  */
-async function armFocusProbe(page: Page, selectId: string): Promise<void> {
-  await page.evaluate((id) => {
-    const sel = document.getElementById(id) as HTMLSelectElement | null;
-    if (!sel) throw new Error(`focus probe: no control with id ${id} on the page`);
-    // The control and its glyph are siblings inside the select's wrapper, in
-    // both components.
-    const chevron = sel.parentElement?.querySelector("svg") ?? null;
-    if (!chevron) throw new Error(`focus probe: no chevron beside ${id}`);
-    const samples: FocusSample[] = [];
-    const t0 = performance.now();
-    let sawBusy = false;
-    let settledAt: number | null = null;
-    let detachedAt: number | null = null;
+async function armFocusProbe(
+  page: Page,
+  selectId: string,
+  options: {
+    /**
+     * Does this control draw a chevron that dims with it? True for the board's
+     * two stage selects, which is why the probe REFUSES to arm when it cannot
+     * find one — a silently missing glyph is the failure this samples for. The
+     * scan's correction panel draws none, and says so here rather than
+     * reporting a null the assertions would have to be taught to ignore.
+     */
+    chevron?: boolean;
+    /** A second control locked by the same write; see `CompanionSample`. */
+    companionId?: string;
+  } = {},
+): Promise<void> {
+  await page.evaluate(
+    ({ id, wantsChevron, companionId }) => {
+      const sel = document.getElementById(id) as
+        | HTMLSelectElement
+        | HTMLButtonElement
+        | null;
+      if (!sel) throw new Error(`focus probe: no control with id ${id} on the page`);
+      // The control and its glyph are siblings inside the select's wrapper, in
+      // both board components.
+      const chevron = wantsChevron ? (sel.parentElement?.querySelector("svg") ?? null) : null;
+      if (wantsChevron && !chevron) throw new Error(`focus probe: no chevron beside ${id}`);
+      const mate = companionId
+        ? (document.getElementById(companionId) as HTMLSelectElement | null)
+        : null;
+      if (companionId && !mate) {
+        throw new Error(`focus probe: no companion control with id ${companionId}`);
+      }
+      const samples: FocusSample[] = [];
+      const t0 = performance.now();
+      let sawBusy = false;
+      let settledAt: number | null = null;
+      let detachedAt: number | null = null;
 
-    const read = () => {
-      const now = Math.round(performance.now() - t0);
-      const active = document.activeElement;
-      const mounted = document.contains(sel);
-      if (!mounted && detachedAt === null) detachedAt = now;
-      // Only a MOUNTED control's attributes are still being written to: a
-      // detached node freezes on its last frame, and reading a settle off it
-      // would be reading the past.
-      const busy = mounted && sel.getAttribute("aria-busy") === "true";
-      if (busy) sawBusy = true;
-      else if (mounted && sawBusy && settledAt === null) settledAt = now;
-      samples.push({
-        t: now,
-        active: active ? active.id || active.tagName : "none",
-        ariaBusy: sel.getAttribute("aria-busy"),
-        ariaDisabled: sel.getAttribute("aria-disabled"),
-        disabledProp: sel.disabled,
-        opacity: getComputedStyle(sel).opacity,
-        chevronOpacity: chevron ? getComputedStyle(chevron).opacity : null,
-        value: sel.value,
-        inDocument: document.contains(sel),
+      const read = () => {
+        const now = Math.round(performance.now() - t0);
+        const active = document.activeElement;
+        const mounted = document.contains(sel);
+        if (!mounted && detachedAt === null) detachedAt = now;
+        // Only a MOUNTED control's attributes are still being written to: a
+        // detached node freezes on its last frame, and reading a settle off it
+        // would be reading the past.
+        const busy = mounted && sel.getAttribute("aria-busy") === "true";
+        if (busy) sawBusy = true;
+        else if (mounted && sawBusy && settledAt === null) settledAt = now;
+        samples.push({
+          t: now,
+          active: active ? active.id || active.tagName : "none",
+          ariaBusy: sel.getAttribute("aria-busy"),
+          ariaDisabled: sel.getAttribute("aria-disabled"),
+          disabledProp: sel.disabled,
+          opacity: getComputedStyle(sel).opacity,
+          chevronOpacity: chevron ? getComputedStyle(chevron).opacity : null,
+          value: sel.value,
+          inDocument: mounted,
+          companion: mate
+            ? {
+                ariaBusy: mate.getAttribute("aria-busy"),
+                ariaDisabled: mate.getAttribute("aria-disabled"),
+                disabledProp: mate.disabled,
+                opacity: getComputedStyle(mate).opacity,
+                inDocument: document.contains(mate),
+              }
+            : null,
+        });
+        return now;
+      };
+
+      read();
+      const done = new Promise<FocusTrace>((resolve) => {
+        const timer = window.setInterval(() => {
+          const now = read();
+          // 500ms of tail past the settle: on the live board the unmount landed
+          // ~1.4s after the change, well after `aria-busy` cleared, and a blur
+          // that happens THERE has to be inside the trace too.
+          const finished =
+            (settledAt !== null && now - settledAt >= 500) ||
+            (detachedAt !== null && now - detachedAt >= 300) ||
+            now >= 3000;
+          if (!finished) return;
+          window.clearInterval(timer);
+          resolve({ samples, sawBusy, settledAt, detachedAt });
+        }, 8);
       });
-      return now;
-    };
-
-    read();
-    const done = new Promise<FocusTrace>((resolve) => {
-      const timer = window.setInterval(() => {
-        const now = read();
-        // 500ms of tail past the settle: on the live board the unmount landed
-        // ~1.4s after the change, well after `aria-busy` cleared, and a blur
-        // that happens THERE has to be inside the trace too.
-        const finished =
-          (settledAt !== null && now - settledAt >= 500) ||
-          (detachedAt !== null && now - detachedAt >= 300) ||
-          now >= 3000;
-        if (!finished) return;
-        window.clearInterval(timer);
-        resolve({ samples, sawBusy, settledAt, detachedAt });
-      }, 8);
-    });
-    window.__focusProbe = { done };
-  }, selectId);
+      window.__focusProbe = { done };
+    },
+    { id: selectId, wantsChevron: options.chevron ?? true, companionId: options.companionId },
+  );
 }
 
 /** Where focus is right now, addressed the same way the probe addresses it. */
@@ -202,6 +285,26 @@ function dispatchStage(
   );
 }
 
+/**
+ * Press a button the way the page itself would, from inside the page.
+ *
+ * Same reason as `dispatchStage`: once the fix works, the button reads
+ * `aria-disabled="true"` mid-write and `locator.click()` would be refused by
+ * Playwright's actionability layer — the RUNNER's refusal, not the product's,
+ * and a green that proves nothing. `HTMLElement.click()` dispatches a real
+ * click that React's delegated listener receives, so what happens next is the
+ * component's decision.
+ */
+function dispatchClick(page: Page, buttonId: string): Promise<{ wasBusy: boolean }> {
+  return page.evaluate((id) => {
+    const btn = document.getElementById(id) as HTMLButtonElement | null;
+    if (!btn) throw new Error(`dispatchClick: no button with id ${id} on the page`);
+    const wasBusy = btn.getAttribute("aria-busy") === "true";
+    btn.click();
+    return { wasBusy };
+  }, buttonId);
+}
+
 /** The trace is only evidence if it caught the window it claims to describe. */
 function expectUsableTrace(trace: FocusTrace, control: string): void {
   expect(
@@ -231,8 +334,20 @@ function expectNeverBlurredWhileMounted(trace: FocusTrace, selectId: string): vo
   ).toEqual([]);
 }
 
-/** The lock has to still read as a lock — to the eye and to assistive tech. */
-function expectBusyIsCommunicated(trace: FocusTrace, control: string): void {
+/**
+ * The lock has to still read as a lock — to the eye and to assistive tech.
+ *
+ * The IN-FLIGHT half only. What the control looks like once the write returns
+ * is `expectSettlesIdle`, and the two are separate because they are not always
+ * both true: a correction that is answered `needs_employer` clears `aria-busy`
+ * and stays locked, for a different and visible reason, so the case that
+ * exercises that branch states its own end state rather than skipping one.
+ */
+function expectBusyIsCommunicated(
+  trace: FocusTrace,
+  control: string,
+  options: { chevron?: boolean } = {},
+): void {
   // Mounted only: a detached node freezes with its last attributes and
   // `getComputedStyle` on it returns nothing, so including one would compare
   // an empty string to "0.5" and red for a reason that is not the product's.
@@ -242,11 +357,22 @@ function expectBusyIsCommunicated(trace: FocusTrace, control: string): void {
     notDimmed.map((s) => `t=${s.t} opacity=${s.opacity}`),
     `${control}: the control must still be visibly dimmed while the write is in flight (if this reads opacity=1, the aria-disabled: Tailwind variant did not emit)`,
   ).toEqual([]);
-  const glyphNotDimmed = busy.filter((s) => s.chevronOpacity !== "0.5");
-  expect(
-    glyphNotDimmed.map((s) => `t=${s.t} chevron opacity=${s.chevronOpacity}`),
-    `${control}: the chevron dims with the control (if this reads 1, peer-aria-disabled did not emit and the glyph is keying off a DOM property the control no longer sets)`,
-  ).toEqual([]);
+  if (options.chevron ?? true) {
+    const glyphNotDimmed = busy.filter((s) => s.chevronOpacity !== "0.5");
+    expect(
+      glyphNotDimmed.map((s) => `t=${s.t} chevron opacity=${s.chevronOpacity}`),
+      `${control}: the chevron dims with the control (if this reads 1, peer-aria-disabled did not emit and the glyph is keying off a DOM property the control no longer sets)`,
+    ).toEqual([]);
+  } else {
+    // Asserted rather than skipped: "this control draws no chevron" and "the
+    // probe was armed for one and read nothing" are the same value, and only
+    // one of them is a fact about the product.
+    const glyph = busy.filter((s) => s.chevronOpacity !== null);
+    expect(
+      glyph.map((s) => `t=${s.t} chevron opacity=${s.chevronOpacity}`),
+      `${control}: this control has no chevron and the probe was armed without one — a reading here means the arming and the assertions disagree about what is on the page`,
+    ).toEqual([]);
+  }
   const notStated = busy.filter((s) => s.ariaDisabled !== "true");
   expect(
     notStated.map((s) => `t=${s.t} aria-disabled=${s.ariaDisabled}`),
@@ -257,6 +383,10 @@ function expectBusyIsCommunicated(trace: FocusTrace, control: string): void {
     natively.map((s) => `t=${s.t} disabled=${s.disabledProp}`),
     `${control}: the in-flight lock must NOT be the DOM disabled property — the browser blurs a focused element that becomes disabled, which is defect #425`,
   ).toEqual([]);
+}
+
+/** …and it has to stop reading as one. */
+function expectSettlesIdle(trace: FocusTrace, control: string): void {
   // Only for a control that is still there to clear it. A correction that
   // moves its row replaces the node instead — its last frame legitimately
   // still reads busy, and the case that does this asserts the row arrived in
@@ -270,6 +400,39 @@ function expectBusyIsCommunicated(trace: FocusTrace, control: string): void {
       `${control}: the chevron is undimmed once the write returns`,
     ).toBe("1");
   }
+}
+
+/**
+ * The other locked control, read off the same trace at the same instants.
+ *
+ * This is the assertion that makes the two halves of a two-control fix
+ * SEPARATELY falsifiable: putting `disabled` back on the companion alone —
+ * the one that cannot hold focus during the write — reds here and nowhere
+ * else, naming it.
+ */
+function expectCompanionLockIsAdvisory(trace: FocusTrace, control: string): void {
+  const busy = trace.samples.filter(
+    (s) => s.ariaBusy === "true" && s.companion !== null && s.companion.inDocument,
+  );
+  expect(
+    busy.length,
+    `${control}: the trace holds no in-flight reading of the companion control, so everything below it is vacuous`,
+  ).toBeGreaterThan(2);
+  const natively = busy.filter((s) => s.companion!.disabledProp);
+  expect(
+    natively.map((s) => `t=${s.t} disabled=${s.companion!.disabledProp}`),
+    `${control}: the in-flight lock must NOT be the DOM disabled property — it takes the control out of the focus order at the moment the reader might reach for it, which is defect #425`,
+  ).toEqual([]);
+  const notStated = busy.filter((s) => s.companion!.ariaDisabled !== "true");
+  expect(
+    notStated.map((s) => `t=${s.t} aria-disabled=${s.companion!.ariaDisabled}`),
+    `${control}: the in-flight lock must be stated to assistive tech with aria-disabled`,
+  ).toEqual([]);
+  const notDimmed = busy.filter((s) => s.companion!.opacity !== "0.5");
+  expect(
+    notDimmed.map((s) => `t=${s.t} opacity=${s.companion!.opacity}`),
+    `${control}: the control must still be visibly dimmed while the write is in flight (if this reads opacity=1, the aria-disabled: Tailwind variant did not emit)`,
+  ).toEqual([]);
 }
 
 
@@ -317,6 +480,7 @@ test.describe("a correction keeps the reader's place", () => {
 
     // --- The lock is still a lock ----------------------------------------
     expectBusyIsCommunicated(trace, "the row's stage select");
+    expectSettlesIdle(trace, "the row's stage select");
     expect(
       midFlight.wasBusy,
       "the mid-flight attempt has to land INSIDE the write window or it tests nothing",
@@ -385,6 +549,7 @@ test.describe("a correction keeps the reader's place", () => {
     // reparent-only "fix" could not pass.
     expectNeverBlurredWhileMounted(trace, selectId);
     expectBusyIsCommunicated(trace, "the row's stage select (stage-changing)");
+    expectSettlesIdle(trace, "the row's stage select (stage-changing)");
     await expect(page.getByRole("region", { name: /interviewing — 5/i })).toBeVisible();
   });
 
@@ -419,6 +584,7 @@ test.describe("a correction keeps the reader's place", () => {
       "focus is still on the pane's control after the write returned",
     ).toBe(selectId);
     expectBusyIsCommunicated(trace, "the detail pane's stage select");
+    expectSettlesIdle(trace, "the detail pane's stage select");
     expect(
       midFlight.wasBusy,
       "the mid-flight attempt has to land INSIDE the write window or it tests nothing",
@@ -428,5 +594,207 @@ test.describe("a correction keeps the reader's place", () => {
       "a stage picked while the pane's write is in flight is ignored and the controlled value snaps back",
     ).toBe("ghosted");
     await expect(select).toHaveValue("ghosted");
+  });
+});
+
+// --- /demo/scan -------------------------------------------------------------
+// The fixture rows, by the ids the control builds its own ids from. The two
+// that matter here are the two ENDINGS a correction has: one that files (and
+// takes the panel away with it) and one that files nothing (and leaves the
+// panel open, which is the only way to sample the settle).
+
+/** Files cleanly — its sender names an employer. */
+const SCAN_FILES_ID = "demo-scan-1";
+const SCAN_FILES_SUBJECT = "Your HackerRank assessment for Software Engineer II";
+/** A personal address names no employer: the answer is `needs_employer`. */
+const SCAN_UNNAMED_ID = "demo-scan-3";
+const SCAN_UNNAMED_SUBJECT = "Next steps + take-home details";
+/** A third row, used only to prove the in-page click dispatch is alive. */
+const SCAN_OTHER_SUBJECT = "Update on your application";
+
+/** The row `<li>` carrying a given subject — the same address `scan-correct` uses. */
+function scanRow(page: Page, subject: string) {
+  return page.locator("li").filter({ hasText: subject }).first();
+}
+
+/** Open a row's correction panel and pick a category, ready to apply. */
+async function openCorrection(page: Page, subject: string, category: string): Promise<void> {
+  const target = scanRow(page, subject);
+  await target.getByRole("button", { name: /^reclassify/i }).click();
+  await target.getByLabel(/new category for/i).selectOption(category);
+}
+
+test.describe("a scan correction keeps the reader's place", () => {
+  test("the apply button keeps focus for as long as the panel it is in exists", async ({
+    page,
+  }) => {
+    await page.goto("/demo/scan");
+    await expect(page.getByText(SCAN_FILES_SUBJECT)).toBeVisible();
+    await openCorrection(page, SCAN_FILES_SUBJECT, "assessment");
+
+    const applyId = `reclass-apply-${SCAN_FILES_ID}`;
+    const selectId = `reclass-${SCAN_FILES_ID}`;
+    await page.locator(`#${applyId}`).focus();
+    expect(
+      await activeElementId(page),
+      "the reader is standing on apply before they press it",
+    ).toBe(applyId);
+
+    await armFocusProbe(page, applyId, { chevron: false, companionId: selectId });
+    // ENTER, not `locator.click()`. It is the route the defect was measured on,
+    // and it is the route that still works once the button reads
+    // aria-disabled: Playwright would refuse the click, the browser does not
+    // refuse the key, and the component's own guard is what answers it.
+    await page.keyboard.press("Enter");
+    // A second press, inside the same window the probe is sampling.
+    const second = await dispatchClick(page, applyId);
+    const trace = await page.evaluate(() => window.__focusProbe!.done);
+
+    // --- The defect ------------------------------------------------------
+    expectUsableTrace(trace, "the scan's apply button");
+    expectNeverBlurredWhileMounted(trace, applyId);
+    // The premise, checked rather than assumed: this correction FILES, so the
+    // panel is replaced by "corrected" and the button goes with it. Focus after
+    // that is the unmount question, which is not this one.
+    expect(
+      trace.detachedAt,
+      "a correction that files replaces its panel — if the button is never unmounted, this case is no longer the one that ends at an unmount",
+    ).not.toBeNull();
+
+    // --- The lock is still a lock ----------------------------------------
+    expectBusyIsCommunicated(trace, "the scan's apply button", { chevron: false });
+    // …on BOTH nodes the write locks. The select cannot be the focused one
+    // here, so this is what makes its half of the fix separately falsifiable.
+    expectCompanionLockIsAdvisory(trace, "the scan's category select");
+    expect(
+      second.wasBusy,
+      "the second press has to land INSIDE the write window or it tests nothing",
+    ).toBe(true);
+    // What that second press is and is NOT evidence of, stated so nobody reads
+    // more into it than it holds: a second apply would send the SAME body and
+    // land on the same verdict, so this page cannot count applies and does not
+    // claim to. It asserts the press was made mid-write and the surface ended
+    // in the one corrected state. The COUNT is asserted where the calls are
+    // visible — `tests/unit/reclassify-asks-which-application.test.mjs` holds
+    // the transport open and reads `sent.length`.
+    await expect(scanRow(page, SCAN_FILES_SUBJECT)).toContainText(/corrected/i);
+    await expect(page.getByRole("button", { name: /^assessment 1$/ })).toBeVisible();
+
+    // --- The instrument can press a button when it is allowed to ---------
+    // Without this, "the second press changed nothing" is equally well
+    // explained by a dispatch React never receives. Same call, another row, no
+    // write in flight: it corrects.
+    await openCorrection(page, SCAN_OTHER_SUBJECT, "offer");
+    const otherApplyId = await scanRow(page, SCAN_OTHER_SUBJECT)
+      .getByRole("button", { name: /^apply$/i })
+      .getAttribute("id");
+    const allowed = await dispatchClick(page, otherApplyId!);
+    expect(
+      allowed.wasBusy,
+      "the control case has to run with NO write in flight to say anything",
+    ).toBe(false);
+    await expect(scanRow(page, SCAN_OTHER_SUBJECT)).toContainText(/corrected/i);
+  });
+
+  test("a 2xx that filed nothing hands the reader back their place too", async ({ page }) => {
+    // The branch the demo transport exists to reproduce, and the second blur
+    // the old code caused: `needs_employer` clears `busy` and sets the employer
+    // prompt, and the apply button's own condition then flipped the still-
+    // focused button straight back to `disabled`. This panel STAYS on the page,
+    // so it is the case that can sample past the settle.
+    await page.goto("/demo/scan");
+    await expect(page.getByText(SCAN_UNNAMED_SUBJECT)).toBeVisible();
+    await openCorrection(page, SCAN_UNNAMED_SUBJECT, "assessment");
+
+    const applyId = `reclass-apply-${SCAN_UNNAMED_ID}`;
+    const selectId = `reclass-${SCAN_UNNAMED_ID}`;
+    await page.locator(`#${applyId}`).focus();
+    expect(
+      await activeElementId(page),
+      "the reader is standing on apply before they press it",
+    ).toBe(applyId);
+
+    await armFocusProbe(page, applyId, { chevron: false, companionId: selectId });
+    await page.keyboard.press("Enter");
+    const trace = await page.evaluate(() => window.__focusProbe!.done);
+
+    expectUsableTrace(trace, "the scan's apply button (needs_employer)");
+    expectNeverBlurredWhileMounted(trace, applyId);
+    expectBusyIsCommunicated(trace, "the scan's apply button (needs_employer)", {
+      chevron: false,
+    });
+    expectCompanionLockIsAdvisory(trace, "the scan's category select (needs_employer)");
+    expect(
+      trace.detachedAt,
+      "this correction files nothing, so the panel must still be there — a detach means the case stopped being the one that covers the settle",
+    ).toBeNull();
+    expect(
+      trace.settledAt,
+      "the write has to have finished inside the trace for the end state below to be the end state",
+    ).not.toBeNull();
+
+    // The end state, STATED rather than skipped. `expectSettlesIdle` would be
+    // wrong here and it would be wrong for a reason worth writing down: the
+    // button is legitimately still locked and still dimmed, because the prompt
+    // it just raised is asking for a company nobody has typed yet. What must
+    // have changed is that the write is over — and that the reader is still
+    // standing where they were.
+    const last = trace.samples[trace.samples.length - 1];
+    expect(last.inDocument).toBe(true);
+    expect(last.ariaBusy, "the write is over").toBe("false");
+    expect(last.ariaDisabled, "and the empty company box is the lock now").toBe("true");
+    expect(last.opacity, "which is a state the reader can see").toBe("0.5");
+    expect(last.disabledProp, "but never with the attribute that blurs it").toBe(false);
+    expect(
+      await activeElementId(page),
+      "focus is still on the button after a 2xx that filed nothing — this is the SECOND blur the old code caused, at the far end of the same correction",
+    ).toBe(applyId);
+    await expect(scanRow(page, SCAN_UNNAMED_SUBJECT).getByRole("status")).toContainText(
+      /which company/i,
+    );
+  });
+
+  test("the probe can see a blur — the same trace with `disabled` put back from outside", async ({
+    page,
+  }) => {
+    // THE ARM WITHOUT WHICH THE TWO ABOVE MEAN NOTHING. A focus trace that
+    // never reports `<body>` is equally well explained by a fix that works and
+    // by a sampler that cannot see a blur at all. So: same page, same probe,
+    // same press — and the one attribute the fix removed is put back from
+    // outside React, mid-write, on the focused node. The trace must go red the
+    // way the defect did.
+    await page.goto("/demo/scan");
+    await expect(page.getByText(SCAN_FILES_SUBJECT)).toBeVisible();
+    await openCorrection(page, SCAN_FILES_SUBJECT, "assessment");
+
+    const applyId = `reclass-apply-${SCAN_FILES_ID}`;
+    await page.locator(`#${applyId}`).focus();
+    expect(await activeElementId(page)).toBe(applyId);
+
+    await armFocusProbe(page, applyId, { chevron: false });
+    // Scheduled INSIDE the page, not driven from the test: it then lands at a
+    // known point in the write window whatever the round trip costs, rather
+    // than racing an unmount 170ms away. React never diffs an attribute that is
+    // not in the element's props, so it stays set.
+    await page.evaluate((id) => {
+      const btn = document.getElementById(id) as HTMLButtonElement;
+      window.setTimeout(() => {
+        btn.disabled = true;
+      }, 40);
+    }, applyId);
+    await page.keyboard.press("Enter");
+    const trace = await page.evaluate(() => window.__focusProbe!.done);
+
+    expectUsableTrace(trace, "the blur control");
+    const strayed = trace.samples.filter((s) => s.inDocument && s.active !== applyId);
+    expect(
+      strayed.length,
+      "the probe reported no blur while the focused button was disabled mid-write — it cannot see the defect it is used to rule out, so every green above it is unfalsifiable",
+    ).toBeGreaterThan(0);
+    expect(strayed[0].active, "and where the browser sends it is the document body").toBe("BODY");
+    expect(
+      strayed[0].disabledProp,
+      "with the node still in the document and carrying the attribute that did it",
+    ).toBe(true);
   });
 });
