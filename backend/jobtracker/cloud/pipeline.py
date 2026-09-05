@@ -2066,6 +2066,40 @@ def identity_parts(
     return (role or None, req_id or None)
 
 
+def identity_never_derived(
+    *,
+    req_id: str | None,
+    role: str | None,
+    snippet: str,
+) -> bool:
+    """True when a stored row's silence about its application is IGNORANCE.
+
+    Both parts ``None`` means no derivation exists for this row — the same
+    reading :func:`identity_parts` makes — and an empty ``snippet`` means there
+    is no text for a reader to derive one from now either. Together they say
+    the row names no application because nothing about it is known, which is a
+    different fact from a reader having looked and found none.
+
+    ``is None``, never ``not role``: ``""`` is a DERIVED "names nothing", the
+    honest value that keeps one employer's two identical acknowledgements a
+    single decision, and a truthiness spelling here would collapse the two
+    classes this predicate exists to tell apart.
+
+    Lives beside :func:`identity_parts` because it reads the same trust rule
+    and that rule is written once. Its caller is
+    ``applications._settle_thread_siblings`` (#462), which settles a row of the
+    first class — and only that class — when its thread names exactly one
+    application. Both sources of the class are permanent: rows written before
+    the identity columns existed (migration ``d5e91c4a7f28`` backfilled
+    nothing, deliberately) and every row ``_record_scanned_email`` stores for a
+    client-relayed scan, because :class:`PipelineItemIn` refuses to accept an
+    identity from a client and must not learn to. A backfill cannot reach the
+    second one.
+    """
+
+    return req_id is None and role is None and not snippet.strip()
+
+
 def item_identity(item: PipelineItem) -> str | None:
     """:func:`identity_or_derive` for a message in flight."""
 
