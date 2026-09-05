@@ -130,7 +130,7 @@ RECORDED_FIRED: tuple[tuple[str, str, str], ...] = (
     ('applied', 'weak', 'your application to\\s+.+\\s+at\\s+[A-Z]'),
     # assessment — 8 of 23
     ('assessment', 'strong', '(technical|coding|take.?home).{0,20}(assessment|challenge|test|exercise)'),
-    ('assessment', 'strong', '\\bcomplete\\b.{0,30}(technical|coding|take.?home).{0,20}(assessment|challenge|test|exercise)'),
+    ('assessment', 'strong', '\\bcomplete\\b.{0,30}take.?home.{0,20}(assessment|challenge|test|exercise)'),
     ('assessment', 'strong', '\\btake-home\\b(?!\\s+(pay|message|gift|dose|salary|assignment|project|task|round|assessment|challenge|test|exercise))'),
     ('assessment', 'strong', 'assessments?\\s+(invitation|invite)\\b'),
     ('assessment', 'strong', 'coding (exercise|test|challenge)'),

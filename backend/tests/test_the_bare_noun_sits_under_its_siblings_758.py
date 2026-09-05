@@ -59,14 +59,26 @@ TARGET_BODY = "I submitted the take-home exercise and wanted to check on timelin
 NEAR_MISS_SUBJECT = "Take-home assignment"
 NEAR_MISS_BODY = "This take-home exercise is part of our hiring process."
 
+#: THE PAST TENSE, and the only thing the word boundary in ``\bcomplete\b``
+#: exists for. Unanchored, ``complete`` matches inside "completed", so this
+#: sentence fires the twin AND its partner: two strong body hits, 6 points,
+#: margin >= 3, confidence 0.90 -- the cascade short-circuits and the
+#: candidate's own report is read as the employer's imperative, which is this
+#: issue with the roles swapped.
+#:
+#: NOTHING ELSE CAN NOTICE THE ANCHOR GOING AWAY. The independent corpus's
+#: take-home family is entirely invite-shaped (758 cases, all imperative), so a
+#: replay cannot see it; the cascade gate cannot see it; reach cannot see it,
+#: because the pattern still fires either way. This test is the whole guard.
+REPORT_BODY = "I completed the take-home exercise last night. Any update on next steps?"
+
 #: The wording the independent corpus carries 300 times, employer-voiced. It is
 #: the reason the fix needs the ``\bcomplete\b.{0,30}`` twin: without it this mail
 #: scores 3, falls to 0.70, and the board replay puts every one of the 300 in
 #: SUPPRESSED-AS-SETTLED rather than in the review queue.
 CORPUS_UPDATE_SUBJECT = "Next step in your application"
 CORPUS_UPDATE_BODY = (
-    "Please complete the take-home exercise linked below within five days to "
-    "move to the next step."
+    "Please complete the take-home exercise linked below within five days to move to the next step."
 )
 
 
@@ -161,33 +173,104 @@ def test_the_derivation_invariant_can_actually_fail(strong: list[str]) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_the_imperative_twin_can_only_fire_where_its_partner_does(strong: list[str]) -> None:
-    """``4c68e1a``'s shape: a general form and a narrower twin of it.
+#: The leading alternation the general assessment pattern opens with. Named
+#: once, because the derivation below and its tamper arm both need it.
+_HEAD = "(technical|coding|take.?home)"
 
-    The twin is its partner with ``\bcomplete\b.{0,30}`` prefixed, so the
-    containment is structural and does not rest on the probe set below. Both
-    are asserted: the string relation, and that the relation holds when the two
-    are actually run.
+#: The one branch of that alternation the imperative twin keeps.
+_BRANCH = "take.?home"
+
+
+def _derive(general: str) -> str:
+    """The twin, derived from the general pattern by two mechanical steps.
+
+    SELECT one branch of the leading alternation, then PREFIX the imperative.
+    Both steps preserve containment: a branch's language is a subset of its
+    alternation's, and a prefixed pattern fires only where its suffix fires
+    under ``search``. So the twin cannot match text the general form does not,
+    and that is a proof rather than an observation.
     """
-    general = _one(strong, "(technical|coding|take.?home)", exclude=r"\bcomplete\b")
-    twin = _one(strong, r"\bcomplete\b")
-    assert twin == r"\bcomplete\b" + ".{0,30}" + general
 
-    partner, narrower = re.compile(general, re.I), re.compile(twin, re.I)
-    probe = [
-        CORPUS_UPDATE_BODY,
-        TARGET_BODY,
-        NEAR_MISS_BODY,
-        "complete the coding challenge",
-        "Complete your technical assessment by Friday.",
-        "take-home assignment",
-        "Please complete the online assessment.",
-    ]
-    fired = [s for s in probe if narrower.search(s)]
-    assert fired, "the twin fired on nothing — this control measured nothing"
-    assert not [s for s in fired if not partner.search(s)], (
-        "the twin matched text its partner does not; it is no longer strictly narrower"
+    assert general.startswith(_HEAD), (
+        f"the general pattern no longer opens with {_HEAD!r}, so the derivation "
+        f"below is about a shape that is gone: {general!r}"
     )
+    branches = _HEAD[1:-1].split("|")
+    assert _BRANCH in branches, (
+        f"{_BRANCH!r} is not one of the alternation's branches {branches}, so "
+        "selecting it is not a narrowing"
+    )
+    return r"\bcomplete\b.{0,30}" + _BRANCH + general.removeprefix(_HEAD)
+
+
+def test_the_imperative_twin_is_derived_from_its_partner(strong: list[str]) -> None:
+    """The twin is one branch of the general form, under the imperative.
+
+    It USED to be the whole general pattern with a prefix, which made the
+    derivation a single concatenation. It is not any more, and the reason is
+    the point of #758: the general form's `technical` and `coding` branches are
+    already claimed by ``complete.{0,30}(assessment|challenge|test)``, so a twin
+    carrying them scored one phrase a THIRD time. Narrowing to the one branch
+    that has no imperative sibling removes that without touching reach —
+    measured across the independent corpus as 26 (expected, predicted,
+    confidence) cells, none of which moved.
+
+    The literal stays a single string in ``rules.py`` because three static
+    consumers read PATTERNS as literals; the derivation is performed here, on
+    the two live patterns, so drift on either side reds.
+    """
+
+    general = _one(strong, _HEAD, exclude=r"\bcomplete\b")
+    twin = _one(strong, r"\bcomplete\b")
+    assert twin == _derive(general)
+
+
+def test_the_derivation_reds_when_its_partner_moves(strong: list[str]) -> None:
+    """SHOWN TO FAIL: tamper with the general form and the derivation complains.
+
+    Without this, the equality above is a check nobody has watched break — and
+    a derivation that cannot red is decoration, whatever it proves on paper.
+    """
+
+    general = _one(strong, _HEAD, exclude=r"\bcomplete\b")
+    twin = _one(strong, r"\bcomplete\b")
+
+    tampered = general.replace("|exercise)", "|exercise|drill)")
+    assert tampered != general, "the tamper changed nothing, so it tests nothing"
+    assert twin != _derive(tampered), (
+        "adding a noun to the general form left the derived twin unchanged, so "
+        "the equality above cannot notice its partner drifting"
+    )
+
+    headless = general.replace(_HEAD, "(coding|take.?home)", 1)
+    try:
+        _derive(headless)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("removing a branch from the alternation did not red the derivation")
+
+
+def test_the_twin_witnesses_both_directions_of_the_containment(
+    strong: list[str],
+) -> None:
+    """Two witnesses, each with a stated meaning, subordinate to the proof above.
+
+    They observe the theorem rather than standing in for it: one shows the twin
+    firing inside its partner, the other shows the imperative anchor still
+    gating. Twenty probes instead of a derivation would be decoration; two
+    attached to one are a sanity check.
+    """
+
+    general = _one(strong, _HEAD, exclude=r"\bcomplete\b")
+    twin = _one(strong, r"\bcomplete\b")
+    partner, narrower = re.compile(general, re.I), re.compile(twin, re.I)
+
+    invite = "Please complete the take-home exercise by Friday."
+    assert narrower.search(invite), "the twin fired on nothing — this measured nothing"
+    assert partner.search(invite), "the twin matched where its partner does not"
+
+    assert partner.search(TARGET_BODY), "the partner should still read the phrase"
     assert not narrower.search(TARGET_BODY), (
         "the twin must stay silent on the candidate's own words — the imperative "
         "is the whole of what it adds"
@@ -291,7 +374,9 @@ def test_the_deleted_alternation_lost_no_reach(strong: list[str]) -> None:
     one already covers it: a single space fits inside ``.{0,20}`` and
     ``exercise`` is in its tail. Proved by running both, not by reading them.
     """
-    general = re.compile(_one(strong, "(technical|coding|take.?home)", exclude=r"\bcomplete\b"), re.I)
+    general = re.compile(
+        _one(strong, "(technical|coding|take.?home)", exclude=r"\bcomplete\b"), re.I
+    )
     deleted = re.compile(r"take.?home (exercise)", re.I)
 
     matched = 0
@@ -304,3 +389,58 @@ def test_the_deleted_alternation_lost_no_reach(strong: list[str]) -> None:
                 matched += 1
                 assert general.search(probe), probe
     assert matched >= 48, f"the control only reached {matched} strings"
+
+
+def test_the_candidates_report_does_not_reach_the_short_circuit(
+    classifier: RulesClassifier,
+) -> None:
+    """The past tense stays under the gate; the imperative keeps its score."""
+
+    report = classifier.classify("Re: Backend Engineer", REPORT_BODY, None)
+    assert report.confidence < AUTO_FILE_GATE, (
+        "the candidate's own report reached "
+        f"{report.confidence}, so it auto-files or short-circuits the cascade: "
+        f"{report.matched_patterns}"
+    )
+
+    invite = classifier.classify(
+        "Next step for your application",
+        "Please complete the take-home exercise by Friday using the link below.",
+        None,
+    )
+    assert invite.confidence >= RULES_SHORT_CIRCUIT, (
+        "the employer's imperative must keep the score the twin was added for, "
+        f"got {invite.confidence}: {invite.matched_patterns}"
+    )
+
+
+def test_dropping_the_word_boundary_puts_the_report_back_on_the_short_circuit() -> None:
+    """SHOWN TO FAIL: without ``\\b``, the report scores what the invite does.
+
+    MUTATES ``PATTERNS`` ITSELF, not the ``strong`` fixture, and the difference
+    is the whole reason this test is trustworthy: that fixture hands out
+    ``list(...)`` — a COPY — so a mutation applied to it never reaches the
+    engine, and this case would have reported "the anchor makes no difference"
+    while never having removed it. ``RulesClassifier`` compiles from
+    ``PATTERNS`` at construction (``rules.py:1700``), so the real list is what
+    has to move, and it is restored in a ``finally``.
+    """
+
+    live = PATTERNS[EmailCategory.ASSESSMENT].strong
+    twin = _one(list(live), r"\bcomplete\b")
+    index = live.index(twin)
+    unanchored = twin.replace(r"\bcomplete\b", "complete", 1)
+    assert unanchored != twin, "the mutation changed nothing, so it tests nothing"
+
+    live[index] = unanchored
+    try:
+        mutated = RulesClassifier().classify("Re: Backend Engineer", REPORT_BODY, None)
+    finally:
+        live[index] = twin
+
+    assert live[index] == twin, "the mutation was not restored"
+    assert mutated.confidence >= RULES_SHORT_CIRCUIT, (
+        "removing the word boundary did NOT put the candidate's report back on "
+        f"the short circuit ({mutated.confidence}), so the test above is not "
+        "guarding what it claims to guard"
+    )

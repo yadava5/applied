@@ -739,21 +739,41 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
     EmailCategory.ASSESSMENT: CategoryPatterns(
         strong=[
             r"(technical|coding|take.?home).{0,20}(assessment|challenge|test|exercise)",
-            # THE NARROWER TWIN OF THE LINE ABOVE, and `4c68e1a`'s shape: it is
-            # that pattern with `complete.{0,30}` in front, so it can only fire
-            # where its partner already did. What it adds is not a second
+            # THE IMPERATIVE TWIN OF ONE BRANCH OF THE LINE ABOVE, derived in
+            # two containment-preserving steps: select the `take.?home` branch
+            # of its leading alternation, then prefix `\bcomplete\b.{0,30}`. So
+            # it can only fire where its partner already did.
+            #
+            # IT CARRIES ONLY `take.?home`, AND THE OMISSION IS THE POINT. The
+            # `technical` and `coding` branches already have an imperative
+            # sibling in `complete.{0,30}(assessment|challenge|test)` five lines
+            # down, so a twin carrying them scored one phrase a THIRD time —
+            # this issue's own mechanism, reintroduced by its own fix. Measured:
+            # 330 corpus messages went from assessment 10 to 13 with the wide
+            # form. Narrowing costs nothing measurable — 26 (expected,
+            # predicted, confidence) cells across 18,200 cases, none of which
+            # moved — and the one wording it gives up, an imperative
+            # "complete … technical exercise", has no corpus witness and lands
+            # in the review queue rather than auto-filing. That is the safe
+            # direction, and it is the honest cost of the narrowing.
+            #
+            # What it adds is not a second
             # reading of the same phrase — it is the IMPERATIVE. An employer
             # tells you to complete the exercise; a candidate writing about one
             # says they submitted it. That verb is the only thing in this
             # category that separates a report from a reference, and it is read
             # off the mail rather than invented (#758).
             #
-            # It carries the 300 `update-in-thread` messages whose whole
+            # It carries the `update-in-thread` messages whose whole
             # assessment evidence is "Please complete the take-home exercise…"
             # over AUTO_FILE_GATE. Without it they score 3, fall to 0.70, and
             # the corpus replay puts every one of them in SUPPRESSED-AS-SETTLED
-            # — not the review queue: `addressed_on_a_card` 13987 -> 13687 and
-            # `suppressed_as_settled` 0 -> 300, measured.
+            # rather than the review queue: `addressed_on_a_card` 13987 -> 13687
+            # and `suppressed_as_settled` 0 -> 300, measured by REMOVING the
+            # twin from this branch. Those are not a main-to-branch delta —
+            # both trees read 13987 / 0 — and the family the replay counts at
+            # this pattern is 296, not 300; the two numbers describe different
+            # cuts and neither is the other's correction.
             # ANCHORED, and the anchor is the whole difference between fixing
             # this defect and re-importing it. Unanchored, `complete` matches
             # inside "completed", so "I completed the take-home exercise — any
@@ -769,7 +789,7 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             #
             # "completing" and "completion" never contained the substring, so
             # `\bcomplete\b` costs nothing and closes the only hole there was.
-            r"\bcomplete\b.{0,30}(technical|coding|take.?home).{0,20}(assessment|challenge|test|exercise)",
+            r"\bcomplete\b.{0,30}take.?home.{0,20}(assessment|challenge|test|exercise)",
             r"complete.{0,30}(assessment|challenge|test)",
             r"hackerrank",
             r"codility",
