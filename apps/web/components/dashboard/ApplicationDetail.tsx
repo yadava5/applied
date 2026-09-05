@@ -636,7 +636,16 @@ export function ApplicationDetail({
               below `if (!shown) return null` is also past the hook region, so
               `onStageChange` cannot be a `useCallback` without restructuring
               the component — worth doing only if this control ever does start
-              losing changes. */}
+              losing changes.
+
+              It DOES share the row control's other defect, and the same fix
+              (#425): the in-flight state is `aria-disabled`, never `disabled`.
+              A focused element that is disabled mid-write is blurred by the
+              browser to `<body>` and stays there, and at the owner's 1024px
+              with this pane docked open THIS is the keyboard route to a stage
+              change — the row's own select has folded into the pane. The lock
+              is enforced in the handler below instead. See `StageSelect` in
+              ApplicationRow for the measurement. */}
           <div className="flex items-center gap-2">
             <label className="sr-only" htmlFor={`detail-status-${active.id}`}>
               Change stage for {active.company}
@@ -651,9 +660,22 @@ export function ApplicationDetail({
               <select
                 id={`detail-status-${active.id}`}
                 value={statusSelectValue(shownStatus)}
-                disabled={stageBusy}
-                onChange={(e) => void onStageChange(e.target.value)}
-                className="select-control peer rounded border border-line bg-surface-2 py-1 pl-2 pr-6 text-xs outline-none transition-colors hover:border-line-strong focus:border-line-strong disabled:opacity-50"
+                aria-disabled={stageBusy}
+                // The spinner beside this control is `aria-hidden`, so before
+                // this it announced nothing at all while a write was in
+                // flight. `aria-busy` is the row control's channel and is now
+                // this one's too — a lock a screen reader cannot hear is not
+                // a lock, and `aria-disabled` alone says "not now" without
+                // saying "wait".
+                aria-busy={stageBusy}
+                // Ignored rather than prevented, and the controlled `value`
+                // snaps the selection back — same contract as the row's
+                // control, whose header explains why.
+                onChange={(e) => {
+                  if (stageBusy) return;
+                  void onStageChange(e.target.value);
+                }}
+                className="select-control peer rounded border border-line bg-surface-2 py-1 pl-2 pr-6 text-xs outline-none transition-colors hover:border-line-strong focus:border-line-strong aria-disabled:opacity-50"
                 style={{ color: stage.color }}
               >
                 {statusOptions(shownStatus).map((option) => (
@@ -664,7 +686,7 @@ export function ApplicationDetail({
               </select>
               <ChevronDown
                 aria-hidden
-                className="pointer-events-none absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-dim peer-disabled:opacity-50"
+                className="pointer-events-none absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-dim peer-aria-disabled:opacity-50"
               />
             </span>
             {stageBusy ? (

@@ -70,12 +70,29 @@ export const NO_ROLE_LABEL = "role not captured";
  * defeats the whole thing. Nothing but the row's identity, its shown stage and
  * its in-flight state may be passed in; `today` deliberately is NOT, because
  * the day changing is precisely the re-render this must survive.
+ *
+ * WHY THE IN-FLIGHT STATE IS `aria-disabled` AND NOT `disabled` (#425). The
+ * control the user is standing on is the control the write locks, and a
+ * FOCUSED element that becomes `disabled` is blurred by the browser to
+ * `<body>` — measured at t=3ms after the change, on every row, and it never
+ * comes back: the next Tab starts from the top of the document. That is not
+ * the row being reparented into another stage group (a same-section
+ * correction, `rejected → ghosted`, loses focus identically while the node
+ * stays in the document; the unmount, when there is one, lands 1.4s later and
+ * is downstream of a blur that has already happened).
+ *
+ * `aria-disabled` states the same thing to assistive tech WITHOUT taking the
+ * element out of the focus order or out of the accessibility tree, so the
+ * keyboard user keeps their place and can hear the `aria-busy` they are
+ * waiting on. The lock is then enforced in the handler instead of by the UA:
+ * see `onChange` below. Restoring focus after the fact is NOT the repair —
+ * it races the unmount and flickers; not blurring is.
  */
 const StageSelect = memo(function StageSelect({
   id,
   company,
   value,
-  disabled,
+  locked,
   busy,
   onChange,
 }: {
@@ -83,7 +100,13 @@ const StageSelect = memo(function StageSelect({
   company: string;
   /** The stage to SHOW — the optimistic one while a change is in flight. */
   value: string;
-  disabled: boolean;
+  /**
+   * A write is in flight and this control may not accept another one. NAMED
+   * for the state, not for the attribute: it deliberately does not reach the
+   * DOM's `disabled` (see the note above), so calling it `disabled` would
+   * invite exactly the one-word change that reinstates the defect.
+   */
+  locked: boolean;
   busy: boolean;
   /** Must be referentially stable; see the note above. */
   onChange: (next: string) => void;
@@ -97,7 +120,9 @@ const StageSelect = memo(function StageSelect({
           keyboard/AT semantics and the enum options are all unchanged. Only
           the FACE moved off the OS widget: `.select-control` (globals.css)
           strips `appearance`, the chevron is drawn here (ours, so it matches
-          the board's other glyphs and dims with `disabled` via `peer`), and
+          the board's other glyphs and dims with the control's in-flight state
+          via `peer` — `peer-aria-disabled`, because `peer-disabled` reads the
+          DOM property this control no longer sets), and
           engines that support stylable pickers dress the open list too. The
           wrapper now carries the geometry the old comment measured, and the
           reasons hold verbatim: `w-[8.5rem]`, not max-w, because an
@@ -115,10 +140,24 @@ const StageSelect = memo(function StageSelect({
         <select
           id={`status-${id}`}
           value={statusSelectValue(value)}
-          disabled={disabled}
+          aria-disabled={locked}
           aria-busy={busy}
-          onChange={(e) => onChange(e.target.value)}
-          className="select-control peer h-full w-full rounded border border-line-soft bg-surface pl-1.5 pr-5 text-[11px] text-muted outline-none transition-colors hover:border-line focus:border-line-strong disabled:opacity-50"
+          // IGNORED, not prevented. `aria-disabled` leaves the control
+          // operable, so a change CAN still be dispatched mid-write; dropping
+          // it here is what makes the lock real. The `value` prop does not
+          // move, and React restores a controlled <select>'s DOM selection
+          // after a change its handler did not act on
+          // (`restoreControlledState`), so the control snaps back to the stage
+          // in flight without needing a re-render. The guard lives HERE rather
+          // than in the row's `onStatusChange` because that callback's
+          // referential stability is the memo contract above — reading the
+          // in-flight state there would churn the one prop that must not
+          // churn.
+          onChange={(e) => {
+            if (locked) return;
+            onChange(e.target.value);
+          }}
+          className="select-control peer h-full w-full rounded border border-line-soft bg-surface pl-1.5 pr-5 text-[11px] text-muted outline-none transition-colors hover:border-line focus:border-line-strong aria-disabled:opacity-50"
         >
           {statusOptions(value).map((option) => (
             <option key={option.value} value={option.value} disabled={option.disabled}>
@@ -128,7 +167,7 @@ const StageSelect = memo(function StageSelect({
         </select>
         <ChevronDown
           aria-hidden
-          className="pointer-events-none absolute right-1 top-1/2 h-3 w-3 -translate-y-1/2 text-dim peer-disabled:opacity-50"
+          className="pointer-events-none absolute right-1 top-1/2 h-3 w-3 -translate-y-1/2 text-dim peer-aria-disabled:opacity-50"
         />
       </span>
     </>
@@ -612,7 +651,7 @@ export function ApplicationRow({
             id={app.id}
             company={app.company}
             value={shownStatus}
-            disabled={busy !== null}
+            locked={busy !== null}
             busy={busy === "status"}
             onChange={onStatusChange}
           />
