@@ -64,7 +64,12 @@ import { liveClassify, type ClassifyFn } from "@/lib/gmail/transport";
  */
 const CATEGORY_CHOICES: { value: string; label: string }[] = [
   { value: "applied", label: "applied" },
-  { value: "interview", label: "interviewing" },
+  // The label is the CATEGORY's word, not the stage's. `EmailCategory.INTERVIEW`
+  // is "interview" (models.py:131); `ApplicationStatus.INTERVIEWING` is
+  // "interviewing" (:109). Two vocabularies on purpose -- one names what a
+  // message IS, the other names where a card SITS -- and this list asks the
+  // first question, so it answers in the first vocabulary. #425.
+  { value: "interview", label: "interview" },
   { value: "assessment", label: "assessment" },
   { value: "offer", label: "offer" },
   { value: "rejection", label: "rejection" },

@@ -781,8 +781,8 @@ def test_gmail_deeplink_selects_connected_account_when_known() -> None:
     )
     # Known account → authuser selector so the RIGHT mailbox opens, not /u/0/;
     # the address is URL-encoded and the #all/<ref> conversation is preserved.
-    link = p.gmail_deeplink(thread_id="t1", account_email="yadava5@miamioh.edu")
-    assert link == "https://mail.google.com/mail/?authuser=yadava5%40miamioh.edu#all/t1"
+    link = p.gmail_deeplink(thread_id="t1", account_email="reader@harbourgate.test")
+    assert link == "https://mail.google.com/mail/?authuser=reader%40harbourgate.test#all/t1"
     assert "/u/0/" not in link
 
 
