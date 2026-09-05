@@ -58,7 +58,7 @@ asyncpg>=0.31.0
 # Auth (Supabase JWT verification, wired in C3)
 # -----------------------------------------------------------------------------
 pyjwt[crypto]>=2.13.0         # PYSEC-2026-175..179
-cryptography>=50.0.0
+cryptography>=50.0.1
 
 # -----------------------------------------------------------------------------
 # Email Integration (cloud Gmail OAuth wired in C5, IMAP stays)
