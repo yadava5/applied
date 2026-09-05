@@ -74,6 +74,8 @@ interface ImportState {
   truncated: boolean;
   /** Read but unparseable. See ParseResult.unreadable in lib/import/parseMail. */
   unreadable: number;
+  /** Non-null when the file's own structure was ambiguous. See ParseResult.malformed. */
+  malformed: string | null;
   items: Classified[];
 }
 
@@ -266,6 +268,7 @@ export function ImportMail() {
         totalFound: result.totalFound,
         truncated: result.truncated,
         unreadable: result.unreadable,
+        malformed: result.malformed,
         items: classify(result.messages),
       });
     } catch (err) {
@@ -506,6 +509,33 @@ export function ImportMail() {
               ? ` · ${state.unreadable} could not be read and ${state.unreadable === 1 ? "was" : "were"} skipped`
               : ""}
           </p>
+
+          {/* THE FILE'S OWN STRUCTURE WAS AMBIGUOUS, said beside the count it
+              qualifies (#426).
+
+              The line above states a number as fact. On an mbox whose bodies
+              quote an unescaped `From ` line that number was manufactured:
+              five messages were split into ten, and the five phantoms rendered
+              in the list below with a subject taken from the quoted text, a
+              sender of "(unknown sender)", and the same confidence chrome as
+              real mail. `splitMbox` now re-joins those blocks instead of
+              inventing rows, and this is where it says the boundary was
+              decided rather than read.
+
+              It is a caveat, not an error: nothing was dropped and the rows
+              below are real, so it takes the review accent rather than the
+              reject one, and it sits under the summary instead of replacing
+              the results. `role="status"` because it appears after a file is
+              chosen, in response to that choice. */}
+          {state.malformed && (
+            <p
+              role="status"
+              data-testid="import-malformed"
+              className="rounded-xl border border-review/40 bg-surface px-4 py-3 text-xs leading-relaxed text-muted"
+            >
+              {state.malformed}
+            </p>
+          )}
 
           <div className="overflow-hidden rounded-xl border border-line-soft bg-surface">
             <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-line-soft px-4 py-3">

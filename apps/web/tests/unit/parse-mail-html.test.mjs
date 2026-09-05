@@ -209,9 +209,32 @@ test("a four-message mbox parses field for field", () => {
   assert.equal(result.format, "mbox");
   assert.equal(result.totalFound, 4);
   assert.equal(result.truncated, false);
-  assert.deepEqual(result.messages, [
+
+  // THE ID IS ASSERTED APART FROM THE FIELDS, and deliberately not pinned to a
+  // literal. It used to be `m0`..`m3` — the ordinal — which is exactly what
+  // made a second import inherit the first file's expanded rows (#426); it is
+  // derived from the message now, so pinning it here would only record the
+  // hash function's output. What this file can usefully say about it is that
+  // the four rows carry four distinct React keys and that the same bytes give
+  // the same ones twice. Collisions ACROSS files, which is the property the
+  // defect was about, are in `parse-mail-identity.test.mjs`.
+  const ids = result.messages.map((m) => m.id);
+  assert.equal(new Set(ids).size, 4, `duplicate row keys: ${JSON.stringify(ids)}`);
+  assert.deepEqual(
+    ids,
+    parseMailFile("sample.mbox", SAMPLE_MBOX).messages.map((m) => m.id),
+    "the same bytes must parse to the same ids, or every re-render is a remount",
+  );
+
+  // Every field EXCEPT the id, dropped by name rather than by picking the
+  // others out: a field added to `ParsedMessage` then lands in this comparison
+  // unasserted-until-someone-updates-it, instead of silently outside it.
+  const withoutId = (m) => Object.fromEntries(Object.entries(m).filter(([k]) => k !== "id"));
+
+  assert.deepEqual(
+    result.messages.map(withoutId),
+    [
     {
-      id: "m0",
       subject: "We received your application",
       senderName: "Cedar Labs Recruiting",
       senderEmail: "no-reply@greenhouse.io",
@@ -221,7 +244,6 @@ test("a four-message mbox parses field for field", () => {
       receivedAt: "Thu, 16 Jul 2026 09:00:00 +0000",
     },
     {
-      id: "m1",
       subject: "Let's schedule your technical interview",
       senderName: "Juniper Cloud",
       senderEmail: "recruiting@junipercloud.io",
@@ -231,7 +253,6 @@ test("a four-message mbox parses field for field", () => {
       receivedAt: "Thu, 16 Jul 2026 10:00:00 +0000",
     },
     {
-      id: "m2",
       subject: "Update on your application to Atlas Freight",
       senderName: "Atlas Freight Careers",
       senderEmail: "careers@atlasfreight.com",
@@ -241,7 +262,6 @@ test("a four-message mbox parses field for field", () => {
       receivedAt: "Thu, 16 Jul 2026 11:00:00 +0000",
     },
     {
-      id: "m3",
       subject: "Quick question about your background",
       senderName: "Maya Chen",
       senderEmail: "maya@earlystage.xyz",
@@ -250,7 +270,8 @@ test("a four-message mbox parses field for field", () => {
         "Hi, I had a quick question about your background and some recent projects. Do you have a few minutes this week?",
       receivedAt: "Thu, 16 Jul 2026 12:00:00 +0000",
     },
-  ]);
+    ],
+  );
 });
 
 // --- Prototype members are not table entries --------------------------------
