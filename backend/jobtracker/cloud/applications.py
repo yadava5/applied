@@ -4512,6 +4512,63 @@ async def classify_review_item(
     return result
 
 
+def _review_key(row: Email) -> tuple[str, str | None] | str:
+    """:func:`pipeline.review_dedup_key` for a row that is already stored."""
+
+    return pipeline.review_dedup_key(
+        message_id=row.message_id,
+        thread_id=row.thread_id,
+        subject=row.subject or "",
+        snippet=row.body_snippet or "",
+        identity_role=row.identity_role,
+        identity_req_id=row.identity_req_id,
+    )
+
+
+def _thread_sub_key(row: Email) -> str | None:
+    """WHICH application a THREADED stored row names, or ``None`` for none.
+
+    Read off the second half of the row's own :func:`_review_key` rather than
+    running the identity cascade a second time, so this cannot disagree with
+    the key the queue compares — including its snippet truncation. An
+    unthreaded row's key is a bare message id and names nothing here; only
+    threaded rows reach the caller.
+    """
+
+    key = _review_key(row)
+    return key[1] if isinstance(key, tuple) else None
+
+
+async def _thread_sub_keys(
+    session, user_id: uuid.UUID, thread_id: str
+) -> set[str]:
+    """Every application THIS USER's copy of one thread names, once each.
+
+    Scoped to ``user_id`` for the reason
+    ``tests/test_a_thread_is_scoped_to_its_owner.py`` exists: a Gmail thread id
+    says nothing about whose mailbox it came from, and a census that reads a
+    stranger's rows lets another tenant's mail decide what this user's thread
+    names.
+
+    UNFILTERED OTHERWISE, ON PURPOSE. A message already reviewed, or already
+    filed on a live card, still says the conversation names that application.
+    Counting only the rows the settle can still touch would read the real
+    four-role thread with three roles already answered as a one-application
+    thread — and #454's 1-in-4 guess would be back through the one caller that
+    is allowed to settle an unknown row.
+    """
+
+    rows = (
+        await session.exec(
+            select(Email).where(
+                Email.user_id == user_id,
+                Email.thread_id == thread_id,
+            )
+        )
+    ).all()
+    return {key for key in (_thread_sub_key(row) for row in rows) if key is not None}
+
+
 async def _settle_thread_siblings(
     session,
     user_id: uuid.UUID,
@@ -4581,35 +4638,51 @@ async def _settle_thread_siblings(
     # their mail on the wrong card. The Crusoe pair still settle each other —
     # neither names an application, so both keys are ``None``.
     #
-    # KNOWN RESIDUAL, stated rather than hidden: a sibling whose stored
-    # ``body_snippet`` is empty has sub-key ``None`` and so is NOT settled by a
-    # decision on a sibling that names a role. It stays in the queue and gets
-    # asked about again. That is the better direction — before #454 it was
-    # settled by being linked to whichever of four applications the user
-    # happened to pick — and it is bounded, because ``_persist_message_refs``
-    # refuses to blank a snippet it already holds. See #462 for the measurement
-    # and what persisting the identity would cost.
-    decided = pipeline.review_dedup_key(
-        message_id=email.message_id,
-        thread_id=email.thread_id,
-        subject=email.subject or "",
-        snippet=email.body_snippet or "",
-        identity_role=email.identity_role,
-        identity_req_id=email.identity_req_id,
-    )
-    siblings = [
+    # A ROW THAT NAMES NOTHING BECAUSE NOTHING ABOUT IT IS KNOWN is settled too
+    # — issue #462 — but only where "unknown" can mean exactly one thing. Both
+    # identity columns NULL and an empty ``body_snippet`` is silence for lack
+    # of evidence, not a reader's answer: rows predating those columns were
+    # deliberately not backfilled, and :func:`_record_scanned_email` writes
+    # them NULL on EVERY client-relayed row on purpose, because
+    # ``PipelineItemIn`` refuses to let a client state which application a
+    # message is about. That second source is permanent by security design, so
+    # no migration and no backfill can close this; the rule has to be about
+    # what the thread says.
+    #
+    # And the thread says enough only when it names ONE application. Then the
+    # unknown row's application is the only one it could be. A thread naming
+    # two or more is left exactly as #454 left it — asked about again, which
+    # beats a 1-in-4 guess that files mail on the wrong card and can settle a
+    # live application terminally. The census is over the WHOLE thread, not
+    # just the rows still settleable, or three already-answered roles would
+    # make a four-role thread look like a one-application one.
+    #
+    # ``""`` IS NOT ``None`` HERE, and :func:`pipeline.identity_never_derived`
+    # is where that is spelled: a derived "names nothing" is a reader's answer
+    # and stays a value meaning "the same unknown", never evidence that the
+    # thread's one named application is this row's.
+    decided = _review_key(email)
+    keyed = [(s, _review_key(s)) for s in conversation]
+    siblings = [s for s, key in keyed if key == decided]
+    unknown = [
         s
-        for s in conversation
-        if pipeline.review_dedup_key(
-            message_id=s.message_id,
-            thread_id=s.thread_id,
-            subject=s.subject or "",
+        for s, key in keyed
+        if key != decided
+        and _thread_sub_key(s) is None
+        and pipeline.identity_never_derived(
+            req_id=s.identity_req_id,
+            role=s.identity_role,
             snippet=s.body_snippet or "",
-            identity_role=s.identity_role,
-            identity_req_id=s.identity_req_id,
         )
-        == decided
     ]
+    if unknown:
+        decided_sub_key = _thread_sub_key(email)
+        named = await _thread_sub_keys(session, user_id, email.thread_id)
+        if decided_sub_key is not None:
+            # The answered row's own name, in case it is not flushed yet.
+            named.add(decided_sub_key)
+        if named == {decided_sub_key}:
+            siblings.extend(unknown)
 
     for sibling in siblings:
         sibling.is_reviewed = True

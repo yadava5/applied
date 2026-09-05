@@ -1709,21 +1709,41 @@ class RulesClassifier:
 
     def classify(
         self,
-        subject: str,
-        body: str,
+        subject: Optional[str],
+        body: Optional[str],
         sender_email: Optional[str] = None,
     ) -> RuleClassificationResult:
         """
         Classify an email using pattern matching.
 
         Args:
-            subject: Email subject line
-            body: Email body text
+            subject: Email subject line. ``None`` reads as empty.
+            body: Email body text. ``None`` reads as empty.
             sender_email: Sender email address (for ATS detection)
 
         Returns:
             RuleClassificationResult with category, confidence, and details
         """
+        # HERE, NOT AT THE TWO PATTERN LOOPS THAT RAISED.
+        #
+        # ``Email.subject`` and ``Email.body_text`` are ``Optional[str]``
+        # (``database/models.py``), and a ``None`` reaching this method used to
+        # come out as ``TypeError: expected string or bytes-like object`` from
+        # ``pattern.search`` -- at TWO sites, ``in_subject`` and ``in_body``,
+        # which is the reason this normalisation is not written at either of
+        # them. Guard only the subject and a null-subject test goes green while
+        # the body path is still live: the test then reads as coverage for a
+        # hole it never reached. One statement ahead of every reader of either
+        # argument cannot be half-applied.
+        #
+        # Behaviour-preserving for every ``str``. ``x or ""`` is the identity
+        # on the whole string domain, ``""`` included, so a null classifies
+        # exactly as an empty subject or body always did and nothing that was
+        # already scored moves. It also keeps ``own_text_span`` and
+        # ``asserted_text`` below off a ``None`` they only survive by accident.
+        subject = subject or ""
+        body = body or ""
+
         scores: dict[str, int] = {cat.value: 0 for cat in EmailCategory}
         matched_patterns: list[str] = []
 

@@ -18,6 +18,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Dialog } from "@/components/ui/Dialog";
 import { MailText } from "@/components/mail/MailText";
 import { GateMeter } from "@/components/viz/GateMeter";
+import { safeText } from "@/lib/security/hostileText";
 import { useLocalToday } from "@/lib/dashboard/useLocalToday";
 import { filedAt, longDate, shortDate } from "@/lib/dashboard/dates";
 import { AUTO_FILE_GATE } from "@/lib/dashboard/model";
@@ -234,14 +235,15 @@ function SplitPrompt({
   return (
     <div className="rounded-xl border border-review/40 bg-surface-2 p-3">
       <p className="text-sm text-strong">
-        This looks like {candidates.length} applications at {company} — split them?
+        This looks like {candidates.length} applications at <MailText value={company} /> —
+        split them?
       </p>
       <ul className="mt-2 space-y-1">
         {candidates.map((c, i) => (
           // Keyed on the first message id, not the role: a role is nullable on
           // the wire and two clusters at one employer can share one.
           <li key={c.message_ids[0] ?? `candidate-${i}`} className="text-xs text-muted">
-            {company} · {c.role ?? "no role named in this mail"}
+            <MailText value={company} /> · <MailText value={c.role ?? "no role named in this mail"} />
             {c.retains_row ? " · keeps your edits" : null}
           </li>
         ))}
@@ -648,7 +650,7 @@ export function ApplicationDetail({
               ApplicationRow for the measurement. */}
           <div className="flex items-center gap-2">
             <label className="sr-only" htmlFor={`detail-status-${active.id}`}>
-              Change stage for {active.company}
+              Change stage for {safeText(active.company)}
             </label>
             {/* Same face as the row's control: a NATIVE select under the
                 app's own dress — `.select-control` (globals.css) removes the
@@ -735,7 +737,7 @@ export function ApplicationDetail({
           {roleEditing ? (
             <>
               <label className="sr-only" htmlFor={`role-input-${active.id}`}>
-                Role for {active.company}
+                Role for {safeText(active.company)}
               </label>
               <input
                 id={`role-input-${active.id}`}
@@ -780,12 +782,14 @@ export function ApplicationDetail({
             </>
           ) : role ? (
             <>
-              <span className="min-w-0 break-words text-[11px] text-strong">{role}</span>
+              <span className="min-w-0 break-words text-[11px] text-strong">
+                <MailText value={role} />
+              </span>
               {/* Whose word it is — stated only when it is actually the user's. */}
               {roleSource ? <span className="text-[11px] text-dim">{roleSource}</span> : null}
               <button
                 type="button"
-                aria-label={`Change the role for ${active.company}`}
+                aria-label={`Change the role for ${safeText(active.company)}`}
                 onClick={() => {
                   setRoleDraft(role);
                   setRoleError(null);
@@ -798,7 +802,7 @@ export function ApplicationDetail({
               </button>
               <button
                 type="button"
-                aria-label={`Clear the role for ${active.company}`}
+                aria-label={`Clear the role for ${safeText(active.company)}`}
                 title={ROLE_CLEAR_HINT}
                 onClick={() => void onRoleClear()}
                 disabled={roleBusy !== null}
@@ -854,7 +858,7 @@ export function ApplicationDetail({
           {dueEditing ? (
             <>
               <label className="sr-only" htmlFor={`deadline-date-${active.id}`}>
-                Deadline date for {active.company}
+                Deadline date for {safeText(active.company)}
               </label>
               <input
                 id={`deadline-date-${active.id}`}
@@ -894,7 +898,7 @@ export function ApplicationDetail({
               {dueSource ? <span className="text-[11px] text-dim">{dueSource}</span> : null}
               <button
                 type="button"
-                aria-label={`Change the deadline for ${active.company}`}
+                aria-label={`Change the deadline for ${safeText(active.company)}`}
                 onClick={() => {
                   setDueDraft(due.at ? due.at.slice(0, 10) : "");
                   setDueError(null);
@@ -907,7 +911,7 @@ export function ApplicationDetail({
               </button>
               <button
                 type="button"
-                aria-label={`Clear the deadline for ${active.company}`}
+                aria-label={`Clear the deadline for ${safeText(active.company)}`}
                 title={DEADLINE_CLEAR_HINT}
                 onClick={() => void onDeadlineClear()}
                 disabled={dueBusy !== null}
@@ -1066,7 +1070,7 @@ export function ApplicationDetail({
         ref={dockedRef}
         tabIndex={-1}
         data-testid="application-detail"
-        aria-label={`${active.company} — the mail behind this card`}
+        aria-label={`${safeText(active.company)} — the mail behind this card`}
         initial={reduceMotion ? false : { opacity: 0, x: 12 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
@@ -1098,9 +1102,11 @@ export function ApplicationDetail({
             </button>
           </div>
           <h2 className="mt-2 break-words text-lg font-medium leading-snug text-strong">
-            {active.company}
+            <MailText value={active.company} />
           </h2>
-          <p className="mt-0.5 text-sm text-muted">{role || "role not captured yet"}</p>
+          <p className="mt-0.5 text-sm text-muted">
+            <MailText value={role || "role not captured yet"} />
+          </p>
         </header>
         {/* `relative`: this scroller is the containing block for the trail's
             absolute spine/nodes and the sr-only labels — the #149 family. */}
@@ -1116,8 +1122,8 @@ export function ApplicationDetail({
       open={app !== null}
       onClose={onClose}
       variant="sheet"
-      title={active.company}
-      description={role || "role not captured yet"}
+      title={safeText(active.company)}
+      description={<MailText value={role || "role not captured yet"} />}
     >
       <div data-testid="application-detail">
         {traversal ? <div className="mb-4">{traversal}</div> : null}

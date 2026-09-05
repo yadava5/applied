@@ -36,17 +36,30 @@ interface AuthWatch {
  *
  * `page.route` aborts anything bound for Supabase's auth API — the safety net,
  * so even a bug in this spec cannot put a credential on the wire. But it can
- * only count what reaches the network layer, and the app ships a CSP whose
- * `connect-src` names the real Supabase project (`next.config.ts`). CI and
- * local dev both run with the placeholder `https://example.supabase.co`, which
- * that CSP blocks: the fetch fails in the page and no request is ever routed.
- * Measured — the well-formed submit below rendered "Failed to fetch" with the
- * route counter still at zero. A route-only assertion would therefore read
- * zero whether the form validated or not: a check that cannot fail.
+ * only count what reaches the NETWORK layer, and a request the browser refuses
+ * to issue never gets there. The primary instrument therefore wraps
+ * `window.fetch` before any page script runs and records the ATTEMPT, which is
+ * the property actually under test: an invalid submit must not even try.
  *
- * So the primary instrument wraps `window.fetch` before any page script runs
- * and records the ATTEMPT, which is the property under test — an invalid
- * submit must not even try.
+ * THAT DISTINCTION WAS NOT ACADEMIC, AND THE HISTORY IS WORTH KEEPING. Until
+ * #740 the CSP's `connect-src` was a hardcoded project ref, while CI and local
+ * dev both boot against the placeholder `https://example.supabase.co`. The
+ * policy blocked the placeholder outright: measured here, the well-formed
+ * submit below rendered "Failed to fetch" with the route counter still at
+ * zero. A route-only assertion would have read zero whether the form validated
+ * or not — a check that cannot fail. (The directive lives in
+ * `lib/security/csp.ts`, not `next.config.ts` as this note used to say; it
+ * moved when the policy became per-request and nonce-based.)
+ *
+ * SINCE #740 the directive is built from `NEXT_PUBLIC_SUPABASE_URL`, so under
+ * the placeholder the policy names the placeholder and these fetches are no
+ * longer blocked in the page. That changes what the route counter sees for a
+ * submit the form ALLOWS — the positive control below now reaches the route as
+ * well as the wrapper — and changes nothing for the cases this file is about,
+ * where the form refuses and no fetch is issued at all. `expectNoAuthTraffic`
+ * still asserts both, and the wrapper is still the primary instrument: it is
+ * the one that cannot be made vacuous by a policy, an offline runner or a
+ * DNS failure.
  */
 async function watchAuth(page: Page): Promise<AuthWatch> {
   const routeCalls: string[] = [];

@@ -226,11 +226,11 @@ const SAMPLE_SEEDS: SampleEmailSeed[] = [
     receivedDaysAgo: 4,
     verdict: {
       category: "rejection",
-      confidence: 0.9,
+      confidence: 0.95,
       method: "rules",
       needsReview: false,
       trace: [
-        { layer: "rules", state: "answered", note: "rejection @ 90% — regex answered", confidence: 0.9 },
+        { layer: "rules", state: "answered", note: "rejection @ 95% — regex answered", confidence: 0.95 },
         { layer: "embeddings", state: "skipped", note: "never ran", confidence: null },
         { layer: "setfit", state: "skipped", note: "never ran", confidence: null },
       ],

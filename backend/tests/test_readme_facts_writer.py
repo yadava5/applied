@@ -1022,3 +1022,137 @@ def test_every_xfail_in_the_suite_is_strict() -> None:
         "passing will not red and the stale marker will survive its own fix: "
         + ", ".join(offenders)
     )
+
+
+# ── a fact whose value is not a number (#401) ────────────────────────────────
+#
+# The Tech Stack table claimed to be "pinned from apps/web/package.json" and was
+# transcribed by hand. Coverage on this checker is set membership, so an
+# unregistered claim is invisible to its own gate: three of the four versions
+# drifted while `--check` printed a clean bill.
+#
+# Registering them was not free, and that is what these tests are about. Every
+# comparison in this tool went through `same_number`, which coerces with
+# `float()` — so a semver registered under it produces a site that can NEVER be
+# green. That is the mirror of this repository's usual defect: not a check that
+# cannot fail, but one that cannot pass. `same_exact` is the comparator that
+# fixes it, and the first test below is the reason it had to exist.
+
+
+def test_same_number_cannot_green_a_semver() -> None:
+    """The defect that forced `exact`, pinned in BOTH directions.
+
+    The second assertion is the one that matters. A comparator answering False
+    for a WRONG version looks correct; answering False for the RIGHT one is a
+    site that reds forever, and `--write` would then rewrite `16.3.3` to a
+    `float()` of itself on every run.
+    """
+
+    tool = _load()
+    assert tool.same_number("16.3.0", "16.3.3") is False
+    assert tool.same_number("16.3.3", "16.3.3") is False  # <- the correct value
+    assert tool.same_number("^4.5.2", "^4.5.2") is False
+
+    # CONTROL: the numeric comparator is not simply broken. It still answers
+    # the question it was written for, which is why it stays the default.
+    assert tool.same_number("21", 21) is True
+    assert tool.same_number("0.9791", 0.9791304347826086) is True
+
+
+def test_same_exact_greens_the_right_value_and_reds_a_wrong_one() -> None:
+    tool = _load()
+    assert tool.same_exact("16.3.3", "16.3.3") is True
+    assert tool.same_exact("^0.12.5", "^0.12.5") is True
+    assert tool.same_exact("16.3.0", "16.3.3") is False
+    # The caret is part of the claim: a specifier asserts a floor and a major,
+    # and comparing it stripped would let the README publish a pin the manifest
+    # does not make.
+    assert tool.same_exact("4.5.2", "^4.5.2") is False
+
+
+def test_render_under_exact_returns_the_source_value_unchanged() -> None:
+    """`--write` must put the manifest's own characters into the sentence.
+
+    `render`'s numeric branch formats to the site's decimal places, which would
+    turn `^4.5.2` into something `float()` produced. Under `exact` it is a
+    passthrough.
+    """
+
+    tool = _load()
+    assert tool.render("16.3.0", "16.3.3", word=False, exact=True) == "16.3.3"
+    assert tool.render("^4.4.3", "^4.5.2", word=False, exact=True) == "^4.5.2"
+
+
+def test_no_registered_site_asks_for_both_word_and_exact() -> None:
+    """They contradict, and `run` reports a site that sets both.
+
+    Asserted over the real FACTS as well, because the report only fires for a
+    site the loop reaches, and a contradictory site added to a fact whose
+    earlier site already failed would be reported second or not at all.
+    """
+
+    tool = _load()
+    for fid, fact in tool.FACTS.items():
+        for raw in fact["sites"]:
+            site = {"re": raw} if isinstance(raw, str) else raw
+            assert not (site.get("word") and site.get("exact")), (fid, site)
+
+
+def test_every_registered_manifest_version_resolves_against_the_manifest() -> None:
+    """A dead fact is worse than an absent one: it reds for a reason that is
+    not a drifted claim.
+
+    `web_dependency` raises rather than defaulting, so this is really asserting
+    that the packages are still where the facts say they are.
+    """
+
+    tool = _load()
+    assert tool.web_dependency("next")
+    assert tool.web_dependency("react")
+    assert tool.web_dependency("zod")
+    assert tool.web_dependency("@supabase/ssr")
+    assert tool.web_dev_dependency("@playwright/test")
+
+    # CONTROL: it does not answer for a package that is not there, and it does
+    # not read across the two sections.
+    with pytest.raises(KeyError):
+        tool.web_dependency("a-package-this-repo-does-not-depend-on")
+    with pytest.raises(KeyError):
+        tool.web_dependency("@playwright/test")  # devDependency, not a dependency
+
+
+def test_check_reds_when_a_registered_version_drifts(tmp_path, capsys) -> None:
+    """End to end, through `run`, because the unit tests above would all still
+    pass if the loop ignored the flag.
+
+    Minimal pair with the control below: one character of the README differs.
+    """
+
+    tool = _load()
+    pristine = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    drifted = pristine.replace("Next.js 16.3.3 (App Router", "Next.js 16.3.0 (App Router")
+    assert drifted != pristine, "the Framework row moved; update this fixture"
+    tool.REPO = _mirror_repo(tmp_path, drifted)
+
+    with pytest.raises(SystemExit) as exit_info:
+        tool.run("check")
+
+    assert exit_info.value.code == 1
+    err = capsys.readouterr().err
+    assert "webNext" in err, err
+    assert "says 16.3.0" in err, err
+
+
+def test_the_same_tree_with_the_version_correct_is_green(tmp_path, capsys) -> None:
+    """THE CONTROL. Without it the test above is satisfied by a checker that
+    reds on every semver, which is exactly what `same_number` did.
+    """
+
+    tool = _load()
+    pristine = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    tool.REPO = _mirror_repo(tmp_path, pristine)
+
+    tool.run("check")  # must not raise
+
+    out = capsys.readouterr().out
+    assert "all agree with the code" in out, out

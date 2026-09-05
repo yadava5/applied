@@ -193,10 +193,27 @@ Every access to a stored user credential is logged. This is tractable because
 the access surface is small and closed: reads go through
 `get_gmail_credentials` and `get_icloud_credentials`, writes through
 `save_gmail_credentials` / `save_icloud_credentials`, and deletions through
-`delete_*` and `clear_all_credentials` — all in
-`backend/jobtracker/credentials/cloud.py`.
+`delete_*` and `clear_all_credentials` — seven functions, all in
+`backend/jobtracker/credentials/cloud.py` — **plus one site outside that
+module**: the account-deletion purge, `delete_account`
+(`backend/jobtracker/cloud/account.py`).
 
-All **seven** of those access functions emit a single fixed-shape record:
+That eighth site is named rather than folded in, because it is the exception
+the "small and closed" sentence would otherwise hide. `delete_account` empties
+every tenant table — `user_credentials` among them — with one bulk
+`DELETE ... WHERE user_id = :id` per model inside a **single transaction**, so
+it destroys the credential without passing through any of the seven functions.
+It cannot route through `clear_all_credentials` without leaving that
+transaction, because that function opens its own session and owns its own
+commit. So it emits the record itself, after the commit, by calling
+`log_credentials_purged` in `credentials/cloud.py` — which keeps the record's
+shape, its field values and its logger name (`jobtracker.credentials.cloud`)
+inside the credential store, so a query scoped to that one logger still sees
+every access including the destruction. Issue #757: before it, the purge
+emitted no `secret_access` record at all and the `clear` row below attributed
+one to it.
+
+All **eight** of those access sites emit a single fixed-shape record:
 
 ```
 secret_access user_id=%s kind=%s key_id=%s op=%s outcome=%s
@@ -208,10 +225,13 @@ secret_access user_id=%s kind=%s key_id=%s op=%s outcome=%s
 | `read` | `decrypt_failed`, with ` error=InvalidToken` appended | `logger.error` |
 | `write` | `written`, `write_failed` | `logger.info` |
 | `delete` | `deleted` | `logger.info` |
-| `clear` | `deleted`, with `kind=all` — the account-deletion purge | `logger.info` |
+| `clear` | `deleted`, with `kind=all` — the account-deletion purge, emitted by `delete_account` | `logger.info` |
 
-Two exactness notes, because a compliance table that overstates its own
-vocabulary is the thing an assessor checks first:
+Four exactness notes, because a compliance table that overstates its own
+vocabulary — or its own reach — is the thing an assessor checks first. The last
+two are about **which of these functions a real request actually reaches**, and
+they are here because the previous correction pass to this table rewrote it
+around a row naming a caller that did not exist:
 
 - **`logger.info` is the level for every outcome except the two decrypt
   failures**, which are `logger.error` in `get_gmail_credentials`
@@ -230,6 +250,31 @@ vocabulary is the thing an assessor checks first:
   standing. Adding it would cost a `SELECT` before the `DELETE` — the same
   round trip this section declines below for `key_id` — so the honest record
   is the limitation, not a value that does not exist.
+
+  The `clear` record follows the same convention for the same reason:
+  `delete_account` issues its `DELETE`s and emits `deleted` without checking
+  whether the user had a credential, so a `clear` record means "the purge ran",
+  not "a credential existed".
+- **`clear_all_credentials` has no production caller.** It is one of the seven,
+  it emits exactly the record in the `clear` row, and nothing in a request path
+  calls it: `git grep` finds the package re-export (which resolves to the
+  *desktop*, keyring-backed backend), the two backends' definitions, this
+  document, and three tests. The `clear` row is emitted by `delete_account`.
+  Recorded rather than quietly dropped, because the three tests exercise the
+  function and go green while being structurally unable to notice that no
+  caller exists — which is how the row survived a correction pass (issue #757).
+- **The four iCloud functions are unreachable in this deployment.**
+  `backend/jobtracker/main_cloud.py` registers four routers — account,
+  applications, gmail_oauth, cron — and there is no iCloud router.
+  `save_icloud_credentials`, `delete_icloud_credentials` and
+  `has_icloud_credentials` have no caller anywhere in `backend/jobtracker`, and
+  the only references to `get_icloud_credentials` are in
+  `backend/jobtracker/email_clients/icloud.py`, which imports through the
+  package re-export — the **desktop** backend — and calls it with no `user_id`.
+  So the `read`, `write` and `delete` rows are true of the code on both the
+  Gmail and the iCloud arm, and true of the deployment's live traffic on the
+  Gmail arm only. Stated because this section's scope is explicitly the
+  deployment (see "Scope of the logging, stated exactly", below).
 
 `key_id` is `None` on the delete and clear paths, deliberately: those issue a
 `DELETE` and never read a row, and adding a `SELECT` purely to populate the

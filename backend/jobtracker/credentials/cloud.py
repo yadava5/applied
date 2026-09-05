@@ -571,12 +571,46 @@ async def has_icloud_credentials(user_id: uuid.UUID) -> bool:
 # -----------------------------------------------------------------------------
 
 
+def log_credentials_purged(user_id: uuid.UUID) -> None:
+    """Emit the ``op=clear`` access record for a wholesale credential purge.
+
+    Public, and the only thing in this module that is public *purely* for a
+    caller outside it. The account-deletion purge
+    (``jobtracker/cloud/account.py``) destroys ``user_credentials`` with a bulk
+    ``DELETE`` inside one transaction spanning nine models, so it cannot route
+    through :func:`clear_all_credentials` — that function owns its own session
+    and its own commit. See ``delete_account`` for why that transaction is
+    load-bearing. Issue #757.
+
+    What the purge must NOT do is compose the record itself. An assessor is
+    told (``docs/casa/SECRET-ACCESS-POLICY.md`` §3.1) that every access record
+    has one shape and arrives under one logger name; a second module writing
+    its own ``secret_access`` line is how those two facts stop being true. So
+    the wording, the field values and ``logger`` stay here and the caller only
+    fires it.
+
+    ``kind="all"`` because one DELETE removes every row the user owns — naming
+    a single ``kind`` would be a narrower claim than what happened. ``key_id``
+    is ``None`` for the reason given in :func:`_log_secret_access`.
+    """
+
+    _log_secret_access(
+        user_id=user_id, kind="all", key_id=None, op="clear", outcome="deleted"
+    )
+
+
 async def clear_all_credentials(user_id: uuid.UUID) -> bool:
     """Remove every credential row owned by ``user_id``.
 
     Includes the ``gmail_sync_enrollment`` row: this clears the Gmail
     credential too, and an enrollment that outlived its credential is exactly
     the drift the same-transaction writes exist to prevent.
+
+    **No production caller** at present (issue #757): account deletion, the one
+    flow this shape was written for, purges every tenant table in a single
+    transaction and clears the credential row there instead. Stated here rather
+    than left to a grep, because three tests exercise this function and none of
+    them can tell that nothing in a request path does.
     """
 
     async with get_session() as session:
@@ -585,9 +619,5 @@ async def clear_all_credentials(user_id: uuid.UUID) -> bool:
         )
         await _unenroll_gmail(session, user_id=user_id)
         await session.commit()
-    # kind="all": one DELETE removes every row this user owns, so naming a
-    # single `kind` here would be a narrower claim than what happened.
-    _log_secret_access(
-        user_id=user_id, kind="all", key_id=None, op="clear", outcome="deleted"
-    )
+    log_credentials_purged(user_id)
     return True

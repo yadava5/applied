@@ -1575,28 +1575,68 @@ async def revoke_stored_gmail_grant(user_id: uuid.UUID) -> bool:
     return await _revoke_at_google(stored.refresh_token or stored.access_token)
 
 
-# Age filters the UI offers (months). Anything else → "all time" (no bound).
+# Default backfill window (months) when the dashboard triggers a server-side
+# sync without specifying a range -- and, since #755, the bound an
+# UNRECOGNIZED `range` on the inbox mine resolves to. One constant, because two
+# would drift and the second one would be the lenient one.
+_SYNC_DEFAULT_RANGE_MONTHS = 12
+
+# Age filters the UI offers (months).
 _ALLOWED_RANGE_MONTHS = frozenset({3, 6, 9, 12})
+
+#: The words that ASK for all-time, as opposed to failing to say anything.
+#: Kept separate from the parse so "unrecognized" and "unbounded on purpose"
+#: cannot collapse into one another again -- that collapse is the whole of #755.
+_UNBOUNDED_RANGE_TOKENS = frozenset({"all", "any", "0"})
 
 
 def _parse_range_months(value: str | None) -> int | None:
     """Map the ``range`` query param to a month count, or ``None`` for all-time.
 
-    Accepts ``"3"``/``"6"``/``"9"``/``"12"`` (optionally suffixed ``m``) and
-    ``"all"``/empty. Any unrecognized value falls back to all-time rather than
-    erroring, so a stray param can never 500 the mine.
+    Accepts ``"3"``/``"6"``/``"9"``/``"12"`` (optionally suffixed ``m``), and
+    ``"all"``/``"any"``/``"0"``/empty for an unbounded read.
+
+    AN UNRECOGNIZED VALUE IS BOUNDED, NOT UNBOUNDED (#755).
+
+    It used to return ``None`` -- all-time -- for anything it did not
+    understand, so ``?range=24``, ``?range=13`` and ``?range=xyz`` each read the
+    whole mailbox. Failing open is a sound instinct when the failure mode is an
+    error page; here it did not degrade to LESS, it degraded to MORE, on
+    ``gmail.readonly``, which is a Google restricted scope. A typo in a bookmark
+    was an unbounded read of someone's mail, and the response said nothing about
+    it. That is the one direction this may not fail in.
+
+    The no-500 property is deliberately kept: this is a change of fallback
+    VALUE, not a change to raising. A stray param still cannot break the mine.
+
+    ``value is None`` -- the parameter absent altogether -- still means
+    all-time, and that is NOT an oversight. `apps/web/lib/gmail/types.ts`
+    documents omission as how the client spells "All time", so the absent case
+    is an explicit request in the API's own contract, made by leaving the word
+    out. Changing it would silently truncate the UI's own all-time option for
+    any client already loaded in a browser. If that contract is ever revised so
+    the client says ``range=all`` outright, absence should become bounded here
+    in the same change.
     """
 
     if value is None:
         return None
-    token = value.strip().lower().rstrip("m")
-    if token in ("", "all", "any", "0"):
+    raw = value.strip().lower()
+    if not raw:
+        return None
+    # `rstrip("m")` only after the emptiness test: `?range=m` strips to "" and
+    # would otherwise read as a deliberate all-time request, which is exactly
+    # the unrecognized-means-unbounded bug wearing a shorter string.
+    token = raw.rstrip("m")
+    if token in _UNBOUNDED_RANGE_TOKENS:
         return None
     try:
         months = int(token)
     except ValueError:
-        return None
-    return months if months in _ALLOWED_RANGE_MONTHS else None
+        return _SYNC_DEFAULT_RANGE_MONTHS
+    if months in _ALLOWED_RANGE_MONTHS:
+        return months
+    return _SYNC_DEFAULT_RANGE_MONTHS
 
 
 def _parse_scope(value: str | None) -> str:
@@ -1893,9 +1933,6 @@ async def gmail_pipeline(payload: PipelineAnalyzeRequest) -> PipelineAnalyzeResp
     )
 
 
-# Default backfill window (months) when the dashboard triggers a server-side
-# sync without specifying a range.
-_SYNC_DEFAULT_RANGE_MONTHS = 12
 
 # A server-side auto sync scans a STABLE, deep-enough slice of that window: up
 # to this many MESSAGES. Fixed so every routine run covers the same ground
