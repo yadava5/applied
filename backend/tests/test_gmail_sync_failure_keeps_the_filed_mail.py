@@ -560,6 +560,33 @@ async def test_recovery_re_files_idempotently_and_then_stamps(
     assert datetime.fromisoformat(last_sync_at) > SEEDED_SYNC_AT
 
 
+def _items_with_three_distinct_counts() -> list[dict]:
+    """The three filable items plus one that is HELD, so no two counts match.
+
+    ``filed`` 3, ``queued`` 1, ``scanned`` 4. That matters more than it looks:
+    with the plain three-item relay every one of these is 3 except ``queued``,
+    so a template that swapped ``filed`` and ``scanned`` emitted a
+    BYTE-IDENTICAL sentence and no assertion here could see it. Equality does
+    not distinguish equal values, and asserting "3 filed" against a fixture
+    where scanned is also 3 pins a coincidence rather than the operand.
+
+    The fourth item sits under the 0.85 auto-file gate, so it is queued for a
+    person rather than filed — which is also the only shape that makes
+    ``queued`` non-zero anywhere in this module.
+    """
+
+    held = {
+        "message_id": "hold-1",
+        "category": "applied",
+        "sender_email": "no-reply@greenhouse.test",
+        "subject": "Your application to Willowmere",
+        "sender_name": "Willowmere",
+        "received_at": "2026-07-20T12:00:00+00:00",
+        "confidence": 0.70,
+        "thread_id": "th-willowmere",
+    }
+    return [*_filable_items(), held]
+
 # =============================================================================
 # What the 500 SAYS — #643, the precision layer on top of #604's sentence
 # =============================================================================
@@ -600,16 +627,22 @@ async def test_the_500_says_what_it_filed_before_the_stamp_failed(
     handler holds ``ledger`` and ``scanned`` at the moment the stamp raises, so
     the precision costs no extra bookkeeping.
 
-    EQUALITY, NOT TRUTHINESS, on every count: ``filed`` and ``scanned`` are both
-    3 here, so a swap between them would survive a truthiness check, and
-    ``queued`` is 0 — which no truthiness check can assert at all.
+    THREE DISTINCT VALUES, which is stronger than equality-not-truthiness and
+    is the correction this test needed. It first ran against the plain
+    three-item relay, where ``filed`` and ``scanned`` are both 3 — so swapping
+    them in the template emitted a byte-identical sentence and this test stayed
+    green. Measured, not supposed: that mutant survived all seven tests. With
+    ``filed`` 3, ``queued`` 1 and ``scanned`` 4 no two operands can be
+    exchanged without changing the string.
     """
 
     await _make_returning_user(client_500)
     await _set_ledger_columns(present=False)
 
     resp = await client_500.post(
-        "/gmail/sync", json={"items": _filable_items()}, headers=HEADERS
+        "/gmail/sync",
+        json={"items": _items_with_three_distinct_counts()},
+        headers=HEADERS,
     )
 
     assert resp.status_code == 500, resp.text
@@ -622,8 +655,8 @@ async def test_the_500_says_what_it_filed_before_the_stamp_failed(
     assert "sync again to finish" in detail, detail
 
     assert "3 filed" in detail, detail
-    assert "0 queued" in detail, detail
-    assert "of 3 scanned" in detail, detail
+    assert "1 queued" in detail, detail
+    assert "of 4 scanned" in detail, detail
 
     # The counts describe what is REALLY on disk, not what the handler hoped.
     assert await _filed_mail_rows() == 3
