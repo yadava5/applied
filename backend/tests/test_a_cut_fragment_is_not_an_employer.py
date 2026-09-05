@@ -220,3 +220,58 @@ def test_a_one_word_employer_in_front_of_a_lifecycle_word_is_the_price(
     """
 
     assert p.resolve_employer(ATS, subject, None) is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The residual family, pinned as strict xfail rather than left as prose
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# EVERY SHAPE THIS MODULE FIXES HAS A LIVE TWIN, and the boundary between them
+# is not about companies at all. `_lead_segment_candidates` returns the cut
+# ALONE when the remainder opens with a lifecycle object (`for|regarding|re`,
+# `pipeline.py:3009-3011`), so that cut is at index 0 and keeps the one-word
+# exemption the position rule grants. Measured:
+#
+#     Phone Interview - Larkspur                          -> None      (fixed)
+#     Phone Interview for Software Engineer | Larkspur     -> ('phone', 'Phone')
+#     Final Interview Details | Larkspur                   -> None      (fixed)
+#     Final Interview for Data Scientist | Larkspur        -> ('final', 'Final')
+#
+# So the fixed/broken line is "does this subject carry a for/regarding/re
+# object", which has no bearing on whether the fragment is a company. Both
+# variants are ordinary ATS templates.
+#
+# WHY STRICT XFAIL AND NOT PROSE. Asserting the mint would pin a defect as
+# desired behaviour. Asserting `None` would red today. `xfail(strict=True)`
+# does neither: it records the truth, and it turns RED the day the behaviour
+# changes in EITHER direction — including the direction nobody is watching,
+# where someone widens `_LIFECYCLE_OBJECT` (adding `with`, for "Interview with
+# the team") and silently grows this family past every instrument in the
+# estate. The corpus cannot see any of this: it scores 36/36 with and without
+# the fix.
+#
+# Separating these from #512's structurally identical `Anthropic Follow-Up for
+# Engineer | <candidate>` needs a lexicon, not a provenance test. That is the
+# product decision, and it is recorded on the issue rather than guessed here.
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "the object branch emits the cut alone at index 0, so it keeps the "
+        "one-word exemption the position rule grants. Closing it needs a "
+        "lexicon or a decision about #512's pin, not another provenance test."
+    ),
+)
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "Phone Interview for Software Engineer | Larkspur",
+        "Final Interview for Data Scientist | Larkspur",
+        "Important Update regarding your application | Larkspur",
+    ],
+)
+def test_a_lifecycle_object_still_carries_the_fragment_through(subject: str) -> None:
+    """RESIDUAL. Red when this starts refusing, and red if the family grows."""
+
+    assert p._employer_from_subject_segment(subject, BRAND) is None
