@@ -2804,7 +2804,9 @@ _CORPORATE_WORDS = frozenset(
 _ACRONYM_TOKEN = re.compile(r"^[A-Z0-9][A-Z0-9&.\-]+$")
 
 
-def _carries_corporate_evidence(display: str, raw: str) -> bool:
+def _carries_corporate_evidence(
+    display: str, raw: str, *, one_word_is_evidence: bool = True
+) -> bool:
     """Does this display name give a POSITIVE reason to read it as a company?
 
     #733. `_employer_from_sender_name` and `_employer_from_subject_segment`
@@ -2835,13 +2837,45 @@ def _carries_corporate_evidence(display: str, raw: str) -> bool:
       this docstring credited the wrong rule for the case it named;
     - an acronym or numeric token ("Netic AI", "IBM", "3M", "H&R");
     - a legal or corporate-suffix word (:data:`_CORPORATE_WORDS`);
-    - a single word — "Stripe", "Northwind". A person's full name is not one
-      word, and a one-word display is the overwhelmingly common company shape.
+    - a single word — "Stripe", "Northwind" — but ONLY when the message itself
+      offered that word, which is what ``one_word_is_evidence`` carries. A
+      person's full name is not one word, and a one-word display is the
+      overwhelmingly common company shape.
 
     The cost, stated rather than hidden: a two-word plain-name employer whose
     mail also carries an employer-less subject ("Hugging Face", "Jane Street")
     now costs one confirmation click. That is the price of never publishing a
     person's name as a company, and it is the right way round.
+
+    ``one_word_is_evidence`` IS #539, AND IT IS ABOUT PROVENANCE, NOT LENGTH.
+    The one-word rule reads a shape somebody else chose; it says nothing about
+    a fragment this module cut for itself. :func:`_lead_segment_candidates`
+    offers a second reading of a leading segment — the run CUT at its first
+    lifecycle word — and "Phone Interview" was correctly refused here for want
+    of evidence while the cut it left behind, "Phone", walked through the
+    one-word door and filed a company called Phone. Three ordinary ATS
+    subjects did it at HEAD: "Phone Interview - <Employer>", "Final Interview
+    Details | <Employer>" and "Important Update | <Employer>".
+
+    So a caller looking at a reading it has ALREADY turned down passes False,
+    and the word must earn evidence some other way. "IBM Interview" still
+    does, through :data:`_ACRONYM_TOKEN` — which is why the test below falls
+    THROUGH to the word loop instead of returning False, and why a one-word
+    acronym or a name with a digit in it costs nothing here.
+
+    This is not the word-count cap the comment further down records as
+    deliberately removed. That cap was an UPPER bound on the person-shape
+    test — an escape hatch at the shape being tested. This conditions the
+    LOWER-bound exemption on where the string came from, and it can only
+    refuse.
+
+    Its cost, stated rather than hidden, in the same voice as the one above:
+    "<Employer> <Lifecycle> | <Candidate>" with a ONE-WORD employer and
+    nothing after the lifecycle word — "Larkspur Interview | <Candidate>" —
+    resolved to Larkspur and now resolves to nothing, because that word is
+    the second reading of its segment and the first was refused. The row goes
+    to the review queue instead of onto the board under a name that may be an
+    adjective.
     """
 
     if raw and _clean_sender_display_name(raw) != raw.strip():
@@ -2849,7 +2883,7 @@ def _carries_corporate_evidence(display: str, raw: str) -> bool:
     if "@" in display or "&" in display:
         return True
     words = display.split()
-    if len(words) < 2:
+    if len(words) < 2 and one_word_is_evidence:
         return True                       # one word is a company, not a full name
     # NO UPPER BOUND ON WORD COUNT, AND THERE USED TO BE ONE. `len(words) > 4`
     # was here as "too long to be a name", which is false in exactly the
@@ -3578,7 +3612,7 @@ def _employer_from_subject_segment(
     the first word for as long as this function has existed.
     """
 
-    for candidate in _lead_segment_candidates(subject or ""):
+    for index, candidate in enumerate(_lead_segment_candidates(subject or "")):
         display = _clean_company_display(candidate)
         if not display:
             continue
@@ -3621,7 +3655,22 @@ def _employer_from_subject_segment(
         # #733 again, and this door is why guarding the display name alone is
         # not a fix: "Sarah Chen - quick chat?" reaches here with NO display
         # name at all and resolved ('sarah', 'Sarah Chen') on the shipped code.
-        if not _carries_corporate_evidence(display, ""):
+        #
+        # ...and #539: THE ONE-WORD EXEMPTION BELONGS TO THE FIRST READING.
+        # `_lead_segment_candidates` offers at most two readings of a segment
+        # and the second is always the first one CUT at a lifecycle word. When
+        # the uncut reading has just been refused above — "Phone Interview" has
+        # no corporate evidence — the cut left behind is one word, cleared the
+        # guard unconditionally, and filed a company called Phone.
+        #
+        # INDEX, NOT 'IS IT A CUT', and the difference is #512's whole shape.
+        # "<Employer> Follow-Up for <Role> | <Candidate>" has a remainder, so
+        # the uncut run is never offered and the list is the CUT ALONE, at
+        # index 0. Refusing every cut would take that case — the one this
+        # branch was widened for — back to None. What separates the two is
+        # whether this loop already read a longer version of the same segment
+        # and turned it down.
+        if not _carries_corporate_evidence(display, "", one_word_is_evidence=index == 0):
             continue
         return token, display
     return None
