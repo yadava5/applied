@@ -636,7 +636,16 @@ export function ApplicationDetail({
               below `if (!shown) return null` is also past the hook region, so
               `onStageChange` cannot be a `useCallback` without restructuring
               the component — worth doing only if this control ever does start
-              losing changes. */}
+              losing changes.
+
+              It DOES share the row control's other defect, and the same fix
+              (#425): the in-flight state is `aria-disabled`, never `disabled`.
+              A focused element that is disabled mid-write is blurred by the
+              browser to `<body>` and stays there, and at the owner's 1024px
+              with this pane docked open THIS is the keyboard route to a stage
+              change — the row's own select has folded into the pane. The lock
+              is enforced in the handler below instead. See `StageSelect` in
+              ApplicationRow for the measurement. */}
           <div className="flex items-center gap-2">
             <label className="sr-only" htmlFor={`detail-status-${active.id}`}>
               Change stage for {active.company}
@@ -651,9 +660,22 @@ export function ApplicationDetail({
               <select
                 id={`detail-status-${active.id}`}
                 value={statusSelectValue(shownStatus)}
-                disabled={stageBusy}
-                onChange={(e) => void onStageChange(e.target.value)}
-                className="select-control peer rounded border border-line bg-surface-2 py-1 pl-2 pr-6 text-xs outline-none transition-colors hover:border-line-strong focus:border-line-strong disabled:opacity-50"
+                aria-disabled={stageBusy}
+                // The spinner beside this control is `aria-hidden`, so before
+                // this it announced nothing at all while a write was in
+                // flight. `aria-busy` is the row control's channel and is now
+                // this one's too — a lock a screen reader cannot hear is not
+                // a lock, and `aria-disabled` alone says "not now" without
+                // saying "wait".
+                aria-busy={stageBusy}
+                // Ignored rather than prevented, and the controlled `value`
+                // snaps the selection back — same contract as the row's
+                // control, whose header explains why.
+                onChange={(e) => {
+                  if (stageBusy) return;
+                  void onStageChange(e.target.value);
+                }}
+                className="select-control peer rounded border border-line bg-surface-2 py-1 pl-2 pr-6 text-xs outline-none transition-colors hover:border-line-strong focus:border-line-strong aria-disabled:opacity-50"
                 style={{ color: stage.color }}
               >
                 {statusOptions(shownStatus).map((option) => (
@@ -664,7 +686,7 @@ export function ApplicationDetail({
               </select>
               <ChevronDown
                 aria-hidden
-                className="pointer-events-none absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-dim peer-disabled:opacity-50"
+                className="pointer-events-none absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-dim peer-aria-disabled:opacity-50"
               />
             </span>
             {stageBusy ? (
@@ -700,13 +722,14 @@ export function ApplicationDetail({
           </p>
         ) : null}
 
-        {/* --- The role: the one field the mail can never supply ------------ */}
-        {/* Issue #72. `format=metadata` means no body is read, and the subjects
-            that are read name the employer — so this field is empty on every
-            auto-filed row, permanently. The control states that plainly and
-            then lets the person who applied answer it. Nothing here proposes a
-            title: no placeholder text, no guess from the company. The title is
-            data (mono, strong ink); the words around it are not (Atkinson, dim). */}
+        {/* --- The role: the one field only the applicant can settle -------- */}
+        {/* Issue #72 built this control believing the mail could never supply a
+            title. #543: it can — the fetch is `format="full"` and extraction
+            writes one when the message names it — so this field is blank only
+            when nothing readable named a role. The control still proposes
+            nothing: no placeholder, no guess from the company, because a typed
+            answer is the one the sync must not overwrite. The title is data
+            (mono, strong ink); the words around it are not (Atkinson, dim). */}
         <div data-testid="detail-role" className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <Tag className="h-3.5 w-3.5 shrink-0 text-dim" aria-hidden />
           {roleEditing ? (
