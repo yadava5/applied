@@ -149,3 +149,34 @@ Enforced by: backend/tests/test_user_supplied_role.py
 Valid while: the sync writes `position` at all. If extraction is ever removed
   from the filing path, the column is dead weight and this entry is void.
 Markers: backend/jobtracker/cloud/applications.py
+
+## DEC-005 — the password-reset result has nowhere to put an error, on purpose
+
+Status: active (2026-09-05)
+Claim: `requestPasswordReset` returns one constant notice and its result type
+  carries no error field, no status code and no hint about the address. A 429,
+  a thrown fetch failure and a successful send are byte-identical to the
+  caller.
+Why: Supabase's `/auth/v1/recover` enforces "a 60 seconds window before a new
+  request is allowed to the same user", and that window **only fires for an
+  address that has a user**. So surfacing "you can only request this again in
+  51 seconds" confirms the account exists as surely as printing "no such user"
+  would. The absence is a type rather than a convention because, in the
+  module's own words, discipline in the component is exactly what regresses.
+Moved away from: giving the outcome a field that can carry the rate-limit
+  result, so the user is told why nothing arrived instead of being shown a
+  success notice. This is not a hypothetical reversal — an audit of issue #292
+  on 2026-09-05 recommended exactly it, in writing, while the argument against
+  it sat in the header of the file being audited. A thorough comment at the
+  site was not enough on its own.
+Enforced by: apps/web/tests/unit/auth-recovery.test.mjs — drives an unknown
+  address, a known one asked twice with a real 429, and a thrown failure, and
+  asserts the three outcomes are byte-identical before sweeping the notice for
+  "429", "51 seconds", "rate_limit" and "security purposes".
+Valid while: the two 429s remain indistinguishable to the client. Supabase
+  returns the same status for a project-wide email quota, which is NOT
+  user-specific and would be safe to surface, and for the per-user recover
+  window, which is not. If a live response is ever measured to separate them,
+  the quota half may be surfaced — with the enumeration test extended first,
+  since a control that does not know about a branch cannot guard it.
+Markers: apps/web/lib/auth/recovery.ts
