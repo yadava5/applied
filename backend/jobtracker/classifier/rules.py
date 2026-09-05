@@ -78,6 +78,14 @@ class CategoryPatterns:
 # the message was never persisted at all.
 
 
+# BEFORE YOU ADD OR CHANGE A PATTERN, read `docs/CLASSIFIER_RULES_GOVERNANCE.md`.
+# It is a transcription of the standard four commits on `main` already apply by
+# citing issue #10, and it is short. The two rules that catch people: a new
+# pattern must be strictly NARROWER than one that already fires, and a change
+# ships with a named near-miss case that must NOT move. "Macro-F1 is unchanged"
+# is necessary and never sufficient — the failure mode this guards is a narrow
+# patch, and a narrow patch is benchmark-neutral by construction.
+
 # Pattern definitions for each category
 PATTERNS: dict[EmailCategory, CategoryPatterns] = {
     EmailCategory.REJECTION: CategoryPatterns(
