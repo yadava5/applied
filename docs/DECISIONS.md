@@ -232,3 +232,58 @@ Valid while: the built System Card is committed under `apps/web/public/` and
   served directly. If it is ever built at deploy time, the drift class and this
   entry go with it.
 Markers: .github/dependabot.yml, .github/workflows/booklet.yml
+
+## DEC-007 — `ix_emails_review_queue` is kept unused rather than dropped, and the migration that created it is corrected in place
+
+Status: active (2026-09-05)
+Claim: the partial index `ix_emails_review_queue` (revision `c8f3a1d64b27`)
+  stays in the schema although no product query can use it, and the false
+  claims in that revision's own docstring are corrected rather than left as
+  history. No new revision drops the index.
+Why: the measurement is in #826 and it is one-sided. Every reader was checked
+  on a 200k-row corpus and not one implies the index's predicate: the queue
+  moved to a `NOT EXISTS` anti-join in #587/#597, the `needs_review` tile has
+  no `classified_as` at all, `_reset_review_queue` omits `classified_as`, and
+  `linker.py`'s category list excludes `NEEDS_REVIEW`. So the index is dead
+  coverage.
+  Dropping it is still the worse trade. The cost of keeping it is 856 kB at
+  200k rows with 8,000 matching, and negligible at production's ~52 emails —
+  a write-time maintenance cost on a table whose write path is a sync nobody
+  is waiting on. The cost of dropping it is a new revision executed against
+  the production database, which is the estate's highest-risk operation, for a
+  saving that is invisible at present scale.
+  The second reason is the one that would not have been obvious: the only
+  remaining readers of the index are two literals in
+  `test_read_path_indexes_postgres.py`, renamed by PR #825 to
+  `QUEUE_THE_INDEX_WAS_CUT_FOR` / `TILE_THE_INDEX_WAS_CUT_FOR`. They are the
+  demonstration that the shipped index still works, kept deliberately as a
+  negative control. Dropping the index deletes that control along with it, and
+  a future reader would then have neither the index nor the evidence of what
+  it was for.
+Moved away from: dropping it in a new revision, which is what "unused index"
+  usually warrants and is what the issue lists first. Rejected on the two
+  grounds above — a production migration for a saving nobody can measure at
+  this scale, and the loss of the only artefact that records the index's
+  purpose.
+  Also moved away from: leaving the migration's prose alone on the principle
+  that a revision which has run is history. That principle is right about the
+  revision's SQL and wrong about its docstring, which is not history to the
+  next author — it is the file they copy a new revision from. #668 is the
+  same lesson: a correction that reached the document and not the source of
+  the copy has not landed. The executable body is unchanged and that is
+  asserted, not assumed.
+Enforced by: backend/tests/test_read_path_indexes_postgres.py enforces the
+  half that matters — its two `*_THE_INDEX_WAS_CUT_FOR` literals assert on the
+  PLAN, so they fail if the index stops being usable by the queries it was cut
+  for, and "kept but dead" cannot silently become "kept and broken".
+  The retention itself has no gate and cannot have a useful one here: any
+  future revision can drop the index and this file would not notice, because a
+  schema object's absence is not something a test of query plans can see once
+  the queries no longer use it. For that half: nothing enforces this; prose
+  only.
+Valid while: production stays at a scale where the index's write-time cost is
+  invisible. The condition a reader can check in a minute: if `emails` has
+  grown past a few hundred thousand rows for a single user, re-run #826's
+  measurement and revisit — the arithmetic that makes dropping it not worth a
+  migration is the arithmetic that reverses first.
+Markers: backend/alembic/versions/c8f3a1d64b27_read_path_indexes.py, backend/tests/test_read_path_indexes_postgres.py

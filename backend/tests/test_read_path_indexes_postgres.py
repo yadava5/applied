@@ -250,6 +250,11 @@ MAIL_COUNT = (
 # earns its place. The handlers' real statements are compiled from the ORM, off
 # the imported predicate, in
 # ``test_the_orm_emits_the_predicates_these_indexes_were_measured_against``.
+# DEC-007: these two literals are the ONLY remaining readers of
+# `ix_emails_review_queue`. No product query implies its predicate any more
+# (#826), so they are what proves the shipped index still works at all — a
+# negative control, kept deliberately rather than deleted with the coverage.
+# Dropping the index would delete this evidence along with it.
 QUEUE_THE_INDEX_WAS_CUT_FOR = (
     "SELECT * FROM emails WHERE user_id = :uid AND classified_as = 'NEEDS_REVIEW' "
     "AND application_id IS NULL AND is_reviewed = false "
