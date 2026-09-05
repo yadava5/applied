@@ -94,7 +94,15 @@ def test_a_real_run_with_no_docker_names_the_rls_suite() -> None:
     out = _run(["tests/test_rls_postgres.py"], {"DOCKER_HOST": NO_DOCKER})
     assert "tests that did not run" in out, out[-3000:]
     assert "tests/test_rls_postgres.py" in out
-    assert "22 skipped" in out
+    # THE COUNT IS LOAD-BEARING, not decoration: it proves the WHOLE module
+    # skipped. A bare `"skipped" in out` passes a run where one test skipped and
+    # the rest errored, which is the failure this file exists to make visible.
+    #
+    # 22 -> 24 with the two tests #847 added. Re-recorded deliberately: the
+    # registered `rlsTests` fact moved itself when `readme_facts.py --write`
+    # ran, and this literal did not, so it surfaced only in CI. An unregistered
+    # copy of a number is a copy nothing maintains.
+    assert "24 skipped" in out
     assert "UNVERIFIED" in out, "the module's own reason should reach the reader"
 
 
