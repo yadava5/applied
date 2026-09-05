@@ -21,14 +21,34 @@ which imports the module (starting the container) without executing a test.
 Delete the ``register_owned_container`` call from any of the three call sites
 and the matching case here goes red.
 
-IDENTIFYING WHAT LEAKED
------------------------
+IDENTIFYING WHAT LEAKED: AN IDENTITY, NOT A WINDOW
+--------------------------------------------------
 Every testcontainers container carries ``org.testcontainers.session-id``, one
-value per interpreter. Diffing the set of session ids before and after the
-subprocess attributes containers to *that run* rather than counting, so a
-container someone else left behind cannot red this. It does assume no second
-pytest process is starting containers in the same window, which holds in CI
-and on a desktop running one suite.
+value per interpreter, generated as a ``uuid4`` at first import of
+``testcontainers.core.labels``.
+
+This file used to diff that set before and after the subprocess. A difference
+excludes anything that existed *before*, which is why it stopped the incident
+in #603 — two ryuk containers and a concurrent audit's throwaway, force-removed
+out from under a live session. But a difference is a **timestamp**, and it
+captures anything that appears inside the window regardless of who started it.
+The ``--collect-only`` case below has a 900-second timeout; a second suite
+starting anywhere in those fifteen minutes landed in ``leaked`` and was force
+removed. Same harm as the original incident, through a narrower door.
+
+So the child is given the session id **before it runs**. A tiny plugin on the
+child's ``PYTHONPATH`` sets ``testcontainers.core.labels.SESSION_ID`` to a
+value this process chose, and everything that child starts carries it. The
+measurement then asks docker for exactly that label. A concurrent session holds
+a different uuid and is invisible here — not merely unlikely to collide, but
+unable to, which is what ``test_a_concurrent_session_is_neither_flagged_nor_removed``
+pins.
+
+One asymmetry is worth recording because it is load-bearing: ``create_labels``
+returns early for the ryuk image and never stamps a session id on it
+(``testcontainers/core/labels.py:31``). Ryuk containers therefore cannot be
+selected by any session-id filter, so the containers named in #603 are outside
+the reach of this file by construction now.
 """
 
 from __future__ import annotations
@@ -38,11 +58,69 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
+
+#: testcontainers stamps this on every container it starts EXCEPT ryuk's.
+LABEL_SESSION_ID = "org.testcontainers.session-id"
+
+#: Read by the plugin below, written by ``child_session``.
+FORCED_SESSION_ENV = "JOBTRACKER_TEST_FORCED_SESSION_ID"
+
+PLUGIN_MODULE = "_jt_forced_session"
+
+#: Sets the child's testcontainers session id to a value the parent already
+#: knows. ``testcontainers.core.container`` does ``from ...labels import
+#: SESSION_ID``, which COPIES the value at import time, so this has to land
+#: before that module is first imported. Both entry points below satisfy that:
+#: ``PYTEST_PLUGINS`` is imported during pytest startup, ahead of collection —
+#: and collection is when the driven modules start their containers — while the
+#: ``python -c`` child imports it on its own first line.
+#:
+#: Deliberately NOT ``sitecustomize``: this interpreter already has one from
+#: Homebrew, and a second on PYTHONPATH would shadow it rather than run beside
+#: it.
+FORCING_PLUGIN = f"""import os
+
+_forced = os.environ.get("{FORCED_SESSION_ENV}")
+if _forced:
+    import testcontainers.core.labels as _labels
+
+    # ASSIGNING TO A NAME THAT IS NOT THERE SUCCEEDS SILENTLY, and this file's
+    # safety rests on the assignment landing. If a testcontainers upgrade stops
+    # exposing SESSION_ID as a module global, the plugin would quietly create a
+    # new attribute nothing reads, the child would fall back to its own uuid,
+    # and the measurement would find nothing. That IS caught downstream -- the
+    # directional control asserts the child's leak is visible under the minted
+    # id, so an inert plugin reds it -- but three steps from the cause. Fail
+    # here, where the reason can be stated.
+    if not hasattr(_labels, "SESSION_ID"):
+        raise RuntimeError(
+            "testcontainers.core.labels no longer exposes SESSION_ID, so this "
+            "plugin cannot give the child a session id the parent knows. "
+            "tests/test_postgres_containers_are_reaped.py needs updating."
+        )
+
+    _labels.SESSION_ID = _forced
+
+    # A SENTINEL, because the two child flavours load this plugin by DIFFERENT
+    # mechanisms: the driven-module cases rely on PYTEST_PLUGINS, the two
+    # controls import it by hand on their first line. A failure that inerts
+    # only the pytest leg leaves both controls green while the driven cases go
+    # VACUOUSLY green -- child stamps a random uuid, `leaked == []` forever.
+    # The same blindness returns under any subset run that deselects the
+    # controls. So each driven case checks this marker itself rather than
+    # delegating its loudness to a sibling test.
+    import pathlib as _pathlib
+
+    _pathlib.Path(__file__).with_name("loaded.marker").write_text(_forced)
+"""
 
 # The three distinct places a container is started and must be registered.
 # ``test_cascade_delete_postgres`` stands for the three modules that share
@@ -59,6 +137,10 @@ DRIVEN_MODULES = [
 # below can actually see a leak, so a green result means "nothing leaked" and
 # not "nothing was started".
 LEAKY_SNIPPET = (
+    # ``python -c`` gets no PYTEST_PLUGINS, so it adopts the forced session id
+    # by importing the plugin itself. This has to come FIRST: the assignment
+    # only reaches ``container.py`` while that module is still unimported.
+    f"import {PLUGIN_MODULE}\n"
     "from testcontainers.community.postgres import PostgresContainer\n"
     "c = PostgresContainer('postgres:16')\n"
     "c.start()\n"
@@ -87,49 +169,52 @@ requires_docker = pytest.mark.skipif(
 )
 
 
-def _session_ids() -> set[str]:
-    """Every ``org.testcontainers.session-id`` present, running or exited."""
+def containers_in(session_id: str) -> list[str]:
+    """Container ids carrying exactly this session id.
+
+    THE WHOLE POINT OF THIS FUNCTION is that it names what it wants instead of
+    subtracting what it did not expect. It is the measurement the two tests
+    below assert on, and swapping it back for a before/after difference reds
+    ``test_a_concurrent_session_is_neither_flagged_nor_removed``.
+
+    ``-a`` because a container that has exited still holds its volumes, which
+    is most of what #492 measured as leaked. ``--no-trunc`` because ``docker
+    create`` hands back a 64-character id while ``ps -q`` truncates to 12, and
+    comparing the two forms is a silent mismatch rather than an error.
+    """
 
     out = subprocess.run(
         [
             "docker",
             "ps",
-            "-a",
+            "-aq",
+            "--no-trunc",
             "--filter",
-            "label=org.testcontainers=true",
-            "--format",
-            '{{.Label "org.testcontainers.session-id"}}',
+            f"label={LABEL_SESSION_ID}={session_id}",
         ],
         capture_output=True,
         text=True,
         timeout=120,
     )
     assert out.returncode == 0, out.stderr
-    return {line.strip() for line in out.stdout.splitlines() if line.strip()}
+    return out.stdout.split()
 
 
-def _remove(session_ids: set[str]) -> None:
-    """Take out containers this test's own control deliberately leaked."""
+def _remove(session_id: str) -> None:
+    """Take out the containers of one session this file itself created.
 
-    for session_id in session_ids:
-        ids = subprocess.run(
-            [
-                "docker",
-                "ps",
-                "-aq",
-                "--filter",
-                f"label=org.testcontainers.session-id={session_id}",
-            ],
+    Destructive, so it is never handed anything but an id minted by
+    ``child_session`` a few lines earlier. That is the entire safety argument,
+    and it is why the id is chosen rather than discovered.
+    """
+
+    ids = containers_in(session_id)
+    if ids:
+        subprocess.run(
+            ["docker", "rm", "--force", "--volumes", *ids],
             capture_output=True,
-            text=True,
-            timeout=120,
-        ).stdout.split()
-        if ids:
-            subprocess.run(
-                ["docker", "rm", "--force", "--volumes", *ids],
-                capture_output=True,
-                timeout=300,
-            )
+            timeout=300,
+        )
 
 
 def _child_env() -> dict[str, str]:
@@ -147,59 +232,181 @@ def _child_env() -> dict[str, str]:
     return env
 
 
+@dataclass(frozen=True)
+class ChildSession:
+    """A session id minted here, plus the env that makes a child adopt it."""
+
+    id: str
+    env: dict[str, str]
+    #: Written by the plugin once the assignment has landed. Its absence means
+    #: the child never adopted the id, which makes any measurement below vacuous.
+    marker: Path
+
+
+@pytest.fixture
+def child_session(tmp_path: Path) -> Iterator[ChildSession]:
+    """Mint a session id, hand it to the child, and reap only that id."""
+
+    session_id = f"jt-reap-{uuid4()}"
+    plugin_dir = tmp_path / "forced_session"
+    plugin_dir.mkdir()
+    (plugin_dir / f"{PLUGIN_MODULE}.py").write_text(FORCING_PLUGIN)
+
+    env = _child_env()
+    env[FORCED_SESSION_ENV] = session_id
+    env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (env.get("PYTHONPATH", ""), str(plugin_dir)) if part
+    )
+    # Reaches `-m pytest` children; the `python -c` child imports it by hand.
+    # Appended rather than assigned: nothing sets it today, but clobbering an
+    # inherited value would silently drop somebody else's plugin.
+    env["PYTEST_PLUGINS"] = ",".join(
+        part for part in (env.get("PYTEST_PLUGINS", ""), PLUGIN_MODULE) if part
+    )
+
+    try:
+        yield ChildSession(id=session_id, env=env, marker=plugin_dir / "loaded.marker")
+    finally:
+        _remove(session_id)
+
+
 @requires_docker
-def test_the_measurement_can_see_a_container_that_is_never_registered() -> None:
+def test_the_measurement_can_see_a_container_that_is_never_registered(
+    child_session: ChildSession,
+) -> None:
     """Directional control: an unregistered container DOES show up as leaked."""
 
     pytest.importorskip("testcontainers.community.postgres")
 
-    before = _session_ids()
     run = subprocess.run(
         [sys.executable, "-c", LEAKY_SNIPPET],
         cwd=BACKEND_DIR,
-        env=_child_env(),
+        env=child_session.env,
         capture_output=True,
         text=True,
         timeout=600,
     )
-    leaked = _session_ids() - before
+    assert run.returncode == 0, run.stderr[-2000:]
+    assert containers_in(child_session.id), (
+        "the control was supposed to leak a container carrying "
+        f"{child_session.id}, and the measurement found none — so a green "
+        "result from the cases below would mean 'nothing was seen', not "
+        "'nothing leaked'"
+    )
+
+
+@requires_docker
+def test_a_concurrent_session_is_neither_flagged_nor_removed(
+    child_session: ChildSession,
+) -> None:
+    """The race #603 stayed open on, pinned.
+
+    A second suite starting DURING the child's run used to land in ``leaked``
+    and be force-removed, because the old measurement subtracted a snapshot
+    taken before the child began. This creates a container carrying somebody
+    else's session id after that snapshot would have been taken, and asserts
+    the measurement neither reports nor destroys it.
+
+    ``docker create`` rather than a started container: the label is the whole
+    subject here, and a created container appears in ``docker ps -a`` exactly
+    like a running one, without waiting for postgres to come up.
+    """
+
+    bystander_id = f"jt-bystander-{uuid4()}"
+    made = subprocess.run(
+        [
+            "docker",
+            "create",
+            "--label",
+            "org.testcontainers=true",
+            "--label",
+            f"{LABEL_SESSION_ID}={bystander_id}",
+            "postgres:16",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert made.returncode == 0, made.stderr
+    bystander = made.stdout.strip()
+
     try:
+        # The child's own leak, so this run has something real to confuse.
+        run = subprocess.run(
+            [sys.executable, "-c", LEAKY_SNIPPET],
+            cwd=BACKEND_DIR,
+            env=child_session.env,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
         assert run.returncode == 0, run.stderr[-2000:]
-        assert len(leaked) == 1, (
-            "the control was supposed to leak exactly one session, "
-            f"saw {sorted(leaked)}"
+
+        ours = containers_in(child_session.id)
+        theirs = containers_in(bystander_id)
+
+        assert ours, "the child leaked nothing, so this proves nothing"
+        assert bystander not in ours, (
+            "the measurement claimed a container belonging to another session: "
+            f"{bystander} is labelled {bystander_id}, not {child_session.id}"
+        )
+        assert theirs == [bystander], (
+            f"expected the bystander to be intact and alone under its own id, saw {theirs}"
+        )
+
+        # And the destructive half: reaping ours must leave theirs standing.
+        _remove(child_session.id)
+        assert containers_in(bystander_id) == [bystander], (
+            "reaping this session's containers removed another session's"
         )
     finally:
-        _remove(leaked)
+        subprocess.run(
+            ["docker", "rm", "--force", "--volumes", bystander],
+            capture_output=True,
+            timeout=300,
+        )
 
 
 @requires_docker
 @pytest.mark.parametrize("module", DRIVEN_MODULES)
-def test_importing_a_postgres_module_leaves_no_container(module: str) -> None:
+def test_importing_a_postgres_module_leaves_no_container(
+    module: str, child_session: ChildSession
+) -> None:
     """``--collect-only`` imports the module, starts a container, and exits."""
 
-    before = _session_ids()
     run = subprocess.run(
-        [sys.executable, "-m", "pytest", module, "--collect-only", "-q", "-p", "no:cacheprovider"],
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            module,
+            "--collect-only",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+        ],
         cwd=BACKEND_DIR,
-        env=_child_env(),
+        env=child_session.env,
         capture_output=True,
         text=True,
         timeout=900,
     )
-    leaked = _session_ids() - before
-    try:
-        assert run.returncode == 0, (
-            f"collection of {module} failed, so it may never have started a "
-            f"container and this assertion would prove nothing:\n"
-            f"{run.stdout[-2000:]}\n{run.stderr[-2000:]}"
-        )
-        assert leaked == set(), (
-            f"{module} left {len(leaked)} testcontainers session(s) behind "
-            f"after --collect-only: {sorted(leaked)}"
-        )
-    finally:
-        _remove(leaked)
+    leaked = containers_in(child_session.id)
+    assert child_session.marker.is_file(), (
+        f"the plugin never ran in the {module} child, so it kept its own "
+        "random session id and `leaked` below is empty for the wrong reason"
+    )
+    assert child_session.marker.read_text() == child_session.id, (
+        "the child adopted a different session id than this fixture minted"
+    )
+    assert run.returncode == 0, (
+        f"collection of {module} failed, so it may never have started a "
+        f"container and this assertion would prove nothing:\n"
+        f"{run.stdout[-2000:]}\n{run.stderr[-2000:]}"
+    )
+    assert leaked == [], (
+        f"{module} left {len(leaked)} container(s) behind after --collect-only: {leaked}"
+    )
 
 
 def _modules_that_can_start_a_container() -> tuple[set[str], set[str]]:
