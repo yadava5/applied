@@ -73,8 +73,43 @@ const STYLE_SRC = "style-src 'self' 'unsafe-inline'";
  * backend is called server-side from the route handlers under `app/api/**`,
  * where CSP does not apply — see the long note that used to sit on this
  * directive in `next.config.ts` and now lives in git history for #234/#315.
+ *
+ * THE ORIGIN IS A PARAMETER, NOT A LITERAL (#740). It used to be one project
+ * ref written into the policy. A deployment pointed at any other Supabase
+ * project then BUILT GREEN and shipped a policy that blocks its own auth
+ * traffic — nothing type-checks a hostname, and the server side is unaffected.
+ *
+ * What that costs is worse than a degraded refresh: sign-in itself never
+ * leaves the page. `signInWithPassword` (`app/(auth)/login/page.tsx`),
+ * `signOut` (`components/shell/SessionControls.tsx`), signup,
+ * forgot-password, `SetNewPasswordForm`, the Google button and every call in
+ * `lib/settings/transport.ts` are browser fetches to THIS origin, and each is
+ * blocked at the first attempt. Meanwhile `app/api/**` keeps answering under
+ * `'self'`, so every server-side probe reads healthy while nobody can log in.
+ *
+ * Not hypothetical — the repo already recorded the symptom. The docblock in
+ * `tests/e2e/auth.spec.ts` describes CI and local dev running against the
+ * placeholder `https://example.supabase.co` and the fetch failing in the page
+ * with no request ever routed. That is this defect, observed, and it is why
+ * that file needed a second instrument.
+ *
+ * WHY A PARAMETER RATHER THAN READING `publicEnv` HERE. The read costs nothing
+ * in `proxy.ts` either way — it already imports `updateSession`, which imports
+ * `publicEnv` — so the reason is testability, and it is not a stylistic one. A
+ * value this module reads for itself cannot be VARIED, and a test that set
+ * `process.env` would exercise a runtime read production does not have:
+ * `NEXT_PUBLIC_*` is inlined as literal text at build time (see `lib/env.ts`
+ * for why those reads are spelled out in full rather than indexed). The
+ * parameter is in the signature precisely so a unit test can hand this
+ * function two different origins and watch both reach the policy — an
+ * expectation naming the CURRENT project would have passed against the
+ * hardcoded literal too, and proved nothing.
+ *
+ * NO VALIDATION HERE, deliberately. `lib/env.ts#requireUrl` already fails the
+ * build on an absent or malformed `NEXT_PUBLIC_SUPABASE_URL`; a second layer
+ * would only be a second thing to keep in step.
  */
-const CONNECT_SRC = "connect-src 'self' https://jbyvatoodyqqvkqbsrju.supabase.co";
+const connectSrc = (supabaseOrigin: string) => `connect-src 'self' ${supabaseOrigin}`;
 
 /**
  * `next dev` needs `'unsafe-eval'`; production does not. React uses `eval` in
@@ -91,7 +126,15 @@ const CONNECT_SRC = "connect-src 'self' https://jbyvatoodyqqvkqbsrju.supabase.co
  */
 const isDev = process.env.NODE_ENV === "development";
 
-export function buildNonceCsp(nonce: string): string {
+/**
+ * @param nonce          The per-request nonce, from `createNonce()`.
+ * @param supabaseOrigin The deployment's Supabase ORIGIN — scheme, host and
+ *   port only. Pass `new URL(publicEnv.NEXT_PUBLIC_SUPABASE_URL).origin`, not
+ *   the raw variable: a trailing slash or any path would be read by the
+ *   browser as a path restriction on the source, which is a different (and
+ *   narrower) policy than the one intended.
+ */
+export function buildNonceCsp(nonce: string, supabaseOrigin: string): string {
   return [
     "default-src 'self'",
     // 'strict-dynamic' makes the nonce the whole story: a browser that honours
@@ -102,7 +145,7 @@ export function buildNonceCsp(nonce: string): string {
     STYLE_SRC,
     "img-src 'self' data:",
     "font-src 'self'",
-    CONNECT_SRC,
+    connectSrc(supabaseOrigin),
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
