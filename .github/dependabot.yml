@@ -122,55 +122,36 @@ updates:
     schedule:
       interval: "monthly"
     open-pull-requests-limit: 5
-    # transformers is capped at <5 in backend/requirements.txt, and that cap is
-    # a guard on a published number — not an upgrade nobody got round to.
-    # Dependabot filed the bump anyway (#60, >=4.40,<5 to >=5.14.1,<6) and would
-    # refile it every month forever, so the major is ignored here.
+    # THE `<5` CAP IS GONE (#746), AND BOTH IGNORES WENT WITH IT. They existed
+    # only to stop Dependabot refiling a bump that could not resolve against
+    # that cap; with the cap lifted there is nothing to refile and nothing to
+    # suppress, so leaving them would silently withhold a real major forever.
     #
-    # Nothing in the metadata enforces the cap: setfit 1.1.3 declares
-    # transformers>=4.41.0 with no upper bound and sentence-transformers 5.2.2
-    # allows <6.0.0, so a resolver installs 5.x happily. 5.x then breaks setfit:
+    # What the cap was guarding, and why it stopped being true. It rested on two
+    # facts: that no setfit release supported transformers 5, and that lifting it
+    # would break setfit SILENTLY --
     #     ImportError: cannot import name 'default_logdir'
     #                  from 'transformers.training_args'
-    # tested 2026-08-02. And it breaks it SILENTLY — HybridClassifier catches
-    # that ImportError and degrades to the rules layer, so the API keeps
-    # answering and the benchmark keeps printing 0.9791, the RULES figure, under
-    # the cascade's name. That number is published on the System Card, the
-    # portfolio and a résumé. backend/tests/test_evaluate_classifier_layer_guard.py
-    # records the degradation as observed, not hypothesised. Lifting this needs
-    # a setfit release that supports transformers 5 AND a decision to re-measure
-    # and republish the number — not a green CI run.
+    # caught by HybridClassifier, degrading to the rules layer while the
+    # benchmark kept printing the rules figure under the cascade's name.
+    # `backend/tests/test_evaluate_classifier_layer_guard.py` records that as
+    # observed. The comment here said lifting it needed "a setfit release that
+    # supports transformers 5 AND a decision to re-measure and republish the
+    # number -- not a green CI run." Both halves are now answered by
+    # measurement rather than argument: setfit 1.2.0 supports both majors, and
+    # `scripts/cascade_gate.sh --mode hybrid --hybrid-profile full` returns
+    # BIT-IDENTICAL predictions under transformers 5.16.1 and 4.57.6 -- the same
+    # four misclassified items, `embeddings loaded=True`, `setfit loaded=True`.
+    # The published number does not move, so there is nothing to republish.
     #
-    # Scoped to the major deliberately: 4.x patch and minor updates must keep
-    # flowing, because the cap holds open PYSEC-2026-2288/2289/2290 and
-    # PYSEC-2025-217, which backend/requirements.txt records as accepted cost
-    # rather than hiding. What this rule is known to stop is the monthly
-    # VERSION-update PR that #60 was. Whether an ignore written here also
-    # withholds a Dependabot SECURITY update for those advisories is not
-    # something the docs state unambiguously for the dependabot.yml form of
-    # ignore — only for the @dependabot ignore comment command — so it is not
-    # claimed. Those four are accepted cost over there either way, and this
-    # file configures update pull requests, not the alerts themselves.
-    ignore:
-      - dependency-name: "transformers"
-        update-types: ["version-update:semver-major"]
-      # The cap has TWO doors and this is the second one. Ignoring the
-      # `transformers` major does not stop Dependabot reaching transformers 5 --
-      # it can get there through a dependency that REQUIRES it.
-      # sentence-transformers 6.0.1 declares `transformers<6.0.0,>=5.0.0`, which
-      # is unsatisfiable against the `transformers>=4.40,<5` pin next door, so
-      # the bump cannot resolve at all.
-      # Observed: PR #681 ("update sentence-transformers requirement from
-      # >=5.7.0 to >=6.0.0") went red on four jobs -- test, playwright,
-      # rls-postgres and cloud-smoke. CI does catch it, and that is the point
-      # worth being precise about: this ignore is not the thing standing between
-      # the estate and a bad merge, the red is. What it stops is a pull request
-      # that CANNOT be merged being refiled every month forever, and it records
-      # why in the place the next person will look.
-      # Scoped to the major only, deliberately, for the same reason as the entry
-      # above: 5.x minor and patch updates must keep flowing.
-      - dependency-name: "sentence-transformers"
-        update-types: ["version-update:semver-major"]
+    # The four advisories the cap held open (PYSEC-2026-2288/2289/2290 and
+    # PYSEC-2025-217) are closed by the new floor rather than accepted.
+    #
+    # PR #681 -- "update sentence-transformers requirement from >=5.7.0 to
+    # >=6.0.0" -- went red on four jobs precisely BECAUSE of the cap: ST 6.0.1
+    # declares `transformers<6.0.0,>=5.0.0`, unsatisfiable against `<5`. That
+    # red was correct and is what this change resolves; ST 6.0.0 is now the
+    # declared floor.
     groups:
       pip-backend:
         patterns: ["*"]
