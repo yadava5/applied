@@ -2205,6 +2205,10 @@ def _adopt_mail_identity(app, role: str | None, req_id: str | None) -> bool:
         return False
 
     changed = False
+    # DEC-004: the `position_source` guard is why extraction may write here at
+    # all. Removing it because "extraction works now" is the reversal that entry
+    # exists to refuse -- it is the only thing between this line and a title the
+    # user typed. See docs/DECISIONS.md.
     if role and not app.position and app.position_source != ROLE_FROM_USER:
         app.position = role
         changed = True

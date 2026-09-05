@@ -110,11 +110,20 @@ Three reasons, and the first is the one that settles it:
    tests while the values remain in the code they test leaves the material
    published and the repository looking as though the question was handled.
 
-Whether to scrub properly — history rewrite plus issue edits, which breaks every
-open PR and cannot un-index what is already served — is the owner's decision and
-is deliberately still open. Until it is made, **nothing already published is
+Whether to scrub properly — a history rewrite, which breaks every open PR and
+cannot un-index what is already served — is the owner's decision and is
+deliberately still open. Until it is made, **nothing already published is
 deleted**, and this section exists so that a future reader who notices the
 baseline does not helpfully "fix" it.
+
+**The issue-edit half of that sentence is now decided, against — DEC-001.** An
+edit to a published issue body does not replace it. GitHub appends a revision
+and serves the pre-edit text at `userContentEdits` with `deletedAt: null`, and
+no REST path or GraphQL mutation can remove one; an issue in this repository
+that was edited to redact now reports three live revisions. So redacting an
+issue buys a cleaner rendered page and mints a new machine-readable copy of the
+exact text being removed. Do not edit them. The reasoning, and the condition
+that would void it, are in `docs/DECISIONS.md`.
 
 ### The ratchet turns both ways
 
