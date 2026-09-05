@@ -126,9 +126,44 @@ jobs:
       # the built-in glob (>= 21). On the Node 20 this job used to pin they
       # failed with ERR_UNKNOWN_FILE_EXTENSION, so the tests existed while no
       # job ran them — a check that could not fail.
-      - name: Unit tests
+      #
+      # The suite runs in FOUR ZONES, not one. `local-today.test.mjs` and
+      # `dates.test.mjs` assert that day-bucketing follows the READER's calendar
+      # day, and `local-today.test.mjs` names UTC as its POSITIVE CONTROL -- the
+      # arm that "passed before this fix and must pass after it". GitHub's
+      # runners are UTC, so a bare `pnpm test:unit` ran the control and nothing
+      # else, for as long as those tests have existed (#835).
+      #
+      # Measured, on the single most likely regression -- `localTodayISO`
+      # "simplified" to the getUTC* getters:
+      #
+      #     TZ=UTC               3 pass / 0 fail   <- the only arm CI ran
+      #     TZ=America/New_York  0 pass / 3 fail
+      #     TZ=Asia/Tokyo        0 pass / 3 fail
+      #     TZ=Pacific/Auckland  0 pass / 3 fail
+      #
+      # The zone list is READ BACK by `zone-matrix-runs-in-ci.test.mjs`, which
+      # rejects a list that does not span both signs of UTC offset and rejects a
+      # zone name `Intl` does not know -- because a MISSPELLED zone does not
+      # error, it silently resolves to UTC and becomes a second control.
+      #
+      # Cost is ~15s (876 tests in under 4s per zone). Every zone runs even
+      # after one fails: which zones broke is the finding, since a west-only
+      # failure and an all-zones failure are different defects.
+      - name: Unit tests (four zones)
         timeout-minutes: 5
-        run: pnpm test:unit
+        run: |
+          set -uo pipefail
+          failed=""
+          for tz in UTC America/New_York Asia/Tokyo Pacific/Auckland; do
+            echo "::group::TZ=$tz"
+            if TZ="$tz" pnpm test:unit; then :; else failed="$failed $tz"; fi
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::the unit suite failed under:$failed"
+            exit 1
+          fi
 
       - name: Build
         timeout-minutes: 5
