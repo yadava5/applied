@@ -108,6 +108,18 @@ if _forced:
         )
 
     _labels.SESSION_ID = _forced
+
+    # A SENTINEL, because the two child flavours load this plugin by DIFFERENT
+    # mechanisms: the driven-module cases rely on PYTEST_PLUGINS, the two
+    # controls import it by hand on their first line. A failure that inerts
+    # only the pytest leg leaves both controls green while the driven cases go
+    # VACUOUSLY green -- child stamps a random uuid, `leaked == []` forever.
+    # The same blindness returns under any subset run that deselects the
+    # controls. So each driven case checks this marker itself rather than
+    # delegating its loudness to a sibling test.
+    import pathlib as _pathlib
+
+    _pathlib.Path(__file__).with_name("loaded.marker").write_text(_forced)
 """
 
 # The three distinct places a container is started and must be registered.
@@ -226,6 +238,9 @@ class ChildSession:
 
     id: str
     env: dict[str, str]
+    #: Written by the plugin once the assignment has landed. Its absence means
+    #: the child never adopted the id, which makes any measurement below vacuous.
+    marker: Path
 
 
 @pytest.fixture
@@ -243,10 +258,14 @@ def child_session(tmp_path: Path) -> Iterator[ChildSession]:
         part for part in (env.get("PYTHONPATH", ""), str(plugin_dir)) if part
     )
     # Reaches `-m pytest` children; the `python -c` child imports it by hand.
-    env["PYTEST_PLUGINS"] = PLUGIN_MODULE
+    # Appended rather than assigned: nothing sets it today, but clobbering an
+    # inherited value would silently drop somebody else's plugin.
+    env["PYTEST_PLUGINS"] = ",".join(
+        part for part in (env.get("PYTEST_PLUGINS", ""), PLUGIN_MODULE) if part
+    )
 
     try:
-        yield ChildSession(id=session_id, env=env)
+        yield ChildSession(id=session_id, env=env, marker=plugin_dir / "loaded.marker")
     finally:
         _remove(session_id)
 
@@ -373,6 +392,13 @@ def test_importing_a_postgres_module_leaves_no_container(
         timeout=900,
     )
     leaked = containers_in(child_session.id)
+    assert child_session.marker.is_file(), (
+        f"the plugin never ran in the {module} child, so it kept its own "
+        "random session id and `leaked` below is empty for the wrong reason"
+    )
+    assert child_session.marker.read_text() == child_session.id, (
+        "the child adopted a different session id than this fixture minted"
+    )
     assert run.returncode == 0, (
         f"collection of {module} failed, so it may never have started a "
         f"container and this assertion would prove nothing:\n"
