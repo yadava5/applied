@@ -526,6 +526,8 @@ page you can show is wrong, and security findings are genuinely wanted: email th
 | --- | --- |
 | [System Card](https://getapplied.vercel.app/system-card) | Classifier design, evaluation, limitations, safety notes |
 | [Privacy](https://getapplied.vercel.app/privacy) | What Applied reads, what it stores, where it runs, how to delete it — each claim cited to the file that implements it |
+| [`docs/DECISIONS.md`](docs/DECISIONS.md) | Choices whose rejected alternative is attractive and whose reason is invisible from the code — what was chosen against, and whether anything enforces it |
+| [`docs/TEST_DATA_POLICY.md`](docs/TEST_DATA_POLICY.md) | What a fixture may contain, why nothing already published is deleted, and what the gate does not cover |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System architecture and component boundaries |
 | [`docs/WEB_ARCHITECTURE.md`](docs/WEB_ARCHITECTURE.md) | Deployment modes, cloud auth flow, credential storage |
 | [`docs/API_SPEC.md`](docs/API_SPEC.md) | Backend REST contract — auth, the 29-route table, and the shapes worth stating in prose. The machine-checked authority is `apps/web/lib/api/schema.d.ts`, generated from the app and gated by `e2e-ci.yml` |
@@ -741,11 +743,11 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 | Category | Technologies |
 | --- | --- |
 | **Hosting** | Vercel (Next.js + one Python function, `maxDuration` 60), Supabase Postgres, Hugging Face Spaces |
-| **CI** | GitHub Actions — 14 workflows (see [Verify it](#verify-it)) |
+| **CI** | GitHub Actions — 15 workflows (see [Verify it](#verify-it)) |
 
 ### Testing
 
-**2939 tests collected, 0 skipped.** These figures were recorded on 2026-09-03 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. `--record` refuses to write at all unless that run was whole — Docker reachable, nothing skipped, suite green — because skipped tests are still *collected*, so a recording taken without the Postgres extras used to publish "0 skipped" while five modules sat out (#351). The artifact names the interpreter that ran the suite rather than the one that ran the script; those differ here, and a Python 3.14 run is exactly what produced the wrong coverage figures corrected below. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 1659 `test_*` functions across 141 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 2939 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
+**2939 tests collected, 0 skipped.** These figures were recorded on 2026-09-03 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. `--record` refuses to write at all unless that run was whole — Docker reachable, nothing skipped, suite green — because skipped tests are still *collected*, so a recording taken without the Postgres extras used to publish "0 skipped" while five modules sat out (#351). The artifact names the interpreter that ran the suite rather than the one that ran the script; those differ here, and a Python 3.14 run is exactly what produced the wrong coverage figures corrected below. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 1669 `test_*` functions across 142 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 2939 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
 
 The Postgres row-level-security module is the only thing in the repo that can demonstrate the isolation the product claims, and **22 tests** now exercise it. It has not always run: its tests waited on a database URL no workflow set, and a skip is green, so the 10 it held on 2026-08-02 had **never executed anywhere**. Two fixes: `test_rls_postgres.py` now starts its own `postgres:16` via testcontainers when `JOBTRACKER_TEST_PG_ADMIN_URL` is absent and Docker is available, and the `rls-postgres` CI job supplies its own service container. That job then parses the JUnit XML and **fails the build if the suite reports zero tests or any skip**, because a skipped security test and a passing one produce the same green tick.
 
@@ -880,7 +882,7 @@ applied/
 │   │   └── scripts/         # evaluator, latency benchmark, ML-ops tooling
 │   ├── alembic/versions/    # 23 revisions incl. the RLS + InitPlan-hoist migrations
 │   ├── data/evaluation/     # eval sets, committed baselines, benchmark + monitoring history
-│   └── tests/               # 141 modules
+│   └── tests/               # 142 modules
 │
 ├── ml/                      # the classifier as a deployable service
 │   ├── browser/             # ONNX export + the in-browser site (Transformers.js)
@@ -891,7 +893,7 @@ applied/
 ├── api/index.py             # Vercel Python entry → jobtracker.main_cloud
 ├── requirements.txt         # the CLOUD dependency set; deliberately not backend/requirements.txt
 ├── docs/                    # architecture, API spec, ML strategy + runbooks, RLS audit
-└── .github/workflows/       # 14 workflows
+└── .github/workflows/       # 15 workflows
 ```
 
 </details>

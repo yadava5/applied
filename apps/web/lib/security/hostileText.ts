@@ -116,7 +116,9 @@
  *     it is detectable by comparison. It is a different and much harder
  *     problem and #424 separates the two on purpose.
  *   - THE IMPLICIT MARKS PASS THROUGH: U+200E LEFT-TO-RIGHT MARK, U+200F
- *     RIGHT-TO-LEFT MARK and U+061C ARABIC LETTER MARK.
+ *     RIGHT-TO-LEFT MARK and U+061C ARABIC LETTER MARK. DEC-003 in
+ *     docs/DECISIONS.md records why they pass through and what reversing it
+ *     costs; DEC-002 records why this set is derived rather than listed.
  *
  *     An earlier version of this file justified that by saying #424's ranges
  *     stopped at U+200D. That reason is dead — the set below is no longer
