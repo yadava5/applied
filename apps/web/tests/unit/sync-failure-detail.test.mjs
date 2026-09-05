@@ -114,3 +114,45 @@ test("the input is not mutated in place", () => {
   withBackendSyncDetail(original, { detail: TYPED_500 });
   assert.deepEqual(original, GENERIC);
 });
+
+// --- what the DASHBOARD may render, given the status ------------------------
+
+test("the route's machine tokens never reach the reader as prose", async () => {
+  // THE REGRESSION THIS GUARD EXISTS FOR. `withBackendSyncDetail` protects the
+  // proxy's `message`, and that protection does not survive the wire: the route
+  // flattens every failure kind into the same `detail` key. Measured before the
+  // guard, rendering the route's real answers through the failure note:
+  //
+  //   429 -> sync failed · anything it filed or removed before stopping stays
+  //          that way · rate_limited try again
+  //
+  // MUTATION: `return backendSyncDetail(body)` unconditionally -> red on all
+  // five. Each row is verbatim what `app/api/gmail/sync/route.ts` emits.
+  const { dashboardSyncDetail } = await import("../../lib/gmail/sync-detail.ts");
+  for (const [status, body] of [
+    [401, { detail: "unauthenticated" }],
+    [401, { detail: "auth" }],
+    [403, { detail: "auth" }],
+    [429, { detail: "rate_limited" }],
+    [503, { detail: "unavailable" }],
+    [409, { detail: "not_connected" }],
+  ]) {
+    assert.equal(
+      dashboardSyncDetail(status, body),
+      null,
+      `a ${status} would render the machine token "${body.detail}" as the backend's sentence`,
+    );
+  }
+});
+
+test("the statuses that carry prose still carry it", async () => {
+  // MUTATION: add 500 to RENDERED_FROM_STATUS -> red, and #848 is back. The
+  // guard must be narrow: 500 is the typed stamp failure and 502 is the
+  // proxy's own status-derived line, and both are for the reader.
+  const { dashboardSyncDetail } = await import("../../lib/gmail/sync-detail.ts");
+  assert.equal(dashboardSyncDetail(500, { detail: TYPED_500 }), TYPED_500);
+  assert.equal(
+    dashboardSyncDetail(502, { detail: "Backend responded 502" }),
+    "Backend responded 502",
+  );
+});

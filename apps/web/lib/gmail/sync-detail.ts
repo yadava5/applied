@@ -62,3 +62,39 @@ export function withBackendSyncDetail<F extends { kind: string; message?: string
   const detail = backendSyncDetail(body);
   return detail === null ? failure : { ...failure, message: detail };
 }
+
+/**
+ * Statuses the dashboard renders from the KIND, never from a body.
+ *
+ * WHY A SECOND GUARD, BROWSER-SIDE. `withBackendSyncDetail` protects the
+ * proxy's own `message` field, and that protection does not survive the wire.
+ * `app/api/gmail/sync/route.ts` flattens EVERY failure into the same `detail`
+ * key — `{detail:"unauthenticated"}`, `{detail:"auth"}`,
+ * `{detail:"rate_limited"}`, `{detail:"unavailable"}` — so a reader on the
+ * far side cannot tell a machine token from the backend's prose by looking at
+ * the body. Measured, rendering the route's real answers through the failure
+ * note:
+ *
+ *     429 -> sync failed · anything it filed or removed before stopping
+ *            stays that way · rate_limited try again
+ *
+ * That is worse than the generic line it replaced, and 429 is not exotic: a
+ * Gmail deferral and a sync already in flight both land there.
+ *
+ * 409 is in the set because `notConnected` renders its own stronger sentence
+ * and never reaches this copy at all.
+ */
+const RENDERED_FROM_STATUS = new Set([401, 403, 409, 429, 503]);
+
+/**
+ * The detail the DASHBOARD may render, given the status it arrived with.
+ *
+ * Status is the only kind-discriminator that survives the proxy, which is why
+ * this takes one. 500 and 502 are the two that carry prose: the backend's own
+ * typed sentence, or the proxy's status-derived line for a body it could not
+ * quote.
+ */
+export function dashboardSyncDetail(status: number, body: unknown): string | null {
+  if (RENDERED_FROM_STATUS.has(status)) return null;
+  return backendSyncDetail(body);
+}

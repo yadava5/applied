@@ -18,10 +18,15 @@
  * the retry — and `detail` is appended to them. A future edit that drops the
  * clause or the retry to make room for the backend's sentence reds the test.
  *
- * `detail` is `null` on every response that carried no usable body: a 502 from
- * the edge, a timeout, an HTML error page, a function killed on its ceiling.
- * That case renders exactly the sentence this surface shipped before #848 —
- * never the word "null", and never an empty separator dangling off the clause.
+ * `detail` is `null` for two different reasons, and BOTH are ordinary. The
+ * response carried no usable body — a timeout, an HTML error page, a function
+ * killed on its ceiling — or the status is one the dashboard renders from its
+ * KIND rather than from prose, which `dashboardSyncDetail` decides. The second
+ * is the common one: the proxy route always manufactures a JSON body, so on a
+ * 401/403/429/503 there IS a `detail` and it is a machine token
+ * (`"rate_limited"`), which this surface must never print. Either way the line
+ * renders exactly the sentence it shipped before #848 — never the word "null",
+ * and never an empty separator dangling off the clause.
  */
 
 /** Which run failed — the word the reader saw on the button they pressed. */

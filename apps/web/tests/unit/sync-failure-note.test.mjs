@@ -71,6 +71,15 @@ test("VALENCE: the failure leads, the standing clause holds, the detail follows"
     failedAt < clauseAt && clauseAt < detailAt,
     `order is failure -> clause -> detail; got ${failedAt}, ${clauseAt}, ${detailAt}:\n${text}`,
   );
+
+  // The separator itself. MUTATION: drop the " · " join and the line renders
+  // "…stays that wayCould not record this sync." — every indexOf above still
+  // holds, because concatenation preserves order. Ordering alone does not pin
+  // a boundary between two sentences.
+  assert.ok(
+    text.includes(`${STANDING_CLAUSE} · ${TYPED_500}`),
+    `the clause and the detail ran together with no separator:\n${text}`,
+  );
 });
 
 test("VALENCE: the retry survives the detail, on both branches", async () => {
