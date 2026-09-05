@@ -94,7 +94,8 @@ Label decision rules:
 > routers under `backend/jobtracker/api/`), de-scoped and deleted in August
 > 2026 — issue #73. No module declares them; the deployed app registers four
 > routers, applications, Gmail, account and cron
-> (`backend/jobtracker/main_cloud.py:667-684`). The only classification route
+> (the `include_router` calls in `backend/jobtracker/main_cloud.py`). The only
+> classification route
 > that exists is `POST /applications/review/{message_id}/classify`
 > (`backend/jobtracker/cloud/applications.py:3487`), and it records a decision
 > — it does not train. [`ML_STRATEGY.md`](ML_STRATEGY.md) states the same thing

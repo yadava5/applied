@@ -59,7 +59,9 @@ pnpm lint         # eslint, --max-warnings 0 (next's a11y rules ship as warnings
 
 ## Layout
 
-Read from the tree on 2026-08-21. The C9 scaffold this block used to describe —
+Read from the tree on 2026-08-21 — except the `components/` line, whose count
+and names are checked against `git ls-files` on every run of
+`scripts/readme_facts.py` (#401). The C9 scaffold this block used to describe —
 one placeholder dashboard, two component directories — is long gone.
 
 ```
@@ -77,10 +79,10 @@ apps/web/
 │   ├── demo/                      # signed-out product demo
 │   ├── landing-a/ landing-c/      # landing variants
 │   ├── fonts/  layout.tsx  page.tsx  not-found.tsx  globals.css
-├── components/                    # 16 directories: applications, auth, beta,
-│                                  # boot, brand, dashboard, demo, gmail,
-│                                  # import, landing, mail, marketing,
-│                                  # settings, shell, ui, viz
+├── components/                    # 18 directories: applications, auth, beta,
+│                                  # boot, brand, dashboard, demo, feedback,
+│                                  # gmail, import, landing, mail, marketing,
+│                                  # review, settings, shell, ui, viz
 ├── lib/
 │   ├── env.ts / env.server.ts     # zod-validated public + server env
 │   ├── api/                       # client.ts, server.ts, schema.d.ts,
