@@ -583,6 +583,11 @@ BROWSER_SITE_README = "ml/browser/site/README.md"
 BROWSER_DEMO_JS = "ml/browser/site/app.js"
 BOOKLET_CONTENT = "booklet/src/content.ts"
 
+# The three documents carrying the published route arithmetic (#838).
+ARCHITECTURE = "docs/ARCHITECTURE.md"
+API_SPEC = "docs/API_SPEC.md"
+WEB_ARCHITECTURE = "docs/WEB_ARCHITECTURE.md"
+
 DEMO_SPACE_HYBRID = "ml/demo/space/jobtracker/classifier/hybrid.py"
 
 # A `const NAME = <float>;` whose name is SCREAMING_CASE. Anchored at the start
@@ -1112,6 +1117,215 @@ def workflow_pin(pattern: str, what: str) -> int:
 
 def file_bytes(rel: str) -> int:
     return (REPO / rel).stat().st_size
+
+
+#: The verbs a FastAPI route decorator can carry. ``api_route`` is here and is
+#: the reason this counts DECORATORS rather than methods: ``/cron/sync`` is one
+#: ``@router.api_route(..., methods=["GET", "POST"])`` and is ONE route object.
+ROUTE_VERBS = frozenset(
+    {"get", "post", "put", "patch", "delete", "head", "options", "api_route"}
+)
+
+#: Where a route decorator can live. ``main_cloud`` owns some itself; the rest
+#: are the routers it mounts.
+ROUTE_MODULE_ROOTS = ("backend/jobtracker/main_cloud.py", "backend/jobtracker/cloud")
+
+ROUTE_AUTH_GATE = "backend/tests/test_cloud_routes_carry_auth.py"
+
+
+def _router_prefix(tree: ast.Module) -> str:
+    """The `prefix=` on this module's ``APIRouter(...)``, or "".
+
+    `applications.py` mounts its router with `prefix="/applications"`, so a
+    decorator's own argument is only half the path. Reading it wrong would
+    make every path in that module miss the `PUBLIC` allowlist and be counted
+    as authed -- silently, and in the safe-looking direction.
+    """
+
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "APIRouter"
+        ):
+            for keyword in node.keywords:
+                if keyword.arg == "prefix" and isinstance(keyword.value, ast.Constant):
+                    return str(keyword.value.value)
+    return ""
+
+
+def _route_paths(rel: str) -> list[str]:
+    """Every route object this module defines, as its full path.
+
+    ONE ENTRY PER DECORATOR, which is the route-OBJECT unit (#838). The same
+    app answers three different numbers depending on what is counted, and all
+    three are defensible:
+
+        route objects         29     <- what the docs say
+        (method, path) pairs  30
+        distinct paths        26
+
+    `/cron/sync` is the only object carrying two verbs -- one
+    ``@router.api_route(..., methods=["GET", "POST"])`` -- which is where the
+    30 comes from, and why ``PUBLIC`` holds SEVEN entries describing SIX
+    public endpoints.
+
+    PATHS, NOT JUST A COUNT, and that is a correction to how this started.
+    Deriving the authed count as ``objects - len(PUBLIC paths)`` mixes two
+    units: split `/cron/sync` into `@router.get` + `@router.post` -- legal and
+    behaviour-preserving -- and objects go to 30 while the distinct-path count
+    stays 6, so the subtraction publishes 24 authed where the app has 23.
+    Every gate green, the sentence false. Counting the objects whose own path
+    is on the allowlist cannot drift that way.
+    """
+
+    tree = _module(rel)
+    prefix = _router_prefix(tree)
+    paths: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in node.decorator_list:
+            if not isinstance(decorator, ast.Call):
+                continue
+            func = decorator.func
+            if not (
+                isinstance(func, ast.Attribute)
+                and func.attr in ROUTE_VERBS
+                and isinstance(func.value, ast.Name)
+                and func.value.id in {"router", "app"}
+            ):
+                continue
+            if not decorator.args or not isinstance(decorator.args[0], ast.Constant):
+                fail(f"  ✗ {rel}: a route decorator's path is not a literal")
+            own = str(decorator.args[0].value)
+            # `app.get` in main_cloud takes no router prefix; `router.get`
+            # inside a prefixed router does.
+            paths.append((prefix if func.value.id == "router" else "") + own)
+    return paths
+
+
+def route_modules() -> list[str]:
+    """Every tracked module that defines at least one route.
+
+    DISCOVERED, never enumerated. A hardcoded list of five files is a
+    registration list, and a sixth module carrying routes would be invisible
+    to it -- which is the defect class this whole gate exists for. The
+    published "five modules define routes" is then a COUNT of this, not an
+    assumption behind it.
+    """
+
+    candidates = [ROUTE_MODULE_ROOTS[0]] + [
+        f"{ROUTE_MODULE_ROOTS[1]}/{name}"
+        for name in tracked_in_dir(ROUTE_MODULE_ROOTS[1])
+        if name.endswith(".py")
+    ]
+    return [rel for rel in candidates if _route_paths(rel)]
+
+
+def all_route_paths() -> list[str]:
+    """Every route object in the app, as its full path. One entry per object."""
+
+    return [path for rel in route_modules() for path in _route_paths(rel)]
+
+
+def backend_routes() -> int:
+    return len(all_route_paths())
+
+
+def public_allowlist_paths() -> set[str]:
+    """The distinct PATHS on the auth gate's ``PUBLIC`` allowlist.
+
+    Paths, not entries: the dict is keyed on ``(method, path)`` and
+    ``/cron/sync`` appears as both GET and POST, so seven entries describe six
+    endpoints. This is the conversion between the two units, written once.
+    """
+
+    node = _assigned(ROUTE_AUTH_GATE, "PUBLIC")
+    if not isinstance(node, ast.Dict):
+        fail(f"  ✗ {ROUTE_AUTH_GATE}: PUBLIC is not a dict literal")
+    return {ast.literal_eval(key)[1] for key in node.keys}
+
+
+def public_routes() -> int:
+    """Route OBJECTS whose path is on the allowlist -- the total's own unit."""
+
+    allowlisted = public_allowlist_paths()
+    return sum(1 for path in all_route_paths() if path in allowlisted)
+
+
+def authed_routes() -> int:
+    """Route OBJECTS whose path is NOT on the allowlist. Counted, not subtracted.
+
+    A SUBTRACTION HERE WOULD BE ALGEBRA, NOT A MEASUREMENT. `authed + public
+    == routes` is then `(x - y) + y == x`, which no state of the tree can
+    falsify -- a check that cannot fail, shipped inside a change whose whole
+    subject is numbers nothing checks. Both sides are counted from the same
+    census now, so the published split is two measurements rather than one
+    measurement and its complement.
+    """
+
+    allowlisted = public_allowlist_paths()
+    return sum(1 for path in all_route_paths() if path not in allowlisted)
+
+
+def allowlist_paths_with_no_route() -> list[str]:
+    """Allowlisted paths the census cannot find: a stale entry, or a rename.
+
+    THIS is the invariant that can fail, and it is the static twin of
+    ``test_every_public_route_on_the_allowlist_still_exists``. It puts a
+    version of that guarantee inside the REQUIRED check for the first time.
+    """
+
+    census = set(all_route_paths())
+    return sorted(path for path in public_allowlist_paths() if path not in census)
+
+
+def routers_registered() -> int:
+    """``include_router`` calls in ``main_cloud``.
+
+    A DIFFERENT NUMBER from the modules that define routes, and both are
+    published in the same sentence: four routers are mounted, five modules
+    define routes, because ``main_cloud`` owns some itself. Registering only
+    one of them leaves the other free to drift into disagreement with it.
+    """
+
+    found = 0
+    for node in ast.walk(_module(ROUTE_MODULE_ROOTS[0])):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "include_router"
+        ):
+            found += 1
+    return found
+
+
+def suite_outcome(key: str) -> int:
+    """One number out of the artifact's ``suiteOutcome`` block.
+
+    STATIC, not ``recorded``, and the distinction is the point. A recorded
+    fact needs ``--record`` and therefore a whole pytest run; this reads a
+    block ``--record`` ALREADY writes and no rerun can move. Same shape as
+    ``corpus_recorded`` above: the artifact is the source, and this only
+    proves the prose still describes it.
+
+    It exists because ``collected`` was gated and ``passed`` was not, so
+    "3,163 tests, all passing" carried a checked number inside an unchecked
+    claim -- and ``--write`` refreshed the digits twice without ever touching
+    the word "all". A gated number inside an ungated sentence gets more
+    convincing, not more correct (#833).
+    """
+
+    outcome = (load_artifact().get("suiteOutcome") or {})
+    if key not in outcome:
+        fail(
+            f"{_rel(ARTIFACT)}'s suiteOutcome has no `{key}`.\n"
+            f"      Run: python3 scripts/readme_facts.py --record"
+        )
+    return int(outcome[key])
+
+
 
 
 # ── the facts ────────────────────────────────────────────────────────────
@@ -2054,6 +2268,14 @@ FACTS: dict[str, dict] = {
             {"re": r"(\w+) tests drive the real connection machinery", "word": True},
             r"and \*\*(\d+) tests\*\* now exercise it",
             r"(\d+) RLS enforcement tests",
+            # ── printed in the System Card booklet, §04 (#833) ──
+            #
+            # Both were the WORD "twenty-one" and both sat beside a digit this
+            # fact already gated, so `--check` stayed green over them while the
+            # module grew to 24. A word form is invisible to a `(\d+)` site;
+            # spelling them as digits is what put them inside the gate.
+            {"re": r"including the (\d+) Postgres row-level-security tests", "file": BOOKLET_CONTENT},
+            {"re": r"the (\d+) row-level-security tests skip", "file": BOOKLET_CONTENT},
         ],
     },
     # ── recorded: these need a run ──
@@ -2109,7 +2331,12 @@ FACTS: dict[str, dict] = {
             # digits. The card now names the recorded command, so the sentence
             # and the source agree.
             {"re": r'headline: "([\d,]+) tests, and [\d,]+ messages', "file": BOOKLET_CONTENT},
-            {"re": r"The backend suite runs ([\d,]+) tests, all passing", "file": BOOKLET_CONTENT},
+            # REWORDED BY #833, and the site moved with it. The sentence used
+            # to read "runs 3,163 tests, all passing", which was wrong by the
+            # ten strict xfails -- a checked number inside an unchecked claim.
+            # `testsPassing` and `testsXfailed` now gate the other two halves,
+            # so the whole sentence is sourced rather than just its first digit.
+            {"re": r"The backend suite runs ([\d,]+) tests, [\d,]+ of them passing", "file": BOOKLET_CONTENT},
             {"re": r'value: "([\d,]+)", label: "tests · backend suite"', "file": BOOKLET_CONTENT},
             {"re": r"Provenance: ([\d,]+) is what `cd backend", "file": BOOKLET_CONTENT},
         ],
@@ -2120,6 +2347,116 @@ FACTS: dict[str, dict] = {
         "sites": [
             r"%C2%B7%20(\d+)%20skipped",
             r"\*\*\d+ tests collected, (\d+) skipped\.\*\*",
+        ],
+    },
+    "testsPassing": {
+        # NOT the same number as `testsCollected`, and the gap is the issue.
+        # 3163 collected, 3153 passed, 10 xfailed -- strict xfails in
+        # test_the_trailing_segments_right_edge_is_structural.py, which are the
+        # correct state and are not passes.
+        "kind": "static",
+        "describe": "suiteOutcome.passed in docs/readme-facts.json",
+        "compute": lambda: suite_outcome("passed"),
+        "sites": [
+            {
+                "re": r"runs [\d,]+ tests, ([\d,]+) of them passing",
+                "file": BOOKLET_CONTENT,
+            },
+        ],
+    },
+    "testsXfailed": {
+        "kind": "static",
+        "describe": "suiteOutcome.xfailed in docs/readme-facts.json",
+        "compute": lambda: suite_outcome("xfailed"),
+        "sites": [
+            {
+                "re": r"of them passing and (\d+) expected failures",
+                "file": BOOKLET_CONTENT,
+            },
+        ],
+    },
+    # ── the published route arithmetic (#838) ──
+    #
+    # 29 = 23 + 6 held on the day it was written and nothing would have said
+    # when it stopped. `test_cloud_routes_carry_auth.py` gates the SUBSTANCE
+    # (it walks the live app, so a new unguarded route reds) and deliberately
+    # asserts a FLOOR, `MIN_ROUTES = 25`, so adding a route does not red an
+    # unrelated PR. That leaves the arithmetic ungated: a 30th route moves the
+    # truth and all three documents keep saying 29.
+    "backendRoutes": {
+        "kind": "static",
+        "describe": "route decorators across the modules that define them",
+        "compute": backend_routes,
+        "sites": [
+            {"re": r"The deployed app mounts \*\*(\d+) routes\*\*", "file": ARCHITECTURE},
+            {"re": r"Of the (\d+) routes", "file": ARCHITECTURE},
+            {"re": r"required on \d+ of the (\d+) routes", "file": API_SPEC},
+            {"re": r"\*\*(\d+) routes across", "file": API_SPEC},
+        ],
+    },
+    "backendAuthedRoutes": {
+        "kind": "static",
+        "describe": "route objects NOT on the auth gate's PUBLIC allowlist",
+        "compute": authed_routes,
+        "sites": [
+            {"re": r"\*\*(\d+) require a Supabase", "file": ARCHITECTURE},
+            {"re": r"required on (\d+) of the \d+ routes", "file": API_SPEC},
+        ],
+    },
+    "backendPublicRoutes": {
+        # SIX route OBJECTS, from an allowlist holding SEVEN entries. Counted
+        # in the total's own unit -- see `authed_routes` for why a subtraction
+        # here would have been algebra rather than a measurement.
+        "kind": "static",
+        "describe": "route objects whose path is on the PUBLIC allowlist",
+        "compute": public_routes,
+        "sites": [
+            {"re": r"and \*\*(\d+) do not\*\*", "file": ARCHITECTURE},
+            # Spelled out, and beside a link rather than a digit -- invisible
+            # to every `(\d+)` site in this file until now.
+            {"re": r"for the (\w+) routes", "file": WEB_ARCHITECTURE, "word": True},
+        ],
+    },
+    "publicAllowlistEntries": {
+        # SEVEN, for six public routes, and the gap is the trap #838 is about
+        # -- I made this exact mistake while auditing it and had to walk back a
+        # "the docs say 6, the allowlist has 7" finding that was wrong.
+        "kind": "static",
+        "describe": "entries in PUBLIC in the cloud-route auth gate",
+        "compute": lambda: len(_assigned(ROUTE_AUTH_GATE, "PUBLIC").keys),
+        "sites": [
+            {"re": r"holds \*\*(\d+) entries\*\*", "file": ARCHITECTURE},
+        ],
+    },
+    "routeDefiningModules": {
+        "kind": "static",
+        "describe": "modules holding at least one route decorator",
+        "compute": lambda: len(route_modules()),
+        "sites": [
+            {"re": r"but \*\*(\w+) modules define routes\*\*", "file": ARCHITECTURE, "word": True},
+            {"re": r"routes, which is (\w+), because", "file": API_SPEC, "word": True},
+        ],
+    },
+    "routersRegistered": {
+        "kind": "static",
+        "describe": "include_router calls in main_cloud",
+        "compute": routers_registered,
+        "sites": [
+            {"re": r"Routers \*registered\* is (\w+)", "file": API_SPEC, "word": True},
+            {"re": r"(\w+) routers are \*registered\*", "file": ARCHITECTURE, "word": True},
+        ],
+    },
+    "mainCloudRoutes": {
+        # EQUAL TO `routeDefiningModules` TODAY, AND A DIFFERENT NOUN. Five
+        # modules define routes; main_cloud owns five routes. Registering them
+        # as one fact would make a swap between the two invisible, which is
+        # this repo's recorded count-noun defect.
+        "kind": "static",
+        "describe": "route decorators in main_cloud itself",
+        "compute": lambda: len(_route_paths(ROUTE_MODULE_ROOTS[0])),
+        "sites": [
+            {"re": r"`main_cloud` owns (\w+) itself", "file": ARCHITECTURE, "word": True},
+            {"re": r"`main_cloud` owns (\w+) routes itself", "file": API_SPEC, "word": True},
         ],
     },
     "coveragePercent": {
@@ -2182,6 +2519,45 @@ FACTS: dict[str, dict] = {
 # copies of rules.py and two JavaScript ports of the same pattern table.
 
 INVARIANTS = [
+    {
+        # THE ARITHMETIC THE BOOKLET GOT WRONG (#833). "3,163 tests, all
+        # passing" is false by exactly the xfails, and nothing connected the
+        # two numbers, so `--write` refreshed the digit twice and left the
+        # word "all" alone each time. Collected is the SUM of its parts; a
+        # sentence may quote any of them and this is what keeps them a set.
+        # WHAT THIS REPLACES, AND WHY IT WAS DELETED. The first version of
+        # this block asserted `authed + public == routes` while `authed` was
+        # computed as `routes - public`. That is `(x - y) + y == x`: no state
+        # of the tree can falsify it, and none of the seven controls redded
+        # it. A check that cannot fail, shipped inside a change about numbers
+        # nothing checks. Both counts are measured from the census now, and
+        # the invariant asks a question the census can actually get wrong.
+        "name": "every allowlisted public path is a route the census can find",
+        "holds": lambda f: not allowlist_paths_with_no_route(),
+        "explain": lambda f: (
+            "on PUBLIC but not among the census's route paths: "
+            + ", ".join(allowlist_paths_with_no_route())
+        ),
+    },
+    {
+        "name": "collected reconciles with passed, failed, skipped and the xfails",
+        "holds": lambda f: (
+            f["testsCollected"]
+            == f["testsPassing"]
+            + f["testsSkipped"]
+            + f["testsXfailed"]
+            + suite_outcome("failed")
+            + suite_outcome("errors")
+            + suite_outcome("xpassed")
+        ),
+        "explain": lambda f: (
+            f"{f['testsPassing']} passed + {f['testsSkipped']} skipped + "
+            f"{f['testsXfailed']} xfailed + {suite_outcome('failed')} failed + "
+            f"{suite_outcome('errors')} errors + {suite_outcome('xpassed')} xpassed = "
+            f"{f['testsPassing'] + f['testsSkipped'] + f['testsXfailed'] + suite_outcome('failed') + suite_outcome('errors') + suite_outcome('xpassed')}, "
+            f"not {f['testsCollected']}."
+        ),
+    },
     {
         # A COUNT CANNOT SEE A RENAME. Rename `review` to `reviews` and the
         # count stays 18 while both documents name a directory that is gone and
@@ -2601,7 +2977,10 @@ DATE_SITES: list[tuple[str, "re.Pattern[str]"]] = [
     ),
     (
         BOOKLET_CONTENT,
-        re.compile(r"is what `[^`]+` collects and passes, recorded (\d{4}-\d{2}-\d{2})"),
+        # "and passes" was deleted by #833: the command collects 3,163 and
+        # passes 3,153, so the provenance line was making the same wrong claim
+        # the body sentence was. The date this anchors is unaffected.
+        re.compile(r"is what `[^`]+` collects, recorded (\d{4}-\d{2}-\d{2})"),
     ),
 ]
 
