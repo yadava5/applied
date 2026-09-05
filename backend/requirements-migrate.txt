@@ -9,7 +9,7 @@
 #
 #   pip install -r requirements.txt -r backend/requirements-migrate.txt
 #
-psycopg[binary]>=3.3.4
+psycopg[binary]>=3.3.5
 
 # Alembic itself. It is in backend/requirements.txt too, but that file drags the
 # whole ML stack along with it, and the root requirements.txt deliberately does

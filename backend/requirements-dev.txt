@@ -47,4 +47,4 @@ testcontainers[postgres]>=4.15.0
 # can be run against Postgres anywhere except a machine that happens to have it:
 # not in CI, not on a fresh laptop. That is how the migration chain came to be
 # exercised only by production. tests/test_migrations_postgres.py needs it.
-psycopg[binary]>=3.2.0
+psycopg[binary]>=3.3.5
