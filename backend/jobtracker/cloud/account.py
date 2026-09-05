@@ -26,6 +26,14 @@ Before any of that, the caller's Gmail grant is revoked at Google — the
 ``user_credentials`` row is the only place the token exists, so once the purge
 runs there is nothing left to revoke. See ``delete_account`` for why that
 revocation is best-effort and cannot block the deletion.
+
+``user_credentials`` is a *secret* store, so this module is the one place
+outside ``jobtracker/credentials/cloud.py`` that destroys a stored credential.
+It therefore emits that module's ``secret_access`` record itself, through
+``log_credentials_purged``, once the purge has committed — otherwise the bulk
+DELETE would take the credential out of existence with nothing in the access
+log to show for it (issue #757). ``docs/casa/SECRET-ACCESS-POLICY.md`` §3.1
+names this site alongside the store's own seven functions.
 """
 
 from __future__ import annotations
@@ -39,6 +47,7 @@ from pydantic import BaseModel
 from sqlalchemy import delete as sa_delete
 
 from jobtracker.auth import current_user, require_user
+from jobtracker.credentials.cloud import log_credentials_purged
 from jobtracker.database import get_session
 from jobtracker.database.models import (
     Application,
@@ -151,6 +160,29 @@ async def delete_account(
         for model in _DELETION_ORDER:
             await session.exec(sa_delete(model).where(model.user_id == user_id))
         await session.commit()
+
+    # ``user_credentials`` is one of the tables that loop just emptied, and the
+    # bulk statement goes around the credential store's logged access functions
+    # entirely — so without this line the moment a user's credential stops
+    # existing is the one access the secret-access log does not record. That is
+    # the single most audit-relevant moment in an account's life, and
+    # ``docs/casa/SECRET-ACCESS-POLICY.md`` §3.1 offers "use of the key is
+    # logged" as the compensating control for the limb §3.2 cannot close.
+    # Issue #757.
+    #
+    # Fired, not composed: the record's shape, field values and logger name
+    # live in ``credentials.cloud`` so there is still exactly one emission
+    # shape and one logger to query.
+    #
+    # AFTER the commit, matching every other emission site in that module
+    # (``delete_gmail_credentials`` logs outside its own ``async with`` too).
+    # An ``outcome=deleted`` stamped before the transaction resolves would
+    # claim a destruction that can still roll back. The converse — that a
+    # record is emitted even when there was no credential to destroy — is the
+    # convention the policy document already discloses for the ``delete``
+    # paths: neither checks whether a row existed, because distinguishing the
+    # two costs a SELECT round trip for a log field.
+    log_credentials_purged(user_id)
 
     logger.info(
         "account.deleted user_id=%s tables_cleared=%d google_revoked=%s",
