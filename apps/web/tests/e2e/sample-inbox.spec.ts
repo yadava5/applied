@@ -45,7 +45,7 @@ test.describe("sample inbox (/demo/inbox)", () => {
     await expect(rejection).toHaveAttribute("aria-expanded", "false");
     await rejection.click();
     await expect(rejection).toHaveAttribute("aria-expanded", "true");
-    await expect(page.getByText(/rejection @ 90% — regex answered/i)).toBeVisible();
+    await expect(page.getByText(/rejection @ 95% — regex answered/i)).toBeVisible();
 
     // Clicking again collapses it.
     await rejection.click();
