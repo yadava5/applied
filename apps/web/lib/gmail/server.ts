@@ -35,6 +35,7 @@
  * a follow-up worth doing.
  */
 import { serverEnv } from "@/lib/env.server";
+import { withBackendSyncDetail } from "@/lib/gmail/sync-detail";
 import type { InboxPage, PipelineAnalysis } from "@/lib/gmail/types";
 import { getAccessToken } from "@/lib/supabase/auth";
 
@@ -402,7 +403,18 @@ export async function syncGmailPipeline(
       cache: "no-store",
     });
     if (res.status === 409) return { kind: "not_connected" };
-    if (!res.ok) return classifyBadResponse(res.status, res.headers);
+    if (!res.ok) {
+      const failure = classifyBadResponse(res.status, res.headers);
+      // READ THE BODY HERE, on the path that has something to say (#848).
+      // Only the `backend` kind carries a message at all; `auth`,
+      // `unavailable` and `rate_limited` are rendered from their kind and a
+      // sentence would not reach a reader on any of them.
+      if (failure.kind !== "backend") return failure;
+      // A 502 from the edge, a timeout and an HTML error page all land here
+      // with no JSON. `withBackendSyncDetail` keeps the status-derived line
+      // above for every body it cannot quote.
+      return withBackendSyncDetail(failure, await res.json().catch(() => null));
+    }
     return { kind: "ok", result: (await res.json()) as GmailSyncOutcome };
   } catch (err) {
     return networkFailure(err);
