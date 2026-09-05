@@ -454,6 +454,24 @@ jobs:
         working-directory: apps/web
         run: node scripts/csp-gate.mjs http://127.0.0.1:3000
 
+      # The proof the step above can fail, as a step rather than a paragraph.
+      # Until #802 that gate read `script-src` and nothing else, so eight of
+      # /system-card's nine directives were asserted by nothing --
+      # `frame-ancestors 'none'` and `form-action 'self'` among them. #742's
+      # item 2 asked for a falsification and what shipped was recorded prose;
+      # this is the executing version, modelled on
+      # `scripts/negative_control_ignore_build.mjs`.
+      #
+      # It needs no server of its own beyond the stub it starts, so it does not
+      # depend on the preview above and cannot be made green by it. It runs the
+      # REAL gate against nine policies -- six that must red and three that
+      # must not, because a gate that reds on a re-wrapped header is a gate
+      # somebody switches off.
+      - name: CSP gate negative control
+        timeout-minutes: 2
+        working-directory: apps/web
+        run: node scripts/negative_control_csp_gate.mjs
+
       # Again no `--project` filter — and this is the job where it matters
       # most. The race the offset projects exist for is a HYDRATION-adjacent
       # defect, and only this job hydrates a real static prerender; the dev
