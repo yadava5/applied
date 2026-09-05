@@ -172,7 +172,10 @@ tooling yet). Stack:
   `components/ui/button.tsx` committed; further primitives are added via
   `pnpm dlx shadcn@latest add ...`.
 
-File layout, read from the tree on 2026-08-21. The C9 scaffold this section
+File layout, read from the tree on 2026-08-21 — except the `components/`
+line, which is no longer a hand read: its count and its names are checked
+against `git ls-files` on every run of `scripts/readme_facts.py` (#401). The C9
+scaffold this section
 once described (two component directories, a placeholder dashboard) is long
 gone; what is below is the shipped app:
 

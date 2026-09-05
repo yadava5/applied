@@ -59,7 +59,9 @@ pnpm lint         # eslint, --max-warnings 0 (next's a11y rules ship as warnings
 
 ## Layout
 
-Read from the tree on 2026-08-21. The C9 scaffold this block used to describe —
+Read from the tree on 2026-08-21 — except the `components/` line, whose count
+and names are checked against `git ls-files` on every run of
+`scripts/readme_facts.py` (#401). The C9 scaffold this block used to describe —
 one placeholder dashboard, two component directories — is long gone.
 
 ```

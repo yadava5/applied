@@ -778,14 +778,21 @@ WEB_COMPONENTS = "apps/web/components"
 #: held 18 for weeks with nothing able to notice: the count was not a registered
 #: fact and the names were not checked by anything at all. #401.
 COMPONENT_ENUMERATIONS = (
-    ("docs/WEB_ARCHITECTURE.md", r"#\s*(\d+) directories:\s*(.*)$"),
-    ("apps/web/README.md", r"#\s*(\d+) directories:\s*(.*)$"),
+    ("docs/WEB_ARCHITECTURE.md", r"components/\s+#\s*(\d+) directories:\s*(.*)$"),
+    ("apps/web/README.md", r"components/\s+#\s*(\d+) directories:\s*(.*)$"),
 )
 
-#: A parse that yields a handful of names when it should yield eighteen has
-#: found a reworded sentence, not a shrunken tree. Below this, the parser says
-#: so instead of reporting a drift it cannot really see.
-MIN_PLAUSIBLE_COMPONENT_NAMES = 10
+def _min_plausible_names(actual: int) -> int:
+    """The floor under which a parse is a broken parse, not a shrunken tree.
+
+    DERIVED from the tree rather than fixed at 10. A constant does the job
+    today, and the day `apps/web/components` legitimately holds nine
+    directories it would call a CORRECT enumeration "a broken parse" — a gate
+    whose diagnosis becomes false as the tree changes. Half the real count,
+    never below three.
+    """
+
+    return max(3, actual // 2)
 
 
 def component_dirs() -> set[str]:
@@ -866,7 +873,7 @@ def component_enumeration_drift() -> list[str]:
                 f"was reworded — update COMPONENT_ENUMERATIONS."
             )
             continue
-        if len(listed) < MIN_PLAUSIBLE_COMPONENT_NAMES:
+        if len(listed) < _min_plausible_names(len(actual)):
             problems.append(
                 f"{rel}: parsed only {len(listed)} names ({', '.join(listed)}). "
                 f"That is a broken parse, not a shrunken tree."
@@ -1919,9 +1926,17 @@ FACTS: dict[str, dict] = {
         # #608's gate flagged it the moment this fact registered the sentence.
         # It is gone rather than excused: an excused number is still one nobody
         # checks.
+        #
+        # ANCHORED TO `components/`, like the parser above. Unanchored, any
+        # future tree comment of the same shape -- `# 12 directories:` for
+        # `lib/`, say -- matches first and the fact reports 12 against a
+        # components count of 18. That is a red, so nothing ships broken, but
+        # it is a MISATTRIBUTED red that names the wrong line and invites
+        # someone to "fix" a sentence that was correct. Measured: inserting a
+        # decoy row above this one produced exactly that before the anchor.
         "sites": [
-            {"file": "docs/WEB_ARCHITECTURE.md", "re": r"# (\d+) directories:"},
-            {"file": "apps/web/README.md", "re": r"# (\d+) directories:"},
+            {"file": "docs/WEB_ARCHITECTURE.md", "re": r"components/\s+# (\d+) directories:"},
+            {"file": "apps/web/README.md", "re": r"components/\s+# (\d+) directories:"},
         ],
     },
     "workflows": {
