@@ -165,13 +165,46 @@ export function ReclassifyControl({
 
   const showPicker = asksWhichApplication({ category, candidates, linkedApplicationId });
   const canSend = canSubmitReview(category, showPicker, assignment);
+  /**
+   * The apply button's state: a write is in flight, or the decision is not
+   * answerable yet. STATED with `aria-disabled` and enforced in the handler —
+   * never with the DOM's `disabled` (#425).
+   *
+   * A FOCUSED element that becomes `disabled` is blurred by the browser to
+   * `<body>` and never gets the focus back, and this button is exactly where
+   * the reader is standing when the write starts: they pressed Enter on it.
+   * Measured on `/demo/scan`, standing on apply: `document.activeElement` was
+   * `<body>` at t=8ms with the node still in the document, and the unmount that
+   * swaps the panel for "corrected" is a downstream event at t=170ms. So the
+   * blur is caused by the attribute, not by the reparent — character for
+   * character the defect #777 fixed on `ApplicationRow` / `ApplicationDetail`,
+   * whose `StageSelect` header carries that measurement. Restoring focus
+   * afterwards is NOT the repair: it races the unmount and flickers.
+   *
+   * It also blurred a SECOND time, at the far end of the same correction: a
+   * `needs_employer` answer clears `busy` and sets `employerPrompt`, and the
+   * conjunct below then flipped the still-focused button straight back to
+   * `disabled`. One expression, two blurs, one fix.
+   *
+   * The employer conjunct stays OUT of `apply()` deliberately — the two
+   * confirmation buttons re-send with an explicit company and must not be
+   * refused over the empty box they are answering.
+   */
+  const applyLocked =
+    busy || !canSend || (employerPrompt !== null && !canNameCompany(namedCompany));
 
   async function apply(answer?: { company?: string; confirmNewCompany?: boolean }) {
     // ENFORCED HERE, NOT ON THE BUTTON, for the reason `canSubmitReview`'s own
     // docstring gives: the two confirmation buttons and the employer prompt all
-    // re-send this decision without consulting the apply button's `disabled`.
+    // re-send this decision without consulting the apply button's own state.
     // A gate written only there is a gate with three side doors.
-    if (!canSend) return;
+    //
+    // `busy` joins it for #425's sake. The in-flight lock is `aria-disabled`
+    // now, which is ADVISORY — the browser still delivers the click, and
+    // `aria-disabled` on its own would make a mid-write second apply MORE
+    // reachable than it was before. Dropping the call at the one point every
+    // re-send passes through is what makes the lock real.
+    if (!canSend || busy) return;
     setBusy(true);
     setError(null);
     const named = (answer?.company ?? namedCompany).trim();
@@ -262,15 +295,27 @@ export function ReclassifyControl({
       <select
         id={`reclass-${messageId}`}
         value={category}
-        disabled={busy}
+        // Never the DOM's `disabled`, for the reason on `applyLocked` above
+        // (#425). This control is one Shift+Tab from being the focused one
+        // while the write is in flight, and `disabled` would take it out of the
+        // focus order and out of the accessibility tree at the moment the
+        // reader might reach for it; `aria-disabled` says "not now" and leaves
+        // it where they left it.
+        aria-disabled={busy}
         onChange={(e) => {
+          // IGNORED, not prevented. `aria-disabled` leaves the control
+          // operable, so a category CAN still be dispatched mid-write, and
+          // dropping it here is what makes the lock real. `value` does not
+          // move, and React restores a controlled <select>'s DOM selection
+          // after a change its handler did not act on, so it snaps back.
+          if (busy) return;
           setCategory(e.target.value);
           // The pick belonged to the PREVIOUS stage's question. Leaving it
           // mounted is what let a re-send fire against a question the user is
           // no longer looking at (#554).
           setAssignment(null);
         }}
-        className="rounded border border-line-soft bg-surface px-1.5 py-1 text-xs text-muted outline-none transition-colors hover:border-line focus:border-line-strong disabled:opacity-50"
+        className="rounded border border-line-soft bg-surface px-1.5 py-1 text-xs text-muted outline-none transition-colors hover:border-line focus:border-line-strong aria-disabled:opacity-50"
       >
         <option value={PLACEHOLDER} disabled>
           choose a category…
@@ -283,11 +328,25 @@ export function ReclassifyControl({
       </select>
       <button
         type="button"
-        onClick={() => void apply()}
-        disabled={
-          busy || !canSend || (employerPrompt !== null && !canNameCompany(namedCompany))
-        }
-        className="inline-flex items-center gap-1 rounded border border-line px-2 py-1 text-xs font-medium text-foreground transition-colors hover:border-line-strong hover:text-strong disabled:opacity-50"
+        // Addressable on purpose: a scan list holds one of these per row, and
+        // `document.activeElement` cannot say WHICH "apply" it is standing on
+        // without an id. The focus probe in `tests/e2e/stage-focus.spec.ts`
+        // reads it, and the defect this button carries is only measurable if
+        // the instrument can name the node.
+        id={`reclass-apply-${messageId}`}
+        onClick={() => {
+          if (applyLocked) return;
+          void apply();
+        }}
+        aria-disabled={applyLocked}
+        // The spinner beside the word is `aria-hidden`, so without this a
+        // screen reader heard nothing at all while the write was in flight —
+        // `aria-disabled` alone says "not now" without saying "wait". Same gap
+        // and same repair as `ApplicationDetail`'s stage select (#425). It sits
+        // on the button rather than on the select because the button is what
+        // makes the request; the select is locked, not busy.
+        aria-busy={busy}
+        className="inline-flex items-center gap-1 rounded border border-line px-2 py-1 text-xs font-medium text-foreground transition-colors hover:border-line-strong hover:text-strong aria-disabled:opacity-50"
       >
         {busy ? <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden /> : null}
         apply

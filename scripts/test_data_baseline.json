@@ -50,6 +50,10 @@
       "count": 1,
       "digest": "9df1079d69522438"
     },
+    "apps/web/tests/unit/rescission-cap-417.test.mjs": {
+      "count": 1,
+      "digest": "f771706638b7cf1c"
+    },
     "apps/web/tests/unit/review-classify.test.mjs": {
       "count": 5,
       "digest": "bd0d961c01f54c14"
