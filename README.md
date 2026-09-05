@@ -526,6 +526,7 @@ page you can show is wrong, and security findings are genuinely wanted: email th
 | --- | --- |
 | [System Card](https://getapplied.vercel.app/system-card) | Classifier design, evaluation, limitations, safety notes |
 | [Privacy](https://getapplied.vercel.app/privacy) | What Applied reads, what it stores, where it runs, how to delete it — each claim cited to the file that implements it |
+| [`docs/CLASSIFIER_RULES_GOVERNANCE.md`](docs/CLASSIFIER_RULES_GOVERNANCE.md) | What a change to the classifier rules has to prove before it lands, and what actually enforces it |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System architecture and component boundaries |
 | [`docs/WEB_ARCHITECTURE.md`](docs/WEB_ARCHITECTURE.md) | Deployment modes, cloud auth flow, credential storage |
 | [`docs/API_SPEC.md`](docs/API_SPEC.md) | Backend REST contract — auth, the 29-route table, and the shapes worth stating in prose. The machine-checked authority is `apps/web/lib/api/schema.d.ts`, generated from the app and gated by `e2e-ci.yml` |
