@@ -98,12 +98,18 @@ WHAT IT STILL CANNOT SEE
 
 Named here so the next reader inherits a decision rather than another blind spot.
 
-* An interpolated LOCAL part over a literal, routable domain — `f"{i}@corp.com"`.
-  The run after the `@` holds no marker so `TEMPLATE` does not fire, and the `}`
-  in front of the `@` keeps `EMAIL` from firing either. Three sites in the tree,
-  and one of them is `corpus/mail.py`'s iCalendar `UID:{uid}@google.com`, which
-  is not an address at all — which is why closing this is a separate judgement
-  about false positives and not a free widening.
+* (CLOSED by #619. `LOCAL_TEMPLATE` reads it now — an interpolated local part
+  over a literal domain, judged on that domain exactly as a literal address is.
+  The judgement this paragraph deferred was made rather than inherited: the
+  widening surfaces 11 runs across 5 files, and one of them IS the false
+  positive named here — `corpus/mail.py`'s iCalendar `UID:{uid}@google.com`,
+  which is a calendar identifier and not an address. It is recorded anyway.
+  The baseline is a ledger of address-SHAPED runs, not an accusation, and the
+  ratchet is the point: `google.com` routes, the shape is indistinguishable
+  from a sender by any text scan, and a file carrying it contributed ZERO
+  before, so no edit to it could ever red. One declared line buys a digest
+  that moves when the file's addresses do. The same trade is already accepted
+  in `test_test_data_gate.py`, whose own `_reserved()` probe is counted.)
 * A domain concatenated out of literals only, `"careers@" + "north" + "wind.com"`,
   or built by adjacent-literal concatenation. Evasions rather than natural
   style; neither occurs here.
@@ -252,6 +258,34 @@ _LOCAL_SEGMENT = f"(?:{_LOCAL_CHAR}|{MARKER})+"
 #: is whether the address could RESOLVE anywhere; see `sealed_suffix`.
 TEMPLATE = re.compile(
     _LOCAL_SEGMENT + "@" + f"{_DOMAIN_CHAR}*{MARKER}(?:{_DOMAIN_CHAR}|{MARKER})*"
+)
+
+#: An address whose LOCAL part is interpolated and whose DOMAIN is a complete
+#: literal: `f"{prefix}@brackenhill-real.com"`. #619 calls this "the case that
+#: matters" and it was invisible to both readers above, from opposite sides —
+#: `EMAIL`'s local class holds no markers, and `TEMPLATE` requires a marker in
+#: the DOMAIN. A run with a literal domain and an interpolated local fell
+#: between them and contributed nothing, so the file never entered the
+#: baseline and gained no ratchet at all.
+#:
+#: It is the highest-value half because the domain is the part that routes. A
+#: real employer's mail domain sits there in full while only the local part
+#: varies, which is the idiomatic shape when a fixture builds a sender from a
+#: loop counter or a generated id.
+#:
+#: DISJOINT FROM `EMAIL` BY CONSTRUCTION: at least one marker is REQUIRED in
+#: the local part, and `EMAIL`'s local class holds none. Dropping that
+#: requirement makes the two overlap and reds six tests.
+#:
+#: DISJOINT FROM `TEMPLATE` BY ORDERING, not by this pattern. The literal
+#: domain here is defensive: measured, letting markers into it changes no
+#: output at all, because `TEMPLATE` runs first and the span guard in
+#: `matches_in` drops the nested match. Saying "by construction" of both would
+#: claim a guarantee only one of them actually rests on.
+LOCAL_TEMPLATE = re.compile(
+    f"(?:{_LOCAL_CHAR}|{MARKER})*{MARKER}(?:{_LOCAL_CHAR}|{MARKER})*"
+    "@"
+    rf"{_DOMAIN_CHAR}+\.[A-Za-z]{{2,}}"
 )
 
 #: Concatenation, the form no marker can describe: `"careers@" + domain` ends
@@ -486,6 +520,18 @@ def matches_in(text: str) -> list[Match]:
         local, domain, end = read
         spans.append((head.start(), end))
         if not is_allowed(sealed_suffix(domain)):
+            found.append(Match(f"{local}@{domain}", True))
+
+    for match in LOCAL_TEMPLATE.finditer(text):
+        if any(start <= match.start() and match.end() <= end for start, end in spans):
+            continue
+        if _inside_url(text, match.start()):
+            continue
+        spans.append(match.span())
+        # The domain is a literal here, so it is judged exactly as `EMAIL`
+        # judges one -- `sealed_suffix` has nothing to seal.
+        local, domain = canonical(match.group(0)).split("@", 1)
+        if not is_allowed(domain):
             found.append(Match(f"{local}@{domain}", True))
 
     for match in EMAIL.finditer(text):

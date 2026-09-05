@@ -1194,3 +1194,147 @@ def test_a_declared_bom_whose_body_is_not_that_encoding_is_a_skip(tree: Path) ->
         ("backend/tests/fixture_bad_bom.py", gate.BINARY)
     ], skipped
     assert _check(gate, tree) == 1
+
+
+# --- #619: an interpolated LOCAL part over a literal domain ------------------
+
+
+def _interpolated_local(domain: str) -> str:
+    """`{prefix}@<domain>` — the shape #619 calls "the case that matters".
+
+    Built rather than written so this module keeps its own rule: no LITERAL
+    address may appear in it.
+    """
+
+    return f"{{prefix}}@{domain}"
+
+
+def test_an_interpolated_local_over_a_routable_domain_is_caught(tree: Path) -> None:
+    """The domain is the part that routes, and it was invisible from both sides.
+
+    `f"{prefix}@brackenhill-real.com"` fell between the two readers at once:
+    the run after the `@` holds no marker, so the template reader did not
+    fire, and the `}` in front of it stopped the literal one. A file written
+    that way contributed ZERO, never entered the baseline, and therefore
+    gained no ratchet — so a later edit could put a real employer's domain
+    there in silence.
+
+    This is the highest-value half of #619 because only the local part varies;
+    a real mail domain sits after the `@` in full.
+    """
+
+    gate = _load()
+    hits = gate.matches_in(_interpolated_local(_ROUTABLE))
+    assert [h.text for h in hits] == [f"{{}}@{_ROUTABLE}"], hits
+    assert hits[0].interpolated is True, "an assembled address is not a literal one"
+
+
+def test_the_other_three_shapes_from_619_stay_caught(tree: Path) -> None:
+    """`_A`, `_B` and `_D` are the regression half of the issue's four probes.
+
+    A widening that caught `_C` by loosening `EMAIL` or `TEMPLATE` could
+    easily have swallowed or double-counted these. Each must still produce
+    exactly one finding.
+    """
+
+    gate = _load()
+    for label, probe in (
+        ("_A literal", f"{_LOCAL}@{_ROUTABLE}".replace("{", "")),
+        ("_B interpolated domain", f"{_LOCAL}@{{company}}.com"),
+        ("_D concatenated domain", f'"{_LOCAL}@" + company + ".com"'),
+    ):
+        hits = gate.matches_in(probe)
+        assert len(hits) == 1, f"{label} produced {len(hits)} findings: {hits}"
+
+
+def test_an_interpolated_local_over_a_reserved_domain_stays_silent(tree: Path) -> None:
+    """The judgement is the domain's, exactly as it is for a written-out address.
+
+    THE POSITIVE CONTROL #619 ASKS FOR, in its own words: "unscannable" must
+    not quietly become the new "clean", and its opposite — a widening that
+    reds every assembled sender — would be just as useless. A compliant
+    template is the shape the policy actively recommends and it must stay
+    silent.
+    """
+
+    gate = _load()
+    assert gate.matches_in(_interpolated_local(_RESERVED)) == []
+
+
+def test_a_genuinely_clean_file_still_reports_zero(tree: Path) -> None:
+    """The other positive control: the widening must not make everything a finding.
+
+    A file with reserved addresses in every shape the gate reads — literal,
+    interpolated domain, interpolated local, concatenated — contributes
+    nothing, and the run stays green.
+    """
+
+    gate = _load()
+    _write_baseline(gate, tree)
+
+    clean = tree / "backend" / "tests" / "fixture_all_shapes_clean.py"
+    clean.write_text(
+        "\n".join(
+            [
+                f'LITERAL = "{_LOCAL}@{_RESERVED}"',
+                f'DOMAIN_FIELD = f"{_LOCAL}@{{token}}.test"',
+                f'LOCAL_FIELD = f"{_interpolated_local(_RESERVED)}"',
+                f'CONCAT = "{_LOCAL}@" + token + ".test"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
+
+    findings, skipped = gate.scan(tree)
+    assert "backend/tests/fixture_all_shapes_clean.py" not in findings, findings
+    assert [s.path for s in skipped] == [], skipped
+    assert _check(gate, tree) == 0
+
+
+def test_the_three_readers_never_count_one_run_twice(tree: Path) -> None:
+    """Disjointness, asserted rather than argued.
+
+    The three readers are kept apart by construction — a marker is REQUIRED in
+    the local part here and FORBIDDEN in the domain, which is the mirror of
+    the template reader's rule. If that ever stops being true the count
+    inflates silently, and a count is what the baseline ratchets on.
+    """
+
+    gate = _load()
+    for probe in (
+        f"{_LOCAL}@{_ROUTABLE}".replace("{", ""),
+        f"{_LOCAL}@{{company}}.com",
+        _interpolated_local(_ROUTABLE),
+        f"{{a}}@{{b}}.com",
+    ):
+        hits = gate.matches_in(probe)
+        assert len(hits) <= 1, f"{probe!r} was read by more than one reader: {hits}"
+
+
+def test_the_interpolated_local_is_judged_on_its_domain_not_its_template(tree: Path) -> None:
+    """`is_allowed` takes a DOMAIN. Handing it `{prefix}@example.com` is not the same.
+
+    THE GAP THIS CLOSES WAS IN MY OWN CONTROLS. A mutation passing the whole
+    matched run to `is_allowed` instead of just the domain survived every test
+    above, because every reserved probe in this file is allowed by its SUFFIX
+    (`.test`), and a suffix check cannot tell the two apart.
+
+    `example.com` is the case that can: it is reserved by EXACT MATCH in
+    `RESERVED_DOMAINS`, so `is_allowed("example.com")` is True while
+    `is_allowed("{}@example.com")` is False. Measured. Under that mutation the
+    single most-recommended reserved domain becomes a finding.
+    """
+
+    gate = _load()
+    exact = next(d for d in gate.RESERVED_DOMAINS if d.endswith(".com"))
+
+    # The premise, so this test cannot pass for the wrong reason on a tree
+    # where the two happen to agree.
+    assert gate.is_allowed(exact) is True
+    assert gate.is_allowed(f"{gate.MARKER_TOKEN}@{exact}") is False
+
+    assert gate.matches_in(_interpolated_local(exact)) == [], (
+        "an interpolated local part over an exactly-reserved domain is a finding"
+    )
