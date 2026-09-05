@@ -164,6 +164,15 @@ class ClassificationResult:
 # Confidence Thresholds
 # =============================================================================
 
+#: THE ROUTING BOUNDARY, not a display threshold. At or above this the rules
+#: layer's answer is returned immediately and neither SetFit nor embeddings is
+#: consulted, so an edit that pushes an item over this line silently removes the
+#: rest of the cascade from that item's decision (#775). It was the only one of
+#: these three thresholds left as an inline literal, which is why the tests that
+#: reason about it had to type it a second time -- and a number typed twice is a
+#: number that can disagree with itself.
+RULES_SHORT_CIRCUIT = 0.90
+
 CONFIDENCE_AUTO = 0.85  # Auto-classify without review
 CONFIDENCE_MIN_CLASSIFICATION = 0.70  # Minimum confidence to trust semantic layer output
 # Below 0.85: Add to review queue
@@ -289,7 +298,7 @@ class HybridClassifier:
         # =====================================================================
         rules_result = self._rules.classify(subject, body, sender_email)
 
-        if rules_result.confidence >= 0.90:
+        if rules_result.confidence >= RULES_SHORT_CIRCUIT:
             logger.debug(
                 f"Rules classified as {rules_result.category.value} "
                 f"with confidence {rules_result.confidence:.2f}"

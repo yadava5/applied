@@ -37,6 +37,7 @@ import re
 
 import pytest
 
+from jobtracker.classifier.hybrid import RULES_SHORT_CIRCUIT
 from jobtracker.classifier.rules import PATTERNS, RulesClassifier
 from jobtracker.cloud.pipeline import AUTO_FILE_GATE
 from jobtracker.database.models import EmailCategory
@@ -45,7 +46,13 @@ from jobtracker.database.models import EmailCategory
 #: embeddings or SetFit are consulted. Read from the caller's own threshold
 #: rather than typed here as 0.90, because a number typed twice is a number
 #: that can disagree with itself.
-RULES_SHORT_CIRCUIT = 0.90
+#:
+#: IT USED TO SAY THAT AND TYPE 0.90 ANYWAY, because `hybrid` had no name to
+#: import -- the boundary was an inline literal at its one call site. Naming it
+#: there is what let this line become what its comment always claimed (#775).
+#: The consequence of the duplicate was not cosmetic: tuning hybrid's literal
+#: down to 0.65 would have put the target back on the short circuit while
+#: ``0.70 < 0.90`` went on passing.
 
 #: The one message this issue is about. Committed in
 #: ``data/evaluation/classifier_eval_v3.jsonl`` with ``confusion_pair``
