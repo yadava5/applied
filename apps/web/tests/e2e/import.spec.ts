@@ -506,3 +506,214 @@ test.describe("a reply is not its own thread", () => {
     ).toBeVisible();
   });
 });
+
+/**
+ * #426 — A ROW'S DISCLOSURE STATE BELONGS TO THE MESSAGE, NOT TO THE POSITION.
+ *
+ * Filed as "the rows are keyed by index; the messages have ids", and that
+ * remedy was ALREADY in the tree and did nothing: the list is keyed by
+ * `item.id` (`ImportMail.tsx`), but the id WAS the ordinal — `const id =
+ * `m${i}`` in `parseMailFile`. So React saw the same key for a different
+ * message across two files, kept the same `ImportRow` instances mounted, and
+ * the second file inherited the first file's open rows. Measured before the
+ * fix, on this page, with no click between the two imports:
+ *
+ *     file A (Alpha message 1..4)   expanded: row1=true, row3=true
+ *     file B (Beta  message 1..4)   expanded: row1=true, row3=true
+ *
+ * The ids are content-derived now (`contentId` in `lib/import/parseMail.ts`),
+ * so this cannot be satisfied by renaming the scheme while keeping it
+ * positional.
+ *
+ * The two files carry the SAME NUMBER OF ROWS on purpose. With fewer rows in
+ * the second file React unmounts the surplus, and a partially positional
+ * scheme can pass by accident.
+ */
+test.describe("an expanded row belongs to its message", () => {
+  /** Four ordinary messages. Only the employer and the bodies differ between files. */
+  const fourFrom = (who: string, host: string) =>
+    Array.from(
+      { length: 4 },
+      (_, i) =>
+        `From ${i + 1}@import.test Thu Sep  3 0${9 + i}:00:00 2026\n` +
+        `From: ${who} Recruiting <talent@${host}.test>\n` +
+        `Subject: ${who} message ${i + 1}\n` +
+        `Date: Thu, 03 Sep 2026 0${9 + i}:00:00 +0000\n` +
+        `\n` +
+        `Thank you for applying to ${who}. Your application has been received.\n`,
+    ).join("\n");
+
+  const ALPHA = fourFrom("Alpha", "alpha");
+  const BETA = fourFrom("Beta", "beta");
+
+  async function drop(page: Page, name: string, text: string) {
+    await page.getByTestId("import-file").setInputFiles({
+      name,
+      mimeType: "application/mbox",
+      buffer: Buffer.from(text, "utf-8"),
+    });
+  }
+
+  /** The rows currently disclosed, counted from the DOM the reader sees. */
+  const expanded = (page: Page) =>
+    page.locator('[data-testid="import-row"][aria-expanded="true"]');
+
+  test("expansion does not follow a row's position into a different file", async ({ page }) => {
+    await page.goto("/import");
+    await drop(page, "alpha.mbox", ALPHA);
+
+    const rows = page.getByTestId("import-row");
+    await expect(rows).toHaveCount(4);
+
+    // THE POSITIVE CONTROL, and it is what keeps the assertion below honest:
+    // "nothing is expanded" is also what a fix that broke disclosure entirely
+    // would produce.
+    await rows.nth(0).click();
+    await rows.nth(2).click();
+    await expect(rows.nth(0)).toHaveAttribute("aria-expanded", "true");
+    await expect(rows.nth(2)).toHaveAttribute("aria-expanded", "true");
+    await expect(expanded(page), "rows 1 and 3 must actually open").toHaveCount(2);
+
+    // A different file, four different messages, and no click in between.
+    await drop(page, "beta.mbox", BETA);
+    await expect(rows).toHaveCount(4);
+    await expect(rows.first(), "the second file really did land").toContainText("Beta message 1");
+    await expect(
+      expanded(page),
+      "rows 1 and 3 stayed open over DIFFERENT mail — the id is positional again",
+    ).toHaveCount(0);
+  });
+
+  /** The issue's own control: pressing Clear results in between must still work. */
+  test("Clear results leaves nothing expanded", async ({ page }) => {
+    await page.goto("/import");
+    await drop(page, "alpha.mbox", ALPHA);
+
+    const rows = page.getByTestId("import-row");
+    await rows.nth(0).click();
+    await rows.nth(2).click();
+    await expect(expanded(page)).toHaveCount(2);
+
+    await page.getByRole("button", { name: "Clear results" }).click();
+    await expect(page.getByTestId("import-results")).toHaveCount(0);
+
+    await drop(page, "beta.mbox", BETA);
+    await expect(rows).toHaveCount(4);
+    await expect(expanded(page)).toHaveCount(0);
+  });
+});
+
+/**
+ * #426 — AN UNESCAPED MBOX SAYS SO INSTEAD OF INVENTING ROWS.
+ *
+ * mboxrd escapes a body line beginning `From ` as `>From `, and Google Takeout
+ * escapes correctly — so this is a malformed file rather than a mishandled
+ * valid one. It is fixed anyway because of what the page did with the
+ * ambiguity: five messages quoting a forwarded header became `10 messages
+ * found`, and the five phantoms rendered beside the real rows with the same
+ * confidence chrome, an invented subject and sender `(unknown sender)`.
+ * Measured before the fix, both shapes:
+ *
+ *     totalFound=10  rendered=10  unreadable=0  phantoms=5
+ *
+ * THREE SHAPES, because no single rule catches more than two of them, and a
+ * spec that asserted one would leave half the fix uncovered. Which rule each
+ * shape needs is on `Shape` below; both were measured by deleting them one at
+ * a time in `tests/unit/parse-mail-mbox-split.test.mjs`.
+ */
+test.describe("an ambiguous mbox is declared, not invented", () => {
+  const PHANTOM = "INVENTED - this line was never a header";
+
+  /**
+   * How the quoted block is written. Each name is a different rule doing the
+   * work — see `tests/unit/parse-mail-mbox-split.test.mjs`, which measures
+   * that against both mutants:
+   *
+   *   prose     next line is prose and the block has no envelope: either rule.
+   *   header    next line is `Subject:`, so only the re-join rule catches it.
+   *   envelope  the block carries real `From:`/`Date:` headers, so only the
+   *             next-line rule catches it.
+   *   escaped   mboxrd's `>From `, i.e. a well-formed file. The control.
+   */
+  type Shape = "prose" | "header" | "envelope" | "escaped";
+
+  const quotedBlock = (shape: Shape) => {
+    const envelope =
+      shape === "escaped"
+        ? ">From talent@nimbus.test Thu Sep  3 08:00:00 2026"
+        : "From talent@nimbus.test Thu Sep  3 08:00:00 2026";
+    const quoted = "here is the note they sent, quoted verbatim";
+    const middle =
+      shape === "header"
+        ? [`Subject: ${PHANTOM}`]
+        : shape === "envelope"
+          ? [
+              quoted,
+              "From: Nimbus Talent <talent@nimbus.test>",
+              "Date: Thu, 03 Sep 2026 08:00:00 +0000",
+              `Subject: ${PHANTOM}`,
+            ]
+          : [quoted, `Subject: ${PHANTOM}`];
+
+    return [envelope, ...middle, "", "The quoted note runs on for another line."].join("\n");
+  };
+
+  const fiveForwards = (shape: Shape) =>
+    Array.from(
+      { length: 5 },
+      (_, i) =>
+        `From ${i + 1}@import.test Thu Sep  3 09:00:00 2026\n` +
+        `From: Nimbus Talent <talent@nimbus.test>\n` +
+        `Subject: Fwd: your application ${i + 1}\n` +
+        `Date: Thu, 03 Sep 2026 09:0${i}:00 +0000\n` +
+        `\n` +
+        `Passing this along, see the quoted note below.\n` +
+        `\n` +
+        `${quotedBlock(shape)}\n`,
+    ).join("\n");
+
+  async function dropMbox(page: Page, shape: Shape) {
+    await page.goto("/import");
+    await page.getByTestId("import-file").setInputFiles({
+      name: "forwarded.mbox",
+      mimeType: "application/mbox",
+      buffer: Buffer.from(fiveForwards(shape), "utf-8"),
+    });
+  }
+
+  for (const shape of ["prose", "header", "envelope"] as const) {
+    test(`five messages quoting a header (${shape}) are five rows, and the file is called malformed`, async ({
+      page,
+    }) => {
+      await dropMbox(page, shape);
+
+      await expect(page.getByTestId("import-row")).toHaveCount(5);
+      await expect(page.getByText(/messages found/)).toContainText("5 messages found");
+      await expect(
+        page.getByTestId("import-results").getByText(PHANTOM),
+        "a quoted line was rendered as a message of its own",
+      ).toHaveCount(0);
+      await expect(
+        page.getByTestId("import-malformed"),
+        "the page has to say the split was guessed rather than state a count as fact",
+      ).toBeVisible();
+      await expect(page.getByTestId("import-malformed")).toContainText(/mbox/i);
+    });
+  }
+
+  /**
+   * THE CONTROL THAT FAILS A BAD GUARD. The same five messages with mboxrd's
+   * `>From ` escape are a WELL-FORMED file: five rows, and no warning at all.
+   * A guard that fires on both files measures nothing.
+   */
+  test("the same file with >From escaping is five rows and raises no warning", async ({ page }) => {
+    await dropMbox(page, "escaped");
+
+    await expect(page.getByTestId("import-row")).toHaveCount(5);
+    await expect(page.getByText(/messages found/)).toContainText("5 messages found");
+    await expect(
+      page.getByTestId("import-malformed"),
+      "a correctly escaped export must not be called malformed",
+    ).toHaveCount(0);
+  });
+});

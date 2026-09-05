@@ -26,6 +26,17 @@
  */
 
 export interface ParsedMessage {
+  /**
+   * Identity of the MESSAGE, derived from its content — never from where it
+   * sat in the file. See `contentId`.
+   *
+   * IT IS THE REACT KEY THE ROW LIST USES (`ImportMail.tsx`), which is why a
+   * positional value here is a defect rather than a cosmetic choice: with
+   * `m${i}` as the id, importing a second file handed React the same keys for
+   * different mail, so it kept the same `ImportRow` instances mounted and the
+   * second file inherited the first file's expanded rows (#426). Unique within
+   * one `ParseResult` — `parseMailFile` suffixes any repeat.
+   */
   id: string;
   subject: string;
   senderName: string | null;
@@ -59,6 +70,21 @@ export interface ParseResult {
    * because "the first 393" describes a prefix and this is not one.
    */
   unreadable: number;
+  /**
+   * A sentence for the visitor when the file's own structure could not be read
+   * unambiguously, or null when it could. Only the mbox path can set it —
+   * splitting is the only place this parser has to guess.
+   *
+   * IT IS NOT AN ERROR AND IT IS NOT A DROP. Every line of the file is still
+   * inside one of `messages`; what this says is that the BOUNDARY between two
+   * of them was decided rather than read. See `splitMbox`: an mbox whose
+   * bodies quote a `From ` line without mboxrd's `>From ` escape used to be
+   * split into ten messages, five of them manufactured from body text and
+   * rendered beside the real ones with an invented subject, `(unknown sender)`
+   * and the same confidence chrome (#426). A parser that cannot tell a
+   * separator from a body line should say so, not state a count as fact.
+   */
+  malformed: string | null;
 }
 
 /** Keep the tab responsive: a Takeout mbox can hold tens of thousands of mails. */
@@ -692,8 +718,89 @@ function collapse(s: string): string {
   return s.replace(/\s+/g, " ").trim();
 }
 
-/** Parse a single raw RFC-822 message into the fields the classifier needs. */
-export function parseRfc822(raw: string, id: string): ParsedMessage | null {
+// ---------------------------------------------------------------------------
+// Message identity
+// ---------------------------------------------------------------------------
+
+/**
+ * How much of a message is hashed for its id.
+ *
+ * The hash is a linear walk, so this is a bound on work, not on correctness:
+ * two messages agreeing for 8,000 characters and differing after are told
+ * apart by the position salt below. 8,000 is comfortably past any real header
+ * block — RFC 5322 caps a header LINE at 998 octets — so in practice it covers
+ * every header plus the opening of the body.
+ */
+const MAX_ID_HASH_CHARS = 8000;
+
+/**
+ * Longest `Message-ID:` adopted verbatim; anything longer is hashed instead.
+ *
+ * `/import` is public and unauthenticated, so every byte in that header came
+ * from a stranger and a multi-megabyte value would otherwise become a string
+ * this parser carries on every row. RFC 5322 gives a message-id no length of
+ * its own beyond the 998-octet line cap; 256 is generous against every real
+ * one and still bounded. `MAX_FROM_CHARS` is the same reasoning, one header
+ * over.
+ */
+const MAX_MESSAGE_ID_CHARS = 256;
+
+/**
+ * 53-bit content hash (cyrb53). Pure, dependency-free and synchronous, which
+ * `crypto.subtle` is not — this runs on the main thread of a page under a
+ * strict CSP with no network access, and it decides a React key, not a
+ * security property.
+ */
+function hash53(text: string): string {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
+/**
+ * The id of a message, from what it SAYS rather than from where it sat.
+ *
+ * WHY THIS EXISTS. `parseMailFile` minted `const id = `m${i}``, so the id was
+ * the ordinal and `key={item.id}` in `ImportMail` was keying by position under
+ * another name. Importing a second file then handed React identical keys for
+ * different mail: the `ImportRow` instances were reused rather than remounted
+ * and rows 1 and 3 stayed expanded over somebody else's messages (#426). The
+ * issue had already been "fixed" by keying on the id, which is why the
+ * remedy has to be checked at THIS end.
+ *
+ * `Message-ID:` FIRST, because that is the identifier mail already has: RFC
+ * 5322 §3.6.4 makes it globally unique, and it is what makes the id survive
+ * the same message arriving through a different file or a different export.
+ *
+ * OTHERWISE A HASH OF THE MESSAGE, PLUS A POSITION SALT. The hash is what
+ * makes two different messages different — a scheme that stayed positional
+ * cannot pass a cross-file collision test. The salt is only a tie-break for
+ * BYTE-IDENTICAL messages in one file, which a mailbox export really does
+ * contain, and it is not what carries the identity: two files whose messages
+ * differ produce different hashes at every position.
+ */
+function contentId(messageIdHeader: string | undefined, content: string, salt: string): string {
+  const mid = collapse(messageIdHeader ?? "");
+  if (mid) return `mid:${mid.length > MAX_MESSAGE_ID_CHARS ? hash53(mid) : mid}`;
+  return `h:${hash53(content.slice(0, MAX_ID_HASH_CHARS))}:${salt}`;
+}
+
+/**
+ * Parse a single raw RFC-822 message into the fields the classifier needs.
+ *
+ * @param salt - where this message sat in its file, used ONLY to tell
+ *   byte-identical messages apart (see `contentId`). It is deliberately not
+ *   the id: this parameter used to BE the id, and passing the ordinal in is
+ *   how the id became positional in the first place.
+ */
+export function parseRfc822(raw: string, salt: string): ParsedMessage | null {
   const { headerBlock, body } = splitHeadersAndBody(raw);
   const headers = parseHeaders(headerBlock);
 
@@ -708,7 +815,7 @@ export function parseRfc822(raw: string, id: string): ParsedMessage | null {
   const collapsed = collapse(fullText);
 
   return {
-    id,
+    id: contentId(headers.get("message-id"), raw, salt),
     subject: subject || "(no subject)",
     senderName: name,
     senderEmail: email || "(unknown sender)",
@@ -718,40 +825,195 @@ export function parseRfc822(raw: string, id: string): ParsedMessage | null {
   };
 }
 
+/** One message as it was found in an mbox. */
+export interface MboxChunk {
+  /** Raw RFC-822 text of the message, mboxrd `>From ` escapes undone. */
+  raw: string;
+  /**
+   * Where the message starts in the file, counted with ONE character per line
+   * ending — the split that produces these does not keep the terminators, so
+   * on a CRLF export this is not a byte count. It is strictly increasing and
+   * unique per message, which is the whole of what `contentId` asks of it.
+   */
+  offset: number;
+}
+
+export interface MboxSplit {
+  chunks: MboxChunk[];
+  /** See `ParseResult.malformed`, which this is the only source of. */
+  malformed: string | null;
+}
+
+/**
+ * What the line after a separator has to look like: a header field name and
+ * its colon (RFC 5322 §3.6 field names are printable ASCII without a colon;
+ * this is the narrower shape every real header uses).
+ */
+const HEADER_LINE = /^[A-Za-z][A-Za-z0-9-]*:/;
+
+/**
+ * How far into a block this looks for an envelope header.
+ *
+ * A bound is needed because a block with no blank line in it is ALL header
+ * block, and this runs on every chunk of the file including the ones past
+ * DEFAULT_MESSAGE_CAP that will never be parsed. Real mail puts `From:` and
+ * `Date:` in the first few lines; RFC 5322 caps a header line at 998 octets,
+ * so 8,000 is several headers deep and still constant work per chunk.
+ */
+const MAX_ENVELOPE_SCAN_CHARS = 8000;
+
+/**
+ * True when a block carries the envelope a message has and body text does not.
+ *
+ * A SCAN OF THE HEADER BLOCK, NOT A PARSE OF IT. This was
+ * `parseHeaders(splitHeadersAndBody(raw).headerBlock)` and `.has(…)`, which is
+ * the same answer and builds a Map plus a substring per header line — for
+ * EVERY chunk in the file, because the re-join has to happen before
+ * `totalFound` is counted. Measured on 100,000 minimal messages (19.9 MB),
+ * min of three, against the same file before this change:
+ *
+ *     split only, before this change    62 ms
+ *     parseHeaders per chunk           119 ms   (1.82x)
+ *     this scan                         77 ms   (1.23x)
+ *
+ * The cap does not help here — it is applied after the split — and a Takeout
+ * export runs to 786,800 messages, which is 7.9x this fixture. So the two
+ * implementations are about 0.3 s of blocked tab time apart on the largest
+ * input this page accepts, and what is left over the old split is about 0.1 s.
+ *
+ * The search is bounded to the header block rather than run over the whole
+ * chunk: a quoted `From:` line in a BODY is exactly the text this predicate
+ * exists to recognise as body, and matching it would leave the phantom row in
+ * place. `^` under `m` sits after the `\n` of a CRLF pair, so this reads a
+ * CRLF export the same way.
+ */
+function carriesAnEnvelope(raw: string): boolean {
+  const blank = raw.search(/\r?\n\r?\n/);
+  const end = blank === -1 ? raw.length : blank;
+  return /^(from|date):/im.test(raw.slice(0, Math.min(end, MAX_ENVELOPE_SCAN_CHARS)));
+}
+
+/** The sentence `ParseResult.malformed` carries. Each clause only when true. */
+function malformedNote(unescaped: number, rejoined: number): string | null {
+  if (unescaped === 0 && rejoined === 0) return null;
+
+  const clauses: string[] = [];
+  if (unescaped > 0) {
+    clauses.push(
+      `${unescaped} line${unescaped === 1 ? "" : "s"} beginning “From ” ` +
+        `${unescaped === 1 ? "sits" : "sit"} inside a message body without the “>From ” escape an mbox export writes`,
+    );
+  }
+  if (rejoined > 0) {
+    clauses.push(
+      `${rejoined} block${rejoined === 1 ? "" : "s"} carried no From: or Date: header, so ` +
+        `${rejoined === 1 ? "it was" : "they were"} read as part of the message above`,
+    );
+  }
+
+  return (
+    "That file doesn’t read as a clean mbox, so the boundary between messages had to be " +
+    `decided rather than read: ${clauses.join(", and ")}. Nothing was dropped — every line is ` +
+    "inside one of the messages below — but a message may be split in the wrong place."
+  );
+}
+
 /**
  * Split an mbox into raw messages. A separator is a line beginning with
  * `From ` that either starts the file or follows a blank line (the standard
  * mbox rule) — this avoids false splits on body lines that merely start with
  * "From ". Body `>From ` escapes (mboxrd) are unescaped.
+ *
+ * ---------------------------------------------------------------------------
+ * AND THAT RULE ALONE INVENTS MESSAGES (#426).
+ * ---------------------------------------------------------------------------
+ *
+ * mboxrd says a body line beginning `From ` is written `>From `, and Google
+ * Takeout does escape correctly, so a real export never reaches this. A
+ * hand-assembled or re-saved one does, and five messages whose bodies quoted a
+ * forwarded header produced ten: `10 messages found` stated as fact, and five
+ * phantoms rendered beside the real rows with an invented subject taken from
+ * the quoted text, sender `(unknown sender)`, and the same confidence chrome.
+ * The row-level claim is the defect — the count is only how you notice.
+ *
+ * TWO TESTS, because one of them is not enough and it is the prescribed one.
+ *
+ *   1. The line AFTER a candidate separator has to look like a header. A real
+ *      separator is always followed by the message's first header line.
+ *
+ *   2. A block carrying neither `From:` nor `Date:` is not a message. Test 1
+ *      passes happily when the quoted text continues `Subject: …`, which IS
+ *      header-shaped — measured, that shape still produced ten rows with test
+ *      1 alone — so this is the one that makes the count true. Both headers
+ *      have to be absent: real mail has at least one, and plenty of fixtures
+ *      here carry `From:` without `Date:`.
+ *
+ * NOTHING IS DROPPED BY EITHER. A rejected separator stays in the body it came
+ * from, and a re-joined block goes back onto the message above it WITH the
+ * `From ` line that split it off. The file is reassembled, not trimmed; what
+ * changes is that the page stops claiming a message where it only had text.
+ * `malformed` says so out loud, and it is null whenever neither test fired —
+ * a guard that also fired on the correctly escaped file would measure nothing.
  */
-export function splitMbox(text: string): string[] {
+export function splitMbox(text: string): MboxSplit {
   const lines = text.split(/\r?\n/);
-  const messages: string[] = [];
-  let current: string[] = [];
-  let prevBlank = true; // start-of-file counts as "after a blank line"
 
-  const push = () => {
-    if (current.length) {
-      const raw = current
-        .map((l) => (l.startsWith(">From ") ? l.slice(1) : l))
-        .join("\n")
-        .trim();
-      if (raw) messages.push(raw);
-    }
-    current = [];
+  const segments: { separator: string | null; lines: string[]; offset: number }[] = [];
+  let current: { separator: string | null; lines: string[]; offset: number } = {
+    separator: null,
+    lines: [],
+    offset: 0,
   };
+  let prevBlank = true; // start-of-file counts as "after a blank line"
+  let offset = 0;
+  let unescaped = 0;
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const startsAt = offset;
+    offset += line.length + 1;
+
     if (prevBlank && /^From /.test(line)) {
-      push();
-      prevBlank = false;
-      continue; // drop the "From " separator line itself
+      if (HEADER_LINE.test(lines[i + 1] ?? "")) {
+        segments.push(current);
+        current = { separator: line, lines: [], offset: startsAt };
+        prevBlank = false;
+        continue; // the "From " separator line itself is not part of the message
+      }
+      // Not a separator. Keep it as the body text it is, and remember that
+      // this file made us decide.
+      unescaped += 1;
     }
-    current.push(line);
+    current.lines.push(line);
     prevBlank = line.trim() === "";
   }
-  push();
-  return messages;
+  segments.push(current);
+
+  const render = (segment: { lines: string[] }) =>
+    segment.lines
+      .map((l) => (l.startsWith(">From ") ? l.slice(1) : l))
+      .join("\n")
+      .trim();
+
+  const chunks: MboxChunk[] = [];
+  let rejoined = 0;
+
+  for (const segment of segments) {
+    const raw = render(segment);
+    // Blank runs between messages, and the empty head of every file that opens
+    // on a separator. Never counted: they are not a decision.
+    if (!raw) continue;
+
+    const previous = chunks[chunks.length - 1];
+    if (previous && !carriesAnEnvelope(raw)) {
+      previous.raw = `${previous.raw}\n\n${segment.separator ?? ""}\n${raw}`;
+      rejoined += 1;
+      continue;
+    }
+    chunks.push({ raw, offset: segment.offset });
+  }
+
+  return { chunks, malformed: malformedNote(unescaped, rejoined) };
 }
 
 // ---------------------------------------------------------------------------
@@ -797,7 +1059,7 @@ function str(v: unknown): string {
  * `undefined`) and already landed in `unreadable`. `null` and `undefined` are
  * the two shapes that threw, and they now behave like the rest.
  */
-function parseJsonMessage(entry: unknown, id: string): ParsedMessage | null {
+function parseJsonMessage(entry: unknown, salt: string): ParsedMessage | null {
   if (typeof entry !== "object" || entry === null) return null;
   const item = entry as LooseJsonMessage;
 
@@ -810,21 +1072,67 @@ function parseJsonMessage(entry: unknown, id: string): ParsedMessage | null {
   const name = str(item.senderName).trim() || parsed.name;
   const email = parsed.email || str(item.sender_email ?? item.senderEmail).toLowerCase();
   const collapsed = collapse(body);
+  const date = str(item.date ?? item.receivedAt);
 
   return {
-    id,
+    // Same rule as the RFC-822 path (see `contentId`), over the fields a JSON
+    // record identifies itself by. There is no `Message-ID` here to prefer:
+    // this format is a hand-assembled batch, and honouring a caller-supplied
+    // id would put identity back in the file's gift.
+    //
+    // `JSON.stringify` rather than a join, so one record cannot be turned
+    // into another by moving a space across a field boundary, and each field
+    // is cut BEFORE it is quoted so a megabyte body is never copied to make
+    // a key.
+    id: contentId(
+      undefined,
+      JSON.stringify([
+        subject.slice(0, MAX_FROM_CHARS),
+        fromField.slice(0, MAX_FROM_CHARS),
+        date.slice(0, MAX_FROM_CHARS),
+        body.slice(0, MAX_ID_HASH_CHARS),
+      ]),
+      salt,
+    ),
     subject: subject || "(no subject)",
     senderName: name || null,
     senderEmail: email || "(unknown sender)",
     body: body.slice(0, MAX_BODY_CHARS),
     snippet: collapsed.slice(0, SNIPPET_CHARS),
-    receivedAt: str(item.date ?? item.receivedAt) || null,
+    receivedAt: date || null,
   };
 }
 
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
+
+/**
+ * One thing to parse, with where it was found. The salt is NOT the id — see
+ * `contentId`; it exists only so two byte-identical messages in one file can
+ * be told apart.
+ */
+interface Candidate {
+  value: unknown;
+  salt: string;
+}
+
+/**
+ * Make an id unique within one result, keeping the first claim on it.
+ *
+ * THE KEYS REACT IS GIVEN HAVE TO BE DISTINCT, and a content-derived id can
+ * legitimately repeat: a Takeout export contains the same message once per
+ * label it carries, with the same `Message-ID:` each time. Duplicate keys put
+ * React back in the state #426 is about — it matches the first of them and the
+ * rows swap their disclosure state around — so the repeat is suffixed rather
+ * than left to collide, and rows for the same message stay separate rows.
+ */
+function distinct(id: string, taken: Set<string>): string {
+  let unique = id;
+  for (let n = 2; taken.has(unique); n++) unique = `${id}~${n}`;
+  taken.add(unique);
+  return unique;
+}
 
 export function parseMailFile(
   filename: string,
@@ -833,7 +1141,8 @@ export function parseMailFile(
 ): ParseResult {
   const format = detectFormat(filename, text);
 
-  let raws: unknown[] | string[] = [];
+  let raws: Candidate[] = [];
+  let malformed: string | null = null;
   if (format === "json") {
     const data = JSON.parse(text) as unknown;
     const arr = Array.isArray(data)
@@ -841,9 +1150,11 @@ export function parseMailFile(
       : Array.isArray((data as { messages?: unknown }).messages)
         ? (data as { messages: unknown[] }).messages
         : [];
-    raws = arr;
+    raws = arr.map((value, i) => ({ value, salt: String(i) }));
   } else if (format === "mbox") {
-    raws = splitMbox(text);
+    const split = splitMbox(text);
+    malformed = split.malformed;
+    raws = split.chunks.map((chunk) => ({ value: chunk.raw, salt: String(chunk.offset) }));
   } else {
     // The one format that is defined as a single message, and the one that had
     // no bound. See MAX_SINGLE_MESSAGE_CHARS — this refuses rather than
@@ -857,19 +1168,21 @@ export function parseMailFile(
           "If it is really a mailbox export, save it with a .mbox extension and drop it again.",
       );
     }
-    raws = [single];
+    raws = [{ value: single, salt: "0" }];
   }
 
   const totalFound = raws.length;
   const capped = raws.slice(0, cap);
 
   const messages: ParsedMessage[] = [];
-  capped.forEach((item, i) => {
-    const id = `m${i}`;
+  const taken = new Set<string>();
+  for (const { value, salt } of capped) {
     const msg =
-      format === "json" ? parseJsonMessage(item, id) : parseRfc822(item as string, id);
-    if (msg) messages.push(msg);
-  });
+      format === "json" ? parseJsonMessage(value, salt) : parseRfc822(value as string, salt);
+    if (!msg) continue;
+    msg.id = distinct(msg.id, taken);
+    messages.push(msg);
+  }
 
   return {
     format,
@@ -877,5 +1190,6 @@ export function parseMailFile(
     totalFound,
     truncated: totalFound > capped.length,
     unreadable: capped.length - messages.length,
+    malformed,
   };
 }
