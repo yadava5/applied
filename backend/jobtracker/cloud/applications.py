@@ -77,12 +77,22 @@ _NO_ROLE = ""
 DUE_FROM_USER = "user"
 DUE_FROM_MAIL = "mail"
 
-# Who set the ROLE. Issue #72: nothing in the Gmail path can ever supply one —
-# ``format=metadata`` means no body is fetched and the ATS acknowledgement
-# subjects that are fetched name the employer ("Thanks for applying to
-# Supabase"), so ``_role_from_subject`` returns None for all three of the
-# owner's real production subjects. ``position`` is therefore permanently "" on
-# every auto-filed row, and the honest fix is to let the user type it.
+# Who set the ROLE.
+#
+# THE ORIGINAL JUSTIFICATION HERE WAS FALSE AND IS CORRECTED (#543). It read
+# that nothing in the Gmail path can ever supply a role because
+# ``format=metadata`` fetches no body and ATS subjects name only the employer.
+# The fetch is ``format="full"`` (``cloud/gmail_client.py:17``, ``:521``,
+# ``:907``) and has been for longer than this comment has been wrong, and the
+# lead- and trailing-segment readers do resolve roles from subjects (#553,
+# #626) at 40 fire / 40 exact / 0 wrong on the corpus. The sibling docstring at
+# ``cloud/gmail_client.py:1121-1128`` already corrected the same claim; this
+# site and its twin in ``database/models.py`` were missed.
+#
+# The column survives the correction because its real reason was never the
+# extraction gap: a title a human typed must not be overwritten by the next
+# sync, and now that the sync can produce a title, that matters more rather
+# than less.
 #
 # NULL means the sync owns the field, which is the state of every row that
 # exists today; ``user`` means a human typed it and the sync must not argue.
