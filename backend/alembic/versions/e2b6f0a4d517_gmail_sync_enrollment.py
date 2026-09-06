@@ -109,13 +109,23 @@ the stub can never be connected as.
 THE GRANT IS THE HIGHEST-RISK LINE HERE
 ---------------------------------------
 
-No revision has created a table since the cutover to ``jobtracker_app``, so
-there is no precedent and no evidence of ``ALTER DEFAULT PRIVILEGES``. A table
-the runtime role has no privilege on makes ``save_gmail_credentials`` raise,
-which the helper turns into ``False``, which fails the OAuth callback — Gmail
-linking would break for every user, not just the cron. Hence an explicit
-``GRANT SELECT, INSERT, DELETE``. No UPDATE: nothing updates this table, and
-withholding it is free.
+A table the runtime role has no privilege on makes ``save_gmail_credentials``
+raise, which the helper turns into ``False``, which fails the OAuth callback —
+Gmail linking would break for every user, not just the cron. Hence an explicit
+``GRANT SELECT, INSERT, DELETE``.
+
+CORRECTED BY #668, AND THE ORIGINAL CLAIM WAS BACKWARDS. This paragraph said
+there was "no precedent and no evidence of ``ALTER DEFAULT PRIVILEGES``", and
+that withholding ``UPDATE`` was therefore free. Read from production on
+2026-08-31 via ``pg_default_acl``: a default ACL **is** set on ``public`` for
+role ``postgres``, and every ``public`` table is owned by ``postgres``, so a
+new table arrives with those grants already in place before this revision's
+``GRANT`` runs. Withholding ``UPDATE`` here does not withhold it — the default
+ACL grants it regardless, and narrowing has no effect unless a revision also
+``REVOKE``s. ``docs/MIGRATIONS.md`` carries the same correction; it is
+repeated here because this file is the one an author copies a new revision
+from, and the correction reached the document and not the source of the
+copy.
 
 DEPLOY
 ------
@@ -187,8 +197,10 @@ CREATE POLICY gmail_sync_enrollment_owner_delete ON gmail_sync_enrollment
     FOR DELETE TO {RUNTIME_ROLE}
     USING (user_id = (SELECT auth.uid()));
 
--- No ALTER DEFAULT PRIVILEGES is known to exist for this role, and a table it
--- cannot write breaks the OAuth callback, not just the cron. No UPDATE.
+-- A table the runtime role cannot write breaks the OAuth callback, not just
+-- the cron. UPDATE is omitted because nothing updates this table -- but see
+-- the docstring: omitting it does NOT withhold it, because a default ACL on
+-- `public` for role `postgres` grants it before this line runs (#668).
 GRANT SELECT, INSERT, DELETE ON gmail_sync_enrollment TO {RUNTIME_ROLE};
 
 -- THE BACKFILL. Runs as DIRECT_URL (BYPASSRLS), the one identity able to read
