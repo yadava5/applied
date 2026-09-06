@@ -185,3 +185,58 @@ def test_the_cap_still_yields_the_window_the_classifier_reads() -> None:
         f"characters, short of the {_MAX_BODY_CHARS} the classifier is given. "
         "The cap is now truncating real mail below the product's own window."
     )
+    assert "Thank you for applying" in text, (
+        "the window is full but it is not the message. Counting characters is "
+        "not the assertion — see the stylesheet test below, where 4,000 "
+        "characters of CSS satisfied a length check."
+    )
+
+
+def test_a_truncated_stylesheet_does_not_reach_the_classifier_as_prose() -> None:
+    """The hazard the cap ITSELF introduced, and the reason a length check is
+    not a correctness check.
+
+    If the cut lands inside a `<style>` block, that block is no longer
+    terminated, `SCRIPT_OR_STYLE` stops matching it, `TAG` strips the opening
+    tag, and the stylesheet survives into the classifier's window as prose.
+    Measured on the payload below before `cap_html` existed:
+    `extract_body_text` returned **4,000 characters, every one of them CSS**,
+    and the rejection sentence was gone — while
+    `test_the_cap_still_yields_the_window_the_classifier_reads` PASSED, because
+    4,000 characters is 4,000 characters.
+
+    `cap_html` cuts back to the opening tag instead. The body then extracts to
+    nothing, which is the safe answer and not a lossy one: production reads
+    `bodies.get(id) or msg.snippet`, so the message is classified from Gmail's
+    own snippet of the VISIBLE text.
+
+    MUTATION: replace `cap_html(html)` with `html[:MAX_HTML_CHARS]` in any
+    stripper -> that row reds with CSS in the output.
+    """
+
+    import base64
+
+    from jobtracker.cloud.gmail_client import extract_body_text
+
+    css = "@media only screen and (max-width:620px){.mcnTextContent{padding:9px 18px}} " * 700
+    doc = (
+        "<html><head><style>" + css + "</style></head><body>"
+        "<p>Hi Ayush,</p><p>Unfortunately, we have decided not to move forward "
+        "with your application at this time.</p></body></html>"
+    )
+    assert doc.index("</style>") > MAX_HTML_CHARS, (
+        "the stylesheet no longer straddles the cap, so this proves nothing"
+    )
+
+    for where, strip in STRIPPERS.items():
+        assert "@media" not in strip(doc), (
+            f"{where} let a truncated stylesheet through as prose"
+        )
+
+    payload = {
+        "mimeType": "text/html",
+        "body": {"data": base64.urlsafe_b64encode(doc.encode()).decode()},
+    }
+    assert "@media" not in extract_body_text(payload), (
+        "the production entry hands the classifier CSS"
+    )

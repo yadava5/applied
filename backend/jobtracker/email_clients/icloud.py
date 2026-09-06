@@ -34,10 +34,10 @@ from aioimaplib import IMAP4_SSL
 
 from jobtracker.credentials import ICloudCredentials, get_icloud_credentials
 from jobtracker.email_clients.html_text import (
-    MAX_HTML_CHARS,
     SCRIPT_OR_STYLE,
     TAG,
     WHITESPACE,
+    cap_html,
 )
 
 logger = logging.getLogger(__name__)
@@ -552,8 +552,9 @@ class ICloudClient:
     def _strip_html(self, html: str) -> str:
         """Convert HTML to plain text for snippet/search fallback."""
         # Script/style bodies go first, or they survive tag stripping as text.
-        # A time bound, not a correctness one. See ``MAX_HTML_CHARS``.
-        html = html[:MAX_HTML_CHARS]
+        # A time bound. See ``MAX_HTML_CHARS``; ``cap_html`` also refuses to
+        # leave a stylesheet open, which would reach the reader as prose.
+        html = cap_html(html)
         html = SCRIPT_OR_STYLE.sub(" ", html)
         html = TAG.sub(" ", html)
         html = WHITESPACE.sub(" ", html)

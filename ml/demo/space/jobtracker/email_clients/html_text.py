@@ -63,23 +63,58 @@ import re
 #: budget the module's own comments put at 60 s. One message is enough.
 #:
 #: 32 KB, AND THE CORPUS IS THE WRONG INSTRUMENT FOR CHOOSING IT. The largest
-#: ``text/html`` part in the mail corpus is 682 characters, which would argue
-#: for almost any cap — and it argues wrongly, because the corpus contains no
-#: realistic ESP template. Real marketing mail is table markup with an inline
-#: style on every cell, and its markup-to-text ratio is roughly **32:1**.
+#: ``text/html`` part in the mail corpus is 682 characters — 2% of this — so it
+#: would bless any cap at all, because it contains no realistic ESP template.
 #:
-#: Measured on a table-heavy template of that shape, asking the only question
-#: that matters — does the cap still yield the 4,000 characters the classifier
-#: is given?
+#: THE NUMBER THAT DECIDES THIS IS A RATIO, and it has to be measured rather
+#: than asserted: an earlier draft of this note said "roughly 32:1" from
+#: impression, and a genuinely 32:1 template at a 32 KB cap would yield 1,024
+#: characters — a quarter of the window — so the claim refuted the number it was
+#: printed next to. Measured on a table-heavy template with an inline style on
+#: every cell, which is the shape real marketing mail has:
 #:
-#:     cap 16 KB  ->  3,792 characters of text   <- SHORT of the window
-#:     cap 32 KB  ->  7,416
-#:     cap 64 KB  -> 14,670
+#:     119,641 characters of markup  ->  26,797 of text   =  4.46 : 1
+#:
+#: Break-even for a full 4,000-character window at 32 KB is **8.19:1**, so that
+#: template has 1.8x of headroom. Asking the question the cap is actually about:
+#:
+#:     cap 16 KB  ->  3,833 characters of text   <- SHORT of the window
+#:     cap 32 KB  ->  7,457
+#:     cap 64 KB  -> 14,704
 #:
 #: So 16 KB would have silently truncated real mail below the window the
-#: product reads, and the corpus could not have said so. 32 KB clears it with
-#: 1.8x of margin and costs 0.30 s on the adversarial shape.
+#: product reads, and the corpus could not have said so. A template denser than
+#: 8.19:1 still loses text, and that is a disclosed limit rather than a solved
+#: one; the cap trades it for a bound on a 16-second worst case.
 MAX_HTML_CHARS = 32 * 1024
+
+#: A raw-text element left open by the truncation above.
+#:
+#: TRUNCATION CAN REPLACE THE MESSAGE WITH ITS OWN STYLESHEET, which is worse
+#: than the timeout the cap exists to prevent and was found only by asking what
+#: the cap does to CONTENT. If the cut lands inside a `<style>` block,
+#: `SCRIPT_OR_STYLE` no longer matches — its end tag is past the cut — so `TAG`
+#: strips the `<style>` opening and the stylesheet survives into the
+#: classifier's window as prose. Measured on a 52 KB ESP template whose head
+#: block straddles the cap: `extract_body_text` returned 4,000 characters, all
+#: of them CSS, and the rejection sentence was gone.
+#:
+#: Cutting back to the opening tag is the fix, and it is the safe direction:
+#: text before an unterminated stylesheet is real message text; text after it,
+#: at this point, is unreachable anyway.
+RAW_TEXT_OPEN = re.compile(r"<(script|style)\b", re.IGNORECASE)
+RAW_TEXT_CLOSE = re.compile(r"</(script|style)\b", re.IGNORECASE)
+
+
+def cap_html(html: str) -> str:
+    """Truncate to :data:`MAX_HTML_CHARS` without leaving a stylesheet open."""
+
+    html = html[:MAX_HTML_CHARS]
+    opens = list(RAW_TEXT_OPEN.finditer(html))
+    if opens and not RAW_TEXT_CLOSE.search(html, opens[-1].end()):
+        return html[: opens[-1].start()]
+    return html
+
 
 # ``<script foo>…</script >``, ``<style>…</style/>``, either case, spanning
 # newlines. ``\b`` after the name so ``<scripture>`` is not a script element;

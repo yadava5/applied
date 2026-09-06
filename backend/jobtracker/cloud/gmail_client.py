@@ -576,6 +576,23 @@ _SCRIPT_OR_STYLE = re.compile(
 # ``tests/test_html_stripper_is_time_bounded.py``.
 _MAX_HTML_CHARS = 32 * 1024
 
+# See ``email_clients/html_text.py`` for why truncation alone is not enough: a
+# cut landing inside a `<style>` block leaves it unterminated, `_SCRIPT_OR_STYLE`
+# stops matching, and the stylesheet reaches the classifier as prose.
+_RAW_TEXT_OPEN = re.compile(r"<(script|style)\b", re.IGNORECASE)
+_RAW_TEXT_CLOSE = re.compile(r"</(script|style)\b", re.IGNORECASE)
+
+
+def _cap_html(html: str) -> str:
+    """Truncate to ``_MAX_HTML_CHARS`` without leaving a stylesheet open."""
+
+    html = html[:_MAX_HTML_CHARS]
+    opens = list(_RAW_TEXT_OPEN.finditer(html))
+    if opens and not _RAW_TEXT_CLOSE.search(html, opens[-1].end()):
+        return html[: opens[-1].start()]
+    return html
+
+
 _TAG = re.compile(r"<[^>]+>")
 
 # BLOCK-LEVEL MARKUP IS THE ONLY LINE STRUCTURE HTML MAIL HAS (#430).
@@ -703,7 +720,7 @@ def _html_to_text(html: str) -> str:
     that through ``normalise_body_text``.
     """
 
-    html = html[:_MAX_HTML_CHARS]
+    html = _cap_html(html)
     html = _SCRIPT_OR_STYLE.sub(" ", html)
     html = _BLOCK_LEVEL.sub("\n", html)
     return _HORIZONTAL_WHITESPACE.sub(" ", _TAG.sub(" ", html)).strip()
