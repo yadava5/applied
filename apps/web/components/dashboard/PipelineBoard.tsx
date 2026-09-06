@@ -812,14 +812,39 @@ export function PipelineBoard({
     const after = next.get(id);
     if (before === undefined || after === undefined || before === after) return;
     if (document.activeElement !== document.body) return;
-    const control = document.getElementById(`status-${id}`);
-    if (control === null) return;
     // Consumed, so one correction restores focus once. Not cleared on
     // `focusout`: the unmount ITSELF blurs the select, and clearing there
     // would erase the one thing this needs to know at exactly the moment it
     // needs to know it.
+    const control = document.getElementById(`status-${id}`);
+    if (control !== null) {
+      focusedRowId.current = null;
+      control.focus({ preventScroll: true });
+      return;
+    }
+    // THE ROW LANDED IN A COLLAPSED SET, which #425 recorded as not repaired
+    // and left as its own line item. There is no `status-<id>` to return to
+    // because the member rows of a collapsed set are not rendered at all, so
+    // the reader was dropped at <body> and every subsequent Tab restarted
+    // from the top of the document — the same defect the branch above fixes,
+    // reached by a different route.
+    //
+    // The chosen place is the SET HEADER that now holds the row: it is where
+    // the row went, it is one keystroke from opening it, and it is a control
+    // that exists in every state this branch can be reached in. Focusing the
+    // stage heading instead would be further from the row than the reader
+    // was before the correction.
+    const moved = applications.find((app) => app.id === id);
+    if (moved === undefined) return;
+    // Same key the set is rendered under — `groupByEmployer` groups on
+    // `row.company` verbatim, so this needs no normalisation to agree.
+    const key = `${after}:${moved.company}`;
+    const header = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-set-toggle]"),
+    ).find((element) => element.dataset.setToggle === key);
+    if (header === undefined) return;
     focusedRowId.current = null;
-    control.focus({ preventScroll: true });
+    header.focus({ preventScroll: true });
   });
 
   const locked = variant === "locked";
@@ -1387,6 +1412,7 @@ export function PipelineBoard({
                               today={today}
                               open={openSets[`${column.key}:${entry.company}`] === true}
                               onToggle={() => toggleSet(`${column.key}:${entry.company}`)}
+                              setKey={`${column.key}:${entry.company}`}
                               chip={crossStageChip(entry.company, column.key, columns)}
                               onFilterCompany={setCompanyFilter}
                             >
