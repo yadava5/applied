@@ -277,3 +277,48 @@ Still missing, and worth adding before any retrain is automated:
   records counts by source, not row identities, so a bad retrain cannot be
   traced to the examples that caused it. Row identities are user mail; whatever
   is recorded has to be an identifier, not the text.
+
+## The per-layer floor, considered and deferred
+
+#841 asked whether the answer census should itself be gated: if SetFit answers
+18 of 96 on a healthy tree and 2 on a degraded one, a floor on that count would
+fail the run on its **cause** rather than on a downstream label F1. The question
+matters because it is the difference between "narrow the pattern" and "go and
+look at the checkpoint", and the FAIL block now carries the census precisely so
+a reader can tell those apart by eye.
+
+Two versions of the floor were on the table, and they are not the same
+proposal.
+
+**An absolute floor is rejected.** "SetFit must answer at least N of 96" fixes a
+number that is a property of a rotating, per-machine checkpoint and of the
+evaluation set — neither of which the policy controls. Checkpoints rotate after
+three; the models directory is per-machine and ships in no repository. A
+constant chosen from one checkpoint would red a run for a reason nobody chose,
+on a gate whose whole argument (`learning-gate.yml`'s header) is that a build
+people mute is worse than no build.
+
+**A baseline-relative floor is deferred, not rejected.** "Fail when the census
+falls below k times the census the committed baseline recorded" fixes nothing:
+the healthy count is chosen at `--update-baseline` time, which this document
+already defines as a promotion decision, and the comparison is only meaningful
+where the baseline carries a `layers` key — which is exactly one file,
+`baseline_cascade_v3.json`, and exactly one gate. So the objection to the
+absolute version does not reach it.
+
+It is deferred on evidence, not on principle. Choosing `k` needs the natural
+run-to-run variation of the census, and that has never been measured: the
+cascade has been recorded twice, at `setfit=20` (committed) and `setfit=17`/`18`
+(#446, #811), and three points spanning two code revisions cannot separate
+"the model degraded" from "a rules pattern moved a case". Setting `k` from them
+would be a threshold read off the same three numbers it is meant to judge.
+
+**What would settle it:** several cascade runs on one checkpoint and one code
+revision, on a stack that satisfies `backend/requirements.txt` — which no
+machine here currently has (#698). If the census is stable across those, `k`
+can be tight and the floor is worth having; if it moves, the census is a
+diagnostic and not a gate, and this section becomes a rejection.
+
+Until then the census is **reported** beside every FAIL verdict
+(`evaluate_classifier.fail_diagnosis`) and gated by nothing. A reader gets the
+discriminator; no run reds on a number nobody chose.
