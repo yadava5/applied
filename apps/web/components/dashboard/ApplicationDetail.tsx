@@ -277,6 +277,7 @@ export function ApplicationDetail({
   position = null,
   onTraverse,
   transport = liveBoardTransport,
+  onStageChanged,
   focusOnOpen = true,
   focusScrollOnOpen = true,
 }: {
@@ -301,6 +302,9 @@ export function ApplicationDetail({
   onTraverse?: (delta: -1 | 1) => void;
   /** How reads/mutations reach data — the live proxy by default, fixtures on /demo. */
   transport?: BoardTransport;
+  /** Told the stage the open application just moved to, so the board can
+   *  reveal the employer set it may have folded into (#772). */
+  onStageChanged?: (status: string, company: string) => void;
   /**
    * Whether opening the docked pane moves focus into it. True for every open
    * a person performed — the standing contract, so the traversal keys answer
@@ -532,6 +536,15 @@ export function ApplicationDetail({
       setStageError(statusChangeFailure(next, active.status, result.detail));
       return;
     }
+    // #772: the board is about to regroup this row, and a card landing where
+    // its employer already has rows folds into a collapsed set.
+    //
+    // NO TEST DRIVES THIS ARM, stated rather than implied. `demo.spec.ts`
+    // gates the drop path and the row-select path, and each reds on its own
+    // mutation; this third door shares their callback and their reveal, so it
+    // is covered by construction and not by execution. Worth a spec of its own
+    // when the pane's stage control next gets one.
+    onStageChanged?.(result.status ?? next, active.company);
     router.refresh();
   }
 

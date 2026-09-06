@@ -4,6 +4,7 @@ import { Search } from "lucide-react";
 import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { useRouter } from "next/navigation";
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -613,6 +614,45 @@ export function PipelineBoard({
   const toggleSet = (key: string) => setOpenSets((s) => ({ ...s, [key]: !s[key] }));
 
   /**
+   * A STAGE CHANGE REVEALS WHERE THE CARD LANDED (#772).
+   *
+   * `EmployerSetRow` renders its members only while open, so a card arriving at
+   * a stage where its employer already has rows folds into that set and leaves
+   * the DOM: no open button, not draggable, no select. All three ways to move
+   * it again, gone at the moment the reader was moving it — and it recovers on
+   * expanding the group with nothing on screen saying so.
+   *
+   * ONE RULE, THREE DOORS. `moveTo` is the DROP path and the only caller of
+   * itself; the row's `<select>` and the detail pane call
+   * `transport.changeStatus` directly and never enter it. Fixing the drop
+   * alone would close the instance the issue reports and leave the class open
+   * behind two other controls — so this is a callback all three share rather
+   * than a line inside `moveTo`.
+   *
+   * A CALLBACK RATHER THAN A WRAPPED TRANSPORT, deliberately. Wrapping
+   * `transport` would change its identity, and `transport` is a dependency of
+   * `StageSelect`'s memo — the bail-out that stops React 19 re-asserting a
+   * controlled select's value over a choice in flight (see
+   * `playwright.config.ts`, which records that no test in this suite can
+   * observe that race). `useCallback` with no deps is stable for the life of
+   * the mount, so nothing downstream re-renders that did not before.
+   *
+   * `stageOf` rather than the raw status, because the caller may hand back a
+   * finer word than a stage key — `withdrawn` and `ghosted` both live under
+   * `closed`, and the set keys are stage-scoped.
+   *
+   * A key for a set that never forms is inert, so this asks no question about
+   * whether the destination will fold. `openSets` only ever grows within a
+   * mount, and it is not reverted when the write fails: the destination set
+   * stays open showing that employer's other rows while the card does not
+   * arrive. Cosmetic, chosen rather than overlooked — reverting it would need
+   * "was it open before", which is exactly the second opinion this avoids.
+   */
+  const revealStage = useCallback((status: string, company: string) => {
+    setOpenSets((s) => ({ ...s, [`${stageOf(status)}:${company}`]: true }));
+  }, []);
+
+  /**
    * The chip is suppressed for the company the board is already filtered to —
    * "N more at Amazon" while looking at exactly Amazon's set was the bug this
    * argument exists to keep fixed.
@@ -671,25 +711,10 @@ export function PipelineBoard({
     const target: string = stageKey;
     setMoveError(null);
     setPendingMoves((m) => ({ ...m, [appId]: target }));
-    /* A MOVE MUST NOT STRAND THE CARD IT MOVED (#772). If the destination
-       stage already holds rows for this employer, the arriving card folds into
-       that set — and a collapsed set member has no open button, is not
-       draggable and has no select, so the card loses all three ways to move
-       again, at the exact moment the reader was moving it. It recovers on
-       expanding the group and nothing on screen says so.
-
-       Opening the destination set is the whole fix, and it is the same
-       mechanism `traverseDetail` already uses to keep the detail pane's "you
-       are here" mark off a row that is not on screen.
-
-       Unconditional, and optimistic. Unconditional because a key for a set
-       that never forms is inert — cheaper than asking "will this fold?" from
-       here, which would mean re-deriving `groupByEmployer`'s answer against
-       rows that have not moved yet and getting a second opinion about it.
-       Optimistic because the board hops on `pendingMoves` before the write
-       returns, so waiting for the response would show a folded, unreachable
-       card for the width of the request. */
-    setOpenSets((s) => ({ ...s, [`${stageKey}:${app.company}`]: true }));
+    /* Optimistic, and before the await: the board hops on `pendingMoves`
+       before the write returns, so revealing afterwards would show a folded,
+       unreachable card for the width of the request. See `revealStage`. */
+    revealStage(target, app.company);
     const result = await transport.changeStatus(appId, target);
     if (!result.ok) {
       setPendingMoves((m) => {
@@ -974,6 +999,7 @@ export function PipelineBoard({
             columnLabel={column.label}
             today={today}
             transport={transport}
+            onStageChanged={revealStage}
             onOpenDetail={openDetail}
             folded={detailPaneOpen}
             detailOpen={detailApp !== null && detailApp.id === app.id}
@@ -1034,11 +1060,30 @@ export function PipelineBoard({
              `relatedTarget` is null when the pointer leaves the window
              entirely, which is a real leave and must clear.
 
-             The functional `setDropStage` — `dragenter` on the NEXT stage
-             fires before `dragleave` on this one, so a bare `setDropStage(null)`
-             would erase a highlight its successor had already set and leave the
-             board dark over a valid target. Clearing only when the stage is
-             still ours makes the order irrelevant. */
+             The functional `setDropStage` — a bare `setDropStage(null)` erases
+             whatever the CURRENT highlight is, including one a later stage has
+             already claimed. Clearing only when the stage is still ours makes
+             the arrival order irrelevant.
+
+             AND THE ORDER IS WORTH STATING PRECISELY, because the obvious
+             version of this argument is wrong. WHATWG fires, per tick,
+             `dragenter(new)` then `dragleave(old)` then `dragover(new)` — and
+             it is `dragover`, not `dragenter`, that sets the highlight here.
+             So in the spec's own order `dropStage` is still the old stage when
+             its leave arrives and this guard's protective branch does not
+             engage; what it protects against is a leave that arrives AFTER the
+             new stage's first `dragover`, which is what a fast pointer and a
+             re-entrant handler produce. Written as a guard rather than an
+             ordering assumption precisely because the order is the browser's
+             to choose.
+
+             UNMEASURED, and it cannot be measured here: `relatedTarget` is
+             reported null during native drags in some engines, in which case
+             `next instanceof Node` is false and this clears — degrading to the
+             strobe the guard exists to prevent, rather than to the stuck
+             highlight that shipped before it. Every project in
+             `playwright.config.ts` is Chromium, so no gate in this repo can
+             see that path. */
           onDragLeave:
             draggingId !== null
               ? (event: React.DragEvent) => {
@@ -1522,6 +1567,7 @@ export function PipelineBoard({
             }
             onTraverse={traverseDetail}
             transport={transport}
+            onStageChanged={revealStage}
             focusOnOpen={detailUserOpened}
             focusScrollOnOpen={focusScrollOnOpen}
           />

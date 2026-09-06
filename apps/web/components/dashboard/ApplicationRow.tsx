@@ -291,6 +291,7 @@ export function ApplicationRow({
   detailOpen = false,
   revealOnOpen = true,
   transport = liveBoardTransport,
+  onStageChanged,
 }: {
   app: Application;
   /** The heading of the stage group this row is rendered in (see `board.ts`). */
@@ -345,6 +346,10 @@ export function ApplicationRow({
   revealOnOpen?: boolean;
   /** How mutations reach data — the live proxy by default, fixtures on /demo. */
   transport?: BoardTransport;
+  /** Told the stage this row just moved to, so the board can reveal the
+   *  employer set it may have folded into (#772). Stable by construction on
+   *  the board side; see `PipelineBoard`'s `revealStage`. */
+  onStageChanged?: (status: string, company: string) => void;
 }) {
   const router = useRouter();
   const confirmId = `confirm-delete-${useId()}`;
@@ -430,6 +435,11 @@ export function ApplicationRow({
       if (result.status && result.status !== next) {
         setOptimistic({ from: app.status, to: result.status });
       }
+      // The stage the row actually landed on — `result.status` when the server
+      // normalised the word, otherwise what was asked for. #772: this row is
+      // about to regroup, and if its employer already holds rows in that stage
+      // it folds into a collapsed set and disappears mid-act.
+      onStageChanged?.(result.status ?? next, app.company);
       // Success is otherwise silent — on the list view the row stays put and
       // only the select's face changes. The key is deliberately target-free
       // (#511): a triage burst across rows merges into ONE toast reading
@@ -441,7 +451,7 @@ export function ApplicationRow({
       });
       router.refresh();
     },
-    [app.company, app.id, app.status, optimisticTo, router, transport],
+    [app.company, app.id, app.status, onStageChanged, optimisticTo, router, transport],
   );
 
   const commitRemoval = useCallback(async () => {
