@@ -60,9 +60,26 @@ claims to fix them.
   AND is_reviewed = false``
 
 ``GET /applications/review`` and the ``needs_review`` tile on
-``GET /applications/summary`` share all four predicates. The queue was reading
-the global ``received_at`` index and discarding 3,231 rows to find 100
-(101 buffers); with this index it is 36 buffers and no filter at all.
+``GET /applications/summary`` shared all four predicates WHEN THIS WAS WRITTEN.
+The queue was reading the global ``received_at`` index and discarding 3,231
+rows to find 100 (101 buffers); with this index it was 36 buffers and no
+filter at all.
+
+**NEITHER OF THEM DOES ANY MORE, AND NOTHING ELSE DOES EITHER (#826, DEC-007).**
+Measured on a 200k-row corpus with every reader checked: the queue moved to a
+``NOT EXISTS`` anti-join in #587/#597, the tile has no ``classified_as``
+predicate at all, ``_reset_review_queue`` omits ``classified_as``, and
+``linker.py``'s category list excludes ``NEEDS_REVIEW``. A partial index is
+usable only while its predicate is implied by the query's, so this one is dead
+coverage maintained on every write.
+
+It is kept rather than dropped, and DEC-007 in ``docs/DECISIONS.md`` records
+why: the cost is 856 kB at 200k rows and invisible at production's scale,
+where dropping it means executing a revision against the production database
+for a saving nobody can measure — and the only remaining readers of the index
+are the two ``*_THE_INDEX_WAS_CUT_FOR`` literals in
+``tests/test_read_path_indexes_postgres.py``, which are the sole surviving
+evidence of what it was for.
 
 **The ``INCLUDE`` is load-bearing.** Without it the summary tile's plan does not
 change *at all* — the planner keeps its bitmap scan and its 2,312-buffer heap
@@ -76,8 +93,10 @@ An index-only scan needs the visibility map, so a continuously-written table
 pays some ``Heap Fetches`` between autovacuums. That degrades gradually — it
 never falls back to the sequential scan.
 
-**The partial predicate must stay byte-identical to the handler's filter.** It
-matches what SQLAlchemy emits for
+**The partial predicate had to stay byte-identical to the handler's filter,
+and no longer can: there is no handler filter left that implies it (#826,
+DEC-007). Kept for the record of what it once matched.** It matches what
+SQLAlchemy emits for
 ``Email.classified_as == EmailCategory.NEEDS_REVIEW``,
 ``Email.application_id.is_(None)`` and ``Email.is_reviewed == False`` (Postgres
 renders the last as ``NOT is_reviewed`` in the plan and still matches). A future
