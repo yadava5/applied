@@ -19,10 +19,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { todayISO } from "../../lib/dashboard/age.ts";
 import { summarize } from "../../lib/dashboard/summary.ts";
 
 /** Fixed clock: 2026-08-26T12:00:00Z. The window reaches back to 2026-08-19. */
 const NOW = Date.parse("2026-08-26T12:00:00Z");
+
+/** The DAY `summarize` buckets against — it takes a day, not an instant (#584).
+ *  Derived from `NOW` rather than retyped, so the comment above stays true. */
+const TODAY = todayISO(NOW);
 
 /** A row applied on `appliedDate` but ingested on `createdAt`. */
 const row = (appliedDate, createdAt, status = "applied") => ({
@@ -44,7 +49,7 @@ test("counts the week the user applied, not the week we ingested the row", () =>
     row("2026-08-24", "2026-08-26"),
   ];
   assert.equal(
-    summarize(apps, NOW).thisWeek,
+    summarize(apps, TODAY).thisWeek,
     1,
     "rows ingested today but applied for weeks ago are being counted as this week",
   );
@@ -54,7 +59,7 @@ test("a row applied this week still counts when it was ingested long ago", () =>
   // The inverse error: the confirmation arrived in an earlier sync, so
   // `created_at` is old, but the application itself is from this week.
   const apps = [row("2026-08-25", "2026-07-01")];
-  assert.equal(summarize(apps, NOW).thisWeek, 1);
+  assert.equal(summarize(apps, TODAY).thisWeek, 1);
 });
 
 test("the window is THIS CALENDAR WEEK — Monday to today, matching the momentum bars", () => {
@@ -71,22 +76,22 @@ test("the window is THIS CALENDAR WEEK — Monday to today, matching the momentu
   // and Sunday the 23rd — one day earlier, and well inside any seven-day
   // window — is now OUT. That last assertion is the one that fails if anyone
   // reinstates the rolling window.
-  assert.equal(summarize([row("2026-08-26", "2026-08-26")], NOW).thisWeek, 1, "today");
-  assert.equal(summarize([row("2026-08-24", "2026-08-24")], NOW).thisWeek, 1, "this week's Monday");
+  assert.equal(summarize([row("2026-08-26", "2026-08-26")], TODAY).thisWeek, 1, "today");
+  assert.equal(summarize([row("2026-08-24", "2026-08-24")], TODAY).thisWeek, 1, "this week's Monday");
   assert.equal(
-    summarize([row("2026-08-23", "2026-08-23")], NOW).thisWeek,
+    summarize([row("2026-08-23", "2026-08-23")], TODAY).thisWeek,
     0,
     "Sunday belongs to LAST week, however few days ago it was",
   );
   assert.equal(
-    summarize([row("2026-08-20", "2026-08-20")], NOW).thisWeek,
+    summarize([row("2026-08-20", "2026-08-20")], TODAY).thisWeek,
     0,
     "the old trailing window's near edge, which is last Thursday",
   );
 });
 
 test("a future applied date is not this week", () => {
-  assert.equal(summarize([row("2026-09-02", "2026-08-26")], NOW).thisWeek, 0);
+  assert.equal(summarize([row("2026-09-02", "2026-08-26")], TODAY).thisWeek, 0);
 });
 
 /**
@@ -107,7 +112,7 @@ test("a future applied date is not this week", () => {
  */
 test("an undated row falls back to its insert time, as the momentum bars do", () => {
   const undated = { ...row("2026-08-24", "2026-08-26"), applied_date: null };
-  const summary = summarize([undated], NOW);
+  const summary = summarize([undated], TODAY);
   assert.equal(summary.thisWeek, 1, "an undated row was dropped, not folded back");
   assert.equal(summary.total, 1);
 });
@@ -115,12 +120,65 @@ test("an undated row falls back to its insert time, as the momentum bars do", ()
 test("the fallback is a floor: a real applied_date always outranks created_at", () => {
   // The CONTROL for the line above — without it, "falls back" could be
   // satisfied by ignoring `applied_date` entirely, which is the original bug.
-  assert.equal(summarize([row("2026-07-20", "2026-08-26")], NOW).thisWeek, 0);
+  assert.equal(summarize([row("2026-07-20", "2026-08-26")], TODAY).thisWeek, 0);
 });
 
 test("a malformed applied date is not counted and does not throw", () => {
   for (const bad of ["", "not-a-date", "2026-08", 20260824]) {
     const app = { ...row("2026-08-24", "2026-08-26"), applied_date: bad };
-    assert.equal(summarize([app], NOW).thisWeek, 0, `${JSON.stringify(bad)} was counted`);
+    assert.equal(summarize([app], TODAY).thisWeek, 0, `${JSON.stringify(bad)} was counted`);
   }
+});
+
+/**
+ * #584. `summarize` took `now: number` and derived the UTC day itself, so a
+ * caller that KNEW the reader's day had no way to say so — and /demo's header
+ * was exactly that caller, sitting beside a momentum caption that already
+ * counted from `useLocalToday()`.
+ *
+ * The two days below are the real pair, not an invented one: a reader at
+ * UTC-10 at 04:00 UTC on Monday 2026-09-07 is living in Sunday 2026-09-06.
+ * They fall in DIFFERENT calendar weeks, which is the whole reason the split
+ * was worth a number rather than a shrug.
+ */
+test("the week is counted from the day it is GIVEN, not from a clock it reads", () => {
+  // The demo's own near seeds: filed 0, 1, 3 and 5 days before the reader's
+  // Sunday, so every one of them is inside that reader's Monday-to-Sunday week.
+  const readerSunday = "2026-09-06";
+  const utcMonday = "2026-09-07";
+  const apps = [
+    row("2026-09-06", "2026-09-06"),
+    row("2026-09-05", "2026-09-05"),
+    row("2026-09-03", "2026-09-03"),
+    row("2026-09-01", "2026-09-01"),
+  ];
+
+  assert.equal(summarize(apps, readerSunday).thisWeek, 4, "the reader's own week");
+  // The UTC day has already rolled into the NEXT week, which contains none of
+  // them — and `buildSubtitle` omits the whole segment at zero, so the header
+  // did not read a wrong number, it silently stopped saying anything.
+  assert.equal(summarize(apps, utcMonday).thisWeek, 0, "the UTC week");
+
+  // Stated as its own assertion so the pair cannot quietly become one case:
+  // if a future edit made both days answer the same, the two lines above could
+  // still be made to pass by changing one number, and this one could not.
+  assert.notEqual(
+    summarize(apps, readerSunday).thisWeek,
+    summarize(apps, utcMonday).thisWeek,
+    "the two days must be able to disagree, or this file grades nothing",
+  );
+});
+
+/**
+ * The default is the UTC day, and it has to stay that way: server renders and
+ * the hydrating client pass both call this with no day, and they must produce
+ * byte-identical HTML (`age.ts` header, React #418).
+ */
+test("with no day given it counts from the UTC day", () => {
+  const apps = [row("2026-09-06", "2026-09-06")];
+  assert.equal(
+    summarize(apps).thisWeek,
+    summarize(apps, todayISO()).thisWeek,
+    "the default must be the UTC day, or SSR and hydration disagree",
+  );
 });
