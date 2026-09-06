@@ -365,6 +365,290 @@ def test_the_newer_error_envelope_is_still_read_as_quota() -> None:
     assert is_retryable_gmail_error(modern) is False
 
 
+def _quota_envelope(
+    *, error_info: bool, status: bool = True, shadow: bool = False, legacy: bool = False
+) -> HttpError:
+    """One google.rpc quota refusal, with the OPTIONAL parts switched on or off.
+
+    Built from a single dict so the arms below differ in exactly the field
+    named and in nothing else. A pair that also differed in ``status``, in the
+    HTTP code or in the message would grade nothing — both arms would be read
+    as quota for reasons unrelated to what is under test.
+
+    ``shadow`` adds ``error.detail`` (singular). That is not decoration:
+    ``HttpError._get_reason`` takes the FIRST of ``detail``/``details``/
+    ``errors``/``message`` that is present, so ``detail`` makes
+    ``error_details`` the message STRING and the ``ErrorInfo`` becomes
+    readable only from the raw body. Verified against the installed
+    googleapiclient rather than inferred.
+    """
+
+    error: dict[str, object] = {
+        # 403, matching the response status above rather than the 429 that
+        # `google.rpc.Code.RESOURCE_EXHAUSTED` maps to. Gmail answers a
+        # per-user rate limit with 403, and 403 is the only door actually
+        # under test: a 429 would be caught by `is_rate_limited_gmail_error`'s
+        # status fallback whatever the reasons said, so a fixture built on it
+        # could not fail.
+        "code": 403,
+        "message": (
+            "Quota exceeded for quota metric 'Total Query Cost' and limit "
+            "'Units per minute per user' of service 'gmail.googleapis.com'."
+        ),
+    }
+    if status:
+        error["status"] = "RESOURCE_EXHAUSTED"
+    if error_info:
+        error["details"] = [
+            {
+                "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                "reason": "RATE_LIMIT_EXCEEDED",
+                "domain": "googleapis.com",
+                "metadata": {"service": "gmail.googleapis.com"},
+            }
+        ]
+    if shadow:
+        error["detail"] = "Quota exceeded."
+    if legacy:
+        error["errors"] = [{"domain": "usageLimits", "reason": "rateLimitExceeded"}]
+    return HttpError(_Resp(403), json.dumps({"error": error}).encode())
+
+
+def test_an_error_info_beside_the_status_does_not_hide_it() -> None:
+    """The same envelope twice, differing ONLY in ``error.details[]`` (#863).
+
+    ``_error_reasons`` used to read ``error_details`` and return the moment it
+    yielded anything, so the raw-body parse — the only code that harvests
+    ``error.status`` — ran only for envelopes carrying no details at all. The
+    existing envelope test uses exactly that shape, which is why it passed
+    while adding an AIP-193 ``ErrorInfo`` beside the same ``RESOURCE_EXHAUSTED``
+    flipped `rate_limited` to False: the page was not aborted, the router did
+    not answer 429, and every remaining sub-request in the window was dropped.
+
+    MUST RED ON: removing BOTH halves of the fix — the union in
+    `_error_reasons` AND `RATE_LIMIT_EXCEEDED` — which is the state `main`
+    shipped in. Either half alone keeps this green, and that is not a
+    weakness to hide: this is the OUTCOME assertion, and the outcome is
+    protected twice over. The per-half mutation ledger lives on the three
+    tests below, which each name a single line.
+
+    An earlier version of this docstring claimed the early return alone reds
+    it. That was measured before the constant was added and was false by the
+    time it shipped — the same "a number from an earlier script" shape this
+    repository keeps finding, in the ledger that exists to catch it.
+    """
+
+    without = _quota_envelope(error_info=False)
+    with_ = _quota_envelope(error_info=True)
+
+    # The arms have to be genuinely different inputs, or this grades nothing:
+    # `details` is what makes `error_details` a list, and a list is the only
+    # thing the early return could ever have fired on.
+    assert not isinstance(without.error_details, list)
+    assert isinstance(with_.error_details, list)
+
+    assert is_rate_limited_gmail_error(without) is True
+    assert is_rate_limited_gmail_error(with_) is True, (
+        "an ErrorInfo beside the status must not hide the status; the page "
+        "has to abort as quota, not be dropped as unreadable"
+    )
+    assert is_unrecognised_gmail_refusal(with_) is False
+
+
+def test_the_reason_harvest_is_a_union_of_all_three_sources() -> None:
+    """Equality, not membership: a widened set would pass a `>=` assertion.
+
+    Three places can carry a reason — ``error_details``, the legacy
+    ``error.errors[]``, and google.rpc's ``error.details[]``/``error.status``
+    — and reading one is reading part of an envelope. Pinned with `==` so
+    neither dropping a source nor inventing one goes unnoticed.
+
+    MUST RED ON: restoring the `if reasons: return` early return — the FIRST
+    arm only, whose harvest collapses to the single `error_details` reason;
+    and deleting the raw-body `error.details[]` loop — the SECOND arm only,
+    because arm one reaches the same reason through `error_details`, which IS
+    the details list when nothing shadows it. Verified per arm rather than
+    asserted for both: the earlier version of this line said "both arms" for
+    the second mutation and was wrong.
+    """
+
+    every_source = _quota_envelope(error_info=True, legacy=True)
+    assert isinstance(every_source.error_details, list), (
+        "if this is not a list the early return could not have fired and the "
+        "first arm stops grading the mutation it names"
+    )
+    assert gc._error_reasons(every_source) == frozenset(
+        {"RATE_LIMIT_EXCEEDED", "RESOURCE_EXHAUSTED", "rateLimitExceeded"}
+    )
+
+    # `detail` (singular) sorts before `details` in googleapiclient's own
+    # lookup, so `error_details` is the message string and the ErrorInfo is
+    # reachable ONLY from the raw body. This arm is the one that grades the
+    # body-side `details[]` parse.
+    shadowed = _quota_envelope(error_info=True, shadow=True)
+    assert not isinstance(shadowed.error_details, list)
+    assert gc._error_reasons(shadowed) == frozenset(
+        {"RATE_LIMIT_EXCEEDED", "RESOURCE_EXHAUSTED"}
+    )
+
+
+def test_an_error_info_alone_is_read_as_quota() -> None:
+    """`RATE_LIMIT_EXCEEDED` earns its place only on the envelope WITHOUT a status.
+
+    The union fix alone repairs the AIP-193 shape, because `RESOURCE_EXHAUSTED`
+    rides in `error.status` beside the `ErrorInfo`. So the new constant has to
+    be graded on the one input where the status is absent — otherwise it is a
+    string added to a set that no test can distinguish from not adding it.
+
+    IT IS NOT A GUESS AT A NAME. `RATE_LIMIT_EXCEEDED = 5` is
+    `google/api/error_reason.proto`'s value for "not enough rate quota for the
+    consumer", and the enum's 48 values do NOT include `RESOURCE_EXHAUSTED` —
+    that is a `google.rpc.Code`, which can only arrive in `error.status`. The
+    two are one condition in two fields, not two spellings of one field.
+
+    MUST RED ON: removing `RATE_LIMIT_EXCEEDED` from `_RATE_LIMIT_REASONS`.
+    """
+
+    only_error_info = _quota_envelope(error_info=True, status=False)
+
+    # The arm has to actually lack the status, or `RESOURCE_EXHAUSTED` answers
+    # for it and this grades the union fix a second time instead.
+    assert "RESOURCE_EXHAUSTED" not in gc._error_reasons(only_error_info)
+    assert gc._error_reasons(only_error_info) == frozenset({"RATE_LIMIT_EXCEEDED"})
+
+    assert is_rate_limited_gmail_error(only_error_info) is True
+    assert is_retryable_gmail_error(only_error_info) is False
+    assert is_unrecognised_gmail_refusal(only_error_info) is False
+
+
+def test_a_daily_limit_is_left_unclassified_on_purpose() -> None:
+    """`dailyLimitExceeded` belongs to neither set, and that is the decision.
+
+    It is a real Gmail reason (403, `domain: usageLimits`, quoted in Gmail's
+    own error guide) and it was nearly filed under `_RATE_LIMIT_REASONS` on
+    the strength of its name. The primary sources do not support that: it is
+    PROJECT-scoped, its documented remedy is "raise the quota in the Google
+    Cloud project", and no Google page ties it to a day-length window or a
+    reset time. Answering 429 + Retry-After would send the browser back in a
+    minute for something a minute does not fix; calling it permanent would
+    silence it.
+
+    So it stays unrecognised, which is the loud answer, and this test is what
+    stops it being quietly filed under either set later.
+
+    MUST RED ON: adding `dailyLimitExceeded` to `_RATE_LIMIT_REASONS`, to
+    `_RETRYABLE_REASONS`, or to `_PERMANENT_REASONS`.
+    """
+
+    daily = _refusal(403, "dailyLimitExceeded")
+
+    assert is_rate_limited_gmail_error(daily) is False
+    assert is_retryable_gmail_error(daily) is False
+    assert is_unrecognised_gmail_refusal(daily) is True, (
+        "a refusal whose meaning we cannot cite must be counted, not guessed at"
+    )
+
+
+def test_an_unfamiliar_error_info_beside_a_quota_status_still_aborts() -> None:
+    """The input where the UNION half alone decides a verdict — #863's class.
+
+    Every other case here is known-beside-known, where the constant and the
+    union each answer, or known-alone, where only the constant does. This is
+    the one that isolates the union: a reason string we have never classified,
+    riding beside a status we have. On the early-return code the harvest is
+    that unknown string alone, nothing matches, and the refusal is dropped as
+    unreadable; on the union it reads the status too and the page aborts.
+
+    That is not a contrived shape. It is exactly what the NEXT envelope change
+    looks like — `RESOURCE_EXHAUSTED` is in the rate-limit set because the
+    field moved once already, and a new `ErrorInfo.reason` is the cheapest way
+    for Google to extend an error it already emits.
+
+    MUST RED ON: restoring `if reasons: return frozenset(reasons)`.
+    """
+
+    body = json.dumps(
+        {
+            "error": {
+                "code": 403,
+                "message": "Quota exceeded.",
+                "status": "RESOURCE_EXHAUSTED",
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                        "reason": "A_REASON_THIS_CODE_HAS_NEVER_SEEN",
+                        "domain": "googleapis.com",
+                    }
+                ],
+            }
+        }
+    ).encode()
+    unfamiliar = HttpError(_Resp(403), body)
+
+    # The premise: the details reason really is unclassified, so the verdict
+    # below cannot be coming from it. Without this the test would still pass
+    # if someone added the string to a set, and it would then be grading the
+    # opposite of what it claims.
+    assert not (
+        frozenset({"A_REASON_THIS_CODE_HAS_NEVER_SEEN"})
+        & (gc._RATE_LIMIT_REASONS | gc._RETRYABLE_REASONS | gc._PERMANENT_REASONS)
+    )
+    assert isinstance(unfamiliar.error_details, list), (
+        "the early return fires only on a list; if this is not one the "
+        "mutation this test names cannot reach it"
+    )
+
+    assert gc._error_reasons(unfamiliar) == frozenset(
+        {"A_REASON_THIS_CODE_HAS_NEVER_SEEN", "RESOURCE_EXHAUSTED"}
+    )
+    assert is_rate_limited_gmail_error(unfamiliar) is True
+    assert is_unrecognised_gmail_refusal(unfamiliar) is False
+
+
+def test_a_permanent_refusal_stays_permanent_when_more_reasons_are_read() -> None:
+    """Reading MORE reasons must not PROMOTE a refusal we already understood.
+
+    The union's stated invariant is one-directional — it can move a refusal up
+    the priority chain, never down — and the risk it carries is the promotion,
+    not a narrowing. A revoked grant answering 403 `authError` with a
+    google.rpc `PERMISSION_DENIED` beside it must still be permanent: promote
+    it and the router answers 429, the browser waits a minute, and re-probes a
+    grant that will never widen, forever.
+
+    This replaces a test that asserted the same idea and could not fail: every
+    fixture it ran carried exactly one reason, so a consumer keyed on
+    `len(reasons) == 1` — the thing its own docstring named — passed it, and it
+    was green byte-for-byte on the unfixed code.
+
+    MUST RED ON: adding `PERMISSION_DENIED` to `_RATE_LIMIT_REASONS`, which is
+    what "add the google.rpc spelling too" looks like when applied to the
+    wrong row; and restoring the early return, which collapses the harvest to
+    `{authError}` and takes the two-reason premise with it. Both measured.
+    """
+
+    body = json.dumps(
+        {
+            "error": {
+                "code": 403,
+                "message": "Request had insufficient authentication scopes.",
+                "status": "PERMISSION_DENIED",
+                "errors": [{"domain": "global", "reason": "authError"}],
+            }
+        }
+    ).encode()
+    revoked = HttpError(_Resp(403), body)
+
+    # TWO reasons, which is the condition the old test never met.
+    assert gc._error_reasons(revoked) == frozenset({"authError", "PERMISSION_DENIED"})
+
+    assert is_rate_limited_gmail_error(revoked) is False, (
+        "a permanent refusal promoted to quota makes the browser retry a "
+        "revoked grant every minute"
+    )
+    assert is_retryable_gmail_error(revoked) is False
+    assert is_unrecognised_gmail_refusal(revoked) is False
+
+
 def test_an_unreadable_403_is_treated_as_permanent() -> None:
     """A 403 whose reason we cannot parse must NOT be retried.
 
@@ -487,7 +771,14 @@ def test_flake_retries_are_bounded_and_the_error_still_surfaces() -> None:
 # --- the batch path: the 146 silently-dropped messages ----------------------
 
 
-def test_a_rate_limited_sub_request_abandons_the_page(slept: list[float]) -> None:
+@pytest.mark.parametrize(
+    "refusal",
+    [_QUOTA, _quota_envelope(error_info=True)],
+    ids=["legacy-usageLimits", "google-rpc-ErrorInfo"],
+)
+def test_a_rate_limited_sub_request_abandons_the_page(
+    slept: list[float], refusal: HttpError
+) -> None:
     """The quiet exit, closed. This is the 146-of-200 case.
 
     A rate-limited sub-request means the bucket is dry, so the remaining
@@ -496,12 +787,19 @@ def test_a_rate_limited_sub_request_abandons_the_page(slept: list[float]) -> Non
     answer 429 and the client refetch this page from the cursor it still holds.
     Nothing is lost — the page is refetched, not skipped.
 
+    BOTH ENVELOPES, because the predicate and the loop are two boundaries and
+    a green predicate proves nothing about the loop that consults it (#863).
+    The google.rpc arm reds on the shipped state of `main` — the early return
+    plus the missing constant — which is the whole point of running it here
+    rather than only against the predicate.
+
     MUST RED ON: removing the `is_rate_limited_gmail_error` raise from `_send`
-    (the ids are then silently dropped and the page returns 200 with a
-    shrunken, unexplained count — exactly the production behaviour).
+    (measured: both arms red — the ids are then silently dropped and the page
+    returns 200 with a shrunken, unexplained count, exactly the production
+    behaviour).
     """
 
-    service = FakeService(["a", "b", "c"], sub_errors={"b": [_QUOTA]})
+    service = FakeService(["a", "b", "c"], sub_errors={"b": [refusal]})
 
     with pytest.raises(HttpError):
         _collect_page(service, query="in:inbox", page_size=50, page_token=None)
