@@ -622,20 +622,30 @@ export function PipelineBoard({
    * it again, gone at the moment the reader was moving it — and it recovers on
    * expanding the group with nothing on screen saying so.
    *
-   * ONE RULE, THREE DOORS. `moveTo` is the DROP path and the only caller of
-   * itself; the row's `<select>` and the detail pane call
-   * `transport.changeStatus` directly and never enter it. Fixing the drop
-   * alone would close the instance the issue reports and leave the class open
-   * behind two other controls — so this is a callback all three share rather
-   * than a line inside `moveTo`.
+   * THE DROP PATH ONLY, AND THAT IS A DELIBERATE STOP RATHER THAN AN
+   * OVERSIGHT. `moveTo` is the drop path and the only caller of itself; the
+   * row's `<select>` and the detail pane call `transport.changeStatus`
+   * directly and never enter it, so the same defect is reachable through both
+   * — measured on the twin: a select-driven move takes the row out of
+   * `interviewing` and into a still-collapsed `applied` set, gone.
    *
-   * A CALLBACK RATHER THAN A WRAPPED TRANSPORT, deliberately. Wrapping
-   * `transport` would change its identity, and `transport` is a dependency of
+   * IT IS NOT FIXED HERE BECAUSE #425 ALREADY OWNS THAT PATH, and the two
+   * answers contradict each other. `tests/e2e/stage-focus.spec.ts`'s "a
+   * correction into a COLLAPSED employer set" asserts the row DOES fold and
+   * that focus is parked on the set header, because a folded row has no
+   * `#status-<id>` to return to. Wiring the reveal into the select made that
+   * test red — its premise, not its assertion. Revealing is very likely the
+   * better answer (the row stays visible and the id it wants exists again),
+   * but that is a change to #425's design and it needs #425's evidence, not a
+   * drag issue's. Filed rather than smuggled in.
+   *
+   * A CALLBACK SHAPE IS KEPT even with one caller, because that is what the
+   * other two doors will use. NOT A WRAPPED TRANSPORT: wrapping `transport`
+   * would change its identity, and `transport` is a dependency of
    * `StageSelect`'s memo — the bail-out that stops React 19 re-asserting a
    * controlled select's value over a choice in flight (see
    * `playwright.config.ts`, which records that no test in this suite can
-   * observe that race). `useCallback` with no deps is stable for the life of
-   * the mount, so nothing downstream re-renders that did not before.
+   * observe that race).
    *
    * `stageOf` rather than the raw status, because the caller may hand back a
    * finer word than a stage key — `withdrawn` and `ghosted` both live under
@@ -999,7 +1009,6 @@ export function PipelineBoard({
             columnLabel={column.label}
             today={today}
             transport={transport}
-            onStageChanged={revealStage}
             onOpenDetail={openDetail}
             folded={detailPaneOpen}
             detailOpen={detailApp !== null && detailApp.id === app.id}
@@ -1567,7 +1576,6 @@ export function PipelineBoard({
             }
             onTraverse={traverseDetail}
             transport={transport}
-            onStageChanged={revealStage}
             focusOnOpen={detailUserOpened}
             focusScrollOnOpen={focusScrollOnOpen}
           />

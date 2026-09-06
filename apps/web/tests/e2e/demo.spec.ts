@@ -431,11 +431,22 @@ test.describe("live demo (/demo)", () => {
     });
     await offered.dispatchEvent("dragover", { dataTransfer });
     await expect(offered).toHaveAttribute("data-drop", "true");
-    const washed = await offered.evaluate((el) => getComputedStyle(el).backgroundColor);
+    // POLLED, NOT READ ONCE. The chip carries `transition-colors`, so the
+    // background ANIMATES from transparent to the wash — a single
+    // `getComputedStyle` immediately after the attribute lands reads the
+    // START of that transition. It passed on a dev server, where the step was
+    // slower, and failed on the production build with both values
+    // `rgba(0, 0, 0, 0)`: a measurement taken before the thing it measures
+    // had happened.
     const resting = await page
       .getByRole("button", { name: /^assessment — 0$/ })
       .evaluate((el) => getComputedStyle(el).backgroundColor);
-    expect(washed, "a dragged-over chip paints the same as a resting one").not.toBe(resting);
+    await expect
+      .poll(
+        () => offered.evaluate((el) => getComputedStyle(el).backgroundColor),
+        { message: "a dragged-over chip never stopped painting like a resting one" },
+      )
+      .not.toBe(resting);
     await offered.dispatchEvent("dragend", { dataTransfer });
 
     await card.dragTo(offered);
@@ -556,61 +567,6 @@ test.describe("live demo (/demo)", () => {
       .first();
 
     // All three paths, named one at a time so a failure says which one went.
-    await expect(landed, "the moved card is not on screen at all").toBeVisible();
-    await expect(landed, "the moved card is no longer draggable").toHaveAttribute(
-      "draggable",
-      "true",
-    );
-    await expect(landed.locator("select"), "the moved card lost its stage select").toHaveCount(1);
-    await expect(
-      landed.getByRole("button", { name: /^Open / }),
-      "the moved card lost its open button",
-    ).toHaveCount(1);
-  });
-
-  test("a card moved by its SELECT into an employer fold also keeps all three ways", async ({
-    page,
-  }) => {
-    /*
-     * THE SAME DEFECT THROUGH A DIFFERENT DOOR, and the reason the fix is a
-     * shared callback rather than a line inside `moveTo`.
-     *
-     * `moveTo` is the DROP path and has exactly one caller — its own
-     * `onDrop`. The row's `<select>` and the detail pane call
-     * `transport.changeStatus` directly and never enter it, so a fix placed
-     * inside `moveTo` would close the instance #772 reports and leave the
-     * class open behind two other controls. Closing the instance is not
-     * closing the class.
-     */
-    await page.goto("/demo");
-
-    const fold = page.getByRole("button", { name: /Northstar Systems/ }).first();
-    await expect(fold).toHaveAttribute("aria-expanded", "false");
-
-    // Exactly one, because the three `applied` rows are inside the collapsed
-    // set and render no controls at all. If that stops being true this test is
-    // driving a different row than it claims.
-    const select = page.getByLabel("Change stage for Northstar Systems");
-    await expect(select, "the moving row's select is not unique").toHaveCount(1);
-    await select.selectOption("applied");
-
-    // The move has to LAND before anything below is a claim about the fold.
-    // Written after the first version of this test passed under the mutation
-    // that removes the fix: the row is still in `interviewing` for the width of
-    // the transport, and auto-retrying assertions are satisfied by it.
-    await expect(
-      page
-        .getByRole("region", { name: /^interviewing/i })
-        .locator(".board-row")
-        .filter({ has: page.getByTitle("ML Engineer", { exact: true }) }),
-      "the move never landed",
-    ).toHaveCount(0);
-
-    const landed = page
-      .getByRole("region", { name: /^applied/i })
-      .locator(".board-row")
-      .filter({ has: page.getByTitle("ML Engineer", { exact: true }) })
-      .first();
     await expect(landed, "the moved card is not on screen at all").toBeVisible();
     await expect(landed, "the moved card is no longer draggable").toHaveAttribute(
       "draggable",
