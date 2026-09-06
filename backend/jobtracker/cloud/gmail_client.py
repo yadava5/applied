@@ -287,6 +287,15 @@ _RATE_LIMIT_REASONS = frozenset(
 # `is_unrecognised_gmail_refusal` counts it, which is loud — and loud is the
 # documented safe direction for a refusal whose meaning we cannot cite.
 #
+# WHAT "LOUD" COSTS, so the next reader is not surprised by it. Unrecognised
+# does not ABORT — the taxonomy has no "page-fatal, do not retry" arm. A
+# project-wide refusal would fail every sub-request, and the scan would grind
+# through all twenty windows of every remaining page issuing doomed batches,
+# then report a successful scan of almost nothing with `unreadable` near the
+# page size. That is acceptable only because the exposure is close to nil at
+# this scale — Gmail's per-project daily threshold is 80,000,000 quota units —
+# and it is the cost of not guessing, not a free choice.
+#
 # Left as a comment rather than a constant on purpose: a frozenset nothing
 # reads is a declaration, not a rule. The behaviour is pinned instead by
 # `test_a_daily_limit_is_left_unclassified_on_purpose`, which fails if anyone
@@ -369,11 +378,25 @@ def _error_reasons(exc: BaseException) -> frozenset[str]:
     ``ErrorInfo.reason``. Reading one and skipping the other is reading half
     an envelope.
 
-    THE UNION CANNOT NARROW A VERDICT. Every consumer intersects this set
-    against a classified reason set, so more reasons can only add matches:
-    a refusal that was recognised stays recognised, and one that was
-    unrecognised can become recognised. There is no input for which this
-    change loses a classification.
+    THE UNION CAN ONLY MOVE A REFUSAL UP THE PRIORITY CHAIN — rate limit,
+    then retryable, then permanent, then unrecognised — never down. That is
+    the invariant, and it is deliberately not the more obvious "every consumer
+    intersects, so more reasons only add matches": :func:`is_retryable_gmail_error`
+    does not merely intersect, it consults :func:`is_rate_limited_gmail_error`
+    first and NEGATES it. So a `backendError` arriving beside
+    `status: RESOURCE_EXHAUSTED` stops being retried in place and aborts the
+    page as quota. That flip is doctrine — a quota reason outranks a retryable
+    status, and `test_a_quota_reason_beats_a_retryable_status` pins the legacy
+    spelling of exactly it — but a reader who believed the weaker claim could
+    add a string to :data:`_RATE_LIMIT_REASONS` expecting it to be inert.
+
+    THE ONE INPUT WHERE THIS MAKES AN OUTCOME WORSE, named rather than covered
+    by a slogan: an envelope carrying a PERMANENT reason alongside
+    `status: RESOURCE_EXHAUSTED` would be promoted from "give up" to "abort and
+    answer 429", and a browser would then re-probe a revoked grant every minute.
+    That needs Gmail to contradict itself across two fields generated from one
+    underlying error, and no such shape is documented — but it is unmeasured,
+    and it is the accepted risk here rather than an impossibility.
 
     Three sources, all read: ``error_details`` (a googleapiclient convenience
     that has moved between library versions — on the ``status``-only envelope
@@ -411,6 +434,14 @@ def _error_reasons(exc: BaseException) -> frozenset[str]:
                 # google.rpc `ErrorInfo.reason`, read from the body rather
                 # than from `error_details`, because that attribute is the
                 # library version's opinion and this is the wire.
+                #
+                # DELIBERATELY NOT FILTERED ON `@type`. Any detail item with a
+                # string `reason` counts, so a `BadRequest.FieldViolation`
+                # would be harvested too. That is the safe direction: the
+                # harvest feeds intersections against classified sets, an
+                # unclassified string changes no verdict, and the alternative
+                # — an `@type` allow-list — is a closed enumeration standing
+                # in for an open set, which is how this module got here.
                 for item in error.get("details") or []:
                     if isinstance(item, dict) and isinstance(item.get("reason"), str):
                         reasons.add(item["reason"])
