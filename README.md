@@ -199,26 +199,37 @@ went 139 to 119 with no confirmation family losing a single message
 ([#455](https://github.com/yadava5/applied/issues/455)).
 
 **And read it knowing it is a property of the mix, not of the engine.** It was 93.05% on
-2026-08-22 and is 93.24%
-on the same engine, and it has moved twice since without a rule changing. It went DOWN first, to
-92.87%, because the corpus stopped being written entirely by the author of the classifier. It went
-back up because [#626](https://github.com/yadava5/applied/issues/626) added 760 messages whose
-difficulty is entirely in the IDENTITY layer — a job title readable only from the last segment of
-an ATS subject — and the classifier reads every one of them correctly. Neither move is an accuracy
-change. Measured before the transcribed families landed: **100.0% of the 13,730 lifecycle messages contained an
+2026-08-22 and is 92.36%
+on the same engine, and it has moved three times since without a rule changing. It went DOWN first,
+to 92.87%, because the corpus stopped being written entirely by the author of the classifier. It went
+back up to 93.24% because [#626](https://github.com/yadava5/applied/issues/626) added 760 messages
+whose difficulty is entirely in the IDENTITY layer — a job title readable only from the last segment
+of an ATS subject — and the classifier reads every one of them correctly. Neither move is an accuracy
+change.
+
+**The third move is a different kind, and it is why this figure is lower than every earlier one
+published here.** 93.24% was measured by an instrument that was wrong. The harness handed the
+classifier bodies with no length cap, so the 320-message family built to test the product's own
+4,000-character cap was graded on text production cannot deliver, and 160 verdicts counted correct
+were the harness's rather than the product's
+([#767](https://github.com/yadava5/applied/issues/767)). Corrected, they abstain — `wrong` did not
+move and `Wrong AND stated to the user as fact` stayed 0, so nothing was ever told to a reader as
+fact; 160 things stopped being counted as read. **Every earlier accuracy figure in this series
+overstates by roughly the same 0.88 points.** Measured before the transcribed families landed: **100.0% of the 13,730 lifecycle messages contained an
 engine pattern verbatim**, and **123 of 160 engine patterns were never exercised at all**. A corpus
 in that state cannot find a gap — it can only confirm the pattern list against itself, and its
 headline describes the author's vocabulary rather than the product's reach. `observed.py` holds 36
 wordings transcribed from mail that actually arrived, from ten applicant tracking platforms, written
-by recruiting teams with no knowledge of this repository. 93.24% is the first number here that was
-not partly graded by the person who set the exam.
+by recruiting teams with no knowledge of this repository. 92.36% is the first number here that was
+not partly graded by the person who set the exam — a fact about who wrote the mail, and not the
+reason for the 0.88 points above, which was the instrument.
 
-| | measured 2026-08-22 |
+| | measured 2026-09-06 |
 | --- | --- |
-| Correct | **16,970 of 18,200 — 93.24%** |
+| Correct | **16,810 of 18,200 — 92.36%** |
 | Wrong | **304** |
 | **Wrong AND stated to the user as fact** | **0** |
-| Abstained (below the 0.70 review floor, the product says nothing) | **926** |
+| Abstained (below the 0.70 review floor, the product says nothing) | **1086** |
 | Board: cards / splits / merges / noise / misrouted review | **9,908 / 0 / 0 / 0 / 0** |
 | Updates that reached the wrong card | **0** |
 | Updates held for a person because the classifier was unsure | 360 |
@@ -749,7 +760,7 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 
 ### Testing
 
-**3163 tests collected, 0 skipped.** These figures were recorded on 2026-09-05 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. `--record` refuses to write at all unless that run was whole — Docker reachable, nothing skipped, suite green — because skipped tests are still *collected*, so a recording taken without the Postgres extras used to publish "0 skipped" while five modules sat out (#351). The artifact names the interpreter that ran the suite rather than the one that ran the script; those differ here, and a Python 3.14 run is exactly what produced the wrong coverage figures corrected below. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 1813 `test_*` functions across 157 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 3163 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
+**3163 tests collected, 0 skipped.** These figures were recorded on 2026-09-05 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. `--record` refuses to write at all unless that run was whole — Docker reachable, nothing skipped, suite green — because skipped tests are still *collected*, so a recording taken without the Postgres extras used to publish "0 skipped" while five modules sat out (#351). The artifact names the interpreter that ran the suite rather than the one that ran the script; those differ here, and a Python 3.14 run is exactly what produced the wrong coverage figures corrected below. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 1821 `test_*` functions across 157 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 3163 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
 
 The Postgres row-level-security module is the only thing in the repo that can demonstrate the isolation the product claims, and **24 tests** now exercise it. It has not always run: its tests waited on a database URL no workflow set, and a skip is green, so the 10 it held on 2026-08-02 had **never executed anywhere**. Two fixes: `test_rls_postgres.py` now starts its own `postgres:16` via testcontainers when `JOBTRACKER_TEST_PG_ADMIN_URL` is absent and Docker is available, and the `rls-postgres` CI job supplies its own service container. That job then parses the JUnit XML and **fails the build if the suite reports zero tests or any skip**, because a skipped security test and a passing one produce the same green tick.
 

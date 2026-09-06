@@ -4,8 +4,11 @@ Two scores, because a message can pass one and fail the other and the product
 only works when it passes both:
 
 **Classification.** ``RulesClassifier.classify`` over what production would
-actually hand it — ``extract_body_text(payload) or snippet``, expressed here as
-each case's ``delivered`` field. Scored three ways rather than two: CORRECT,
+actually hand it — ``extract_body_text(payload) or snippet``. That is
+:func:`as_classified`, which applies production's own ``normalise_body_text``
+to the case's ``delivered`` field; it was ``delivered`` RAW until #767, and the
+sentence here claimed parity the whole time it was false. Scored three ways
+rather than two: CORRECT,
 WRONG (a confident verdict that is not the right one), and ABSTAINED (below
 ``REVIEW_FLOOR``, so the product says nothing). Abstention is the safe failure
 and must not be averaged into the same number as being confidently wrong.
@@ -94,7 +97,6 @@ from sqlmodel import select
 
 from jobtracker.classifier.rules import RulesClassifier
 from jobtracker.cloud import pipeline
-from jobtracker.database.models import EmailCategory
 from jobtracker.cloud.applications import (
     Application,
     Email,
@@ -105,6 +107,8 @@ from jobtracker.cloud.applications import (
     sync_gmail_pipeline_additive,
     threads_naming_one_application,
 )
+from jobtracker.cloud.gmail_client import normalise_body_text
+from jobtracker.database.models import EmailCategory
 
 from .generate import Case, snippet_of
 
@@ -126,12 +130,59 @@ class Verdict:
     auto_filed: bool
 
 
+def as_classified(case: Case) -> str:
+    """The exact text production hands ``classify()`` — cap and all.
+
+    IT USED TO PASS ``case.delivered`` RAW, and #767 is what that cost. The
+    docstring below said "as production would get it" while the classifier was
+    handed text production cannot deliver: ``_classify_messages`` reads
+    ``bodies.get(id) or msg.snippet``, and ``bodies`` holds
+    ``extract_body_text``'s output, which ends in ``normalise_body_text`` —
+    ``[:4000]``. The corpus carries a 320-message family, ``verdict-past-the-
+    body-cap``, built to measure what happens when the verdict falls outside
+    that window, and handed the classifier the whole 7,351-character body. The
+    family read 320/320 correct: 160 of them correct only because the
+    instrument delivered what the product never would.
+
+    MEASURED BOTH WAYS at 18,200 cases before the change landed. Applying
+    production's normalisation moves **160 verdicts and no others** — every one
+    in ``verdict-past-the-body-cap``, every one ``rejection`` 0.95 (auto-filed)
+    to ``other`` 0.50 (abstained). 624 further cases change TEXT under
+    normalisation and not one changes a verdict, so the cap is the whole of the
+    effect and the whitespace half is inert here.
+
+    THE SNIPPET BRANCH IS NOT DECORATION. Production normalises the BODY and
+    never the snippet: when ``extract_body_text`` returns "" there is no entry
+    in ``bodies`` at all and Gmail's own snippet is passed through untouched.
+    The generator models that by overriding ``delivered`` with
+    ``snippet_of(body)`` (``generate.py:623``, ``:2268``); everywhere else
+    ``delivered`` IS ``body`` (``generate.py:458``). Normalising unconditionally
+    would rewrite 47 of those snippets — ``rejection-past-the-snippet`` — which
+    changes no verdict today and would still be a false claim about the product.
+
+    THE DISCRIMINATOR IS AN EQUALITY PROXY AND IT IS ASSERTED RATHER THAN
+    TRUSTED. What this needs to know is "did the generator model an extraction
+    failure"; what it can see is whether two strings are equal. Those coincide
+    on the committed corpus — every overridden body is 214 characters or more
+    against ``SNIPPET_CHARS = 186``, so a snippet override is never equal to its
+    body — but **11,515 of 18,200 bodies are short enough that
+    ``snippet_of(body) == body``**, so a future override on one of them would
+    take the wrong branch in silence. ``test_the_snippet_arm_is_reached_only_by
+    _a_real_override`` holds the invariant the proxy depends on, and reds the
+    day it stops being true rather than the day a number moves.
+    """
+
+    if case.delivered == case.body:
+        return normalise_body_text(case.body)
+    return case.delivered
+
+
 def classify_all(cases: list[Case]) -> list[Verdict]:
     """The classifier's answer for every message, as production would get it."""
 
     out: list[Verdict] = []
     for case in cases:
-        result = _CLASSIFIER.classify(case.subject, case.delivered, case.sender)
+        result = _CLASSIFIER.classify(case.subject, as_classified(case), case.sender)
         category = result.category.value
         confidence = result.confidence
         # NOISE IS SCORED ON ITS CONTRACT, NOT ITS LABEL. For mail that must
@@ -225,12 +276,12 @@ def score_classifier(verdicts: list[Verdict]) -> ClassifierScore:
 #: cap changes **160**, every one of them in ``verdict-past-the-body-cap``,
 #: the family named for it.
 #:
-#: The classifier in this harness still reads the UNCAPPED ``delivered``, which
-#: is a separate instrument defect and is filed rather than fixed here: that
-#: family builds a 7,351-character body with its verdict at ~7,261 to test what
-#: happens when the verdict is out of reach, and hands the classifier all 7,351.
-#: Correcting it moves classifier numbers, not identity ones, and belongs with
-#: its own re-record.
+#: THE CLASSIFIER USED TO READ THE UNCAPPED ``delivered`` — the instrument
+#: defect this note recorded as filed-not-fixed, closed by #767. It fed the
+#: classifier all 7,351 characters of a body whose verdict sits at ~7,261, so
+#: the family named for the cap was the one family the cap never reached. It is
+#: ``as_classified`` now, which applies production's own normalisation; the
+#: 160-verdict cost of correcting it is written there and re-recorded below.
 #:
 #: IMPORTED RATHER THAN COPIED, since 2026-08-27. It was hand-written as 4000
 #: here — a THIRD copy of a number that also lives in the product and in
@@ -245,8 +296,8 @@ def score_classifier(verdicts: list[Verdict]) -> ClassifierScore:
 #: THE CAP IS NO LONGER NAMED HERE AT ALL, which is the same argument carried
 #: one step further: ``normalise_body_text`` applies it, so the harness borrows
 #: the window and the whitespace rule together and cannot hold a right answer
-#: about one and a stale answer about the other.
-from jobtracker.cloud.gmail_client import normalise_body_text  # noqa: E402
+#: about one and a stale answer about the other. Imported at the top of the
+#: module since #767, because ``classify_all`` needs it too.
 
 
 def _readable(case: Case) -> str:
@@ -280,8 +331,20 @@ def _item(v: Verdict) -> pipeline.PipelineItem:
     such fix existed. That is the defect shape this repository keeps finding,
     and the corpus was carrying it.
 
-    The classifier still reads ``delivered``. Only identity is narrowed, and it
-    is narrowed to exactly what production stores.
+    The classifier reads ``as_classified`` since #767 — ``delivered`` with
+    production's window applied — so both fields are now production-shaped and
+    the sentence that used to sit here ("the classifier still reads
+    ``delivered``") was true only until that commit.
+
+    IDENTITY IS THE THIRD INSTANCE OF THIS SHAPE AND IS DELIBERATELY LEFT.
+    ``_readable(case)`` is ``normalise_body_text(case.body)`` for every case,
+    while production derives identity from the text it CLASSIFIED — the
+    snippet, for the 460 cases that model an extraction failure. Measured
+    2026-09-06: the text differs on all 460 and the resolved identity differs on
+    **0**, because no case has its role reachable only past the snippet cut.
+    Changing it would move nothing and could be gated by nothing, which is this
+    repository's definition of decoration; a family whose role sits past the cut
+    is what would make the fix measurable, and that is the case to write first.
     """
 
     return pipeline.PipelineItem(

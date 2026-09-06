@@ -945,6 +945,108 @@ def test_a_job_advert_is_still_not_a_reference_to_your_application() -> None:
         assert not pipeline.references_an_application("New roles for you", text), text
 
 
+def test_the_employer_may_sit_inside_your_application() -> None:
+    """#767. `your application` was spelled adjacently, and ATS subjects are not.
+
+    "Update on your <Employer> application" is the most ordinary subject an
+    applicant tracking system sends, and this floor could not see it. The shape
+    is not invented for this test: ``observed.py``'s OBSERVED_PENDING carries
+    "[Action Required] Your {display} Application" transcribed from the owner's
+    inbox, employer between the two words.
+
+    It cost 160 messages per corpus run — the whole truncated half of
+    ``verdict-past-the-body-cap``, real rejections reaching no card, no queue
+    row and no counter, which is the one outcome #447 exists to make impossible.
+    They were invisible until #767 stopped the harness handing the classifier a
+    body production cannot deliver.
+
+    MUTATION: restore ``your\\ application\\b`` -> every row below reds.
+    """
+    for subject in (
+        "Update on your Dovetailmontreach Works application",
+        "[Action Required] Your Northwind Application",
+        "An update on your Software Engineer I application",
+        # 44 characters of intervener. The bound was `{0,80}` from #767's review
+        # for exactly this: a real employer name runs past the 40 the corpus's
+        # invented ones fit inside.
+        "Update on your Pricewaterhouse Coopers International Limited application",
+        "your application",  # the adjacency that already worked must keep working
+    ):
+        assert pipeline.references_an_application(subject, ""), subject
+
+
+def test_the_application_named_is_the_readers_own() -> None:
+    """The two shapes the widened span reaches that belong to somebody else.
+
+    Neither could match under the old adjacency, so both are admissions the
+    widening created and the corpus cannot see: `ats-relay-noise` carries
+    referral ASKS and no referral STATUS mail, and no family sends a
+    talent-community blast about the process itself.
+
+    MUTATION: delete the `_NOT_THE_READERS_APPLICATION` check from
+    `references_an_application` -> every row here reds. Narrow it to
+    `\\bapplication\\ process\\b` alone -> the first three red.
+    """
+    for subject, snippet in (
+        ("Update on your referral's application", ""),
+        ("Your referral’s application is under review", ""),  # curly apostrophe
+        ("", "We have an update on your colleague's application."),
+        ("Thank you for your interest in our application process", ""),
+        ("", "Questions about our application processes are answered here."),
+    ):
+        assert not pipeline.references_an_application(subject, snippet), (
+            subject or snippet
+        )
+
+
+def test_refusing_those_two_does_not_refuse_the_reader_their_own() -> None:
+    """The control on the exclusion, and the half that keeps it narrow.
+
+    An exclusion that swallowed the ordinary case would be strictly worse than
+    the adjacency it replaced: mail about a real application would reach nothing
+    again, which is the #447 defect. These are the shapes that must survive it,
+    including one that contains the word `process` and one that contains an
+    apostrophe-s somewhere other than in front of `application`.
+
+    MUTATION: drop the `\\ application` tail from the possessive arm (so any
+    `'s` refuses) -> the third and fourth red. Drop `\\ process` (so any
+    `application` followed by anything refuses) -> the first two red.
+    """
+    for subject, snippet in (
+        ("Update on your application", "We are still reviewing your application."),
+        ("", "Your application is moving through our interview process."),
+        ("Update on your Ernst & Young LLP application", ""),
+        ("An update on your application", "Northwind's hiring team has read it."),
+    ):
+        assert pipeline.references_an_application(subject, snippet), (
+            subject or snippet
+        )
+
+
+def test_the_gap_inside_your_application_is_still_one_clause() -> None:
+    """The control on the widening above, and it is the half that bounds it.
+
+    A span between "your" and "application" that may hold anything at any
+    distance turns this floor into "the word application appears somewhere",
+    and the failure mode of that is a review queue full of job adverts. The
+    bound is a clause and a length, and both are load-bearing here: the first
+    two rows are stopped by the sentence break, the last by the distance.
+
+    MUTATION: widen to ``[\\s\\S]{0,400}?`` -> the first two red. Widen the
+    length alone -> the last one reds.
+    """
+    for subject, snippet in (
+        ("New roles for you", "Browse your matches. Applications close Friday."),
+        ("Your weekly digest", "Your saved searches are ready. Application deadlines below."),
+        (
+            "Your profile",
+            "Your account settings, alert preferences, saved jobs and privacy "
+            "controls can all be managed from the careers application portal.",
+        ),
+    ):
+        assert not pipeline.references_an_application(subject, snippet), snippet
+
+
 def test_the_employers_possessive_is_not_part_of_the_job_title() -> None:
     """"applying to <Employer>'s <Title> position" — the capture took both.
 
