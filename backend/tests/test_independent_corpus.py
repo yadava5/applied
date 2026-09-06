@@ -374,14 +374,28 @@ RECORDED = {
     # 16790 -> 16970 (#641): +180, the whole of the new family, which every
     # rule reads correctly. `wrong` and `abstained` do not move, so the family
     # adds no classifier defect and its board numbers are about identity alone.
-    "correct": 16970,
+    # 16970 -> 16810 (#767): -160, and this one is a LOSS OF FALSE CREDIT rather
+    # than a regression. The harness handed the classifier the uncapped body, so
+    # `verdict-past-the-body-cap` — the family built for `_MAX_BODY_CHARS` —
+    # scored 320/320 on text production cannot deliver. Capping it moves exactly
+    # 160 verdicts and no others, all `rejection` 0.95 -> `other` 0.50; they are
+    # in `abstained` below. `wrong` does not move and `auto_filed_wrong` stays 0,
+    # so nothing became a false statement to the user; 160 things stopped being
+    # counted as read. The corpus was overstating accuracy by 0.88 points.
+    "correct": 16810,
     # 361 -> 304 (#451).
     "wrong": 304,
     # 1013 -> 926 (#451). It FELL, which is not what a demotion is supposed
     # to do and is worth saying plainly: the tie-break half moves messages
     # OUT of abstention by giving a tied report the verdict, and that more
     # than covers what the demotion pushed in.
-    "abstained": 926,
+    # 926 -> 1086 (#767): +160, the other side of the `correct` note above.
+    # Every one is a rejection whose verdict sits past character 4,000, which
+    # production has never been able to read and the harness was reading for it.
+    # Pinned per-family and two-sided by
+    # `test_the_body_cap_is_measured_rather_than_merely_populated`, with a
+    # control that lifts the cap and gets all 160 rejections back.
+    "abstained": 1086,
     # The number that matters more than `wrong`: how many wrong verdicts are
     # stated to the user as fact rather than held for them to settle.
     #
@@ -1170,6 +1184,100 @@ def test_abstention_is_where_truncation_lands(verdicts) -> None:
     assert score.by_family["rejection-past-the-snippet"]["wrong"] == 0, (
         "a truncated rejection was stated to the user as FACT rather than left "
         "silent. This was 14 (#455) and is the regression guard for that fix."
+    )
+
+
+def test_the_body_cap_is_measured_rather_than_merely_populated(verdicts) -> None:
+    """#767. 320 cases existed for the 4,000-character cap and none of them met it.
+
+    ``verdict-past-the-body-cap`` builds pairs: a confirmation, then a rejection
+    whose verdict starts at character ~7,261 of a 7,351-character body. The
+    harness handed the classifier all 7,351, so the one family named for the cap
+    was the one family the cap never reached. It read **320 correct, 0
+    abstained** — a family that cannot fail, which this repository has now
+    written down enough times that a number without a control should be assumed
+    to be one.
+
+    ``harness.as_classified`` applies production's own ``normalise_body_text``,
+    and the pair splits: the confirmation is inside the window and correct, the
+    rejection is outside it and silent.
+
+    PINNED AT BOTH NUMBERS, for the reason
+    ``test_abstention_is_where_truncation_lands`` gives: a single assertion over
+    their sum would let ``correct`` and ``abstained`` eat each other. ``wrong``
+    is pinned separately because silence and a false verdict are different
+    products, and only one of them is acceptable here.
+    """
+
+    score = score_classifier(verdicts)
+    family = score.by_family["verdict-past-the-body-cap"]
+    assert family["correct"] == 160, (
+        "the half INSIDE the window must still be read correctly. If this falls, "
+        "the cap is not what moved — something taught the classifier to miss a "
+        f"plain confirmation. Got {family['correct']}."
+    )
+    assert family["abstained"] == 160, (
+        "the half OUTSIDE the window must be silent. Below 160 means the "
+        "classifier is answering from text production cannot deliver, which is "
+        f"the #767 instrument defect returning. Got {family['abstained']}."
+    )
+    assert family["wrong"] == 0, (
+        "a rejection the product never read was stated to the user as fact. "
+        "Silence is the designed outcome past the cap; a verdict is not."
+    )
+
+
+def test_the_cap_is_what_makes_that_family_abstain(cases) -> None:
+    """The control on the test above, and it is the whole reason to trust it.
+
+    160 abstentions prove nothing on their own: a classifier that had simply
+    stopped reading rejections would produce the same number, and so would a
+    generator that had stopped writing them. This re-classifies the SAME 160
+    messages with the cap lifted and nothing else changed, and asserts they come
+    back as confident rejections.
+
+    So the pin above is directional: it reds if the harness stops capping (the
+    defect returning) and it reds if the rejections stop being rejections (the
+    fixture rotting), and this control says which of the two happened.
+
+    IT ALSO PROVES THE MUTATION LANDS. ``as_classified`` returning
+    ``case.delivered`` unchanged — the pre-#767 code, and the one-line revert
+    somebody will reach for — makes the assertion below still pass and the two
+    assertions above fail, which is the direction that names the cause.
+    """
+
+    from jobtracker.classifier.rules import RulesClassifier
+    from jobtracker.cloud.gmail_client import _MAX_BODY_CHARS
+    from tests.corpus_independent.harness import as_classified
+
+    over = [
+        c
+        for c in cases
+        if c.family == "verdict-past-the-body-cap" and len(c.body) > _MAX_BODY_CHARS
+    ]
+    assert len(over) == 160, (
+        f"{len(over)} messages exceed the cap, not 160. The family's shape "
+        "changed and the pin above is measuring a different population."
+    )
+
+    classifier = RulesClassifier()
+    silent_when_capped = 0
+    read_when_not = 0
+    for case in over:
+        capped = classifier.classify(case.subject, as_classified(case), case.sender)
+        uncapped = classifier.classify(case.subject, case.body, case.sender)
+        if capped.category.value != "rejection":
+            silent_when_capped += 1
+        if uncapped.category.value == "rejection":
+            read_when_not += 1
+
+    assert silent_when_capped == 160, (
+        f"{silent_when_capped} of 160 were unread at the cap. The harness is "
+        "not applying production's window."
+    )
+    assert read_when_not == 160, (
+        f"only {read_when_not} of 160 are rejections at all with the cap lifted. "
+        "The abstentions above are a fixture problem, not the cap."
     )
 
 
@@ -2195,6 +2303,18 @@ async def test_every_application_mail_is_addressed(
     # here at ANY size is mail the product received and did nothing with, which
     # is the one outcome a user cannot tell apart from a mailbox that never
     # received it.
+    #
+    # IT WENT TO 160 AND BACK TO EMPTY DURING #767, and the round trip is the
+    # reason to trust the empty dict rather than a reason to distrust it. The
+    # harness had been handing the classifier the UNCAPPED body, so the whole
+    # truncated half of `verdict-past-the-body-cap` was scored from text
+    # production cannot deliver and this counter could not see them. Feeding it
+    # production's window put 160 real rejections here — no card, no queue row,
+    # no counter — and the cause was the floor's own anchor: `your application`
+    # spelled adjacently cannot match "Update on your <Employer> application".
+    # Both halves are in that commit; neither is any use without the other,
+    # because the instrument fix alone records the loss and the floor fix alone
+    # is unmeasurable.
     lost = Counter(f.family for f in score.failures if f.mode == "LOST")
     assert dict(lost) == {
         # EMPTY SINCE #458, and the 11 that used to sit here were not lost for

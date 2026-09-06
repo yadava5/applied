@@ -945,6 +945,56 @@ def test_a_job_advert_is_still_not_a_reference_to_your_application() -> None:
         assert not pipeline.references_an_application("New roles for you", text), text
 
 
+def test_the_employer_may_sit_inside_your_application() -> None:
+    """#767. `your application` was spelled adjacently, and ATS subjects are not.
+
+    "Update on your <Employer> application" is the most ordinary subject an
+    applicant tracking system sends, and this floor could not see it. The shape
+    is not invented for this test: ``observed.py``'s OBSERVED_PENDING carries
+    "[Action Required] Your {display} Application" transcribed from the owner's
+    inbox, employer between the two words.
+
+    It cost 160 messages per corpus run — the whole truncated half of
+    ``verdict-past-the-body-cap``, real rejections reaching no card, no queue
+    row and no counter, which is the one outcome #447 exists to make impossible.
+    They were invisible until #767 stopped the harness handing the classifier a
+    body production cannot deliver.
+
+    MUTATION: restore ``your\\ application\\b`` -> every row below reds.
+    """
+    for subject in (
+        "Update on your Dovetailmontreach Works application",
+        "[Action Required] Your Northwind Application",
+        "An update on your Software Engineer I application",
+        "your application",  # the adjacency that already worked must keep working
+    ):
+        assert pipeline.references_an_application(subject, ""), subject
+
+
+def test_the_gap_inside_your_application_is_still_one_clause() -> None:
+    """The control on the widening above, and it is the half that bounds it.
+
+    A span between "your" and "application" that may hold anything at any
+    distance turns this floor into "the word application appears somewhere",
+    and the failure mode of that is a review queue full of job adverts. The
+    bound is a clause and a length, and both are load-bearing here: the first
+    two rows are stopped by the sentence break, the last by the distance.
+
+    MUTATION: widen to ``[\\s\\S]{0,400}?`` -> the first two red. Widen the
+    length alone -> the last one reds.
+    """
+    for subject, snippet in (
+        ("New roles for you", "Browse your matches. Applications close Friday."),
+        ("Your weekly digest", "Your saved searches are ready. Application deadlines below."),
+        (
+            "Your profile",
+            "Your account settings, alert preferences, saved jobs and privacy "
+            "controls can all be managed from the careers application portal.",
+        ),
+    ):
+        assert not pipeline.references_an_application(subject, snippet), snippet
+
+
 def test_the_employers_possessive_is_not_part_of_the_job_title() -> None:
     """"applying to <Employer>'s <Title> position" — the capture took both.
 

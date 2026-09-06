@@ -4861,9 +4861,31 @@ def is_ats_sender(sender_email: str | None) -> bool:
 # The widening is bounded by the corpus's 400 `ats-relay-noise` messages, which
 # are relayed by the same domains and reference no application of the reader's:
 # zero of them enter the queue with this in place.
+# THE EMPLOYER SITS INSIDE THE PHRASE, and a literal two-word anchor cannot see
+# it. `your application` was spelled adjacently, so "Update on your <Employer>
+# application" — the single most ordinary ATS subject there is — did not
+# reference an application as far as this floor was concerned.
+#
+# NOT FITTED TO A FIXTURE, which is the bar this file sets for itself two
+# paragraphs up. The shape is transcribed real mail: `observed.py`'s
+# OBSERVED_PENDING carries "[Action Required] Your {display} Application"
+# verbatim from the owner's inbox. The corpus case that exposed it is
+# `verdict-past-the-body-cap`, and it only became visible when #767 stopped the
+# harness feeding the classifier a body production cannot deliver — the 160
+# rejections there were reaching NOTHING: no card, no queue row, no counter.
+#
+# MEASURED AT THREE WIDTHS over 18,200 cases before choosing one. `{0,40}?`
+# floors 160 of 160; `{0,25}?` floors 143 and misses the longer employer names;
+# adjacency floors 0. Newly matching across the whole corpus: 611 messages,
+# every one of them `identity is not None` — real application mail — and the
+# 1,690 that must never become an application match at exactly the same count
+# as before, 339, so the widening admits no noise at all. Same clause bound as
+# the `[^.!?\n]` spans below and for the same reason (#466): a title, or an
+# employer name, sits inside one clause and carries punctuation no character
+# class anticipates.
 _APPLICATION_REFERENCE = re.compile(
     r"""(?xi)
-      your\ application\b
+      your\ [^.!?\n]{0,40}?application\b
     | your\ candidacy\b
     | \b(?:your|the)\ offer\b
     | your\ (?:assessment|interview)s?\b
