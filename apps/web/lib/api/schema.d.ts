@@ -1293,6 +1293,11 @@ export interface components {
              * @default 0
              */
             unreadable: number;
+            /**
+             * Unrecognised
+             * @default 0
+             */
+            unrecognised: number;
             /** Result Size Estimate */
             result_size_estimate?: number | null;
         };
@@ -1839,6 +1844,11 @@ export interface components {
              * @default 0
              */
             unreadable: number;
+            /**
+             * Unrecognised
+             * @default 0
+             */
+            unrecognised: number;
             /**
              * Stopped By
              * @default complete

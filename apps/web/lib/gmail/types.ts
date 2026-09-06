@@ -95,6 +95,24 @@ export interface InboxPage {
    * without it, and `0` is the honest reading of "this page never told us".
    */
   unreadable?: number;
+  /**
+   * Of `unreadable`, the share Gmail refused with no reason the backend
+   * recognises (#744).
+   *
+   * A SUBSET, carried separately because the two mean opposite things. A
+   * deleted message is ordinary; a refusal we cannot classify may be a quota
+   * wearing an envelope shape that changed under us, and the cursor advances
+   * past those ids permanently either way. Non-zero on a healthy mailbox means
+   * a refusal shape the backend does not classify.
+   *
+   * It is log-and-wire only today: nothing renders it. `unreadable` is what
+   * the workbench shows ("N could not be read"), and this narrows the cause
+   * for whoever reads the logs, not for the reader of the page.
+   *
+   * Optional for the same reason as `unreadable`: an older snapshot hydrates
+   * without it, and `0` is the honest reading of "this page never told us".
+   */
+  unrecognised?: number;
 }
 
 /** An `applied` message with no later response — a nudge to follow up. */
