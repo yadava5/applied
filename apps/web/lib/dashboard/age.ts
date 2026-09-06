@@ -207,15 +207,15 @@ export interface WeekOverWeek {
  *    Monday it counted; `lib/dashboard/readerWeek.ts` decides when to ask and
  *    `BoardSubtitle` does the asking, after hydration, on the same
  *    server-value-then-client-value pattern `useLocalToday` is built on.
- *  - `summarize()` still defaults to `Date.now()` and buckets on `todayISO` —
- *    the UTC day. TWO surfaces call it, and only one of them can show the
- *    split:
+ *  - `summarize()` takes a DAY and defaults it to `todayISO()` — the UTC day.
+ *    TWO surfaces call it, and only one of them could ever show the split:
  *      · `DemoDashboard.tsx` renders `buildSubtitle(summary, notifications.weekly)`,
  *        so with the weekly pref on, /demo's header and its momentum caption
- *        can still disagree in exactly the window described above. The fix is
- *        one line (pass the `useLocalToday()` value the twin already holds),
- *        but it moves numbers the `demo-utc-minus-10` / `demo-utc-plus-14`
- *        Playwright projects measure, so it is not smuggled in here.
+ *        used to disagree in exactly the window described above. FIXED in #584:
+ *        the twin passes the `useLocalToday()` value it already holds, so both
+ *        lines count from the reader's day. The signature changed with it —
+ *        it used to take `now: number` and derive the UTC day internally, which
+ *        meant a caller who KNEW the reader's day had no way to say so.
  *      · `MarketingBoard.tsx` renders `buildSubtitle(summarize(apps), false)`.
  *        `weekly` is a hard `false` there, and `buildSubtitle` omits the whole
  *        ` · +N this wk` segment when it is — so the landing board computes a

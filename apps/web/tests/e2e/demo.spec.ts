@@ -1129,6 +1129,81 @@ test.describe("live demo (/demo)", () => {
     await expect(rowSelects).toHaveCount(closedSelects);
   });
 
+  test("the header's week and the momentum caption's week are one number", async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    /*
+     * #584 / #518. Two renderers of ONE number, side by side on the same
+     * screen. The momentum caption has always counted from `useLocalToday()`;
+     * the header came from `summarize()`, which derived the UTC day itself and
+     * gave the twin no way to say otherwise. For a reader whose local day and
+     * UTC day fall either side of a Monday, the two lines then described
+     * different weeks — and at UTC+14 they differ EVERY day, because the
+     * header's window ends one day early and the fixture files a row today.
+     *
+     * WHEN THIS CAN GO RED, stated rather than implied, because a gate that
+     * cannot fail is this repo's recurring defect. Measured against the
+     * unfixed code, not reasoned about:
+     *   demo-utc-plus-14   red whenever UTC is in [10:00, 24:00) — the whole
+     *                      window in which that zone's local day differs.
+     *   demo-utc-minus-10  red on Mondays in [00:00, 10:00) UTC, when the
+     *                      shift crosses the week boundary.
+     *   chromium (UTC)     never — local and UTC are the same day, which is
+     *                      exactly why the two offset projects exist.
+     * SO THIS IS THE ONLY GATE ON THE WIRING, and the first version of this
+     * comment claimed otherwise. `tests/unit/this-week.test.mjs` grades the
+     * MECHANISM — that `summarize` counts from the day it is handed, and that
+     * an instant is no longer accepted as one — but nothing there sees
+     * `DemoDashboard`'s call site. Revert that one line and this comparison is
+     * the only red anywhere. Combined with the windows above, a broken build
+     * is invisible to all three projects for UTC Tue-Sun 00:00-10:00, roughly
+     * a third of the clock. That is the honest coverage and it is written down
+     * rather than implied.
+     *
+     * The +14 margin is also thin on two weekdays: Tue and Wed differ by
+     * exactly one row, which is the seed at `filedDaysAgo: 0` in
+     * `lib/demo/demoData.ts`. Move that seed and the red window shrinks with
+     * nothing going red to say so.
+     */
+
+    // `+N this wk` is folded into the header only when the weekly-summary
+    // preference is on, and it is off by default — the live default for a
+    // never-set preference. Set the cookie the demo Settings toggle writes
+    // rather than driving the toggle: the pref path already has its own case
+    // in settings.spec.ts, and what is under test here is the two numbers.
+    await context.addCookies([
+      {
+        name: "applied-demo-notifications",
+        value: encodeURIComponent(JSON.stringify({ weekly: true, reviewAlerts: false })),
+        url: `${baseURL ?? "http://localhost:3000"}/demo`,
+      },
+    ]);
+    await page.goto("/demo");
+
+    const pulse = page.getByTestId("pipeline-pulse");
+    await expect(pulse.getByText(/[1-9]\d* this wk/)).toBeVisible();
+
+    // Scoped to the sync header row: "this wk" also appears in the pulse, so
+    // an unscoped query would compare the caption with itself and pass on any
+    // build at all.
+    const header = page.locator("[data-sync-header-row]").getByText(/ filed · /);
+    await expect(header).toContainText(/\+\d+ this wk/);
+
+    const headerWeek = ((await header.innerText()).match(/\+(\d+) this wk/) ?? [])[1];
+    const captionWeek = (
+      (await pulse.getByText(/\d+ this wk/).innerText()).match(/(\d+) this wk/) ?? []
+    )[1];
+
+    expect(headerWeek, "the header stopped carrying a week at all").toBeDefined();
+    expect(captionWeek, "the momentum caption stopped carrying a week at all").toBeDefined();
+    expect(
+      headerWeek,
+      "the board header and the momentum caption are counting different weeks",
+    ).toBe(captionWeek);
+  });
+
   test("the pulse renders all four derived signals in the board's band", async ({ page }) => {
     await page.goto("/demo");
     // ONE copy, and it is the board's full-width band — back in the
