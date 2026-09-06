@@ -1337,7 +1337,8 @@ body {
  * motion.
  * ------------------------------------------------------------------------- */
 .board-col[data-drop="true"],
-.spine-stage[data-drop="true"] {
+.spine-stage[data-drop="true"],
+.stage-chip[data-drop="true"] {
   border-color: var(--line-strong);
   background: var(--surface-2);
 }

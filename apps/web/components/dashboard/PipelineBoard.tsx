@@ -4,6 +4,7 @@ import { Search } from "lucide-react";
 import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { useRouter } from "next/navigation";
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -613,6 +614,55 @@ export function PipelineBoard({
   const toggleSet = (key: string) => setOpenSets((s) => ({ ...s, [key]: !s[key] }));
 
   /**
+   * A STAGE CHANGE REVEALS WHERE THE CARD LANDED (#772).
+   *
+   * `EmployerSetRow` renders its members only while open, so a card arriving at
+   * a stage where its employer already has rows folds into that set and leaves
+   * the DOM: no open button, not draggable, no select. All three ways to move
+   * it again, gone at the moment the reader was moving it — and it recovers on
+   * expanding the group with nothing on screen saying so.
+   *
+   * THE DROP PATH ONLY, AND THAT IS A DELIBERATE STOP RATHER THAN AN
+   * OVERSIGHT. `moveTo` is the drop path and the only caller of itself; the
+   * row's `<select>` and the detail pane call `transport.changeStatus`
+   * directly and never enter it, so the same defect is reachable through both
+   * — measured on the twin: a select-driven move takes the row out of
+   * `interviewing` and into a still-collapsed `applied` set, gone.
+   *
+   * IT IS NOT FIXED HERE BECAUSE #425 ALREADY OWNS THAT PATH, and the two
+   * answers contradict each other. `tests/e2e/stage-focus.spec.ts`'s "a
+   * correction into a COLLAPSED employer set" asserts the row DOES fold and
+   * that focus is parked on the set header, because a folded row has no
+   * `#status-<id>` to return to. Wiring the reveal into the select made that
+   * test red — its premise, not its assertion. Revealing is very likely the
+   * better answer (the row stays visible and the id it wants exists again),
+   * but that is a change to #425's design and it needs #425's evidence, not a
+   * drag issue's. Filed rather than smuggled in.
+   *
+   * A CALLBACK SHAPE IS KEPT even with one caller, because that is what the
+   * other two doors will use. NOT A WRAPPED TRANSPORT: wrapping `transport`
+   * would change its identity, and `transport` is a dependency of
+   * `StageSelect`'s memo — the bail-out that stops React 19 re-asserting a
+   * controlled select's value over a choice in flight (see
+   * `playwright.config.ts`, which records that no test in this suite can
+   * observe that race).
+   *
+   * `stageOf` rather than the raw status, because the caller may hand back a
+   * finer word than a stage key — `withdrawn` and `ghosted` both live under
+   * `closed`, and the set keys are stage-scoped.
+   *
+   * A key for a set that never forms is inert, so this asks no question about
+   * whether the destination will fold. `openSets` only ever grows within a
+   * mount, and it is not reverted when the write fails: the destination set
+   * stays open showing that employer's other rows while the card does not
+   * arrive. Cosmetic, chosen rather than overlooked — reverting it would need
+   * "was it open before", which is exactly the second opinion this avoids.
+   */
+  const revealStage = useCallback((status: string, company: string) => {
+    setOpenSets((s) => ({ ...s, [`${stageOf(status)}:${company}`]: true }));
+  }, []);
+
+  /**
    * The chip is suppressed for the company the board is already filtered to —
    * "N more at Amazon" while looking at exactly Amazon's set was the bug this
    * argument exists to keep fixed.
@@ -671,6 +721,10 @@ export function PipelineBoard({
     const target: string = stageKey;
     setMoveError(null);
     setPendingMoves((m) => ({ ...m, [appId]: target }));
+    /* Optimistic, and before the await: the board hops on `pendingMoves`
+       before the write returns, so revealing afterwards would show a folded,
+       unreachable card for the width of the request. See `revealStage`. */
+    revealStage(target, app.company);
     const result = await transport.changeStatus(appId, target);
     if (!result.ok) {
       setPendingMoves((m) => {
@@ -1000,6 +1054,53 @@ export function PipelineBoard({
                   setDropStage(column.key);
                 }
               : undefined,
+          /* THE HIGHLIGHT HAD NO WAY TO CLEAR (#772). `onDragOver` set it and
+             nothing unset it until a drop, so a stage the pointer had already
+             left stayed lit — during a drag the visible affordance and the
+             actual drop target disagreed, which is the one moment a board must
+             not lie about where a card will land.
+
+             TWO GUARDS, and each is a bug without the other:
+
+             `contains(relatedTarget)` — `dragleave` also fires when the
+             pointer crosses into a CHILD of this target, and a section full of
+             cards is nothing but children. Clearing there strobes the
+             highlight off and on for every row the pointer passes over.
+             `relatedTarget` is null when the pointer leaves the window
+             entirely, which is a real leave and must clear.
+
+             The functional `setDropStage` — a bare `setDropStage(null)` erases
+             whatever the CURRENT highlight is, including one a later stage has
+             already claimed. Clearing only when the stage is still ours makes
+             the arrival order irrelevant.
+
+             AND THE ORDER IS WORTH STATING PRECISELY, because the obvious
+             version of this argument is wrong. WHATWG fires, per tick,
+             `dragenter(new)` then `dragleave(old)` then `dragover(new)` — and
+             it is `dragover`, not `dragenter`, that sets the highlight here.
+             So in the spec's own order `dropStage` is still the old stage when
+             its leave arrives and this guard's protective branch does not
+             engage; what it protects against is a leave that arrives AFTER the
+             new stage's first `dragover`, which is what a fast pointer and a
+             re-entrant handler produce. Written as a guard rather than an
+             ordering assumption precisely because the order is the browser's
+             to choose.
+
+             UNMEASURED, and it cannot be measured here: `relatedTarget` is
+             reported null during native drags in some engines, in which case
+             `next instanceof Node` is false and this clears — degrading to the
+             strobe the guard exists to prevent, rather than to the stuck
+             highlight that shipped before it. Every project in
+             `playwright.config.ts` is Chromium, so no gate in this repo can
+             see that path. */
+          onDragLeave:
+            draggingId !== null
+              ? (event: React.DragEvent) => {
+                  const next = event.relatedTarget;
+                  if (next instanceof Node && event.currentTarget.contains(next)) return;
+                  setDropStage((current) => (current === column.key ? null : current));
+                }
+              : undefined,
           onDrop: (event: React.DragEvent) => {
             event.preventDefault();
             const id = Number(event.dataTransfer.getData("text/plain"));
@@ -1026,8 +1127,24 @@ export function PipelineBoard({
           key={column.key}
           type="button"
           {...common}
+          /* THE ONLY DROP TARGET AN EMPTY STAGE HAS BELOW THE SPINE (#772).
+             `groups` drops empty columns, so an empty stage renders no
+             `<section>` to drop onto and the spine — which does carry these —
+             is `hidden` until `lg` (or `md` in the shell). Measured: five
+             stages accepted a drop at 900px and an empty stage accepted none
+             at 700px or 390px. That is a narrow desktop window, which is
+             exactly where board drag is plausible; the phone width is not the
+             case this is for. Same handlers as the spine button, deliberately:
+             two drop surfaces built from one definition cannot disagree about
+             what a drop does. */
+          data-drop={dropStage === column.key || undefined}
+          {...dropHandlers(column)}
           className={cn(
-            "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+            // `stage-chip` earns the same `[data-drop]` wash the spine and the
+            // list columns already have. Without it this target would accept a
+            // drop and show nothing — a drop point with no affordance, which is
+            // the same lie as an affordance with no drop point.
+            "stage-chip inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
             active
               ? "border-line-strong bg-surface-2 text-strong"
               : "border-line-soft text-muted hover:text-strong",

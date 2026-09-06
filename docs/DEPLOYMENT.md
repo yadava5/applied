@@ -410,6 +410,14 @@ pnpm e2e
 cd apps/web && pnpm build && PORT=3210 pnpm start &
 PLAYWRIGHT_BASE_URL=http://localhost:3210 pnpm e2e:prod tests/e2e/landing.spec.ts
 
+# `localhost`, NOT `127.0.0.1` (#741). Roughly 200 tests red at `127.0.0.1`,
+# and it is a harness constraint rather than a bug: every server-generated
+# redirect is built from `request.url`, and a self-hosted Next 16.3.3 reports
+# `localhost` there whatever you do -- measured on dev and on a production
+# build across six host/binding combinations. The app IGNORING a client's
+# `Host` header is the safe behaviour and is pinned in `auth.spec.ts`;
+# "fixing" it would be host-header injection.
+
 # Backend cloud-smoke
 cd backend
 JOBTRACKER_DEPLOYMENT=cloud JOBTRACKER_CORS_ALLOWED_HOSTS=jobtracker.app \

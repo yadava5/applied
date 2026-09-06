@@ -12,6 +12,24 @@ import { defineConfig, devices } from "@playwright/test";
  * - `baseURL` defaults to localhost but can be overridden with
  *   `PLAYWRIGHT_BASE_URL` to point at a Vercel Preview deployment once
  *   the Preview-URL wiring lands (out of scope for C17).
+ *
+ *   AGAINST A LOCAL SERVER IT MUST SAY `localhost`, NOT `127.0.0.1` (#741).
+ *   Pointing it at `127.0.0.1` reds around 200 tests, and the mechanism is
+ *   not a literal in this app: every server-generated redirect is built from
+ *   `request.url`, and a self-hosted Next 16.3.3 reports `localhost` there
+ *   whatever you do. Measured on `next dev` AND on a real `next start`
+ *   production build, six configurations — request via `localhost`, request
+ *   via `127.0.0.1`, `Host: example.test`, `Host: 127.0.0.1`, the server on
+ *   its default binding, and the server started with `--hostname 127.0.0.1`.
+ *   All six answered `location: http://localhost:<port>/…`. `request.url`'s
+ *   host follows neither the `Host` header nor `--hostname`.
+ *
+ *   That is the SAFE default and it is pinned as a security property in
+ *   `tests/e2e/auth.spec.ts` ("the callback's redirect target is not
+ *   client-controlled"): a redirect that followed a client-supplied `Host`
+ *   is host-header injection. So this is a harness constraint to respect,
+ *   not a bug to fix — do not "make the app honour the Host header" to make
+ *   a 127.0.0.1 run work.
  * - `video: 'on'` and `trace: 'on-first-retry'` give us post-mortem
  *   artifacts for any red test in CI without bloating every green run
  *   with traces.
