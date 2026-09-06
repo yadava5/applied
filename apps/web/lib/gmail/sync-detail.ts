@@ -64,7 +64,18 @@ export function withBackendSyncDetail<F extends { kind: string; message?: string
 }
 
 /**
- * Statuses the dashboard renders from the KIND, never from a body.
+ * Statuses at which `app/api/gmail/sync/route.ts` answers with a MACHINE TOKEN
+ * rather than prose.
+ *
+ * This set is a property of the ROUTE, not of any one caller, and checking that
+ * is what stopped a second copy of it being written for the workbench (#852).
+ * `classifyBadResponse` in `server.ts` partitions the statuses exhaustively:
+ * 401/403 -> `auth`, 429 -> `rate_limited`, 503 -> `unavailable`, 409 ->
+ * `notConnected`, and EVERYTHING ELSE -> `backend`. Only the `backend` arm
+ * carries a sentence (`{detail: result.message}`); the other four flatten to
+ * `{detail:"unauthenticated"}`, `{detail:"auth"}`, `{detail:"rate_limited"}`,
+ * `{detail:"unavailable"}`. So this set is exactly the complement of the arm
+ * that has prose, and both browser callers need the same one.
  *
  * WHY A SECOND GUARD, BROWSER-SIDE. `withBackendSyncDetail` protects the
  * proxy's own `message` field, and that protection does not survive the wire.
@@ -87,14 +98,21 @@ export function withBackendSyncDetail<F extends { kind: string; message?: string
 const RENDERED_FROM_STATUS = new Set([401, 403, 409, 429, 503]);
 
 /**
- * The detail the DASHBOARD may render, given the status it arrived with.
+ * The detail a BROWSER CALLER may render, given the status it arrived with.
  *
  * Status is the only kind-discriminator that survives the proxy, which is why
  * this takes one. 500 and 502 are the two that carry prose: the backend's own
  * typed sentence, or the proxy's status-derived line for a body it could not
  * quote.
+ *
+ * NAMED FOR THE PROXY, NOT THE SURFACE. This shipped as `dashboardSyncDetail`
+ * for #848, when the dashboard was the only caller that read the body. The
+ * inbox workbench is the second (#852), and a guard named for one surface is
+ * how a second, subtly different copy gets written for the other — the defect
+ * class this repository keeps re-finding. There is one endpoint and one
+ * flattening; there is one guard.
  */
-export function dashboardSyncDetail(status: number, body: unknown): string | null {
+export function proxySyncDetail(status: number, body: unknown): string | null {
   if (RENDERED_FROM_STATUS.has(status)) return null;
   return backendSyncDetail(body);
 }

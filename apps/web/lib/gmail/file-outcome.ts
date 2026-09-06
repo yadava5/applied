@@ -39,8 +39,16 @@
 export type FileFailure =
   /** The backend refused before it read or merged anything — see below. */
   | { kind: "not-connected" }
-  /** A non-OK status came back. */
-  | { kind: "status"; status: number }
+  /**
+   * A non-OK status came back.
+   *
+   * `detail` is the backend's own sentence when it sent one (#852) — APPENDED
+   * to the clause below, never replacing it. The valence has to survive: a
+   * reader shown "3 filed and 1 queued of 4 scanned" with the failure lead
+   * removed has been told a 500 was a success, which is the collapse #643
+   * names. `proxySyncDetail` decides whether a body may be quoted at all.
+   */
+  | { kind: "status"; status: number; detail?: string | null }
   /** The request threw: no response at all, so no outcome is knowable. */
   | { kind: "unreachable" };
 
@@ -77,7 +85,13 @@ export function fileFailureNote(failure: FileFailure): string {
       return "Gmail isn't connected — nothing was filed.";
     case "unreachable":
       return `Couldn't reach the server — ${KEPT}.`;
-    default:
-      return `Couldn't file these (${failure.status}) — ${KEPT}.`;
+    default: {
+      // The detail is a TAIL. The lead names the failure and the status, the
+      // middle clause says what survived, and only then does the backend get
+      // to be specific. Reordering these hands the reader a success sentence.
+      const detail = failure.detail?.trim();
+      const tail = detail ? ` · ${detail}` : "";
+      return `Couldn't file these (${failure.status}) — ${KEPT}.${tail}`;
+    }
   }
 }
