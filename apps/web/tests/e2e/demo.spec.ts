@@ -964,9 +964,20 @@ test.describe("live demo (/demo)", () => {
      *                      shift crosses the week boundary.
      *   chromium (UTC)     never — local and UTC are the same day, which is
      *                      exactly why the two offset projects exist.
-     * So this is not a gate that fires at every instant, and it is paired with
-     * `tests/unit/this-week.test.mjs`, which grades the mechanism on a fixed
-     * pair of days and therefore always can.
+     * SO THIS IS THE ONLY GATE ON THE WIRING, and the first version of this
+     * comment claimed otherwise. `tests/unit/this-week.test.mjs` grades the
+     * MECHANISM — that `summarize` counts from the day it is handed, and that
+     * an instant is no longer accepted as one — but nothing there sees
+     * `DemoDashboard`'s call site. Revert that one line and this comparison is
+     * the only red anywhere. Combined with the windows above, a broken build
+     * is invisible to all three projects for UTC Tue-Sun 00:00-10:00, roughly
+     * a third of the clock. That is the honest coverage and it is written down
+     * rather than implied.
+     *
+     * The +14 margin is also thin on two weekdays: Tue and Wed differ by
+     * exactly one row, which is the seed at `filedDaysAgo: 0` in
+     * `lib/demo/demoData.ts`. Move that seed and the red window shrinks with
+     * nothing going red to say so.
      */
 
     // `+N this wk` is folded into the header only when the weekly-summary

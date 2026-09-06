@@ -19,7 +19,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { todayISO } from "../../lib/dashboard/age.ts";
+import { localTodayISO, todayISO } from "../../lib/dashboard/age.ts";
 import { summarize } from "../../lib/dashboard/summary.ts";
 
 /** Fixed clock: 2026-08-26T12:00:00Z. The window reaches back to 2026-08-19. */
@@ -140,6 +140,23 @@ test("a malformed applied date is not counted and does not throw", () => {
  * UTC-10 at 04:00 UTC on Monday 2026-09-07 is living in Sunday 2026-09-06.
  * They fall in DIFFERENT calendar weeks, which is the whole reason the split
  * was worth a number rather than a shrug.
+ *
+ * WHAT THIS DOES NOT GRADE, said here because the first version of this
+ * comment implied it did. The first two assertions pass on the OLD signature
+ * too: `new Date("2026-09-06")` parses as UTC midnight, so `todayISO(day)`
+ * returns that same day and the old body computed the identical week. `node
+ * --test` strips types rather than checking them, so the string sails through.
+ * What they DO grade is a regression where `summarize` ignores its argument
+ * and reads a clock — both days would then collapse to the real week and the
+ * `notEqual` fires.
+ *
+ * The third assertion is the one that separates the two signatures, and it is
+ * why it is here rather than in a type test.
+ *
+ * NOTHING IN THIS FILE GRADES THE `DemoDashboard` WIRING, which is where the
+ * defect actually lived. Revert that one line and the only red anywhere is the
+ * time-windowed comparison in `tests/e2e/demo.spec.ts`. That is a real limit
+ * and it is written down rather than papered over.
  */
 test("the week is counted from the day it is GIVEN, not from a clock it reads", () => {
   // The demo's own near seeds: filed 0, 1, 3 and 5 days before the reader's
@@ -167,18 +184,58 @@ test("the week is counted from the day it is GIVEN, not from a clock it reads", 
     summarize(apps, utcMonday).thisWeek,
     "the two days must be able to disagree, or this file grades nothing",
   );
+
+  // THE ASSERTION THAT SEPARATES THE TWO SIGNATURES. The old parameter was an
+  // INSTANT and `summarize(apps, NOW)` counted the week around it; the new one
+  // is a DAY, and a number is not one — `utcDay` cannot parse it, so nothing
+  // is bucketed. Ugly on purpose: it is the only single-process way to state
+  // "this argument is a calendar day, not a clock reading", and reverting the
+  // signature is exactly the edit that would put an instant back here.
+  assert.equal(
+    summarize(apps, Date.parse("2026-09-06T12:00:00Z")).thisWeek,
+    0,
+    "an instant is no longer a day: the parameter must not accept one",
+  );
 });
 
 /**
  * The default is the UTC day, and it has to stay that way: server renders and
  * the hydrating client pass both call this with no day, and they must produce
  * byte-identical HTML (`age.ts` header, React #418).
+ *
+ * THE FIRST VERSION OF THIS TEST COULD NOT FAIL. It compared `summarize(apps)`
+ * against `summarize(apps, todayISO())` over a row dated a fixed day — two
+ * expressions that are equal by construction whatever the default is, and
+ * whose count decays to `0 === 0` as that fixed day recedes.
+ *
+ * This one uses the day AFTER the UTC day, which is the future for a UTC
+ * reader and TODAY for a reader east of UTC inside the divergence window. So
+ * the assertion is a real gate in `TZ=Asia/Tokyo` and `TZ=Pacific/Auckland`
+ * (which `frontend-ci.yml` runs, alongside `America/New_York` and `UTC`), for
+ * the part of the day those zones have already turned over — and an honest
+ * control everywhere else. Which arm you are in is asserted, not assumed.
  */
-test("with no day given it counts from the UTC day", () => {
-  const apps = [row("2026-09-06", "2026-09-06")];
+test("with no day given it counts from the UTC day, not the reader's", () => {
+  const utcToday = todayISO();
+  const tomorrowUTC = new Date(Date.parse(`${utcToday}T00:00:00Z`) + 86400000)
+    .toISOString()
+    .slice(0, 10);
+  const apps = [row(tomorrowUTC, tomorrowUTC)];
+
   assert.equal(
     summarize(apps).thisWeek,
-    summarize(apps, todayISO()).thisWeek,
-    "the default must be the UTC day, or SSR and hydration disagree",
+    0,
+    "a row dated tomorrow (UTC) was counted: the default is reading a clock that is not UTC",
   );
+
+  // East of UTC and already turned over: the same row IS today for that
+  // reader, so a default that read their day would have counted it. Where the
+  // two days agree there is nothing to discriminate and this arm is a control.
+  if (localTodayISO() > utcToday) {
+    assert.equal(
+      summarize(apps, localTodayISO()).thisWeek,
+      1,
+      "the fixture is not east-discriminating: this arm proves nothing",
+    );
+  }
 });
