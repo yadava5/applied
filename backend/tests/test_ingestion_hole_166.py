@@ -966,9 +966,61 @@ def test_the_employer_may_sit_inside_your_application() -> None:
         "Update on your Dovetailmontreach Works application",
         "[Action Required] Your Northwind Application",
         "An update on your Software Engineer I application",
+        # 44 characters of intervener. The bound was `{0,80}` from #767's review
+        # for exactly this: a real employer name runs past the 40 the corpus's
+        # invented ones fit inside.
+        "Update on your Pricewaterhouse Coopers International Limited application",
         "your application",  # the adjacency that already worked must keep working
     ):
         assert pipeline.references_an_application(subject, ""), subject
+
+
+def test_the_application_named_is_the_readers_own() -> None:
+    """The two shapes the widened span reaches that belong to somebody else.
+
+    Neither could match under the old adjacency, so both are admissions the
+    widening created and the corpus cannot see: `ats-relay-noise` carries
+    referral ASKS and no referral STATUS mail, and no family sends a
+    talent-community blast about the process itself.
+
+    MUTATION: delete the `_NOT_THE_READERS_APPLICATION` check from
+    `references_an_application` -> every row here reds. Narrow it to
+    `\\bapplication\\ process\\b` alone -> the first three red.
+    """
+    for subject, snippet in (
+        ("Update on your referral's application", ""),
+        ("Your referral’s application is under review", ""),  # curly apostrophe
+        ("", "We have an update on your colleague's application."),
+        ("Thank you for your interest in our application process", ""),
+        ("", "Questions about our application processes are answered here."),
+    ):
+        assert not pipeline.references_an_application(subject, snippet), (
+            subject or snippet
+        )
+
+
+def test_refusing_those_two_does_not_refuse_the_reader_their_own() -> None:
+    """The control on the exclusion, and the half that keeps it narrow.
+
+    An exclusion that swallowed the ordinary case would be strictly worse than
+    the adjacency it replaced: mail about a real application would reach nothing
+    again, which is the #447 defect. These are the shapes that must survive it,
+    including one that contains the word `process` and one that contains an
+    apostrophe-s somewhere other than in front of `application`.
+
+    MUTATION: drop the `\\ application` tail from the possessive arm (so any
+    `'s` refuses) -> the third and fourth red. Drop `\\ process` (so any
+    `application` followed by anything refuses) -> the first two red.
+    """
+    for subject, snippet in (
+        ("Update on your application", "We are still reviewing your application."),
+        ("", "Your application is moving through our interview process."),
+        ("Update on your Ernst & Young LLP application", ""),
+        ("An update on your application", "Northwind's hiring team has read it."),
+    ):
+        assert pipeline.references_an_application(subject, snippet), (
+            subject or snippet
+        )
 
 
 def test_the_gap_inside_your_application_is_still_one_clause() -> None:

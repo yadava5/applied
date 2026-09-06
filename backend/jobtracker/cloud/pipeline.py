@@ -4879,13 +4879,29 @@ def is_ats_sender(sender_email: str | None) -> bool:
 # adjacency floors 0. Newly matching across the whole corpus: 611 messages,
 # every one of them `identity is not None` — real application mail — and the
 # 1,690 that must never become an application match at exactly the same count
-# as before, 339, so the widening admits no noise at all. Same clause bound as
-# the `[^.!?\n]` spans below and for the same reason (#466): a title, or an
-# employer name, sits inside one clause and carries punctuation no character
-# class anticipates.
+# as before, 339, so the widening admits no noise THIS CORPUS CAN SEE. That
+# qualifier is load-bearing; see `_NOT_THE_READERS_APPLICATION` below.
+#
+# `{0,80}` AND NOT `{0,40}`, matching the two spans beneath it rather than
+# sitting at half their width for no stated reason.
+#
+# THE CORPUS CANNOT CHOOSE THIS NUMBER AND IT IS WORTH SAYING WHY. Measured over
+# all 18,200 cases: 4,164 subjects carry a `your ... application` frame and the
+# LONGEST intervener among them is 29 characters. So every bound from 30 upward
+# passes every case the corpus has, and 40 was fitted to nothing but the
+# generator's own invented employer names — whose longest, at 42 characters,
+# the frame never even reaches (#737). Real names run past it: "Update on your
+# Pricewaterhouse Coopers International Limited application" is 44 characters of
+# intervener and misses at 40. Confirmed the widening is inert here rather than
+# assumed: over the 1,266 messages where the floor is actually consulted (an ATS
+# sender with an `other` verdict), 786 floor at 40 and 786 at 80.
+#
+# Same clause bound as the `[^.!?\n]` spans below and for the same reason
+# (#466): a title, or an employer name, sits inside one clause and carries
+# punctuation no character class anticipates.
 _APPLICATION_REFERENCE = re.compile(
     r"""(?xi)
-      your\ [^.!?\n]{0,40}?application\b
+      your\ [^.!?\n]{0,80}?application\b
     | your\ candidacy\b
     | \b(?:your|the)\ offer\b
     | your\ (?:assessment|interview)s?\b
@@ -4893,6 +4909,46 @@ _APPLICATION_REFERENCE = re.compile(
       [^.!?\n]{0,80}?(?:opportunity|position|role|opening)\b
     | \bappl(?:y|ied|ying)\ (?:for|to)\ (?:the\ |a\ |an\ )?
       [^.!?\n]{0,80}?(?:opportunity|position|role|opening)\b
+    """
+)
+
+
+#: The two shapes the widened first alternative reaches that are NOT the
+#: reader's own application. Held apart from the pattern rather than folded into
+#: it, because each needs its own control and a negative lookahead inside an
+#: alternation gets one shared one.
+#:
+#: THE CORPUS CANNOT SEE EITHER, and that is why they are here rather than
+#: absent. Measured: adding these changes zero of the 1,266 floor decisions the
+#: corpus makes. Its `ats-relay-noise` family carries referral *asks* — mail
+#: inviting the reader to refer somebody — and no referral *status* mail, so the
+#: zero-noise-delta that licensed the widening was structurally unable to
+#: contain the first shape. A clean corpus delta is necessary here and never
+#: sufficient; this file already declines a wording that measured 633/633 with
+#: zero noise, twenty lines up.
+#:
+#: 1. A POSSESSIVE THAT IS NOT THE READER'S. Greenhouse and Lever mail the
+#:    REFERRER when a referral moves: "Update on your referral's application".
+#:    Adjacency could not match it and the widened span can, so this is a
+#:    genuine new admission and not a pre-existing one.
+#: 2. THE PROCESS, NOT AN INSTANCE. "your interest in our application process"
+#:    is a talent-community blast. Sharper than it looks: the fourth alternative
+#:    in the pattern fences `your interest in ...` with
+#:    `opportunity|position|role|opening` precisely to exclude process-general
+#:    text, and the widened first alternative reaches around that fence.
+#:
+#: Cost of being wrong in either direction is one review-queue row — the only
+#: caller is `ats_floor`, gated on an ATS sender and an `other` verdict, and
+#: `_qualifies_for_hard_row` is untouched — so a message this refuses is not
+#: lost, it takes the route it took before the widening.
+#:
+#: REAL-WORLD FREQUENCY OF BOTH IS UNMEASURED. They are excluded on structure —
+#: a possessive names its owner, and "application process" is a mass noun — not
+#: on a count, and that is said plainly rather than implied.
+_NOT_THE_READERS_APPLICATION = re.compile(
+    r"""(?xi)
+      your\ [^.!?\n]{0,80}?['’]s\ application\b
+    | application\ process(?:es)?\b
     """
 )
 
@@ -4905,10 +4961,14 @@ def references_an_application(subject: str, snippet: str) -> bool:
     retained, and the messages this exists for are precisely the ones where no
     body part could be extracted.
 
-    Carries no verdict. See :data:`_APPLICATION_REFERENCE`.
+    Carries no verdict. See :data:`_APPLICATION_REFERENCE` and
+    :data:`_NOT_THE_READERS_APPLICATION`.
     """
 
-    return bool(_APPLICATION_REFERENCE.search(f"{subject} {snippet}"))
+    text = f"{subject} {snippet}"
+    if _NOT_THE_READERS_APPLICATION.search(text):
+        return False
+    return bool(_APPLICATION_REFERENCE.search(text))
 
 
 # --- WHY a message is in the review queue --------------------------------

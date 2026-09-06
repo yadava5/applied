@@ -179,9 +179,12 @@ RECORDED_ANSWERS = {
     # share an identity would exercise it.
     "settled_by_a_prior_answer": 0,
     # The branch that keeps the row in the queue and returns quietly. Measured
-    # independently before these buckets were designed: 360 of the 17,260 cases
-    # resolve no employer from sender + subject — all 200 `bare-relay`, and 160
-    # of 320 `verdict-past-the-body-cap`. Every one of them is here.
+    # independently before these buckets were designed: 360 of the corpus's
+    # cases resolve no employer from sender + subject — all 200 `bare-relay`,
+    # and 160 of 320 `verdict-past-the-body-cap`. Every one of them is here.
+    # The denominator used to read 17,260 and the corpus is 18,200 (#828); the
+    # decomposition is what carries this comment and it re-derives every run, so
+    # the stale size is corrected rather than dated.
     "refused_needs_employer": 360,
     # 2024 -> 2081 (#451), 2081 -> 2092 (#458): the eleven relayed follow-ups
     # #458 recovered are all answered onto a card their employer already had.
@@ -1225,6 +1228,84 @@ def test_the_body_cap_is_measured_rather_than_merely_populated(verdicts) -> None
         "a rejection the product never read was stated to the user as fact. "
         "Silence is the designed outcome past the cap; a verdict is not."
     )
+
+
+def test_the_harness_hands_the_classifier_what_a_gmail_payload_would_yield(
+    cases,
+) -> None:
+    """#767, and it crosses the real boundary instead of restating it.
+
+    ``as_classified`` calls ``normalise_body_text``, which is production's own
+    function — but "the harness applies the same tail as production" is a
+    weaker claim than "the harness produces what a Gmail payload produces".
+    This drives ``extract_body_text`` over a base64 payload built from the
+    case's body, which is the whole path: MIME decode, tag strip, whitespace,
+    cap. Nothing here compares a constant to itself.
+
+    DIRECTIONAL, because equality alone would pass if both sides stopped
+    capping: the second assertion requires the extractor to have actually cut
+    something, so a run where the cap silently stopped applying reds here
+    rather than reading as agreement.
+    """
+
+    import base64
+
+    from jobtracker.cloud.gmail_client import _MAX_BODY_CHARS, extract_body_text
+    from tests.corpus_independent.harness import as_classified
+
+    over = [
+        c
+        for c in cases
+        if c.family == "verdict-past-the-body-cap" and len(c.body) > _MAX_BODY_CHARS
+    ]
+    assert over, "no case exceeds the cap; this test is measuring nothing"
+
+    for case in over[:20]:
+        payload = {
+            "mimeType": "text/plain",
+            "body": {"data": base64.urlsafe_b64encode(case.body.encode()).decode()},
+        }
+        produced = extract_body_text(payload)
+        assert produced == as_classified(case), (
+            "the harness and a real Gmail payload disagree about what reaches "
+            f"classify() for {case.message_id}"
+        )
+        assert len(produced) < len(case.body), (
+            "the extractor returned the whole body, so the boundary this test "
+            "crosses is not applying the cap at all"
+        )
+
+
+def test_the_snippet_arm_is_reached_only_by_a_real_override(cases) -> None:
+    """The invariant `as_classified`'s discriminator rests on.
+
+    It branches on `delivered == body`, which is a proxy for "the generator
+    modelled an extraction failure". The proxy holds only while an overridden
+    `delivered` can never equal its own body — and 11,515 of the 18,200 bodies
+    are short enough that `snippet_of(body) == body`, so the margin is a
+    property of WHICH cases carry an override, not of the corpus at large.
+
+    Asserted here rather than left as a comment, because the failure mode is
+    silent: a short-bodied override would take the normalise branch, where
+    production passes Gmail's snippet through untouched, and no number would
+    move.
+    """
+
+    from tests.corpus_independent.generate import SNIPPET_CHARS, snippet_of
+
+    overrides = [c for c in cases if c.delivered != c.body]
+    assert overrides, "no case models an extraction failure; the arm is dead"
+
+    for case in overrides:
+        assert case.delivered == snippet_of(case.body), (
+            f"{case.message_id} sets `delivered` to something that is neither "
+            "the body nor its snippet; `as_classified` cannot classify it"
+        )
+        assert len(case.body) > SNIPPET_CHARS, (
+            f"{case.message_id} overrides `delivered` on a body of "
+            f"{len(case.body)} characters, which `snippet_of` cannot shorten. "
+            "`as_classified` would take the body branch for it, silently."
+        )
 
 
 def test_the_cap_is_what_makes_that_family_abstain(cases) -> None:

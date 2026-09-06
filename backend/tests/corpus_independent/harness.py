@@ -4,8 +4,11 @@ Two scores, because a message can pass one and fail the other and the product
 only works when it passes both:
 
 **Classification.** ``RulesClassifier.classify`` over what production would
-actually hand it — ``extract_body_text(payload) or snippet``, expressed here as
-each case's ``delivered`` field. Scored three ways rather than two: CORRECT,
+actually hand it — ``extract_body_text(payload) or snippet``. That is
+:func:`as_classified`, which applies production's own ``normalise_body_text``
+to the case's ``delivered`` field; it was ``delivered`` RAW until #767, and the
+sentence here claimed parity the whole time it was false. Scored three ways
+rather than two: CORRECT,
 WRONG (a confident verdict that is not the right one), and ABSTAINED (below
 ``REVIEW_FLOOR``, so the product says nothing). Abstention is the safe failure
 and must not be averaged into the same number as being confidently wrong.
@@ -156,6 +159,17 @@ def as_classified(case: Case) -> str:
     ``delivered`` IS ``body`` (``generate.py:458``). Normalising unconditionally
     would rewrite 47 of those snippets — ``rejection-past-the-snippet`` — which
     changes no verdict today and would still be a false claim about the product.
+
+    THE DISCRIMINATOR IS AN EQUALITY PROXY AND IT IS ASSERTED RATHER THAN
+    TRUSTED. What this needs to know is "did the generator model an extraction
+    failure"; what it can see is whether two strings are equal. Those coincide
+    on the committed corpus — every overridden body is 214 characters or more
+    against ``SNIPPET_CHARS = 186``, so a snippet override is never equal to its
+    body — but **11,515 of 18,200 bodies are short enough that
+    ``snippet_of(body) == body``**, so a future override on one of them would
+    take the wrong branch in silence. ``test_the_snippet_arm_is_reached_only_by
+    _a_real_override`` holds the invariant the proxy depends on, and reds the
+    day it stops being true rather than the day a number moves.
     """
 
     if case.delivered == case.body:
@@ -317,8 +331,20 @@ def _item(v: Verdict) -> pipeline.PipelineItem:
     such fix existed. That is the defect shape this repository keeps finding,
     and the corpus was carrying it.
 
-    The classifier still reads ``delivered``. Only identity is narrowed, and it
-    is narrowed to exactly what production stores.
+    The classifier reads ``as_classified`` since #767 — ``delivered`` with
+    production's window applied — so both fields are now production-shaped and
+    the sentence that used to sit here ("the classifier still reads
+    ``delivered``") was true only until that commit.
+
+    IDENTITY IS THE THIRD INSTANCE OF THIS SHAPE AND IS DELIBERATELY LEFT.
+    ``_readable(case)`` is ``normalise_body_text(case.body)`` for every case,
+    while production derives identity from the text it CLASSIFIED — the
+    snippet, for the 460 cases that model an extraction failure. Measured
+    2026-09-06: the text differs on all 460 and the resolved identity differs on
+    **0**, because no case has its role reachable only past the snippet cut.
+    Changing it would move nothing and could be gated by nothing, which is this
+    repository's definition of decoration; a family whose role sits past the cut
+    is what would make the fix measurable, and that is the case to write first.
     """
 
     return pipeline.PipelineItem(

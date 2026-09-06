@@ -34,7 +34,8 @@ one can be extracted, otherwise Gmail's ~186-character snippet. Which one it got
 decides the verdict for a whole family of mail — an ATS rejection spends the
 entire snippet budget on a polite preamble, so the classifier reads the
 preamble, scores a CONFIRMATION, and files it. Every case therefore carries both
-``body`` (what the mail says) and ``delivered`` (what the classifier sees), and
+``body`` (what the mail says) and ``delivered`` (what the classifier is handed,
+through ``harness.as_classified``, which applies production's window to it), and
 the families that turn on the difference set them apart deliberately.
 
 Ground truth, and the trap in it
@@ -205,8 +206,13 @@ class Case:
     sender_name: str | None
     #: What the mail says, in full.
     body: str
-    #: What reaches ``classify()`` — the body, or the snippet when no body can
-    #: be extracted. See the module docstring.
+    #: What the server holds for this message — the body, or the snippet when no
+    #: body can be extracted. NOT what reaches ``classify()``: production applies
+    #: ``normalise_body_text`` (whitespace, then a 4,000-character cap) to a body
+    #: and never to a snippet, and ``harness.as_classified`` is where that
+    #: happens. This said "what reaches ``classify()``" until #767, and the
+    #: harness passed it through raw, so the claim and the code agreed with each
+    #: other and neither agreed with the product. See the module docstring.
     delivered: str
     received_at: datetime
     family: str
@@ -2894,8 +2900,10 @@ def _readable_text(case: Case) -> str:
     ``delivered`` IS DELIBERATELY ABSENT, and an earlier draft had it. It is
     what the CLASSIFIER reads; ``role_from_message`` is handed ``subject`` and
     the capped body and never sees it (``harness._item``). Including it did
-    nothing visible — measured, ``delivered`` is a substring of ``body`` in all
-    17,260 cases and the flip count is 146 either way — but it is
+    nothing visible — re-derived 2026-09-06 at the current size, ``delivered`` is a
+    substring of ``body`` in all 18,200 cases and the flip count is 146 either
+    way (the figure read 17,260 and is corrected rather than dated because the
+    measurement was re-run, #828) — but it is
     ``body`` UNCAPPED, so it silently restored the 4,000 characters this
     function exists to cut off. A family whose only mention of a role sat past
     the cap, with no shorter sibling on the card, would have been called
