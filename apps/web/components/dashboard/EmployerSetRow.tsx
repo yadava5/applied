@@ -46,6 +46,7 @@ export function EmployerSetRow({
   today,
   open,
   onToggle,
+  setKey,
   chip,
   onFilterCompany,
   children,
@@ -59,6 +60,9 @@ export function EmployerSetRow({
   today: string;
   open: boolean;
   onToggle: () => void;
+  /** `${stage}:${company}` — this set's identity, and the board's focus
+   *  anchor for a row that regrouped into it while collapsed (#425). */
+  setKey: string;
   /** Cross-stage affordance, prebuilt by the board: how many of this
    *  employer's applications sit outside this stage, and where. */
   chip: { count: number; label: string } | null;
@@ -123,6 +127,13 @@ export function EmployerSetRow({
       >
         <button
           type="button"
+          // The focus anchor for a row that regrouped INTO this set (#425).
+          // A corrected row landing in a COLLAPSED set has no `status-<id>`
+          // select to return the reader to, because it is not rendered; the
+          // board falls back to this header, which is where the row now is.
+          // A data attribute rather than an id: a company name is arbitrary
+          // text and would need escaping to survive `getElementById`.
+          data-set-toggle={setKey}
           aria-expanded={open}
           aria-controls={open ? listId : undefined}
           aria-label={`${company} — ${items.length} applications`}
