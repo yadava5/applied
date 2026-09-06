@@ -386,13 +386,19 @@ def compute_report(
     per_label: dict[str, dict[str, Any]] = {}
     for label in labels:
         true_positive = sum(
-            1 for exp, pred in zip(expected, predicted, strict=True) if exp == label and pred == label
+            1
+            for exp, pred in zip(expected, predicted, strict=True)
+            if exp == label and pred == label
         )
         false_positive = sum(
-            1 for exp, pred in zip(expected, predicted, strict=True) if exp != label and pred == label
+            1
+            for exp, pred in zip(expected, predicted, strict=True)
+            if exp != label and pred == label
         )
         false_negative = sum(
-            1 for exp, pred in zip(expected, predicted, strict=True) if exp == label and pred != label
+            1
+            for exp, pred in zip(expected, predicted, strict=True)
+            if exp == label and pred != label
         )
         support = sum(1 for exp in expected if exp == label)
 
@@ -434,9 +440,7 @@ def compute_report(
     layer_of: list[str | None] = list(methods) if methods is not None else [None] * total
     mismatches = [
         ExampleOutcome(expected=exp, predicted=pred, subject=item.subject, method=method)
-        for item, exp, pred, method in zip(
-            examples, expected, predicted, layer_of, strict=True
-        )
+        for item, exp, pred, method in zip(examples, expected, predicted, layer_of, strict=True)
         if exp != pred
     ]
 
@@ -643,6 +647,79 @@ def print_summary(report: dict[str, Any], max_mismatches: int) -> None:
                 f"- expected={expected:<20} predicted={predicted:<20}"
                 f"{answered_by} subject={preview}"
             )
+
+
+def _census(counts: dict[str, Any]) -> str:
+    """``{"rules": 61, "setfit": 2}`` -> ``rules=61, setfit=2``."""
+    return ", ".join(f"{name}={count}" for name, count in sorted(counts.items()))
+
+
+def fail_diagnosis(report: dict[str, Any], baseline: dict[str, Any] | None = None) -> list[str]:
+    """
+    The attribution lines that belong INSIDE every FAIL block.
+
+    The discriminators these lines carry are not new -- ``print_summary`` has
+    always printed the ``answered by:`` census, and the mismatch table has
+    always carried a per-item ``by=``. The defect (#841) is adjacency, not
+    absence: they sit above the verdict, so a reader who greps ``FAIL:``, or
+    reads a job summary of only the failing lines, decides what to change
+    without them.
+
+    That decision is the whole point. Two causes with opposite responses
+    produce the same per-label regression:
+
+        a rules pattern got broader   -> narrow the pattern
+        a learned layer degraded      -> leave the patterns alone, go to the
+                                         checkpoint
+
+    Three lines separate them, and only the second is genuinely new:
+
+    ``answered by``        the run's own census. A degraded-but-present model
+                           still answers, just far less often (arm A ``sf18``
+                           against arm D ``sf2``).
+    ``wrong answers by``   which layer produced the *incorrect* verdicts. This
+                           is the direct discriminator, and it existed only
+                           per-item, capped at ``--max-mismatches``, in a table
+                           above the verdict.
+    ``baseline answered by``  what the committed baseline recorded when it was
+                           healthy. Without it ``sf2`` is a number with nothing
+                           to be small against. It is a *reported* comparison,
+                           deliberately not a gate: the healthy count is a
+                           property of a checkpoint and a dataset, and a floor
+                           on it would red main for reasons no one chose.
+    """
+    lines: list[str] = []
+
+    layers = report.get("layers") or {}
+    if layers:
+        lines.append(f"answered by: {_census(layers)}")
+
+    mismatches = report.get("mismatches")
+    if isinstance(mismatches, list) and mismatches:
+        attributed = Counter(
+            str(item["method"])
+            for item in mismatches
+            if isinstance(item, dict) and item.get("method")
+        )
+        if attributed:
+            unattributed = len(mismatches) - sum(attributed.values())
+            tail = f" ({unattributed} not recorded)" if unattributed else ""
+            lines.append(f"wrong answers by: {_census(dict(attributed))}{tail}")
+        else:
+            # Every report written before the ``method`` field existed. Saying so
+            # beats an absent line, which reads as "nothing was wrong".
+            lines.append(f"wrong answers by: not recorded ({len(mismatches)} mismatches)")
+
+    baseline_layers = (baseline or {}).get("layers") or {}
+    if baseline_layers and layers:
+        lines.append(f"baseline answered by: {_census(baseline_layers)}")
+
+    return lines
+
+
+def print_fail_diagnosis(report: dict[str, Any], baseline: dict[str, Any] | None = None) -> None:
+    for line in fail_diagnosis(report, baseline):
+        print(line)
 
 
 def build_comparison(
@@ -916,6 +993,10 @@ def main() -> int:
         )
     )
     baseline_path = args.baseline or DEFAULT_BASELINES[args.mode]
+    # Read once, up here, because every FAIL block below cites it: a shrunken
+    # layer census (`setfit=2`) means nothing without the count the baseline was
+    # recorded with. Reading before --update-baseline writes is intentional.
+    baseline = _read_json(baseline_path) if baseline_path.exists() else None
 
     print_summary(report, max_mismatches=args.max_mismatches)
     print_comparison(report)
@@ -935,15 +1016,16 @@ def main() -> int:
             print("\nFAIL: the evaluated classifier is not the one that was requested")
             for failure in layer_failures:
                 print(f"- {failure}")
+            print_fail_diagnosis(report, baseline)
             return 1
 
     if args.min_macro_f1 is not None:
         macro_f1 = float(report["overall"]["macro_f1"])
         if macro_f1 < args.min_macro_f1:
             print(
-                f"\nFAIL: macro_f1 {macro_f1:.4f} is below "
-                f"required floor {args.min_macro_f1:.4f}"
+                f"\nFAIL: macro_f1 {macro_f1:.4f} is below required floor {args.min_macro_f1:.4f}"
             )
+            print_fail_diagnosis(report, baseline)
             return 1
 
     if args.update_baseline:
@@ -951,13 +1033,13 @@ def main() -> int:
         print(f"\nUpdated baseline: {baseline_path}")
         return 0
 
-    if baseline_path.exists():
-        baseline = _read_json(baseline_path)
+    if baseline is not None:
         failures = compare_against_baseline(report, baseline, tolerance=args.tolerance)
         if failures:
             print("\nFAIL: non-regression checks failed")
             for failure in failures:
                 print(f"- {failure}")
+            print_fail_diagnosis(report, baseline)
             return 1
         print("\nPASS: non-regression checks passed")
     else:
