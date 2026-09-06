@@ -236,15 +236,30 @@ export function toPulseRow(app: Application): PulseRow {
 }
 
 /**
- * Derive every headline number from the application list. `now` is injectable
- * so tests are deterministic; production passes the real clock.
+ * Derive every headline number from the application list.
+ *
+ * THE SECOND ARGUMENT IS A DAY, NOT AN INSTANT (#584). It used to be `now: number`
+ * and the body's first act was `todayISO(now)` — so the only thing an instant
+ * could ever produce here was the UTC day, and a caller that knew the reader's
+ * real day had no way to say so. That is not a hypothetical gap: it is the
+ * shape of #518, where the signed-in header and the momentum caption beside it
+ * rolled over at different midnights, and it survived on /demo because
+ * `DemoDashboard` could only hand this function a clock.
+ *
+ * Taking the day makes the choice explicit at every call site, which is the
+ * point. `todayISO()` is the honest default — server renders and the hydrating
+ * pass must use the UTC day or the HTML mismatches (see `age.ts`) — and a
+ * client that has hydrated passes `useLocalToday()` instead.
  *
  * Kept for the demo twin (which holds the full fixture array in memory) and
  * as the reference the counts-only endpoint is validated against. The real
  * dashboard uses `summarizeCounts` fed by the O(1) summary endpoint instead of
  * materializing every row just to count.
  */
-export function summarize(applications: Application[], now: number = Date.now()): PipelineSummary {
+export function summarize(
+  applications: Application[],
+  today: string = todayISO(),
+): PipelineSummary {
   const statusCounts: Record<string, number> = {};
   let thisWeek = 0;
 
@@ -283,7 +298,6 @@ export function summarize(applications: Application[], now: number = Date.now())
   // trailing seven days. `weekOverWeek` owns that boundary for both this
   // number and the momentum caption, and the backend's `_week_start` computes
   // the same Monday for the signed-in board.
-  const today = todayISO(now);
   const days = dailyCounts(
     applications.map((app) => filedAt(app)),
     today,

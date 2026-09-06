@@ -391,6 +391,194 @@ test.describe("live demo (/demo)", () => {
     ).toBeVisible();
   });
 
+  test("an empty stage accepts a drop where the only target is the chip strip", async ({
+    page,
+  }) => {
+    /*
+     * #772, item 1. `groups` drops empty columns, so an empty stage renders no
+     * `<section>` to drop onto. Above the shell's `md` the rail's stage list
+     * carries the handlers; below it, the chip strip is the ONLY stage surface
+     * there is — and it carried none. Measured on the original pass: five
+     * stages accepted a drop at 900px and an empty stage accepted zero at
+     * 700px and 390px.
+     *
+     * 700px, not 390px, and that is the point: this is a narrow desktop
+     * window, which is where board drag is plausible in the first place.
+     */
+    await page.setViewportSize({ width: 700, height: 900 });
+    await page.goto("/demo");
+
+    // The premise, asserted rather than assumed: `offered` is empty, so there
+    // is no list section for it, and the chip is the only stage control on
+    // screen. If either stops being true this test is measuring something else.
+    const offered = page.getByRole("button", { name: /^offered — 0$/ });
+    await expect(offered).toHaveCount(1);
+    await expect(page.getByRole("region", { name: /^offered/i })).toHaveCount(0);
+
+    const card = page
+      .locator("li")
+      .filter({ has: page.getByText("Quarry Data", { exact: true }) })
+      .first();
+
+    // THE CHIP MUST ALSO SAY IT IS A TARGET. `data-drop` alone would leave the
+    // chip accepting a drop and showing nothing, which is the same lie as an
+    // affordance with no drop point — and a typo in the `.stage-chip` selector
+    // would produce exactly that while every attribute assertion stayed green.
+    // So the wash is read off the computed style, once, here.
+    const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+    await card.locator('.board-row[draggable="true"]').first().dispatchEvent("dragstart", {
+      dataTransfer,
+    });
+    await offered.dispatchEvent("dragover", { dataTransfer });
+    await expect(offered).toHaveAttribute("data-drop", "true");
+    // POLLED, NOT READ ONCE. The chip carries `transition-colors`, so the
+    // background ANIMATES from transparent to the wash — a single
+    // `getComputedStyle` immediately after the attribute lands reads the
+    // START of that transition. It passed on a dev server, where the step was
+    // slower, and failed on the production build with both values
+    // `rgba(0, 0, 0, 0)`: a measurement taken before the thing it measures
+    // had happened.
+    const resting = await page
+      .getByRole("button", { name: /^assessment — 0$/ })
+      .evaluate((el) => getComputedStyle(el).backgroundColor);
+    await expect
+      .poll(
+        () => offered.evaluate((el) => getComputedStyle(el).backgroundColor),
+        { message: "a dragged-over chip never stopped painting like a resting one" },
+      )
+      .not.toBe(resting);
+    await offered.dispatchEvent("dragend", { dataTransfer });
+
+    await card.dragTo(offered);
+
+    await expect(page.getByRole("button", { name: /^offered — 1$/ })).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: /^offered/i }).getByText("Quarry Data", { exact: true }),
+    ).toBeVisible();
+  });
+
+  test("the drop highlight leaves with the pointer, and does not flicker over the rows inside", async ({
+    page,
+  }) => {
+    /*
+     * #772, item 2. There was no `onDragLeave` on the board at all, so the
+     * highlight persisted on a stage the pointer had already left: during a
+     * drag the visible affordance and the actual drop target disagreed.
+     *
+     * Dispatched rather than dragged, because `dragTo` is atomic and cannot
+     * express "the pointer entered and then left without dropping" — which is
+     * the entire behaviour under test. `dragstart` first, because the
+     * handlers are gated on `draggingId !== null`.
+     *
+     * THE NEGATIVE IS HALF THE TEST. `dragleave` also fires when the pointer
+     * crosses into a CHILD, and a stage section is nothing but children, so a
+     * naive `setDropStage(null)` strobes the highlight off over every row the
+     * pointer passes. A test that only asserted "it clears" would pass on that
+     * version.
+     */
+    await page.goto("/demo");
+
+    const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+    const source = page
+      .locator('.board-row[draggable="true"]')
+      .filter({ hasText: "Quarry Data" })
+      .first();
+    await source.dispatchEvent("dragstart", { dataTransfer });
+
+    const stage = page.getByRole("region", { name: /^interviewing/i });
+    await stage.dispatchEvent("dragover", { dataTransfer });
+    await expect(stage).toHaveAttribute("data-drop", "true");
+
+    // Into a row INSIDE the stage: not a leave, and the highlight must hold.
+    const inner = await stage.locator(".board-row").first().elementHandle();
+    await stage.dispatchEvent("dragleave", { dataTransfer, relatedTarget: inner });
+    await expect(stage).toHaveAttribute("data-drop", "true");
+
+    // Out to something that is not in this stage at all: a real leave.
+    const applied = page.getByRole("region", { name: /^applied/i });
+    await stage.dispatchEvent("dragleave", { dataTransfer, relatedTarget: await applied.elementHandle() });
+    await expect(stage).not.toHaveAttribute("data-drop", "true");
+
+    // AND THE ORDER OF THE TWO EVENTS MUST NOT MATTER. `dragenter` on the next
+    // stage fires BEFORE `dragleave` on the one being left, so a bare
+    // `setDropStage(null)` erases a highlight its successor has already set and
+    // the board goes dark over a valid target. Replayed here in that order:
+    // the new stage lights, then the OLD stage's leave arrives late.
+    await applied.dispatchEvent("dragover", { dataTransfer });
+    await expect(applied).toHaveAttribute("data-drop", "true");
+    await stage.dispatchEvent("dragleave", { dataTransfer, relatedTarget: await applied.elementHandle() });
+    await expect(applied, "a late dragleave darkened the stage the pointer is now over").toHaveAttribute(
+      "data-drop",
+      "true",
+    );
+  });
+
+  test("a card dropped into an employer fold keeps all three ways to move again", async ({
+    page,
+  }) => {
+    /*
+     * #772, item 3, and the one worth fixing first: the other two mislead,
+     * this one strands.
+     *
+     * `Northstar Systems` holds three rows in `applied` — a folded set — and
+     * one in `interviewing`. Dropping the fourth onto `applied` folds it into
+     * that set, and `EmployerSetRow` renders its members ONLY while open, so
+     * the card leaves the DOM entirely: no open button, not draggable, no
+     * select. It recovers on expanding the group and nothing on screen says
+     * so.
+     */
+    await page.goto("/demo");
+
+    // SCOPED TO THE INTERVIEWING REGION, and that is not decoration. `applied`
+    // renders BEFORE `interviewing` in DOM order, so a future seed adding an
+    // exact "ML Engineer" at `applied` would make an unscoped `.first()` grab
+    // it — the drag onto `applied` would then be a same-stage no-op that
+    // `moveTo` returns from, and every assertion below would pass on a card
+    // that never moved and never folded.
+    const moving = page
+      .getByRole("region", { name: /^interviewing/i })
+      .locator('.board-row[draggable="true"]')
+      .filter({ has: page.getByTitle("ML Engineer", { exact: true }) });
+    await expect(moving, "the moving row is not unique to interviewing").toHaveCount(1);
+
+    // The premise: `applied` already holds a COLLAPSED Northstar set, so the
+    // drop below really does fold. Without this the test would pass on a board
+    // where nothing folded and would be grading nothing.
+    const fold = page.getByRole("button", { name: /Northstar Systems/ }).first();
+    await expect(fold).toHaveAttribute("aria-expanded", "false");
+
+    await moving.dragTo(page.getByRole("region", { name: /^applied/i }), {
+      targetPosition: { x: 140, y: 20 },
+    });
+
+    // WAIT FOR THE MOVE TO LAND FIRST, and this is not defensive padding. The
+    // row stays mounted in its old group wearing an optimistic face until the
+    // transport resolves, and every assertion below is auto-retrying — so on a
+    // board where the fix had been removed they would all be satisfied by the
+    // PRE-MOVE row on the first poll and the test would grade nothing. The
+    // sibling select test was written without this and passed under its own
+    // mutation; this line is what that cost.
+    await expect(moving, "the move never landed").toHaveCount(0);
+
+    const landed = page
+      .getByRole("region", { name: /^applied/i })
+      .locator(".board-row")
+      .filter({ has: page.getByTitle("ML Engineer", { exact: true }) })
+      .first();
+
+    // All three paths, named one at a time so a failure says which one went.
+    await expect(landed, "the moved card is not on screen at all").toBeVisible();
+    await expect(landed, "the moved card is no longer draggable").toHaveAttribute(
+      "draggable",
+      "true",
+    );
+    await expect(landed.locator("select"), "the moved card lost its stage select").toHaveCount(1);
+    await expect(
+      landed.getByRole("button", { name: /^Open / }),
+      "the moved card lost its open button",
+    ).toHaveCount(1);
+  });
+
   test("the card answers a stage change before the write returns", async ({ page }) => {
     // WHY THIS IS NOT THE TEST ABOVE (#601).
     //
@@ -939,6 +1127,81 @@ test.describe("live demo (/demo)", () => {
     await expect(pane).toBeHidden();
     await expect(page.getByRole("button", { name: /^Open Harbor Analytics/ })).toBeFocused();
     await expect(rowSelects).toHaveCount(closedSelects);
+  });
+
+  test("the header's week and the momentum caption's week are one number", async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    /*
+     * #584 / #518. Two renderers of ONE number, side by side on the same
+     * screen. The momentum caption has always counted from `useLocalToday()`;
+     * the header came from `summarize()`, which derived the UTC day itself and
+     * gave the twin no way to say otherwise. For a reader whose local day and
+     * UTC day fall either side of a Monday, the two lines then described
+     * different weeks — and at UTC+14 they differ EVERY day, because the
+     * header's window ends one day early and the fixture files a row today.
+     *
+     * WHEN THIS CAN GO RED, stated rather than implied, because a gate that
+     * cannot fail is this repo's recurring defect. Measured against the
+     * unfixed code, not reasoned about:
+     *   demo-utc-plus-14   red whenever UTC is in [10:00, 24:00) — the whole
+     *                      window in which that zone's local day differs.
+     *   demo-utc-minus-10  red on Mondays in [00:00, 10:00) UTC, when the
+     *                      shift crosses the week boundary.
+     *   chromium (UTC)     never — local and UTC are the same day, which is
+     *                      exactly why the two offset projects exist.
+     * SO THIS IS THE ONLY GATE ON THE WIRING, and the first version of this
+     * comment claimed otherwise. `tests/unit/this-week.test.mjs` grades the
+     * MECHANISM — that `summarize` counts from the day it is handed, and that
+     * an instant is no longer accepted as one — but nothing there sees
+     * `DemoDashboard`'s call site. Revert that one line and this comparison is
+     * the only red anywhere. Combined with the windows above, a broken build
+     * is invisible to all three projects for UTC Tue-Sun 00:00-10:00, roughly
+     * a third of the clock. That is the honest coverage and it is written down
+     * rather than implied.
+     *
+     * The +14 margin is also thin on two weekdays: Tue and Wed differ by
+     * exactly one row, which is the seed at `filedDaysAgo: 0` in
+     * `lib/demo/demoData.ts`. Move that seed and the red window shrinks with
+     * nothing going red to say so.
+     */
+
+    // `+N this wk` is folded into the header only when the weekly-summary
+    // preference is on, and it is off by default — the live default for a
+    // never-set preference. Set the cookie the demo Settings toggle writes
+    // rather than driving the toggle: the pref path already has its own case
+    // in settings.spec.ts, and what is under test here is the two numbers.
+    await context.addCookies([
+      {
+        name: "applied-demo-notifications",
+        value: encodeURIComponent(JSON.stringify({ weekly: true, reviewAlerts: false })),
+        url: `${baseURL ?? "http://localhost:3000"}/demo`,
+      },
+    ]);
+    await page.goto("/demo");
+
+    const pulse = page.getByTestId("pipeline-pulse");
+    await expect(pulse.getByText(/[1-9]\d* this wk/)).toBeVisible();
+
+    // Scoped to the sync header row: "this wk" also appears in the pulse, so
+    // an unscoped query would compare the caption with itself and pass on any
+    // build at all.
+    const header = page.locator("[data-sync-header-row]").getByText(/ filed · /);
+    await expect(header).toContainText(/\+\d+ this wk/);
+
+    const headerWeek = ((await header.innerText()).match(/\+(\d+) this wk/) ?? [])[1];
+    const captionWeek = (
+      (await pulse.getByText(/\d+ this wk/).innerText()).match(/(\d+) this wk/) ?? []
+    )[1];
+
+    expect(headerWeek, "the header stopped carrying a week at all").toBeDefined();
+    expect(captionWeek, "the momentum caption stopped carrying a week at all").toBeDefined();
+    expect(
+      headerWeek,
+      "the board header and the momentum caption are counting different weeks",
+    ).toBe(captionWeek);
   });
 
   test("the pulse renders all four derived signals in the board's band", async ({ page }) => {
