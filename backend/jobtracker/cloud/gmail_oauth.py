@@ -256,6 +256,14 @@ class InboxResponse(BaseModel):
     # counts only what was read, so without this a page that lost 60 of 2,000
     # messages reports 1,940 as though that were the whole mailbox.
     unreadable: int = 0
+    # Of ``unreadable``, the share Gmail refused with no reason this client
+    # recognises (#744). A SUBSET, surfaced separately because the two mean
+    # opposite things: a deleted message is normal and a refusal we cannot read
+    # may be a quota wearing an envelope shape that has changed under us, which
+    # is how a scan silently returns a fraction of the mailbox and reports
+    # success. Non-zero on a healthy mailbox is a signal to extend
+    # ``_RATE_LIMIT_REASONS``.
+    unrecognised: int = 0
     # Gmail's own ``resultSizeEstimate`` for the query — an ESTIMATE, not a
     # count. Gmail documents it as approximate and it drifts between pages of
     # the same query, so a client using it as a progress denominator must clamp
@@ -484,6 +492,8 @@ class SyncResponse(BaseModel):
     # metadata sub-request, or metadata that would not parse. ``scanned`` counts
     # only what was read, so this is the gap between the two.
     unreadable: int = 0
+    # The ``unreadable`` share refused with no reason we recognise (#744).
+    unrecognised: int = 0
     # One of the ``STOPPED_*`` constants above.
     stopped_by: str = STOPPED_COMPLETE
     # Gmail's own ``resultSizeEstimate`` for the query — the largest one seen
@@ -1862,6 +1872,7 @@ async def gmail_inbox(
         scope=mail_scope,
         range_months=range_months,
         unreadable=page.unreadable,
+        unrecognised=page.unrecognised,
         result_size_estimate=page.result_size_estimate,
         note=(
             "Classified from the subject and the message body using the "
@@ -2011,6 +2022,8 @@ class _ScanOutcome:
     incremental: bool
     history_id: str | None
     unreadable: int = 0
+    # The ``unreadable`` share refused with no reason we recognise (#744).
+    unrecognised: int = 0
     stopped_by: str = STOPPED_COMPLETE
     result_size_estimate: int | None = None
 
@@ -2132,6 +2145,8 @@ class _ScanRead:
     items: list[Any]
     scanned: int
     unreadable: int = 0
+    # The ``unreadable`` share refused with no reason we recognise (#744).
+    unrecognised: int = 0
     stopped_by: str = STOPPED_COMPLETE
     result_size_estimate: int | None = None
 
@@ -2176,6 +2191,7 @@ async def _full_scan(
     items: list[Any] = []
     scanned = 0
     unreadable = 0
+    unrecognised = 0
     estimate: int | None = None
     page_token: str | None = None
     stopped_by = STOPPED_COMPLETE
@@ -2236,6 +2252,7 @@ async def _full_scan(
         )
         scanned += len(page.messages)
         unreadable += page.unreadable
+        unrecognised += page.unrecognised
         if page.result_size_estimate is not None:
             estimate = max(estimate or 0, page.result_size_estimate)
         page_token = page.next_page_token
@@ -2262,6 +2279,7 @@ async def _full_scan(
         items=items,
         scanned=scanned,
         unreadable=unreadable,
+        unrecognised=unrecognised,
         stopped_by=stopped_by,
         # Never let the estimate sit below what we already read: a denominator
         # smaller than its numerator is worse than no denominator. Stays None
@@ -2341,6 +2359,7 @@ async def _incremental_scan(
         items=items,
         scanned=len(page.messages),
         unreadable=page.unreadable,
+        unrecognised=page.unrecognised,
         stopped_by=STOPPED_COMPLETE,
     )
 
@@ -2642,6 +2661,7 @@ async def gmail_sync(
             # scan behind it: how far the client got, and what it lost getting
             # there, are the client's to report.
             unreadable = 0
+            unrecognised = 0
             stopped_by = STOPPED_RELAY
             result_size_estimate: int | None = None
             # Deliberately no baseline: the client's mine can be a NARROWER
@@ -2952,6 +2972,7 @@ async def gmail_sync(
         applications=total,
         scanned=scanned,
         unreadable=unreadable,
+        unrecognised=unrecognised,
         stopped_by=stopped_by,
         result_size_estimate=result_size_estimate,
         purged=purged,
