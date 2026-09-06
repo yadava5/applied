@@ -675,18 +675,29 @@ def fail_diagnosis(report: dict[str, Any], baseline: dict[str, Any] | None = Non
     Three lines separate them, and only the second is genuinely new:
 
     ``answered by``        the run's own census. A degraded-but-present model
-                           still answers, just far less often (arm A ``sf18``
-                           against arm D ``sf2``).
+                           still answers, just far less often -- #841 reports
+                           ``sf18`` against ``sf2`` for its two arms, quoted
+                           here as that issue's measurement and not as one
+                           taken here (no stack on this repo currently
+                           satisfies requirements.txt's ML floors, #698).
     ``wrong answers by``   which layer produced the *incorrect* verdicts. This
                            is the direct discriminator, and it existed only
                            per-item, capped at ``--max-mismatches``, in a table
                            above the verdict.
     ``baseline answered by``  what the committed baseline recorded when it was
                            healthy. Without it ``sf2`` is a number with nothing
-                           to be small against. It is a *reported* comparison,
-                           deliberately not a gate: the healthy count is a
-                           property of a checkpoint and a dataset, and a floor
-                           on it would red main for reasons no one chose.
+                           to be small against. Only one committed baseline
+                           carries a ``layers`` key --
+                           ``baseline_cascade_v3.json``, at ``setfit=20`` -- so
+                           this line prints on the cascade gate and nowhere
+                           else, which is the gate the ambiguity was found on.
+
+    It is a *reported* comparison and not a gate. Both versions of the floor
+    #841 asks for are disposed of in ``docs/ML_PROMOTION_POLICY.md`` -- the
+    absolute one rejected, the baseline-relative one deferred for want of a
+    measured run-to-run variance to choose a threshold from. Neither rejection
+    is made here, because a threshold argued in a docstring is a threshold
+    nobody can find.
     """
     lines: list[str] = []
 
@@ -977,6 +988,31 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _read_baseline(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    """
+    The committed baseline, or the reason it could not be read.
+
+    It RETURNS the error instead of raising because the two callers want
+    opposite things from a file that will not parse. `--update-baseline` is the
+    advertised remedy for exactly that state -- `compare_against_baseline` says
+    "regenerate with --update-baseline" and so does `cascade_gate.sh --help` --
+    and the likeliest unreadable baseline on this repository is a JSON file with
+    conflict markers in it. An update run must therefore survive one and
+    overwrite it; raising here would stack-trace the fix.
+
+    A COMPARE run must not survive it, and must not fall through to the
+    "no baseline found; skipping regression checks" branch either. Absent and
+    unparseable are different states, and only the first is a green.
+    """
+    if not path.exists():
+        return None, None
+    try:
+        return _read_json(path), None
+    except (OSError, ValueError) as err:
+        # JSONDecodeError is a ValueError; IsADirectoryError is an OSError.
+        return None, f"{type(err).__name__}: {err}"
+
+
 def main() -> int:
     args = parse_args()
     if args.mode != "hybrid" and args.hybrid_profile != "full":
@@ -995,8 +1031,11 @@ def main() -> int:
     baseline_path = args.baseline or DEFAULT_BASELINES[args.mode]
     # Read once, up here, because every FAIL block below cites it: a shrunken
     # layer census (`setfit=2`) means nothing without the count the baseline was
-    # recorded with. Reading before --update-baseline writes is intentional.
-    baseline = _read_json(baseline_path) if baseline_path.exists() else None
+    # recorded with. An update run reads it too, so a run that fails the layer
+    # guard can still cite the census it was about to overwrite -- and an
+    # unreadable file is carried as an error rather than raised, so that
+    # --update-baseline stays the remedy for one. See `_read_baseline`.
+    baseline, baseline_error = _read_baseline(baseline_path)
 
     print_summary(report, max_mismatches=args.max_mismatches)
     print_comparison(report)
@@ -1032,6 +1071,16 @@ def main() -> int:
         _write_json(baseline_path, report)
         print(f"\nUpdated baseline: {baseline_path}")
         return 0
+
+    if baseline_error is not None:
+        # Deliberately NOT the "skipping regression checks" branch below. A
+        # baseline that cannot be read is not a baseline that is absent, and
+        # skipping would print a green for a run nothing checked.
+        print(f"\nFAIL: the baseline at {baseline_path} could not be read")
+        print(f"- {baseline_error}")
+        print("- fix the file, or regenerate it with --update-baseline")
+        print_fail_diagnosis(report, None)
+        return 1
 
     if baseline is not None:
         failures = compare_against_baseline(report, baseline, tolerance=args.tolerance)

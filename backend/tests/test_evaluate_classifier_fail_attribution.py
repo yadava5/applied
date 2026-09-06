@@ -234,8 +234,8 @@ def test_every_fail_path_in_main_carries_the_diagnosis() -> None:
         if isinstance(block, list) and _returns_one(block)
     ]
 
-    assert len(blocks_returning_one) == 4, (
-        f"expected 4 failure exits in main(), found {len(blocks_returning_one)}; "
+    assert len(blocks_returning_one) == 5, (
+        f"expected 5 failure exits in main(), found {len(blocks_returning_one)}; "
         "a new one must either carry print_fail_diagnosis or be excluded here "
         "with a stated reason"
     )
@@ -247,3 +247,252 @@ def test_every_fail_path_in_main_carries_the_diagnosis() -> None:
     )
     argument_validation = ast.dump(ast.Module(body=undiagnosed[0], type_ignores=[]))
     assert "--hybrid-profile is only valid when --mode hybrid" in argument_validation
+
+
+def test_main_fails_only_by_returning_one() -> None:
+    """
+    The counter above finds `return 1`. It is blind to `sys.exit(1)`,
+    `raise SystemExit(1)` and `os._exit(1)`, so a FAIL path written in any of
+    those spellings would leave the count at 4 and never be asked whether it
+    carries the diagnosis.
+
+    Rather than teach the counter three more shapes, pin the idiom it counts.
+    `main` is a `-> int` that `__main__` wraps in `SystemExit`; an exit written
+    any other way is a bug on its own terms.
+    """
+    offenders: list[str] = []
+    for node in ast.walk(_main_function()):
+        if isinstance(node, ast.Raise) and "SystemExit" in ast.dump(node):
+            offenders.append("raise SystemExit")
+        if isinstance(node, ast.Call):
+            target = ast.dump(node.func)
+            if "'exit'" in target or "'_exit'" in target:
+                offenders.append(ast.unparse(node))
+
+    assert offenders == [], (
+        f"main() exits by {offenders} as well as by `return 1`; the FAIL-path "
+        "counter above only sees `return 1` and would not check these"
+    )
+
+
+# --- the printed FAIL block, from a real main() ------------------------------
+#
+# Everything above this line reads either a pure function or the source. That
+# leaves the fix itself unfalsifiable in three ways, all of which stay green:
+#
+#   emptying `print_fail_diagnosis`'s body     -- `fail_diagnosis` is still
+#                                                 tested, the call still exists
+#   dropping its `baseline` argument           -- the AST pin is argument-blind
+#   `baseline = None` at the hoist             -- and the compare branch then
+#                                                 becomes unreachable, so both
+#                                                 non-regression gates would
+#                                                 print "no baseline found" and
+#                                                 exit 0 FOREVER
+#
+# The last one is the estate's own recurring defect -- a check that cannot fail
+# -- introduced by the very change meant to make failures legible. So this drives
+# `main()` end to end with a stubbed evaluation, and reads the bytes it printed.
+
+
+def _full_report(layers: dict[str, int], methods: list[str], f1: float) -> dict:
+    """A report shaped as `compute_report` actually emits one."""
+    return {
+        "meta": {
+            "dataset": "data/evaluation/classifier_eval_v3.jsonl",
+            "mode": "hybrid",
+            "hybrid_profile": "full",
+            "sample_count": 96,
+        },
+        "overall": {
+            "accuracy": f1,
+            "macro_f1": f1,
+            "weighted_f1": f1,
+            "misclassified": len(methods),
+        },
+        # BOTH labels the baseline carries. A report missing one fails
+        #  on "Missing current per-label metrics"
+        # rather than on the metric, which is a different verdict than the one
+        # these tests mean to produce.
+        "per_label": {
+            "assessment": {"support": 12, "precision": f1, "recall": f1, "f1": f1},
+            "follow_up": {"support": 12, "precision": f1, "recall": f1, "f1": f1},
+        },
+        "layers": layers,
+        "mismatches": [
+            {
+                "expected": "assessment",
+                "predicted": "other",
+                "subject": "a subject",
+                "method": method,
+            }
+            for method in methods
+        ],
+    }
+
+
+def _run_main(monkeypatch, tmp_path, report: dict, baseline: dict | str) -> tuple[int, str]:
+    """`main()` with the evaluation stubbed out, returning (exit code, stdout)."""
+    import io
+    import json
+    import sys
+    from contextlib import redirect_stdout
+
+    from jobtracker.scripts import evaluate_classifier as ec
+
+    baseline_path = tmp_path / "baseline.json"
+    baseline_path.write_text(baseline if isinstance(baseline, str) else json.dumps(baseline))
+
+    async def _stub(*_args, **_kwargs) -> dict:
+        return report
+
+    monkeypatch.setattr(ec, "run_evaluation", _stub)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "evaluate_classifier",
+            "--mode",
+            "hybrid",
+            "--hybrid-profile",
+            "full",
+            "--baseline",
+            str(baseline_path),
+            "--tolerance",
+            "0.001",
+        ],
+    )
+
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        code = ec.main()
+    return code, buffer.getvalue()
+
+
+HEALTHY_LAYERS = {"content_filter": 5, "fallback": 12, "rules": 61, "setfit": 18}
+DEGRADED_LAYERS = {"content_filter": 5, "fallback": 28, "rules": 61, "setfit": 2}
+
+
+def test_the_attribution_is_printed_inside_the_fail_block(monkeypatch, tmp_path) -> None:
+    """
+    ADJACENCY IS THE WHOLE ISSUE, and this is the only test that measures it.
+
+    #841's defect was never that the discriminators were uncomputed -- they are
+    printed above the verdict on every run. It is that a reader who greps
+    `FAIL:` does not have them. So the assertion is positional: the three lines
+    must appear AFTER the FAIL header, not merely somewhere in the output, which
+    was already true before the change.
+    """
+    code, out = _run_main(
+        monkeypatch,
+        tmp_path,
+        _full_report(DEGRADED_LAYERS, ["setfit", "setfit", "rules", "rules"], 0.96),
+        BASELINE,
+    )
+
+    assert code == 1
+    header = out.index("FAIL: non-regression checks failed")
+
+    for line in (
+        "answered by: content_filter=5, fallback=28, rules=61, setfit=2",
+        "wrong answers by: rules=2, setfit=2",
+        "baseline answered by: content_filter=5, fallback=12, rules=61, setfit=18",
+    ):
+        assert line in out, f"the FAIL block never printed {line!r}"
+        assert out.index(line, header) > header, f"{line!r} appears only above the verdict"
+
+
+def test_a_passing_run_prints_no_failure_attribution(monkeypatch, tmp_path) -> None:
+    """
+    The other side of adjacency, and the pin that makes the branch REACHABLE.
+
+    `baseline = None` at the hoist keeps every other test in this file green
+    while making the comparison unreachable -- both backend-ci non-regression
+    gates would print "No baseline found ... skipping" and exit 0 forever. This
+    is the assertion that reds on it.
+
+    `answered by:` is NOT asserted absent: `print_summary` prints it on every
+    run, which is the fact that made the issue's premise wrong. `wrong answers
+    by:` is emitted only by `fail_diagnosis`, so it is the discriminating one.
+    """
+    code, out = _run_main(
+        monkeypatch,
+        tmp_path,
+        _full_report(HEALTHY_LAYERS, [], 1.0),
+        BASELINE,
+    )
+
+    assert code == 0
+    assert "PASS: non-regression checks passed" in out
+    assert "No baseline found" not in out, "the baseline was not read at all"
+    assert "wrong answers by:" not in out, "a passing run printed a failure diagnosis"
+
+
+def test_an_unreadable_baseline_fails_rather_than_skipping(monkeypatch, tmp_path) -> None:
+    """
+    W2. Hoisting the baseline read above the verdicts made an unparseable
+    baseline crash before anything printed, and -- worse -- the obvious repair
+    was to fall through to the "no baseline found" branch, which exits 0.
+
+    A conflict-marked committed JSON is the realistic instance. Absent and
+    unparseable are different states; only the first may be green.
+    """
+    code, out = _run_main(
+        monkeypatch,
+        tmp_path,
+        _full_report(HEALTHY_LAYERS, ["rules"], 1.0),
+        "<<<<<<< HEAD\n{}\n=======\n{}\n>>>>>>> main\n",
+    )
+
+    assert code == 1
+    assert "FAIL: the baseline at" in out
+    assert "could not be read" in out
+    assert "--update-baseline" in out, "the note does not name the remedy"
+    assert "skipping regression checks" not in out, "an unreadable baseline read as absent"
+    # The summary still ran: the reader keeps the run they paid for.
+    assert "=== Classifier Evaluation ===" in out
+
+
+def test_update_baseline_survives_a_baseline_it_cannot_parse(monkeypatch, tmp_path) -> None:
+    """
+    `compare_against_baseline` and `cascade_gate.sh --help` both advertise
+    `--update-baseline` as the remedy for a bad baseline. Before W2's fix the
+    hoisted read stack-traced on the way to it, so the documented repair for a
+    corrupt file was itself broken by it.
+    """
+    import io
+    import json
+    import sys
+    from contextlib import redirect_stdout
+
+    from jobtracker.scripts import evaluate_classifier as ec
+
+    baseline_path = tmp_path / "baseline.json"
+    baseline_path.write_text("{not json at all")
+    report = _full_report(HEALTHY_LAYERS, [], 1.0)
+
+    async def _stub(*_args, **_kwargs) -> dict:
+        return report
+
+    monkeypatch.setattr(ec, "run_evaluation", _stub)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "evaluate_classifier",
+            "--mode",
+            "hybrid",
+            "--hybrid-profile",
+            "full",
+            "--baseline",
+            str(baseline_path),
+            "--update-baseline",
+        ],
+    )
+
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        code = ec.main()
+
+    assert code == 0, buffer.getvalue()
+    assert "Updated baseline" in buffer.getvalue()
+    assert json.loads(baseline_path.read_text())["overall"]["macro_f1"] == 1.0
