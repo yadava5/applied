@@ -2468,6 +2468,7 @@ async def _scan_server_side(
                 incremental=True,
                 history_id=history_id,
                 unreadable=incremental.unreadable,
+                unrecognised=incremental.unrecognised,
                 stopped_by=incremental.stopped_by,
                 result_size_estimate=incremental.result_size_estimate,
             )
@@ -2490,6 +2491,7 @@ async def _scan_server_side(
         incremental=False,
         history_id=history_id,
         unreadable=read.unreadable,
+        unrecognised=read.unrecognised,
         stopped_by=read.stopped_by,
         result_size_estimate=read.result_size_estimate,
     )
@@ -2679,6 +2681,7 @@ async def gmail_sync(
             incremental = outcome.incremental
             history_id = outcome.history_id
             unreadable = outcome.unreadable
+            unrecognised = outcome.unrecognised
             stopped_by = outcome.stopped_by
             result_size_estimate = outcome.result_size_estimate
 

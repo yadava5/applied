@@ -724,10 +724,15 @@ def test_the_predicate_fires_on_silence_not_on_unfamiliarity() -> None:
     assert is_unrecognised_gmail_refusal(_QUOTA) is False, "a rate limit aborts the page"
     assert is_unrecognised_gmail_refusal(_FLAKE) is False, "a flake is retried"
 
-    # And the reason it is not just "status == 403": a 403 that NAMES something
-    # is not silent, even when the name means nothing to us.
-    assert is_unrecognised_gmail_refusal(_refusal(403, "somethingNewFromGoogle")) is False
-    # while a status that does not explain itself, with nothing said, is.
+    # A NAME WE HAVE NEVER CLASSIFIED IS NOT KNOWLEDGE, and this is the half a
+    # first draft of the predicate got wrong. It treated "it named a reason" as
+    # "we recognise it", which waves through exactly the change this exists to
+    # catch: the envelope moved the quota signal once already (that is why
+    # RESOURCE_EXHAUSTED is in _RATE_LIMIT_REASONS), and a RENAMED quota reason
+    # would arrive unfamiliar rather than absent.
+    assert is_unrecognised_gmail_refusal(_refusal(403, "quotaExceededNew")) is True
+    assert is_unrecognised_gmail_refusal(_refusal(403, "someFutureReason")) is True
+    # A status that does not explain itself, with nothing said, likewise.
     assert is_unrecognised_gmail_refusal(HttpError(_Resp(451), b"")) is True
 
     # THE CASE `_SELF_EXPLANATORY_STATUSES` EXISTS FOR, and without it this
@@ -804,3 +809,119 @@ def test_a_clean_page_reports_zero_unrecognised() -> None:
 
     assert page.unreadable == 0
     assert page.unrecognised == 0
+
+
+def test_unrecognised_is_always_a_subset_of_the_loss() -> None:
+    """A subset that can exceed its superset is a wiring mistake, not a count.
+
+    ``unrecognised`` is documented as a share OF ``unreadable``. Nothing in the
+    types enforces that: the two are accumulated in different places --
+    ``unreadable`` from ``len(ids) - len(out)`` at the page, ``unrecognised``
+    from a set of ids inside the batch -- so a mistake in either would show up
+    here and nowhere else. Driven across the four shapes that reach the page
+    differently rather than on one fixture, since a single case cannot tell a
+    real subset from an accident.
+
+    MUST RED ON: `unrecognised` sourced from the raw refusal count rather than
+    from ids that produced nothing; the page taking it from a different batch
+    than the one it counted `unreadable` from.
+    """
+
+    for name, errors in [
+        ("clean", {}),
+        ("one gone", {"b": [_GONE] * 20}),
+        ("one unreadable envelope", {"b": [_ROGUE] * 20}),
+        ("two, mixed causes", {"b": [_GONE] * 20, "c": [_ROGUE] * 20}),
+    ]:
+        page = _collect_page(
+            FakeService(["a", "b", "c", "d"], sub_errors=errors),
+            query="in:inbox",
+            page_size=50,
+            page_token=None,
+        )
+        assert page.unrecognised <= page.unreadable, (
+            f"{name}: unrecognised={page.unrecognised} exceeds "
+            f"unreadable={page.unreadable}, so it is not a share of it"
+        )
+        assert page.unrecognised >= 0
+
+    # And the mixed case specifically: two losses, exactly one of them silent.
+    mixed = _collect_page(
+        FakeService(["a", "b", "c", "d"], sub_errors={"b": [_GONE] * 20, "c": [_ROGUE] * 20}),
+        query="in:inbox",
+        page_size=50,
+        page_token=None,
+    )
+    assert mixed.unreadable == 2
+    assert mixed.unrecognised == 1, "the deleted message was counted as an envelope change"
+    assert [m.message_id for m in mixed.messages] == ["a", "d"]
+
+
+def test_the_three_reason_sets_do_not_overlap() -> None:
+    """A reason in two sets makes the predicate's ORDER load-bearing by accident.
+
+    is_unrecognised_gmail_refusal asks rate-limit, then retryable, then
+    permanent. If a string appeared in two of those, the answer would depend on
+    which check ran first rather than on what the string means, and the next
+    person to reorder the guards for readability would change behaviour without
+    touching a rule.
+
+    MUST RED ON: adding a reason to _PERMANENT_REASONS that is already a rate
+    limit or a flake.
+    """
+
+    from jobtracker.cloud.gmail_client import (
+        _PERMANENT_REASONS,
+        _RATE_LIMIT_REASONS,
+        _RETRYABLE_REASONS,
+    )
+
+    pairs = [
+        ("rate-limit", _RATE_LIMIT_REASONS, "retryable", _RETRYABLE_REASONS),
+        ("rate-limit", _RATE_LIMIT_REASONS, "permanent", _PERMANENT_REASONS),
+        ("retryable", _RETRYABLE_REASONS, "permanent", _PERMANENT_REASONS),
+    ]
+    for a_name, a, b_name, b in pairs:
+        assert not (a & b), f"{a_name} and {b_name} both claim {sorted(a & b)}"
+
+    # And each is non-empty, so the disjointness above is not vacuous.
+    for name, s in [
+        ("rate-limit", _RATE_LIMIT_REASONS),
+        ("retryable", _RETRYABLE_REASONS),
+        ("permanent", _PERMANENT_REASONS),
+    ]:
+        assert s, f"{name} is empty; the disjointness assertions grade nothing"
+
+
+def test_an_unrecognised_refusal_survives_a_retry_round_beside_it() -> None:
+    """The counter's own target scenario, and it is the COMMON presentation.
+
+    An envelope change fails many sub-requests in the same window. If any one
+    of them is an ordinary 5xx flake, the round retries -- and `failures` is
+    cleared at the top of every round. A recorder that only runs at the
+    terminal exit therefore sees an empty dict for the unrecognised id, which
+    was never re-sent because it was never deferred.
+
+    So the defect the counter exists to make loud goes quiet again, precisely
+    when it matters most. Every other test in this file uses a single failing
+    id and cannot see it.
+
+    MUST RED ON: calling `_record_unrecognised` only at `_send`'s exits rather
+    than once per round.
+    """
+
+    service = FakeService(
+        ["a", "b", "c"], sub_errors={"b": [_ROGUE] * 20, "c": [_FLAKE]}
+    )
+
+    page = _collect_page(service, query="in:inbox", page_size=50, page_token=None)
+
+    # `c` flaked once and then answered; `b` is the permanent silent refusal.
+    assert [m.message_id for m in page.messages] == ["a", "c"]
+    assert page.unreadable == 1
+    assert page.unrecognised == 1, (
+        "the unrecognised refusal was cleared by the retry round beside it"
+    )
+    assert service.batch_rounds == [["a", "b", "c"], ["c"]], (
+        "the flake must be the only id re-sent"
+    )

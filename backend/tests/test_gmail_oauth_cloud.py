@@ -5550,3 +5550,108 @@ async def test_a_message_the_resolver_will_not_name_ships_no_employer(
         "an employer — the ledger would offer that employer's rows as answers "
         "to a question the backend cannot act on"
     )
+
+
+async def test_the_unrecognised_share_reaches_every_endpoint_that_reports_loss(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#744, and the layer the unit tests cannot see.
+
+    ``unrecognised`` is accumulated in ``gmail_client`` and has to survive four
+    hand-written hops to reach a reader: MessagePage/HistoryPage -> _ScanRead ->
+    _ScanOutcome -> the local in ``gmail_sync`` -> SyncResponse. Every one of
+    those is a keyword argument somebody has to remember, and two of them were
+    missed the first time this shipped -- ``_ScanOutcome`` had the field and no
+    writer, so the sync surface published a permanent 0, and the server-side
+    branch never bound the local at all, which is an UnboundLocalError on every
+    non-relay sync.
+
+    Neither failure is visible from ``_collect_page``, which is where all the
+    other tests for this live.
+
+    MUST RED ON: deleting any single ``unrecognised=`` kwarg along the chain.
+    """
+
+    import jobtracker.cloud.gmail_client as gmail_client_module
+    from jobtracker.cloud.gmail_client import HistoryPage, MessagePage
+
+    await _connect_gmail(USER_A)
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+
+    # 1. the mine, which reads MessagePage directly.
+    async def _fake_page(user_id, *, query, page_size, page_token):
+        return MessagePage(
+            messages=[], next_page_token=None, unreadable=9, unrecognised=4
+        )
+
+    monkeypatch.setattr(gmail_client_module, "fetch_message_page", _fake_page)
+    inbox = (await client.get("/gmail/inbox", headers=headers)).json()
+    assert inbox["unreadable"] == 9
+    assert inbox["unrecognised"] == 4, "the mine drops the unrecognised share"
+
+    # 2. the SERVER-SIDE full scan, the hop that was broken two ways.
+    async def _fake_profile(user_id, **_kwargs):
+        return "9001"
+
+    async def _scan_page(user_id, **_kwargs):
+        return MessagePage(
+            messages=[_applied_msg()],
+            next_page_token=None,
+            unreadable=7,
+            unrecognised=3,
+        )
+
+    monkeypatch.setattr(gmail_client_module, "fetch_mailbox_history_id", _fake_profile)
+    monkeypatch.setattr(gmail_client_module, "fetch_message_page", _scan_page)
+    full = (await client.post("/gmail/sync", json={}, headers=headers)).json()
+    assert full["unreadable"] == 7
+    assert full["unrecognised"] == 3, "the full scan drops the unrecognised share"
+
+    # 3. the INCREMENTAL path, which reaches _ScanOutcome by a different branch.
+    # Uses the file's own stub installer, since the history read is reached
+    # through more than one module attribute.
+    calls = _install_gmail_stubs(
+        monkeypatch,
+        full_messages=[_applied_msg(day=1)],
+        history_results=[
+            HistoryPage(messages=[_interview_msg(day=10)], unreadable=4, unrecognised=2)
+        ],
+        profile_ids=["9001", "9100"],
+    )
+    await client.post("/gmail/sync", json={}, headers=headers)  # baseline
+    incr = (await client.post("/gmail/sync", json={}, headers=headers)).json()
+    # `calls["history"]` is deliberately NOT asserted: arms 1 and 2 above have
+    # already moved this mailbox's state, so the call count here is a property
+    # of the test's own ordering rather than of the code under test. The
+    # existing dedicated incremental test pins it on a fresh mailbox.
+    assert calls["history"] >= 1, "the incremental branch was never reached"
+    assert incr["unreadable"] == 4
+    assert incr["unrecognised"] == 2, "the incremental path drops it"
+
+
+async def test_a_clean_scan_reports_zero_unrecognised(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The floor, so the assertions above cannot pass on a constant."""
+
+    import jobtracker.cloud.gmail_client as gmail_client_module
+    from jobtracker.cloud.gmail_client import MessagePage
+
+    await _connect_gmail(USER_A)
+
+    async def _fake_profile(user_id, **_kwargs):
+        return "9001"
+
+    async def _clean(user_id, **_kwargs):
+        return MessagePage(messages=[_applied_msg()], next_page_token=None)
+
+    monkeypatch.setattr(gmail_client_module, "fetch_mailbox_history_id", _fake_profile)
+    monkeypatch.setattr(gmail_client_module, "fetch_message_page", _clean)
+
+    body = (
+        await client.post(
+            "/gmail/sync", json={}, headers={"Authorization": f"Bearer {_token_for(USER_A)}"}
+        )
+    ).json()
+    assert body["unreadable"] == 0
+    assert body["unrecognised"] == 0

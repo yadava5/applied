@@ -383,6 +383,36 @@ def is_retryable_gmail_error(exc: BaseException) -> bool:
 # revoked grant are indistinguishable without one.
 _SELF_EXPLANATORY_STATUSES = frozenset({400, 404})
 
+# Reasons we have classified as permanent. The THIRD set, and the one whose
+# absence made an earlier draft of this predicate too narrow.
+#
+# Treating "it named a reason" as "we recognise it" is wrong: a renamed quota
+# reason -- exactly the change that put RESOURCE_EXHAUSTED in
+# _RATE_LIMIT_REASONS -- would arrive as an unfamiliar string, be waved through
+# as recognised, and go back to being counted as ordinary loss. Silence and an
+# unfamiliar name are the same condition to a reader; only a reason we have
+# actually classified is knowledge.
+#
+# DELIBERATELY CONSERVATIVE. Only reasons that can be pointed at: "authError"
+# and "notFound" are this suite's own fixtures, taken from real refusals;
+# "forbidden" and "insufficientPermissions" are standard Google API reasons for
+# a grant that will not widen. Nothing is added on the strength of what a name
+# sounds like -- google.rpc's canonical statuses in particular live in a
+# different field in a different case, and guessing at them would put a string
+# in this set that Gmail never emits while implying we had checked.
+#
+# Erring SMALL is the safe direction: a permanent reason missing from this set
+# is counted as unrecognised, which is loud, and loud is what this predicate
+# exists to prefer. Erring large would silence the thing it watches for.
+_PERMANENT_REASONS = frozenset(
+    {
+        "authError",
+        "forbidden",
+        "insufficientPermissions",
+        "notFound",
+    }
+)
+
 
 def is_unrecognised_gmail_refusal(exc: BaseException) -> bool:
     """True when a failed sub-request told us nothing we could act on (#744).
@@ -408,19 +438,22 @@ def is_unrecognised_gmail_refusal(exc: BaseException) -> bool:
     essentially every real page, and an envelope change would then be one more
     unit in a number already large -- the opposite of making it loud.
 
-    So the test is: it named no reason we could read, on a status that does not
-    speak for itself. That is also true of a 403 carrying an HTML body, which
-    is correct -- an unreadable envelope is exactly the condition worth
-    surfacing.
+    So the test is three-sided, not two: a status that speaks for itself (404,
+    400) is never unrecognised whatever it says; otherwise a reason we have
+    CLASSIFIED as permanent is recognised; and anything else -- silence, an
+    HTML body, or a reason string we have never seen -- is not.
+
+    The last of those is the half an earlier draft got wrong. It treated "it
+    named a reason" as "we recognise it", which waves through precisely the
+    change this exists to catch: a renamed quota reason would be unfamiliar
+    rather than absent, and would go straight back to being ordinary loss.
     """
 
     if is_rate_limited_gmail_error(exc) or is_retryable_gmail_error(exc):
         return False
-    if _error_reasons(exc):
-        # It told us something. We may not act on it, but a future reader can
-        # grep the logged reason; that is a different problem from silence.
+    if _error_status(exc) in _SELF_EXPLANATORY_STATUSES:
         return False
-    return _error_status(exc) not in _SELF_EXPLANATORY_STATUSES
+    return not (_error_reasons(exc) & _PERMANENT_REASONS)
 
 
 def _retry_delay(attempt: int) -> float:
@@ -763,10 +796,17 @@ class MetadataBatch:
 
     messages: dict[str, dict]
     dropped: int = 0
-    # Of ``dropped``, how many were refused with no reason this client could
-    # read (#744). A SUBSET, not a second population: it exists so an error
-    # envelope Gmail changes under us is loud instead of arriving as one more
-    # unit of ``dropped`` alongside genuinely deleted mail.
+    # Of ``dropped``, how many carried a refusal this client cannot classify
+    # (#744) -- silent, or naming a reason in none of the three sets. A SUBSET,
+    # not a second population: it exists so a refusal shape Gmail changes under
+    # us is loud instead of arriving as one more unit of ``dropped`` alongside
+    # genuinely deleted mail.
+    #
+    # WHAT IT DOES NOT COVER: a refusal whose reason we DO read but route to
+    # the wrong set. #863 is exactly that -- a google.rpc quota envelope whose
+    # status never reaches ``_error_reasons``, so it is not read as a rate
+    # limit and does not abort the page. This counter makes that loss loud;
+    # it does not prevent it.
     unrecognised: int = 0
     # Body text per message id, for classification only. Kept OUT of the
     # parsed ``CloudGmailMessage`` on purpose: that object is what every
@@ -1115,6 +1155,16 @@ def _batch_fetch_metadata(
                 )
             batch.execute()
 
+            # RECORDED PER ROUND, not at the exits. `failures` is cleared at
+            # the top of every round, so a recorder that ran only where `_send`
+            # returns would miss an unrecognised refusal that shared a round
+            # with a retryable flake: the flake defers, the round repeats, and
+            # the silent id -- never deferred, never re-sent -- is wiped before
+            # anything looked at it. That is the counter's own target
+            # scenario, because an envelope change fails many sub-requests at
+            # once and one 5xx among them is unremarkable.
+            _record_unrecognised()
+
             for exc in failures.values():
                 if is_rate_limited_gmail_error(exc):
                     logger.warning(
@@ -1127,7 +1177,6 @@ def _batch_fetch_metadata(
                 mid for mid, exc in failures.items() if is_retryable_gmail_error(exc)
             ]
             if not deferred or attempt >= _RETRY_ATTEMPTS:
-                _record_unrecognised()
                 return
             delay = _retry_delay(attempt)
             if not budget.spend(delay):
@@ -1139,7 +1188,6 @@ def _batch_fetch_metadata(
                     "budget is spent; reporting them as unreadable.",
                     len(deferred),
                 )
-                _record_unrecognised()
                 return
             logger.warning(
                 "Gmail deferred %s of %s metadata sub-request(s); "
@@ -1218,9 +1266,12 @@ def _batch_fetch_metadata(
     if unrecognised > 0:
         logger.warning(
             "Gmail refused %s of %s message(s) with no reason this client "
-            "recognises; treating them as permanently unreadable. If this is "
-            "non-zero on a healthy mailbox, Gmail's error envelope has changed "
-            "shape and _RATE_LIMIT_REASONS needs extending (#744).",
+            "recognises; treating them as permanently unreadable. Non-zero on "
+            "a healthy mailbox means a refusal shape we do not classify -- "
+            "read the per-failure status/reason lines above and extend "
+            "_RATE_LIMIT_REASONS or _PERMANENT_REASONS accordingly (#744). It "
+            "does NOT cover a quota refusal whose reason IS classified but "
+            "reaches the wrong set; see #863.",
             unrecognised,
             len(set(ids)),
         )
