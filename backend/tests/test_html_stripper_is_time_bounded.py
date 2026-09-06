@@ -254,64 +254,147 @@ def test_a_truncated_stylesheet_does_not_reach_the_classifier_as_prose() -> None
     )
 
 
-def test_the_cap_leaves_a_message_below_it_completely_alone() -> None:
-    """The first `cap_html` had no length guard, and that was worse than the
-    leak it was written for.
+# ── what truncation must never do ────────────────────────────────────────────
+#
+# Three rounds of this function shipped three different wrong answers, and every
+# one was found by adjudicating against a real browser rather than against these
+# payloads. The rules that survived:
+#
+#   below the cap        change nothing at all
+#   above it, unsure     return "" and let `msg.snippet` speak
+#   "is it terminated"   ask SCRIPT_OR_STYLE, never a second opinion
+#
+# The third is the one that closes the class. Two earlier versions carried their
+# own close-tag pattern — first any `</script|style>`, then a name-matched
+# `</style\b` — and each disagreed with the stripper somewhere. `</style-x>`
+# satisfies `\b` and is not an appropriate end tag to a browser or to
+# SCRIPT_OR_STYLE, so the block read as closed and 4,000 characters of CSS went
+# to the classifier.
 
-    It cut back on any unpaired `<script`/`<style` token at ANY size, so a
-    50-byte message lost its verdict:
+#: Sub-cap markup that an earlier version truncated anyway. Each holds a token
+#: that LOOKS like a raw-text open and is not one a browser would honour here.
+SUB_CAP = {
+    "comment holding a style tag": "<p>Hi</p><!-- <style> --><p>REJECTEDWORD.</p>",
+    "script token inside an href": '<p>Hi</p><a href="/x?t=<script">l</a><p>REJECTEDWORD.</p>',
+    "style inside noscript": "<p>Hi</p><noscript><style>a{}</noscript><p>REJECTEDWORD.</p>",
+    "an entity, not a tag": "<p>A literal &lt;style&gt; is discussed.</p><p>REJECTEDWORD.</p>",
+}
 
-        <p>Hi</p><!-- <style> --><p>You were rejected.</p>
-            browser     : "Hi\n\nYou were rejected."
-            that version: "Hi <!--"
+#: Over-cap markup carrying an unterminated raw-text element. The answer must be
+#: EMPTY — never a short non-empty stub, which is what defeats the snippet
+#: fallback and turned a rejection into `other`.
+_PAD = "<p>Filler paragraph number one.</p>" * 1200
+OVER_CAP_UNTERMINATED = {
+    "comment holding a style tag": "<!-- <style> -->",
+    "script token inside an href": '<a href="/x?t=<script">l</a>',
+    "style inside noscript": "<noscript><style>a{}</noscript>",
+    "style inside svg": "<svg><style>a{}</svg>",
+    "a CDATA section": "<![CDATA[ <style> ]]>",
+    "an ESP build comment": "<!-- start: hero module <style> -->",
+}
 
-    And the snippet fallback does not rescue it: the result is short but NOT
-    empty, so `if text:` stores it and `bodies.get(id) or msg.snippet` never
-    fires. A real rejection scored `other` — the exact defect class the parent
-    commit's issue was about.
+#: A close tag of the right NAME and the wrong SHAPE. `</style\b` accepts every
+#: one of these; a browser and `SCRIPT_OR_STYLE` accept none, so the stylesheet
+#: is still open and its body must not reach the classifier.
+WRONG_SHAPE_CLOSE = ("</style-x>", "</style:1>", "</style.y>", '</style"y>', "</style!y>")
 
-    Below the cap nothing is truncated, so there is no unterminated element to
-    repair and the honest answer is to change nothing at all.
 
-    MUTATION: drop the `len(html) <= MAX_HTML_CHARS` guard -> every row reds.
+@pytest.mark.parametrize("where", sorted(STRIPPERS))
+@pytest.mark.parametrize("shape", sorted(SUB_CAP))
+def test_a_message_below_the_cap_is_left_completely_alone(where: str, shape: str) -> None:
+    """MUTATION: drop the `len(html) <= MAX_HTML_CHARS` guard -> every row reds.
+
+    An earlier version cut back on any unpaired token at any size, so a
+    fifty-byte message lost its verdict — and the result was short but NOT
+    empty, so `if text:` stored it and `bodies.get(id) or msg.snippet` never
+    fired. A real rejection scored `other`.
     """
 
-    for markup in (
-        "<p>Hi</p><!-- <style> --><p>You were REJECTEDWORD.</p>",
-        '<p>Hi</p><a href="/x?t=<script">link</a><p>You were REJECTEDWORD.</p>',
-        "<p>Hi</p><noscript><style>a{}</noscript><p>You were REJECTEDWORD.</p>",
-        "<p>A literal &lt;style is discussed here.</p><p>REJECTEDWORD.</p>",
-    ):
-        assert len(markup) < MAX_HTML_CHARS, "this payload is not sub-cap"
-        for where, strip in STRIPPERS.items():
-            assert "REJECTEDWORD" in strip(markup), (
-                f"{where} truncated a message that never reached the cap: "
-                f"{strip(markup)!r}"
-            )
+    markup = SUB_CAP[shape]
+    assert len(markup) < MAX_HTML_CHARS, "this payload is not sub-cap"
+    assert "REJECTEDWORD" in STRIPPERS[where](markup)
 
 
-def test_the_cutback_matches_the_close_tag_by_name_and_takes_the_earliest() -> None:
-    """The other two defects in the first `cap_html`, and they are one shape.
+@pytest.mark.parametrize("where", sorted(STRIPPERS))
+@pytest.mark.parametrize("shape", sorted(OVER_CAP_UNTERMINATED))
+def test_an_over_cap_body_it_cannot_read_becomes_empty_and_not_a_stub(
+    where: str, shape: str
+) -> None:
+    """Empty, or the whole message — never a stub.
 
-    It asked a WEAKER question than `SCRIPT_OR_STYLE` answers — any
-    `</script|style>` counted as a close, and only the LAST open was examined —
-    so a stylesheet could read as terminated and reach the classifier anyway:
+    A short non-empty body is the worst of the three outcomes: production stores
+    it and never reaches `msg.snippet`, so the reader's mail is classified from
+    a fragment. `""` hands the message to Gmail's own summary of the VISIBLE
+    text instead.
 
-        <p>REJECTED</p><style>x</script>POISON…</style>
-            the cut-back saw `</script>` and called the `<style>` closed
-
-    MUTATION: accept any close rather than the name-matched one, or look only
-    at `opens[-1]` -> this reds with the poison in the output.
+    MUTATION: cut back to the opening tag instead of returning "" -> every row
+    reds with a stub.
     """
 
-    poison = "POISONWORD" + "a" * (MAX_HTML_CHARS + 8000)
-    for markup in (
-        f"<p>REJECTEDWORD</p><style>x</script>{poison}</style>",
-        f"<p>REJECTEDWORD</p><script>var a = '</style>';{poison}</script>",
-        f"<p>REJECTEDWORD</p><style>a{{}}<script>b()</script>{poison}</style>",
-    ):
-        for where, strip in STRIPPERS.items():
-            assert "POISONWORD" not in strip(markup), (
-                f"{where} let a raw-text body through: the cut-back accepted a "
-                "close tag of the wrong name, or looked only at the last open"
-            )
+    doc = (
+        "<html><body><p>Hi Ayush,</p>"
+        + OVER_CAP_UNTERMINATED[shape]
+        + "<p>You were REJECTEDWORD.</p>"
+        + _PAD
+        + "</body></html>"
+    )
+    assert len(doc) > MAX_HTML_CHARS, "this payload does not exceed the cap"
+
+    text = STRIPPERS[where](doc)
+    assert text == "" or "REJECTEDWORD" in text, (
+        f"{where} returned a {len(text)}-character stub with the verdict gone: "
+        f"{text[:80]!r}. A stub defeats the snippet fallback."
+    )
+
+
+@pytest.mark.parametrize("where", sorted(STRIPPERS))
+@pytest.mark.parametrize("close", WRONG_SHAPE_CLOSE)
+def test_a_close_tag_of_the_wrong_shape_does_not_count_as_terminated(
+    where: str, close: str
+) -> None:
+    """MUTATION: give `cap_html` its own `</script|style\b` close pattern
+    instead of asking `SCRIPT_OR_STYLE` -> every row reds with the poison out.
+
+    This is the whole reason the check delegates: any second opinion about what
+    "terminated" means is a place the two can disagree, and every disagreement
+    is a bug.
+    """
+
+    # THE FAKE CLOSE MUST SIT INSIDE THE WINDOW, and the first version of this
+    # payload put it past the cap — where BOTH the right answer and the wrong
+    # one return "", so the row could not tell them apart. A control that
+    # cannot return positive is this repository's signature defect and it very
+    # nearly shipped inside the test written to catch one.
+    doc = (
+        "<html><body><p>REJECTEDWORD</p><style>@media{a{}} POISONWORD"
+        + close
+        + _PAD
+        + "</body></html>"
+    )
+    assert len(doc) > MAX_HTML_CHARS, "this payload does not exceed the cap"
+    assert doc.index(close) < MAX_HTML_CHARS, (
+        "the fake close is past the cap, where every implementation returns "
+        "empty and this row grades nothing"
+    )
+
+    assert "POISONWORD" not in STRIPPERS[where](doc)
+
+
+def test_the_vendored_mirror_carries_the_same_stripper() -> None:
+    """The `ml/demo/space` copy is a fifth stripper and is not in `STRIPPERS`.
+
+    It cannot be imported here — it is a vendored package, not a dependency —
+    so the property asserted is the one that makes its absence safe: the file is
+    byte-identical to the one these tests do exercise.
+    """
+
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    shipped = root / "backend/jobtracker/email_clients/html_text.py"
+    mirror = root / "ml/demo/space/jobtracker/email_clients/html_text.py"
+    assert mirror.exists(), "the vendored mirror is gone; drop this test with it"
+    assert mirror.read_bytes() == shipped.read_bytes(), (
+        "the vendored stripper has drifted from the one under test, so nothing "
+        "in this file says anything about it"
+    )

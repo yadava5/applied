@@ -103,41 +103,6 @@ MAX_HTML_CHARS = 32 * 1024
 #: text before an unterminated stylesheet is real message text; text after it,
 #: at this point, is unreachable anyway.
 RAW_TEXT_OPEN = re.compile(r"<(script|style)\b", re.IGNORECASE)
-RAW_TEXT_CLOSE = {
-    "script": re.compile(r"</script\b", re.IGNORECASE),
-    "style": re.compile(r"</style\b", re.IGNORECASE),
-}
-
-
-def cap_html(html: str) -> str:
-    """Truncate to :data:`MAX_HTML_CHARS` without leaving a stylesheet open."""
-
-    # BELOW THE CAP, CHANGE NOTHING. The first version of this function had no
-    # such guard, and cut back on any unpaired token at any size — so a 50-byte
-    # message lost its verdict:
-    #
-    #     <p>Hi</p><!-- <style> --><p>You were rejected.</p>
-    #         browser  : "Hi\n\nYou were rejected."
-    #         that fix : "Hi <!--"
-    #
-    # Worse than the leak it was written for, because the result is short but
-    # NOT EMPTY, so `if text:` stores it and `bodies.get(id) or msg.snippet`
-    # never falls back. A real rejection scored `other`.
-    if len(html) <= MAX_HTML_CHARS:
-        return html
-
-    html = html[:MAX_HTML_CHARS]
-
-    # THE EARLIEST unterminated open, and its close matched BY NAME. The first
-    # version asked a weaker question than `SCRIPT_OR_STYLE` answers — it looked
-    # only at the LAST open and accepted any `</script|style>` as a close — so
-    # `<style>x</script>POISON…</style>` read as terminated and the stylesheet
-    # reached the classifier anyway.
-    for match in RAW_TEXT_OPEN.finditer(html):
-        if not RAW_TEXT_CLOSE[match.group(1).lower()].search(html, match.end()):
-            return html[: match.start()]
-    return html
-
 
 # ``<script foo>…</script >``, ``<style>…</style/>``, either case, spanning
 # newlines. ``\b`` after the name so ``<scripture>`` is not a script element;
@@ -153,6 +118,45 @@ SCRIPT_OR_STYLE = re.compile(
 # failure mode is text QUALITY — a few characters more or fewer in a snippet —
 # not an element body surviving into the classifier's input. CodeQL did not
 # flag it and widening it here would change legitimate mail.
+def cap_html(html: str) -> str:
+    """Truncate to :data:`MAX_HTML_CHARS` without leaving a stylesheet open.
+
+    BELOW THE CAP, CHANGE NOTHING. An earlier version had no such guard and cut
+    back on any unpaired token at any size, so a fifty-byte message lost its
+    verdict — and the result was short but NOT empty, so `if text:` stored it
+    and `bodies.get(id) or msg.snippet` never fell back. A real rejection
+    scored `other`.
+
+    ABOVE IT, THE QUESTION IS ASKED WITH ``SCRIPT_OR_STYLE`` ITSELF, and that is
+    the whole design. Two earlier versions asked their own version of "is this
+    element terminated" — first any `</script|style>` at all, then a
+    name-matched `</style\\b` — and each disagreed with the stripper somewhere:
+    ``</style-x>`` satisfies `\\b` and is NOT an appropriate end tag to a
+    browser or to ``SCRIPT_OR_STYLE``, so the block read as closed and its CSS
+    reached the classifier. Every such mismatch is a bug, and the only way to
+    have none is to stop having a second opinion: remove what the stripper
+    removes, and if a raw-text open SURVIVES that, it is unterminated by the
+    only definition that matters here.
+
+    AND THE ANSWER IS "" RATHER THAN A CUT-BACK. Cutting back to the opening tag
+    keeps the text before it, which is real message text — but it also produces
+    a short non-empty body, and that is precisely the shape that defeats the
+    snippet fallback and turns a rejection into `other`. Returning nothing hands
+    the message to ``msg.snippet``, which is Gmail's own summary of the VISIBLE
+    text, so the reader's mail is still classified. Losing the head of an
+    over-cap body is the smaller harm, and it is disclosed rather than implied:
+    on the desktop paths there is no snippet to fall back to.
+    """
+
+    if len(html) <= MAX_HTML_CHARS:
+        return html
+
+    html = html[:MAX_HTML_CHARS]
+    if RAW_TEXT_OPEN.search(SCRIPT_OR_STYLE.sub(" ", html)):
+        return ""
+    return html
+
+
 TAG = re.compile(r"<[^>]+>")
 
 WHITESPACE = re.compile(r"\s+")
