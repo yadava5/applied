@@ -391,6 +391,148 @@ test.describe("live demo (/demo)", () => {
     ).toBeVisible();
   });
 
+  test("an empty stage accepts a drop where the only target is the chip strip", async ({
+    page,
+  }) => {
+    /*
+     * #772, item 1. `groups` drops empty columns, so an empty stage renders no
+     * `<section>` to drop onto. Above the shell's `md` the rail's stage list
+     * carries the handlers; below it, the chip strip is the ONLY stage surface
+     * there is — and it carried none. Measured on the original pass: five
+     * stages accepted a drop at 900px and an empty stage accepted zero at
+     * 700px and 390px.
+     *
+     * 700px, not 390px, and that is the point: this is a narrow desktop
+     * window, which is where board drag is plausible in the first place.
+     */
+    await page.setViewportSize({ width: 700, height: 900 });
+    await page.goto("/demo");
+
+    // The premise, asserted rather than assumed: `offered` is empty, so there
+    // is no list section for it, and the chip is the only stage control on
+    // screen. If either stops being true this test is measuring something else.
+    const offered = page.getByRole("button", { name: /^offered — 0$/ });
+    await expect(offered).toHaveCount(1);
+    await expect(page.getByRole("region", { name: /^offered/i })).toHaveCount(0);
+
+    const card = page
+      .locator("li")
+      .filter({ has: page.getByText("Quarry Data", { exact: true }) })
+      .first();
+    await card.dragTo(offered);
+
+    await expect(page.getByRole("button", { name: /^offered — 1$/ })).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: /^offered/i }).getByText("Quarry Data", { exact: true }),
+    ).toBeVisible();
+  });
+
+  test("the drop highlight leaves with the pointer, and does not flicker over the rows inside", async ({
+    page,
+  }) => {
+    /*
+     * #772, item 2. There was no `onDragLeave` on the board at all, so the
+     * highlight persisted on a stage the pointer had already left: during a
+     * drag the visible affordance and the actual drop target disagreed.
+     *
+     * Dispatched rather than dragged, because `dragTo` is atomic and cannot
+     * express "the pointer entered and then left without dropping" — which is
+     * the entire behaviour under test. `dragstart` first, because the
+     * handlers are gated on `draggingId !== null`.
+     *
+     * THE NEGATIVE IS HALF THE TEST. `dragleave` also fires when the pointer
+     * crosses into a CHILD, and a stage section is nothing but children, so a
+     * naive `setDropStage(null)` strobes the highlight off over every row the
+     * pointer passes. A test that only asserted "it clears" would pass on that
+     * version.
+     */
+    await page.goto("/demo");
+
+    const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+    const source = page
+      .locator('.board-row[draggable="true"]')
+      .filter({ hasText: "Quarry Data" })
+      .first();
+    await source.dispatchEvent("dragstart", { dataTransfer });
+
+    const stage = page.getByRole("region", { name: /^interviewing/i });
+    await stage.dispatchEvent("dragover", { dataTransfer });
+    await expect(stage).toHaveAttribute("data-drop", "true");
+
+    // Into a row INSIDE the stage: not a leave, and the highlight must hold.
+    const inner = await stage.locator(".board-row").first().elementHandle();
+    await stage.dispatchEvent("dragleave", { dataTransfer, relatedTarget: inner });
+    await expect(stage).toHaveAttribute("data-drop", "true");
+
+    // Out to something that is not in this stage at all: a real leave.
+    const applied = page.getByRole("region", { name: /^applied/i });
+    await stage.dispatchEvent("dragleave", { dataTransfer, relatedTarget: await applied.elementHandle() });
+    await expect(stage).not.toHaveAttribute("data-drop", "true");
+
+    // AND THE ORDER OF THE TWO EVENTS MUST NOT MATTER. `dragenter` on the next
+    // stage fires BEFORE `dragleave` on the one being left, so a bare
+    // `setDropStage(null)` erases a highlight its successor has already set and
+    // the board goes dark over a valid target. Replayed here in that order:
+    // the new stage lights, then the OLD stage's leave arrives late.
+    await applied.dispatchEvent("dragover", { dataTransfer });
+    await expect(applied).toHaveAttribute("data-drop", "true");
+    await stage.dispatchEvent("dragleave", { dataTransfer, relatedTarget: await applied.elementHandle() });
+    await expect(applied, "a late dragleave darkened the stage the pointer is now over").toHaveAttribute(
+      "data-drop",
+      "true",
+    );
+  });
+
+  test("a card dropped into an employer fold keeps all three ways to move again", async ({
+    page,
+  }) => {
+    /*
+     * #772, item 3, and the one worth fixing first: the other two mislead,
+     * this one strands.
+     *
+     * `Northstar Systems` holds three rows in `applied` — a folded set — and
+     * one in `interviewing`. Dropping the fourth onto `applied` folds it into
+     * that set, and `EmployerSetRow` renders its members ONLY while open, so
+     * the card leaves the DOM entirely: no open button, not draggable, no
+     * select. It recovers on expanding the group and nothing on screen says
+     * so.
+     */
+    await page.goto("/demo");
+
+    const moving = page
+      .locator('.board-row[draggable="true"]')
+      .filter({ has: page.getByTitle("ML Engineer", { exact: true }) })
+      .first();
+    await expect(moving).toBeVisible();
+
+    // The premise: `applied` already holds a COLLAPSED Northstar set, so the
+    // drop below really does fold. Without this the test would pass on a board
+    // where nothing folded and would be grading nothing.
+    const fold = page.getByRole("button", { name: /Northstar Systems/ }).first();
+    await expect(fold).toHaveAttribute("aria-expanded", "false");
+
+    await moving.dragTo(page.getByRole("region", { name: /^applied/i }), {
+      targetPosition: { x: 140, y: 20 },
+    });
+
+    const landed = page
+      .locator('.board-row')
+      .filter({ has: page.getByTitle("ML Engineer", { exact: true }) })
+      .first();
+
+    // All three paths, named one at a time so a failure says which one went.
+    await expect(landed, "the moved card is not on screen at all").toBeVisible();
+    await expect(landed, "the moved card is no longer draggable").toHaveAttribute(
+      "draggable",
+      "true",
+    );
+    await expect(landed.locator("select"), "the moved card lost its stage select").toHaveCount(1);
+    await expect(
+      landed.getByRole("button", { name: /^Open / }),
+      "the moved card lost its open button",
+    ).toHaveCount(1);
+  });
+
   test("the card answers a stage change before the write returns", async ({ page }) => {
     // WHY THIS IS NOT THE TEST ABOVE (#601).
     //

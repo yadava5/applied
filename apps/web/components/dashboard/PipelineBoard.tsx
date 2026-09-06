@@ -671,6 +671,25 @@ export function PipelineBoard({
     const target: string = stageKey;
     setMoveError(null);
     setPendingMoves((m) => ({ ...m, [appId]: target }));
+    /* A MOVE MUST NOT STRAND THE CARD IT MOVED (#772). If the destination
+       stage already holds rows for this employer, the arriving card folds into
+       that set — and a collapsed set member has no open button, is not
+       draggable and has no select, so the card loses all three ways to move
+       again, at the exact moment the reader was moving it. It recovers on
+       expanding the group and nothing on screen says so.
+
+       Opening the destination set is the whole fix, and it is the same
+       mechanism `traverseDetail` already uses to keep the detail pane's "you
+       are here" mark off a row that is not on screen.
+
+       Unconditional, and optimistic. Unconditional because a key for a set
+       that never forms is inert — cheaper than asking "will this fold?" from
+       here, which would mean re-deriving `groupByEmployer`'s answer against
+       rows that have not moved yet and getting a second opinion about it.
+       Optimistic because the board hops on `pendingMoves` before the write
+       returns, so waiting for the response would show a folded, unreachable
+       card for the width of the request. */
+    setOpenSets((s) => ({ ...s, [`${stageKey}:${app.company}`]: true }));
     const result = await transport.changeStatus(appId, target);
     if (!result.ok) {
       setPendingMoves((m) => {
@@ -1000,6 +1019,34 @@ export function PipelineBoard({
                   setDropStage(column.key);
                 }
               : undefined,
+          /* THE HIGHLIGHT HAD NO WAY TO CLEAR (#772). `onDragOver` set it and
+             nothing unset it until a drop, so a stage the pointer had already
+             left stayed lit — during a drag the visible affordance and the
+             actual drop target disagreed, which is the one moment a board must
+             not lie about where a card will land.
+
+             TWO GUARDS, and each is a bug without the other:
+
+             `contains(relatedTarget)` — `dragleave` also fires when the
+             pointer crosses into a CHILD of this target, and a section full of
+             cards is nothing but children. Clearing there strobes the
+             highlight off and on for every row the pointer passes over.
+             `relatedTarget` is null when the pointer leaves the window
+             entirely, which is a real leave and must clear.
+
+             The functional `setDropStage` — `dragenter` on the NEXT stage
+             fires before `dragleave` on this one, so a bare `setDropStage(null)`
+             would erase a highlight its successor had already set and leave the
+             board dark over a valid target. Clearing only when the stage is
+             still ours makes the order irrelevant. */
+          onDragLeave:
+            draggingId !== null
+              ? (event: React.DragEvent) => {
+                  const next = event.relatedTarget;
+                  if (next instanceof Node && event.currentTarget.contains(next)) return;
+                  setDropStage((current) => (current === column.key ? null : current));
+                }
+              : undefined,
           onDrop: (event: React.DragEvent) => {
             event.preventDefault();
             const id = Number(event.dataTransfer.getData("text/plain"));
@@ -1026,8 +1073,24 @@ export function PipelineBoard({
           key={column.key}
           type="button"
           {...common}
+          /* THE ONLY DROP TARGET AN EMPTY STAGE HAS BELOW THE SPINE (#772).
+             `groups` drops empty columns, so an empty stage renders no
+             `<section>` to drop onto and the spine — which does carry these —
+             is `hidden` until `lg` (or `md` in the shell). Measured: five
+             stages accepted a drop at 900px and an empty stage accepted none
+             at 700px or 390px. That is a narrow desktop window, which is
+             exactly where board drag is plausible; the phone width is not the
+             case this is for. Same handlers as the spine button, deliberately:
+             two drop surfaces built from one definition cannot disagree about
+             what a drop does. */
+          data-drop={dropStage === column.key || undefined}
+          {...dropHandlers(column)}
           className={cn(
-            "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+            // `stage-chip` earns the same `[data-drop]` wash the spine and the
+            // list columns already have. Without it this target would accept a
+            // drop and show nothing — a drop point with no affordance, which is
+            // the same lie as an affordance with no drop point.
+            "stage-chip inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
             active
               ? "border-line-strong bg-surface-2 text-strong"
               : "border-line-soft text-muted hover:text-strong",
