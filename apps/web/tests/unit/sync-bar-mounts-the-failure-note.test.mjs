@@ -74,7 +74,7 @@ test("both failure paths ask what the reader may be shown, and pass the status",
     const rendered = textOf(detail);
     assert.match(
       rendered,
-      /^dashboardSyncDetail\(/,
+      /^proxySyncDetail\(/,
       `a failed phase builds its detail as \`${rendered}\` — the status guard is bypassed`,
     );
     assert.match(

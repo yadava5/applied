@@ -21,7 +21,7 @@
  * `detail` is `null` for two different reasons, and BOTH are ordinary. The
  * response carried no usable body — a timeout, an HTML error page, a function
  * killed on its ceiling — or the status is one the dashboard renders from its
- * KIND rather than from prose, which `dashboardSyncDetail` decides. The second
+ * KIND rather than from prose, which `proxySyncDetail` decides. The second
  * is the common one: the proxy route always manufactures a JSON body, so on a
  * 401/403/429/503 there IS a `detail` and it is a machine token
  * (`"rate_limited"`), which this surface must never print. Either way the line

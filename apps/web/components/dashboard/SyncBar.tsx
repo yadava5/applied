@@ -16,7 +16,7 @@ import { selectClass } from "@/components/ui/formStyles";
 import { onScanRequest, requestScan } from "@/lib/dashboard/scan-bus";
 import { liveSyncTransport, type SyncTransport } from "@/lib/dashboard/transport";
 import { publishAmbientPulse } from "@/lib/shell/ambient-bus";
-import { dashboardSyncDetail } from "@/lib/gmail/sync-detail";
+import { proxySyncDetail } from "@/lib/gmail/sync-detail";
 import {
   SCAN_DEFAULT_DEPTH,
   SCAN_DEFAULT_DISPOSITION,
@@ -391,7 +391,7 @@ export function SyncBar({
         kind: "failed",
         op: "sync",
         notConnected: res.status === 409,
-        detail: dashboardSyncDetail(res.status, res.body),
+        detail: proxySyncDetail(res.status, res.body),
       });
       return;
     }
@@ -484,7 +484,7 @@ export function SyncBar({
           kind: "failed",
           op,
           notConnected: res.status === 409,
-          detail: dashboardSyncDetail(res.status, res.body),
+          detail: proxySyncDetail(res.status, res.body),
         });
         return;
       }

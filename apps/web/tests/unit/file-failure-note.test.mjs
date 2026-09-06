@@ -154,11 +154,21 @@ test("TRIPWIRE: the workbench renders the builder and holds neither old literal"
   // the builder imported and the other two still calling it.
   for (const kind of [
     /\{ kind: "not-connected" \}/,
-    /\{ kind: "status", status: res\.status \}/,
+    /kind: "status",\s*\n\s*status: res\.status,/,
     /\{ kind: "unreachable" \}/,
   ]) {
     assert.match(source, kind, `no failure branch hands the builder ${kind}`);
   }
+  // #852: the status branch must build its detail through the ROUTE-scoped
+  // guard, not from the raw body. Reading `res.body` directly here would render
+  // "· rate_limited" on a 429 — worse than the generic it replaced. Pinned as
+  // the whole expression, because a substring (`proxySyncDetail(`) survives
+  // `proxySyncDetail(res.status, res.body) ?? someRawFallback`.
+  assert.match(
+    source,
+    /detail: proxySyncDetail\(res\.status, res\.body\),/,
+    "the workbench does not build its file-failure detail through proxySyncDetail",
+  );
   // Neither old literal can be RENDERED from here again. `nothing was filed`
   // is still a sentence this product says — the 409 branch keeps it — but it
   // says it from `file-outcome.ts`, so a copy of it in the component means one
@@ -167,5 +177,121 @@ test("TRIPWIRE: the workbench renders the builder and holds neither old literal"
     source,
     /nothing was filed/,
     "the network branch's false sentence is back in InboxWorkbench",
+  );
+});
+
+/**
+ * #852 — THE BACKEND'S SENTENCE REACHES THIS SURFACE, AND THE VALENCE SURVIVES.
+ *
+ * `POST /gmail/sync` answers a failed cursor stamp with "3 filed and 1 queued of
+ * 4 scanned before it failed; sync again to finish" (#643). #848 carried that to
+ * the dashboard. The workbench's `file()` returned on `!res.ok` before reading
+ * anything, so the same endpoint told one caller what survived and the other
+ * nothing — one endpoint, two callers, one of them blind.
+ *
+ * The risk being pinned is NOT that the detail is missing. It is that the detail
+ * arrives and eats the lead: a note reading "3 filed and 1 queued of 4 scanned"
+ * has turned a 500 into a success report.
+ */
+test("the backend's sentence is appended to the failure, never substituted for it", () => {
+  const TYPED = "3 filed and 1 queued of 4 scanned before it failed; sync again to finish";
+  const note = fileFailureNote({ kind: "status", status: 500, detail: TYPED });
+
+  assert.equal(
+    note,
+    `Couldn't file these (500) — anything filed before the failure stays that way. · ${TYPED}`,
+  );
+  // The three properties that make it an append rather than a replacement, each
+  // able to fail on its own.
+  assert.match(note, /^Couldn't file these \(500\)/, "the failure lead was displaced");
+  assert.match(note, KEPT, "the surviving-work clause was dropped for the detail");
+  assert.ok(note.indexOf(TYPED) > note.search(KEPT), "the detail precedes the clause it qualifies");
+});
+
+/**
+ * The guard that makes the append safe, exercised through THIS surface's
+ * renderer rather than only through `proxySyncDetail`'s own unit tests.
+ *
+ * `app/api/gmail/sync/route.ts` flattens every failure kind into one `detail`
+ * key, so a 429 arrives as `{detail:"rate_limited"}`. Rendering that gives
+ * "Couldn't file these (429) — … · rate_limited": a machine token shown to a
+ * person as prose, worse than the generic line it replaced.
+ */
+test("a status the route flattens to a machine token renders no detail", async () => {
+  const { proxySyncDetail } = await import("../../lib/gmail/sync-detail.ts");
+
+  for (const [status, token] of [
+    [401, "unauthenticated"],
+    [403, "auth"],
+    [429, "rate_limited"],
+    [503, "unavailable"],
+  ]) {
+    const detail = proxySyncDetail(status, { detail: token });
+    const note = fileFailureNote({ kind: "status", status, detail });
+
+    assert.equal(detail, null, `${status} let a machine token through`);
+    assert.equal(
+      note,
+      `Couldn't file these (${status}) — anything filed before the failure stays that way.`,
+    );
+    assert.doesNotMatch(note, new RegExp(token), `${status} rendered "${token}" as prose`);
+  }
+});
+
+/** A body with nothing quotable leaves the sentence exactly as it was. */
+test("an unquotable body leaves the generic note byte-identical", async () => {
+  const { proxySyncDetail } = await import("../../lib/gmail/sync-detail.ts");
+  const generic = fileFailureNote({ kind: "status", status: 500 });
+
+  for (const body of [null, undefined, {}, { detail: "" }, { detail: "   " }, { detail: 7 }, []]) {
+    assert.equal(
+      fileFailureNote({ kind: "status", status: 500, detail: proxySyncDetail(500, body) }),
+      generic,
+      `a body of ${JSON.stringify(body) ?? "undefined"} changed the generic note`,
+    );
+  }
+});
+
+/**
+ * The 409 branch cannot acquire a detail. It renders "nothing was filed", and an
+ * appended "3 filed…" would contradict the sentence it is attached to. The type
+ * forbids it — `detail` lives only on the `status` kind — and this asserts the
+ * rendered result rather than trusting `tsc`, because the unit runner strips
+ * types and would not catch a `switch` that read `failure.detail` unguarded.
+ */
+test("the not-connected branch renders no detail even when one is smuggled in", () => {
+  const note = fileFailureNote({
+    kind: "not-connected",
+    detail: "3 filed and 1 queued of 4 scanned",
+  });
+
+  assert.equal(note, "Gmail isn't connected — nothing was filed.");
+});
+
+/**
+ * TRANSPORT WIRING. Everything above passes against a `file()` that still
+ * returns before reading the body — which is the bug. This is the #848 lesson
+ * repeating verbatim: a `detail` threaded through and rendered nowhere
+ * typechecked, passed all 18 tests and the full suite, because no test asserted
+ * the producer produced it.
+ */
+test("TRIPWIRE: file() reads the body on the non-OK path", () => {
+  const source = withoutComments(
+    readFileSync(new URL("../../lib/gmail/transport.ts", import.meta.url), "utf8"),
+  );
+
+  // The read must come BEFORE the branch: `res.json()` cannot be consumed
+  // twice, so a second read placed after `!res.ok` would resolve to a rejected
+  // promise and the detail would be silently null on every failure.
+  const early = source.indexOf("const body = await res.json()");
+  const branch = source.indexOf("if (!res.ok) return { ok: false");
+  assert.ok(early > 0, "file() no longer reads the response body");
+  assert.ok(branch > 0, "file()'s non-OK early return changed shape — re-read this pin");
+  assert.ok(early < branch, "the body is read after the non-OK return, so it is never read");
+
+  assert.match(
+    source,
+    /if \(!res\.ok\) return \{ ok: false, status: res\.status, counts: \{\}, body \};/,
+    "the non-OK return does not carry the body",
   );
 });

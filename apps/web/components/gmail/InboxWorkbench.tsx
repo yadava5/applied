@@ -15,6 +15,7 @@ import { Segmented } from "@/components/ui/Segmented";
 import { GateMeter } from "@/components/viz/GateMeter";
 import { shortDate } from "@/lib/dashboard/dates";
 import { fileFailureNote } from "@/lib/gmail/file-outcome";
+import { proxySyncDetail } from "@/lib/gmail/sync-detail";
 import {
   applyVerdictCorrection,
   scanMessagePayload,
@@ -880,7 +881,17 @@ export function InboxWorkbench({
         setFiling({
           phase: "error",
           note: fileFailureNote(
-            res.status === 409 ? { kind: "not-connected" } : { kind: "status", status: res.status },
+            res.status === 409
+              ? { kind: "not-connected" }
+              : {
+                  kind: "status",
+                  status: res.status,
+                  // The backend's own sentence, when the proxy left one worth
+                  // quoting. `proxySyncDetail` returns null for every status the
+                  // route flattens to a machine token, so a 429 does not render
+                  // "· rate_limited" (#852).
+                  detail: proxySyncDetail(res.status, res.body),
+                },
           ),
         });
         return;
