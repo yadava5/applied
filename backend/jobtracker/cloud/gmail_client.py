@@ -243,9 +243,54 @@ _RATE_LIMIT_REASONS = frozenset(
         # this entry that shape classifies as PERMANENT and a quota refusal
         # becomes a 500 again — the exact defect, reintroduced by an envelope
         # change nobody here controls.
+        #
+        # It is a `google.rpc.Code`, not a reason: `RESOURCE_EXHAUSTED = 8` in
+        # `google/rpc/code.proto`, "HTTP Mapping: 429 Too Many Requests". It
+        # can only ever arrive in `error.status`.
         "RESOURCE_EXHAUSTED",
+        # And its ERROR_INFO counterpart, which arrives in a different field in
+        # the same envelope (#863). `RATE_LIMIT_EXCEEDED = 5` in
+        # `google/api/error_reason.proto` — "The request is denied because
+        # there is not enough rate quota for the consumer" — and the proto's
+        # own worked example carries `"quota_limit": "ReadsPerMinutePerProject"`,
+        # so the per-minute case is the documented one.
+        #
+        # CHECKED, NOT ASSUMED, and the check moved the answer: the full
+        # `ErrorReason` enum is 48 values and `RESOURCE_EXHAUSTED` is not one
+        # of them. So these two strings are not two spellings to try in one
+        # field — they are one condition reported in two fields at once, and a
+        # reader of only `error.status` and a reader of only `ErrorInfo.reason`
+        # each see half an envelope. That is what `_error_reasons` unions.
+        "RATE_LIMIT_EXCEEDED",
     }
 )
+
+# NOT ADDED, AND THE REASON IS WORTH KEEPING (#863).
+#
+# `dailyLimitExceeded` is a real Gmail reason — 403, `domain: usageLimits`,
+# quoted in Gmail's own "Resolve errors" guide. It is in neither
+# `_RATE_LIMIT_REASONS` nor `_PERMANENT_REASONS`, deliberately, and it was
+# nearly added to the first on the strength of what its name sounds like.
+#
+# What the primary sources actually say: its documented remedy is "raise the
+# quota in the Google Cloud project", it is PROJECT-scoped rather than
+# per-user, and **no Google page ties it to a day-length window or a reset
+# time**. Gmail's usage-limits page publishes per-minute quotas plus one
+# per-day BILLING threshold that explicitly cannot be raised — so the reason's
+# remedy and the only per-day number on that page contradict each other. The
+# confident "resets at midnight Pacific" that search returns traces to a
+# vendor blog, not to Google.
+#
+# Classifying it as a rate limit would answer 429 + Retry-After and tell the
+# browser to come back in a minute for something a minute does not fix.
+# Classifying it as permanent would silence it. Leaving it in neither means
+# `is_unrecognised_gmail_refusal` counts it, which is loud — and loud is the
+# documented safe direction for a refusal whose meaning we cannot cite.
+#
+# Left as a comment rather than a constant on purpose: a frozenset nothing
+# reads is a declaration, not a rule. The behaviour is pinned instead by
+# `test_a_daily_limit_is_left_unclassified_on_purpose`, which fails if anyone
+# quietly files this string under either set.
 
 # **Server flakes.** Gmail itself wobbled. A short backoff is exactly Google's
 # prescription and usually clears them, so these DO retry in place — under a
@@ -307,11 +352,35 @@ def _error_status(exc: BaseException) -> int | None:
 def _error_reasons(exc: BaseException) -> frozenset[str]:
     """Every ``reason`` string Gmail attached to an error.
 
-    Reads ``error_details`` first, then falls back to parsing the raw body.
-    The fallback is not belt-and-braces: ``error_details`` is a
-    googleapiclient convenience that has moved between library versions, and a
-    reason we fail to read is a reason we call permanent — so the cost of
-    missing it is a scan that gives up when it did not have to.
+    A UNION OF EVERY SOURCE, NOT A FALLBACK CHAIN, AND THAT IS THE WHOLE
+    POINT (#863). An earlier version read ``error_details`` and returned the
+    moment it yielded anything, so the raw-body parse below — the only code
+    that harvests ``error.status`` — ran only for envelopes carrying no
+    ``details`` at all. ``RESOURCE_EXHAUSTED`` is in
+    :data:`_RATE_LIMIT_REASONS` precisely so that a google.rpc-shaped quota
+    refusal aborts the page; the early return meant that adding an AIP-193
+    ``ErrorInfo`` beside the same ``status`` DEFEATED it. Measured: identical
+    envelopes differing only in whether ``details[]`` carried an ``ErrorInfo``
+    read ``rate_limited=False`` and ``rate_limited=True`` respectively.
+
+    ``details`` yielding a reason is not evidence that the status says
+    nothing, and the two fields disagree by construction — google.rpc puts the
+    canonical status in ``error.status`` and the specific reason in
+    ``ErrorInfo.reason``. Reading one and skipping the other is reading half
+    an envelope.
+
+    THE UNION CANNOT NARROW A VERDICT. Every consumer intersects this set
+    against a classified reason set, so more reasons can only add matches:
+    a refusal that was recognised stays recognised, and one that was
+    unrecognised can become recognised. There is no input for which this
+    change loses a classification.
+
+    Three sources, all read: ``error_details`` (a googleapiclient convenience
+    that has moved between library versions — on the ``status``-only envelope
+    it is the message STRING, not a list), the legacy ``error.errors[]``, and
+    the google.rpc ``error.details[]`` / ``error.status`` in the raw body. A
+    reason we fail to read is a reason we call permanent, so the cost of
+    missing one is a scan that gives up when it did not have to.
     """
 
     reasons: set[str] = set()
@@ -321,8 +390,6 @@ def _error_reasons(exc: BaseException) -> frozenset[str]:
         for item in details:
             if isinstance(item, dict) and isinstance(item.get("reason"), str):
                 reasons.add(item["reason"])
-    if reasons:
-        return frozenset(reasons)
 
     content = getattr(exc, "content", None)
     if isinstance(content, (bytes, bytearray)):
@@ -339,6 +406,12 @@ def _error_reasons(exc: BaseException) -> frozenset[str]:
             error = body.get("error")
             if isinstance(error, dict):
                 for item in error.get("errors") or []:
+                    if isinstance(item, dict) and isinstance(item.get("reason"), str):
+                        reasons.add(item["reason"])
+                # google.rpc `ErrorInfo.reason`, read from the body rather
+                # than from `error_details`, because that attribute is the
+                # library version's opinion and this is the wire.
+                for item in error.get("details") or []:
                     if isinstance(item, dict) and isinstance(item.get("reason"), str):
                         reasons.add(item["reason"])
                 if isinstance(error.get("status"), str):
