@@ -35,6 +35,52 @@ input than the one it prevents.
 
 import re
 
+#: How much markup a stripper is allowed to look at.
+#:
+#: NOT A CORRECTNESS BOUND. The cloud path caps the TEXT it produces at
+#: ``_MAX_BODY_CHARS`` (4,000) immediately afterwards, and 64 KB of markup
+#: yields far more than 4,000 characters of text on anything a person wrote.
+#: This is a TIME bound.
+#:
+#: EVERY PATTERN IN THIS MODULE IS NON-GREEDY AGAINST A TERMINATOR THAT MAY NOT
+#: EXIST, which is what makes it quadratic. An unterminated ``<script>`` — the
+#: shape the module docstring above already records as deliberately unfixed —
+#: costs a full scan to end of input per occurrence. Measured on
+#: ``origin/main`` at ``3f32e0f3``, before any cap existed, through the real
+#: functions:
+#:
+#:     234 KB of repeated unterminated ``<script>``      16.0 s
+#:     215 KB of repeated unterminated ``<style>``       14.7 s
+#:     246 KB of ordinary marketing markup               0.007 s
+#:
+#: So it is the SHAPE and not the size. At the cap the same input costs 0.08 s,
+#: and the doubling curve is 0.08 / 0.30 / 1.2 / 4.8 s at 16 / 32 / 64 / 128 KB
+#: for both the cloud and the desktop strippers.
+#:
+#: WHY THIS IS NOT THEORETICAL. Bodies are attacker-controlled — anyone who can
+#: send the reader mail decides what arrives here — ``format="full"`` fetches
+#: all of it, and the cloud path runs this once per message inside a serverless
+#: budget the module's own comments put at 60 s. One message is enough.
+#:
+#: 32 KB, AND THE CORPUS IS THE WRONG INSTRUMENT FOR CHOOSING IT. The largest
+#: ``text/html`` part in the mail corpus is 682 characters, which would argue
+#: for almost any cap — and it argues wrongly, because the corpus contains no
+#: realistic ESP template. Real marketing mail is table markup with an inline
+#: style on every cell, and its markup-to-text ratio is roughly **32:1**.
+#:
+#: Measured on a table-heavy template of that shape, asking the only question
+#: that matters — does the cap still yield the 4,000 characters the classifier
+#: is given?
+#:
+#:     cap 16 KB  ->  3,792 characters of text   <- SHORT of the window
+#:     cap 32 KB  ->  7,416
+#:     cap 64 KB  -> 14,670
+#:
+#: So 16 KB would have silently truncated real mail below the window the
+#: product reads, and the corpus could not have said so. 32 KB clears it with
+#: 1.8x of margin and costs 0.30 s on the adversarial shape.
+MAX_HTML_CHARS = 32 * 1024
+
 # ``<script foo>…</script >``, ``<style>…</style/>``, either case, spanning
 # newlines. ``\b`` after the name so ``<scripture>`` is not a script element;
 # ``[\s/]`` in the end tag because whitespace and ``/`` are what actually

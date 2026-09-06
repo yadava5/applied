@@ -567,6 +567,15 @@ def _execute_with_retry(request: Any, *, what: str, budget: _RetryBudget) -> Any
 _SCRIPT_OR_STYLE = re.compile(
     r"<(script|style)\b[^>]*>.*?</\1(?:[\s/][^>]*)?>", re.DOTALL | re.IGNORECASE
 )
+# A time bound on this function, not a correctness one.
+#
+# ``email_clients/html_text.py`` carries the full note and the measurements.
+# Spelled out again here rather than imported for the reason the module states:
+# ``cloud/`` deliberately does not depend on ``email_clients/``. The two are
+# pinned against the same payloads by
+# ``tests/test_html_stripper_is_time_bounded.py``.
+_MAX_HTML_CHARS = 32 * 1024
+
 _TAG = re.compile(r"<[^>]+>")
 
 # BLOCK-LEVEL MARKUP IS THE ONLY LINE STRUCTURE HTML MAIL HAS (#430).
@@ -694,6 +703,7 @@ def _html_to_text(html: str) -> str:
     that through ``normalise_body_text``.
     """
 
+    html = html[:_MAX_HTML_CHARS]
     html = _SCRIPT_OR_STYLE.sub(" ", html)
     html = _BLOCK_LEVEL.sub("\n", html)
     return _HORIZONTAL_WHITESPACE.sub(" ", _TAG.sub(" ", html)).strip()

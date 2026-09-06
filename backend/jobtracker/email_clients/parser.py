@@ -23,7 +23,12 @@ from datetime import datetime
 from typing import Optional
 
 from jobtracker.email_clients.gmail import GmailMessage
-from jobtracker.email_clients.html_text import SCRIPT_OR_STYLE, TAG, WHITESPACE
+from jobtracker.email_clients.html_text import (
+    MAX_HTML_CHARS,
+    SCRIPT_OR_STYLE,
+    TAG,
+    WHITESPACE,
+)
 from jobtracker.email_clients.icloud import IMAPMessage
 
 logger = logging.getLogger(__name__)
@@ -289,6 +294,8 @@ class EmailParser:
         # Remove script/style blocks before stripping all tags, or their
         # contents survive as text. The pattern lives in ``html_text`` so this
         # module, ``gmail`` and ``icloud`` cannot drift apart again.
+        # A time bound, not a correctness one. See ``MAX_HTML_CHARS``.
+        html = html[:MAX_HTML_CHARS]
         html = SCRIPT_OR_STYLE.sub(" ", html)
         html = TAG.sub(" ", html)
         return WHITESPACE.sub(" ", html).strip()
