@@ -124,6 +124,92 @@ function alertText(page: Page) {
   return page.locator("form").getByRole("alert");
 }
 
+/**
+ * #741. `/callback` builds every failure redirect from `new URL("/login",
+ * origin)` where `origin` comes from `request.url` — so the question of what
+ * decides that origin is a security question before it is a harness one.
+ *
+ * MEASURED, on both `next dev` and a real `next start` production build, six
+ * configurations: request via `localhost`, request via `127.0.0.1`,
+ * `Host: example.test`, `Host: 127.0.0.1`, the server bound to the default
+ * host, and the server bound to `127.0.0.1` explicitly. Every one of them
+ * answered `location: http://localhost:<port>/login?error=missing_code`.
+ * `request.url`'s host follows NEITHER the `Host` header NOR `--hostname`.
+ *
+ * That is the safe default and this test pins it. Trusting a client-supplied
+ * `Host` to build a redirect target is how host-header injection works: an
+ * attacker who can make a victim's browser hit `/callback` with their own
+ * `Host` would have the app hand the victim a redirect to their domain. The
+ * issue's original closing condition — "a test driving the suite at a
+ * non-localhost host" — is therefore deliberately NOT met here; it would be
+ * asserting the behaviour this test exists to forbid.
+ *
+ * RAW `node:http`, NOT `page.goto` OR `request.get`. A browser refuses to set
+ * `Host` at all, and an API client that silently dropped it would make this
+ * pass for the wrong reason — the vacuity this repo keeps finding. A raw
+ * socket write is the only instrument where what was sent is not in doubt, and
+ * the control below reads the header back off the request object rather than
+ * assuming it went out.
+ */
+test.describe("the callback's redirect target is not client-controlled (#741)", () => {
+  const INJECTED = "attacker.example";
+
+  /** One request, raw, with an explicit `Host`. Returns status + location. */
+  async function callbackWithHost(
+    baseURL: string,
+    host: string,
+  ): Promise<{ status: number; location: string; sent: string | undefined }> {
+    const { request } = await import("node:http");
+    const target = new URL("/callback", baseURL);
+    return await new Promise((resolve, reject) => {
+      const req = request(
+        {
+          hostname: target.hostname,
+          port: target.port,
+          path: target.pathname,
+          method: "GET",
+          headers: { Host: host },
+        },
+        (res) => {
+          res.resume();
+          resolve({
+            status: res.statusCode ?? 0,
+            location: String(res.headers.location ?? ""),
+            sent: req.getHeader("Host") as string | undefined,
+          });
+        },
+      );
+      req.on("error", reject);
+      req.end();
+    });
+  }
+
+  test("a client-supplied Host header cannot move it", async ({ baseURL }) => {
+    const injected = await callbackWithHost(baseURL!, INJECTED);
+
+    // THE CONTROL: the header really was on the request. Without this the
+    // assertion below passes just as well against a client that never sent it.
+    expect(injected.sent, "the Host header was never put on the request").toBe(INJECTED);
+
+    expect(injected.status, "/callback with no code should redirect").toBe(307);
+    expect(injected.location).not.toContain(INJECTED);
+    expect(
+      injected.location,
+      "the redirect followed the client's Host header — this is host-header injection",
+    ).toMatch(/^https?:\/\/[^/]*localhost/);
+  });
+
+  test("and it answers the same thing without one", async ({ baseURL }) => {
+    // The second arm of a one-variable pair: same request, honest Host. If the
+    // two answers differed at all, the header would be influencing something.
+    const honest = await callbackWithHost(baseURL!, new URL(baseURL!).host);
+    const injected = await callbackWithHost(baseURL!, INJECTED);
+
+    expect(honest.status).toBe(307);
+    expect(injected.location).toBe(honest.location);
+  });
+});
+
 test.describe("auth forms validate before they touch the network", () => {
   test("the interceptor is real: a well-formed submit DOES reach the auth API", async ({
     page,
