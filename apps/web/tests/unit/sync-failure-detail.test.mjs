@@ -19,6 +19,7 @@
  * Run:  pnpm test:unit
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { backendSyncDetail, withBackendSyncDetail } from "../../lib/gmail/sync-detail.ts";
@@ -128,7 +129,7 @@ test("the route's machine tokens never reach the reader as prose", async () => {
   //
   // MUTATION: `return backendSyncDetail(body)` unconditionally -> red on all
   // five. Each row is verbatim what `app/api/gmail/sync/route.ts` emits.
-  const { dashboardSyncDetail } = await import("../../lib/gmail/sync-detail.ts");
+  const { proxySyncDetail } = await import("../../lib/gmail/sync-detail.ts");
   for (const [status, body] of [
     [401, { detail: "unauthenticated" }],
     [401, { detail: "auth" }],
@@ -138,7 +139,7 @@ test("the route's machine tokens never reach the reader as prose", async () => {
     [409, { detail: "not_connected" }],
   ]) {
     assert.equal(
-      dashboardSyncDetail(status, body),
+      proxySyncDetail(status, body),
       null,
       `a ${status} would render the machine token "${body.detail}" as the backend's sentence`,
     );
@@ -149,10 +150,78 @@ test("the statuses that carry prose still carry it", async () => {
   // MUTATION: add 500 to RENDERED_FROM_STATUS -> red, and #848 is back. The
   // guard must be narrow: 500 is the typed stamp failure and 502 is the
   // proxy's own status-derived line, and both are for the reader.
-  const { dashboardSyncDetail } = await import("../../lib/gmail/sync-detail.ts");
-  assert.equal(dashboardSyncDetail(500, { detail: TYPED_500 }), TYPED_500);
+  const { proxySyncDetail } = await import("../../lib/gmail/sync-detail.ts");
+  assert.equal(proxySyncDetail(500, { detail: TYPED_500 }), TYPED_500);
   assert.equal(
-    dashboardSyncDetail(502, { detail: "Backend responded 502" }),
+    proxySyncDetail(502, { detail: "Backend responded 502" }),
     "Backend responded 502",
   );
+});
+
+/**
+ * THE GUARD IS A HAND-MAINTAINED COPY OF A PARTITION IT DOES NOT IMPORT.
+ *
+ * `RENDERED_FROM_STATUS` is exactly the complement of the one `GmailFailure`
+ * arm that carries prose. `classifyBadResponse` in `lib/gmail/server.ts`
+ * partitions every non-OK status:
+ *
+ *     401 | 403 -> auth           429 -> rate_limited
+ *     503        -> unavailable   everything else -> backend
+ *
+ * and only `backend` reaches the route's `{detail: result.message}`. So a
+ * status is suppressible IF AND ONLY IF `classifyBadResponse` gives it a
+ * non-backend kind (409 aside, which is raised before the classifier and
+ * renders its own stronger sentence).
+ *
+ * Nothing enforced that correspondence. Moving 503 into the `backend` arm, or
+ * adding a branch for a new status, leaves the guard stale and silently wrong —
+ * and since #852 there are TWO renderers reading it, so a stale guard now
+ * costs two surfaces instead of one. That is the scope increase #852 created,
+ * which is why the pin lands with it.
+ *
+ * NOT CIRCULAR: the expected set is read out of `server.ts`'s SOURCE, and
+ * checked against `proxySyncDetail`'s observable behaviour. It never compares
+ * `RENDERED_FROM_STATUS` to itself.
+ *
+ * AND NOT BLIND TO GAINS: a source scan that simply collects branches passes
+ * when a NEW branch appears that it does not understand, because there is
+ * merely one more status it never asks about. The `deepEqual` on the whole set
+ * is what makes an added branch red — the author is then forced to decide
+ * whether the new status belongs in the guard.
+ */
+test("every status classifyBadResponse diverts from `backend` is suppressed", async () => {
+  const { proxySyncDetail } = await import("../../lib/gmail/sync-detail.ts");
+  const server = readFileSync(new URL("../../lib/gmail/server.ts", import.meta.url), "utf8");
+
+  const body = server.slice(
+    server.indexOf("function classifyBadResponse"),
+    server.indexOf("const RETRY_AFTER_FALLBACK_SECONDS"),
+  );
+  assert.ok(body.includes("kind: \"backend\""), "classifyBadResponse was not located");
+
+  // Every numeric literal the function compares `status` against. Those are its
+  // diversions; whatever it does not name falls through to `backend`.
+  const diverted = [...body.matchAll(/status === (\d{3})/g)].map((m) => Number(m[1]));
+
+  assert.deepEqual(
+    [...new Set(diverted)].sort(),
+    [401, 403, 429, 503],
+    "classifyBadResponse's partition changed — RENDERED_FROM_STATUS in " +
+      "lib/gmail/sync-detail.ts is a copy of it and must be revisited",
+  );
+
+  for (const status of diverted) {
+    assert.equal(
+      proxySyncDetail(status, { detail: "a machine token" }),
+      null,
+      `${status} is diverted from the backend arm, so its body is a machine token`,
+    );
+  }
+
+  // The converse, and the half that keeps the guard NARROW: a status the
+  // classifier leaves alone reaches `backend`, whose detail is the reader's.
+  for (const status of [500, 502, 504]) {
+    assert.ok(!diverted.includes(status), `${status} is no longer a backend status`);
+    assert.equal(proxySyncDetail(status, { detail: "the backend's sentence" }), "the backend's sentence");
+  }
 });

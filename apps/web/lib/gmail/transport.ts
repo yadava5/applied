@@ -109,6 +109,17 @@ export interface ScanFileResult {
   ok: boolean;
   status: number;
   counts: Partial<SyncCounts>;
+  /**
+   * The proxy's response body, for the FAILURE path (#852).
+   *
+   * `POST /gmail/sync` answers a failed cursor stamp with a sentence naming
+   * what survived — "3 filed and 1 queued of 4 scanned before it failed; sync
+   * again to finish" (#643). This transport used to return on `!res.ok`
+   * BEFORE reading anything, so that sentence reached the dashboard (whose
+   * `sync()` always read the body) and died here. Absent on the demo
+   * transport, which never fails.
+   */
+  body?: unknown;
 }
 
 /** A classify response, unreshaped — `readClassifyOutcome` reads the branch. */
@@ -175,11 +186,14 @@ const live: ScanTransport = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ items, mode: "additive" }),
     });
-    if (!res.ok) return { ok: false, status: res.status, counts: {} };
+    // Read ONCE, before the branch. The body cannot be consumed twice, and
+    // reading it after `!res.ok` returned was the whole of #852.
+    const body = await res.json().catch(() => null);
+    if (!res.ok) return { ok: false, status: res.status, counts: {}, body };
     return {
       ok: true,
       status: res.status,
-      counts: (await res.json().catch(() => ({}))) as Partial<SyncCounts>,
+      counts: (body ?? {}) as Partial<SyncCounts>,
     };
   },
   classify: liveClassify,
