@@ -243,9 +243,63 @@ _RATE_LIMIT_REASONS = frozenset(
         # this entry that shape classifies as PERMANENT and a quota refusal
         # becomes a 500 again — the exact defect, reintroduced by an envelope
         # change nobody here controls.
+        #
+        # It is a `google.rpc.Code`, not a reason: `RESOURCE_EXHAUSTED = 8` in
+        # `google/rpc/code.proto`, "HTTP Mapping: 429 Too Many Requests". It
+        # can only ever arrive in `error.status`.
         "RESOURCE_EXHAUSTED",
+        # And its ERROR_INFO counterpart, which arrives in a different field in
+        # the same envelope (#863). `RATE_LIMIT_EXCEEDED = 5` in
+        # `google/api/error_reason.proto` — "The request is denied because
+        # there is not enough rate quota for the consumer" — and the proto's
+        # own worked example carries `"quota_limit": "ReadsPerMinutePerProject"`,
+        # so the per-minute case is the documented one.
+        #
+        # CHECKED, NOT ASSUMED, and the check moved the answer: the full
+        # `ErrorReason` enum is 48 values and `RESOURCE_EXHAUSTED` is not one
+        # of them. So these two strings are not two spellings to try in one
+        # field — they are one condition reported in two fields at once, and a
+        # reader of only `error.status` and a reader of only `ErrorInfo.reason`
+        # each see half an envelope. That is what `_error_reasons` unions.
+        "RATE_LIMIT_EXCEEDED",
     }
 )
+
+# NOT ADDED, AND THE REASON IS WORTH KEEPING (#863).
+#
+# `dailyLimitExceeded` is a real Gmail reason — 403, `domain: usageLimits`,
+# quoted in Gmail's own "Resolve errors" guide. It is in neither
+# `_RATE_LIMIT_REASONS` nor `_PERMANENT_REASONS`, deliberately, and it was
+# nearly added to the first on the strength of what its name sounds like.
+#
+# What the primary sources actually say: its documented remedy is "raise the
+# quota in the Google Cloud project", it is PROJECT-scoped rather than
+# per-user, and **no Google page ties it to a day-length window or a reset
+# time**. Gmail's usage-limits page publishes per-minute quotas plus one
+# per-day BILLING threshold that explicitly cannot be raised — so the reason's
+# remedy and the only per-day number on that page contradict each other. The
+# confident "resets at midnight Pacific" that search returns traces to a
+# vendor blog, not to Google.
+#
+# Classifying it as a rate limit would answer 429 + Retry-After and tell the
+# browser to come back in a minute for something a minute does not fix.
+# Classifying it as permanent would silence it. Leaving it in neither means
+# `is_unrecognised_gmail_refusal` counts it, which is loud — and loud is the
+# documented safe direction for a refusal whose meaning we cannot cite.
+#
+# WHAT "LOUD" COSTS, so the next reader is not surprised by it. Unrecognised
+# does not ABORT — the taxonomy has no "page-fatal, do not retry" arm. A
+# project-wide refusal would fail every sub-request, and the scan would grind
+# through all twenty windows of every remaining page issuing doomed batches,
+# then report a successful scan of almost nothing with `unreadable` near the
+# page size. That is acceptable only because the exposure is close to nil at
+# this scale — Gmail's per-project daily threshold is 80,000,000 quota units —
+# and it is the cost of not guessing, not a free choice.
+#
+# Left as a comment rather than a constant on purpose: a frozenset nothing
+# reads is a declaration, not a rule. The behaviour is pinned instead by
+# `test_a_daily_limit_is_left_unclassified_on_purpose`, which fails if anyone
+# quietly files this string under either set.
 
 # **Server flakes.** Gmail itself wobbled. A short backoff is exactly Google's
 # prescription and usually clears them, so these DO retry in place — under a
@@ -307,11 +361,49 @@ def _error_status(exc: BaseException) -> int | None:
 def _error_reasons(exc: BaseException) -> frozenset[str]:
     """Every ``reason`` string Gmail attached to an error.
 
-    Reads ``error_details`` first, then falls back to parsing the raw body.
-    The fallback is not belt-and-braces: ``error_details`` is a
-    googleapiclient convenience that has moved between library versions, and a
-    reason we fail to read is a reason we call permanent — so the cost of
-    missing it is a scan that gives up when it did not have to.
+    A UNION OF EVERY SOURCE, NOT A FALLBACK CHAIN, AND THAT IS THE WHOLE
+    POINT (#863). An earlier version read ``error_details`` and returned the
+    moment it yielded anything, so the raw-body parse below — the only code
+    that harvests ``error.status`` — ran only for envelopes carrying no
+    ``details`` at all. ``RESOURCE_EXHAUSTED`` is in
+    :data:`_RATE_LIMIT_REASONS` precisely so that a google.rpc-shaped quota
+    refusal aborts the page; the early return meant that adding an AIP-193
+    ``ErrorInfo`` beside the same ``status`` DEFEATED it. Measured: identical
+    envelopes differing only in whether ``details[]`` carried an ``ErrorInfo``
+    read ``rate_limited=False`` and ``rate_limited=True`` respectively.
+
+    ``details`` yielding a reason is not evidence that the status says
+    nothing, and the two fields disagree by construction — google.rpc puts the
+    canonical status in ``error.status`` and the specific reason in
+    ``ErrorInfo.reason``. Reading one and skipping the other is reading half
+    an envelope.
+
+    THE UNION CAN ONLY MOVE A REFUSAL UP THE PRIORITY CHAIN — rate limit,
+    then retryable, then permanent, then unrecognised — never down. That is
+    the invariant, and it is deliberately not the more obvious "every consumer
+    intersects, so more reasons only add matches": :func:`is_retryable_gmail_error`
+    does not merely intersect, it consults :func:`is_rate_limited_gmail_error`
+    first and NEGATES it. So a `backendError` arriving beside
+    `status: RESOURCE_EXHAUSTED` stops being retried in place and aborts the
+    page as quota. That flip is doctrine — a quota reason outranks a retryable
+    status, and `test_a_quota_reason_beats_a_retryable_status` pins the legacy
+    spelling of exactly it — but a reader who believed the weaker claim could
+    add a string to :data:`_RATE_LIMIT_REASONS` expecting it to be inert.
+
+    THE ONE INPUT WHERE THIS MAKES AN OUTCOME WORSE, named rather than covered
+    by a slogan: an envelope carrying a PERMANENT reason alongside
+    `status: RESOURCE_EXHAUSTED` would be promoted from "give up" to "abort and
+    answer 429", and a browser would then re-probe a revoked grant every minute.
+    That needs Gmail to contradict itself across two fields generated from one
+    underlying error, and no such shape is documented — but it is unmeasured,
+    and it is the accepted risk here rather than an impossibility.
+
+    Three sources, all read: ``error_details`` (a googleapiclient convenience
+    that has moved between library versions — on the ``status``-only envelope
+    it is the message STRING, not a list), the legacy ``error.errors[]``, and
+    the google.rpc ``error.details[]`` / ``error.status`` in the raw body. A
+    reason we fail to read is a reason we call permanent, so the cost of
+    missing one is a scan that gives up when it did not have to.
     """
 
     reasons: set[str] = set()
@@ -321,8 +413,6 @@ def _error_reasons(exc: BaseException) -> frozenset[str]:
         for item in details:
             if isinstance(item, dict) and isinstance(item.get("reason"), str):
                 reasons.add(item["reason"])
-    if reasons:
-        return frozenset(reasons)
 
     content = getattr(exc, "content", None)
     if isinstance(content, (bytes, bytearray)):
@@ -339,6 +429,20 @@ def _error_reasons(exc: BaseException) -> frozenset[str]:
             error = body.get("error")
             if isinstance(error, dict):
                 for item in error.get("errors") or []:
+                    if isinstance(item, dict) and isinstance(item.get("reason"), str):
+                        reasons.add(item["reason"])
+                # google.rpc `ErrorInfo.reason`, read from the body rather
+                # than from `error_details`, because that attribute is the
+                # library version's opinion and this is the wire.
+                #
+                # DELIBERATELY NOT FILTERED ON `@type`. Any detail item with a
+                # string `reason` counts, so a `BadRequest.FieldViolation`
+                # would be harvested too. That is the safe direction: the
+                # harvest feeds intersections against classified sets, an
+                # unclassified string changes no verdict, and the alternative
+                # — an `@type` allow-list — is a closed enumeration standing
+                # in for an open set, which is how this module got here.
+                for item in error.get("details") or []:
                     if isinstance(item, dict) and isinstance(item.get("reason"), str):
                         reasons.add(item["reason"])
                 if isinstance(error.get("status"), str):
