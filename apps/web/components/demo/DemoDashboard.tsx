@@ -514,7 +514,18 @@ export function DemoDashboard({
     [commit],
   );
 
-  const summary = summarize(snapshot.apps);
+  // THE READER'S DAY, not the UTC one (#584). `summarize` buckets "this wk"
+  // against the day it is given, and the momentum caption beside this header
+  // already counts from `useLocalToday()` — so handing this call a UTC day is
+  // #518's split reproduced on the twin: two renderers of one number rolling
+  // over at different midnights. `today` is the same value the pulse, the
+  // cards and the board all read, so the two lines cannot disagree.
+  //
+  // `today` rather than `datedFor`: `datedFor` lags by one macrotask while the
+  // store is re-dated, and during that window the pulse has already moved.
+  // Counting from the day the pulse counts from is what makes the pair
+  // identical at EVERY frame, not merely once things settle.
+  const summary = summarize(snapshot.apps, today);
   /** The board as the change ledger reads it. `total` is deliberately not
    *  passed below: on this twin the store IS the whole account, so there is no
    *  slice to disclose. */
