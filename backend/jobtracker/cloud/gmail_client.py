@@ -580,16 +580,39 @@ _MAX_HTML_CHARS = 32 * 1024
 # cut landing inside a `<style>` block leaves it unterminated, `_SCRIPT_OR_STYLE`
 # stops matching, and the stylesheet reaches the classifier as prose.
 _RAW_TEXT_OPEN = re.compile(r"<(script|style)\b", re.IGNORECASE)
-_RAW_TEXT_CLOSE = re.compile(r"</(script|style)\b", re.IGNORECASE)
+_RAW_TEXT_CLOSE = {
+    "script": re.compile(r"</script\b", re.IGNORECASE),
+    "style": re.compile(r"</style\b", re.IGNORECASE),
+}
 
 
 def _cap_html(html: str) -> str:
     """Truncate to ``_MAX_HTML_CHARS`` without leaving a stylesheet open."""
 
+    # BELOW THE CAP, CHANGE NOTHING. The first version of this function had no
+    # such guard, and cut back on any unpaired token at any size — so a 50-byte
+    # message lost its verdict:
+    #
+    #     <p>Hi</p><!-- <style> --><p>You were rejected.</p>
+    #         browser  : "Hi\n\nYou were rejected."
+    #         that fix : "Hi <!--"
+    #
+    # Worse than the leak it was written for, because the result is short but
+    # NOT EMPTY, so `if text:` stores it and `bodies.get(id) or msg.snippet`
+    # never falls back. A real rejection scored `other`.
+    if len(html) <= _MAX_HTML_CHARS:
+        return html
+
     html = html[:_MAX_HTML_CHARS]
-    opens = list(_RAW_TEXT_OPEN.finditer(html))
-    if opens and not _RAW_TEXT_CLOSE.search(html, opens[-1].end()):
-        return html[: opens[-1].start()]
+
+    # THE EARLIEST unterminated open, and its close matched BY NAME. The first
+    # version asked a weaker question than `SCRIPT_OR_STYLE` answers — it looked
+    # only at the LAST open and accepted any `</script|style>` as a close — so
+    # `<style>x</script>POISON…</style>` read as terminated and the stylesheet
+    # reached the classifier anyway.
+    for match in _RAW_TEXT_OPEN.finditer(html):
+        if not _RAW_TEXT_CLOSE[match.group(1).lower()].search(html, match.end()):
+            return html[: match.start()]
     return html
 
 

@@ -37,9 +37,9 @@ AND THE CAP IS A CORRECTNESS QUESTION TOO, which is why a third test asks it.
 The obvious sizing argument — "the largest `text/html` part in the corpus is 682
 characters, so anything is generous" — is wrong, because the corpus holds no
 realistic ESP template. Real marketing mail is table markup with an inline style
-on every cell and runs about **32:1** markup to text. Measured on a template of
-that shape: a 16 KB cap yields **3,792** characters, SHORT of the 4,000 the
-classifier is given; 32 KB yields 7,416. The first version of this change
+on every cell and runs about **4.46:1** markup to text (measured, not asserted). Measured on a template of
+that shape: a 16 KB cap yields **3,833** characters, SHORT of the 4,000 the
+classifier is given; 32 KB yields 7,457. The first version of this change
 capped at 16 KB and would have truncated real mail below the window the product
 reads, silently, with every test green.
 """
@@ -65,12 +65,22 @@ STRIPPERS = {
 }
 
 #: Well past the cap, so the cap is what decides the cost.
-ADVERSARIAL = "<script foo>" * 40000
+#:
+#: BARE `<` AND NOT `<script foo>`, and the reason is a trap this file walked
+#: into. `<script foo>` repeated WAS the worst shape, and `cap_html` now cuts
+#: everything after the first unterminated `<script` — so that payload costs
+#: 0.000 s here and this test would have passed while measuring nothing. The
+#: densest shape against the surviving patterns is a bare `<`, which maximises
+#: `TAG`'s `<[^>]+>` start positions and survives the cut-back untouched
+#: (there is no raw-text element to cut back to). Measured: 0.44 s, against
+#: 0.000 s for the old payload and 28 s for either with the cap removed.
+ADVERSARIAL = "<" * 262144
 
 #: The same length in markup a real sender emits. Without this the ceiling
 #: below would pass on a machine that is merely fast, and prove nothing about
 #: the shape.
-BENIGN = ("<p>Hello Alex, thank you for applying.</p>" * 12000)[: len(ADVERSARIAL)]
+BENIGN = ("<p>Hello Alex, thank you for applying.</p>" * 8000)[: len(ADVERSARIAL)]
+assert len(BENIGN) == len(ADVERSARIAL), "the control is not size-matched"
 
 #: Loose on purpose — see the module docstring. Removing the cap takes the
 #: adversarial payload to tens of seconds, so this fails by a wide margin
@@ -148,7 +158,9 @@ def test_the_ceiling_is_about_the_shape_and_not_the_machine(where: str) -> None:
 # ── the other half of choosing a number ─────────────────────────────────────
 
 #: A table-heavy block in the shape a real ESP emits: an inline style on every
-#: cell, which is what makes marketing markup roughly 32:1 against its own text.
+#: cell. Measured on this very block: 119,641 characters of markup to 26,797
+#: of text, **4.46:1** — not the "roughly 32:1" an earlier draft asserted from
+#: impression, which would have meant a quarter of the window at this cap.
 _ESP_CELL = (
     '<tr><td align="center" valign="top" style="padding:12px 24px;font-family:'
     "'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:14px;line-height:22px;"
@@ -166,7 +178,7 @@ def test_the_cap_still_yields_the_window_the_classifier_reads() -> None:
 
     THE CORPUS CANNOT ANSWER THIS. Its largest `text/html` part is 682
     characters, so it would bless any cap at all — and the first version of this
-    change was sized that way and chose 16 KB, which yields 3,792 characters on
+    change was sized that way and chose 16 KB, which yields 3,833 characters on
     the template below. Every test was green; the loss would have been silent
     and would have landed on exactly the long, heavily-styled mail whose verdict
     sits furthest down.
@@ -240,3 +252,66 @@ def test_a_truncated_stylesheet_does_not_reach_the_classifier_as_prose() -> None
     assert "@media" not in extract_body_text(payload), (
         "the production entry hands the classifier CSS"
     )
+
+
+def test_the_cap_leaves_a_message_below_it_completely_alone() -> None:
+    """The first `cap_html` had no length guard, and that was worse than the
+    leak it was written for.
+
+    It cut back on any unpaired `<script`/`<style` token at ANY size, so a
+    50-byte message lost its verdict:
+
+        <p>Hi</p><!-- <style> --><p>You were rejected.</p>
+            browser     : "Hi\n\nYou were rejected."
+            that version: "Hi <!--"
+
+    And the snippet fallback does not rescue it: the result is short but NOT
+    empty, so `if text:` stores it and `bodies.get(id) or msg.snippet` never
+    fires. A real rejection scored `other` — the exact defect class the parent
+    commit's issue was about.
+
+    Below the cap nothing is truncated, so there is no unterminated element to
+    repair and the honest answer is to change nothing at all.
+
+    MUTATION: drop the `len(html) <= MAX_HTML_CHARS` guard -> every row reds.
+    """
+
+    for markup in (
+        "<p>Hi</p><!-- <style> --><p>You were REJECTEDWORD.</p>",
+        '<p>Hi</p><a href="/x?t=<script">link</a><p>You were REJECTEDWORD.</p>',
+        "<p>Hi</p><noscript><style>a{}</noscript><p>You were REJECTEDWORD.</p>",
+        "<p>A literal &lt;style is discussed here.</p><p>REJECTEDWORD.</p>",
+    ):
+        assert len(markup) < MAX_HTML_CHARS, "this payload is not sub-cap"
+        for where, strip in STRIPPERS.items():
+            assert "REJECTEDWORD" in strip(markup), (
+                f"{where} truncated a message that never reached the cap: "
+                f"{strip(markup)!r}"
+            )
+
+
+def test_the_cutback_matches_the_close_tag_by_name_and_takes_the_earliest() -> None:
+    """The other two defects in the first `cap_html`, and they are one shape.
+
+    It asked a WEAKER question than `SCRIPT_OR_STYLE` answers — any
+    `</script|style>` counted as a close, and only the LAST open was examined —
+    so a stylesheet could read as terminated and reach the classifier anyway:
+
+        <p>REJECTED</p><style>x</script>POISON…</style>
+            the cut-back saw `</script>` and called the `<style>` closed
+
+    MUTATION: accept any close rather than the name-matched one, or look only
+    at `opens[-1]` -> this reds with the poison in the output.
+    """
+
+    poison = "POISONWORD" + "a" * (MAX_HTML_CHARS + 8000)
+    for markup in (
+        f"<p>REJECTEDWORD</p><style>x</script>{poison}</style>",
+        f"<p>REJECTEDWORD</p><script>var a = '</style>';{poison}</script>",
+        f"<p>REJECTEDWORD</p><style>a{{}}<script>b()</script>{poison}</style>",
+    ):
+        for where, strip in STRIPPERS.items():
+            assert "POISONWORD" not in strip(markup), (
+                f"{where} let a raw-text body through: the cut-back accepted a "
+                "close tag of the wrong name, or looked only at the last open"
+            )
