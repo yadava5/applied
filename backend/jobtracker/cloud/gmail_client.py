@@ -567,6 +567,41 @@ def _execute_with_retry(request: Any, *, what: str, budget: _RetryBudget) -> Any
 _SCRIPT_OR_STYLE = re.compile(
     r"<(script|style)\b[^>]*>.*?</\1(?:[\s/][^>]*)?>", re.DOTALL | re.IGNORECASE
 )
+# A time bound on this function, not a correctness one.
+#
+# ``email_clients/html_text.py`` carries the full note and the measurements.
+# Spelled out again here rather than imported for the reason the module states:
+# ``cloud/`` deliberately does not depend on ``email_clients/``. The two are
+# pinned against the same payloads by
+# ``tests/test_html_stripper_is_time_bounded.py``.
+_MAX_HTML_CHARS = 32 * 1024
+
+# See ``email_clients/html_text.py`` for why truncation alone is not enough: a
+# cut landing inside a `<style>` block leaves it unterminated, `_SCRIPT_OR_STYLE`
+# stops matching, and the stylesheet reaches the classifier as prose.
+_RAW_TEXT_OPEN = re.compile(r"<(script|style)\b", re.IGNORECASE)
+
+
+def _cap_html(html: str) -> str:
+    """Truncate to ``_MAX_HTML_CHARS`` without leaving a stylesheet open.
+
+    ``email_clients/html_text.py`` carries the full note. The short version:
+    below the cap change nothing; above it, ask whether a raw-text element is
+    terminated USING ``_SCRIPT_OR_STYLE`` ITSELF, so this cannot hold a second
+    opinion the stripper disagrees with; and answer "" rather than cutting
+    back, because a short non-empty body defeats the ``or msg.snippet``
+    fallback and turns a rejection into ``other``.
+    """
+
+    if len(html) <= _MAX_HTML_CHARS:
+        return html
+
+    html = html[:_MAX_HTML_CHARS]
+    if _RAW_TEXT_OPEN.search(_SCRIPT_OR_STYLE.sub(" ", html)):
+        return ""
+    return html
+
+
 _TAG = re.compile(r"<[^>]+>")
 
 # BLOCK-LEVEL MARKUP IS THE ONLY LINE STRUCTURE HTML MAIL HAS (#430).
@@ -694,6 +729,7 @@ def _html_to_text(html: str) -> str:
     that through ``normalise_body_text``.
     """
 
+    html = _cap_html(html)
     html = _SCRIPT_OR_STYLE.sub(" ", html)
     html = _BLOCK_LEVEL.sub("\n", html)
     return _HORIZONTAL_WHITESPACE.sub(" ", _TAG.sub(" ", html)).strip()

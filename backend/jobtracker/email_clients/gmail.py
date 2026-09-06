@@ -41,7 +41,12 @@ from jobtracker.credentials import (
     save_gmail_credentials,
     update_gmail_access_token,
 )
-from jobtracker.email_clients.html_text import SCRIPT_OR_STYLE, TAG, WHITESPACE
+from jobtracker.email_clients.html_text import (
+    SCRIPT_OR_STYLE,
+    TAG,
+    WHITESPACE,
+    cap_html,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -611,6 +616,9 @@ class GmailClient:
         """Strip HTML tags and return plain text."""
         # Remove script and style elements first, or their contents survive
         # tag stripping and read to the classifier as prose.
+        # A time bound. See ``MAX_HTML_CHARS``; ``cap_html`` also refuses to
+        # leave a stylesheet open, which would reach the reader as prose.
+        html = cap_html(html)
         html = SCRIPT_OR_STYLE.sub("", html)
         # Remove HTML tags
         html = TAG.sub(" ", html)
