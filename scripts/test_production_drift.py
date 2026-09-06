@@ -191,6 +191,36 @@ def require_fixtures() -> None:
         )
 
 
+def require_pinned_lists_agree() -> None:
+    """The detector's pinned aliases and this file's fixtures are ONE fact.
+
+    They are written twice ON PURPOSE and must never be written once. The
+    fixtures above are what the alias cases feed to a fake Vercel; the
+    detector's `pinned_aliases` are what it checks a host against with no
+    credential. If the test imported the detector's list, every pinned case
+    would be comparing the detector to itself and would pass for any value —
+    the shape this repository has recorded as an imported expectation.
+
+    Two independent literals, and this asserts they still say the same thing.
+    Editing one without the other reds here, which is the only way a reader
+    finds out that the fixtures stopped describing production.
+    """
+
+    detector = load_detector()
+    for key, fixture in (("web", WEB_ALIASES), ("api", API_ALIASES)):
+        pinned = tuple(detector.PROJECTS_BY_KEY[key].pinned_aliases)
+        if set(pinned) != set(fixture):
+            sys.exit(
+                f"{key}: the detector's pinned alias list and this file's "
+                f"fixture have diverged.\n"
+                f"  detector: {sorted(pinned)}\n"
+                f"  fixture : {sorted(fixture)}\n"
+                "Both were read from the live API on 2026-09-05. Re-read it "
+                "and update BOTH, or the pinned cases stop describing the "
+                "hosts production actually serves."
+            )
+
+
 def run_case(argv: list[str]) -> tuple[int, str]:
     result = subprocess.run(
         [sys.executable, str(DETECTOR), *argv],
@@ -380,9 +410,65 @@ PROVENANCE_CASES: tuple[
         ("OK", "in-sync", 0),
         ("OK", "reports no aliases at all", "this gate did not run"),
     ),
+    # --- the PINNED path (#844): these three run with NO token at all -------
+    #
+    # Every case above needs `stub-token`, which is the whole finding #844
+    # registered: the alias check has never executed on a live run, because
+    # reading aliases needs a credential and the credential has been dead
+    # since 2026-08-22. These three are what the gate does on a scheduled run.
+    #
+    # `health_url` is the only field the runner overrides, so `pinned_aliases`
+    # stays the production literal — the case is decided by the real list.
+    (
+        "no token, host IS pinned: GREEN, and says which list it checked",
+        "web",
+        "https://getapplied.vercel.app/api/version",
+        WEB_ALIASES,
+        "",
+        ("OK", "in-sync", 0),
+        (
+            "OK",
+            "is on jobtracker-web's pinned alias list",
+            # The two paths must not read alike. This one RAN; the alias line
+            # beside it says it did not.
+            "checked against the pinned list, not against Vercel",
+            "this gate did not run",
+        ),
+    ),
+    (
+        "no token, host is NOT pinned: RED — the case that could not fire before",
+        # #798's mistake, caught with NO credential. Before #844 this exact
+        # input was GREEN with a note saying the gate did not run, because the
+        # only check that could see it needed a token nobody has.
+        "web",
+        "https://jobtracker-web.vercel.app/api/version",
+        WEB_ALIASES,
+        "",
+        ("DRIFT", "config-host-not-pinned", 1),
+        (
+            "DRIFT",
+            "jobtracker-web.vercel.app is not on jobtracker-web's pinned alias list",
+            "determined and wrong",
+            "so unlike the alias check below, this one always runs",
+            # a real drift must not be erased by the provenance verdict
+            "the comparison this replaces",
+        ),
+    ),
+    (
+        "no token, the api host is pinned too: GREEN",
+        # Symmetry with a purpose, as the alias cases have it: a gate that can
+        # only be satisfied by one of the two hardcoded hosts is not safe to
+        # ship on both.
+        "api",
+        "https://jobtracker-api-seven.vercel.app/health",
+        API_ALIASES,
+        "",
+        ("OK", "in-sync", 0),
+        ("OK", "is on jobtracker-api's pinned alias list"),
+    ),
 )
 
-EXPECTED_PROVENANCE_CASES = 6
+EXPECTED_PROVENANCE_CASES = 9
 
 
 def load_detector():
@@ -505,6 +591,7 @@ def run_provenance_block() -> int:
 
 def main() -> int:
     require_fixtures()
+    require_pinned_lists_agree()
 
     if len(CASES) != EXPECTED_CASES:
         sys.exit(

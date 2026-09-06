@@ -186,6 +186,26 @@ class Project:
     key: str  # the argument vercel-ignore-build.sh takes: `web` or `api`
     vercel_name: str  # the Vercel project name; `projectId` accepts a name
     health_url: str | None  # an endpoint that reports its own running commit
+    #: Every hostname this project is ALLOWED to be probed on, as a literal.
+    #:
+    #: WHY A LITERAL AND NOT A LOOKUP (#844). `host_provenance` below answers
+    #: the same question against Vercel's live alias list, which is correct and
+    #: has never run: reading aliases needs a token, the token has been dead
+    #: since 2026-08-22 (#472), and every live invocation therefore takes the
+    #: announced-vacuity path. A gate that says out loud it did not run beats
+    #: one that quietly passes, but it is still a gate that did not run.
+    #:
+    #: These lists were READ FROM THE LIVE API on 2026-09-05 and are the same
+    #: values `scripts/test_production_drift.py` fixtures assert against. They
+    #: are a SECOND, INDEPENDENT statement of the same fact, which is the whole
+    #: point: #798's defect was `health_url` naming a host nobody compared to
+    #: anything, and an edit to `health_url` alone now disagrees with this and
+    #: reds — with no credential.
+    #:
+    #: What this must NEVER become is a value derived from `health_url` at run
+    #: time. That would compare the config to itself and accept any host the
+    #: config names, which is exactly the defect #798 fixed.
+    pinned_aliases: tuple[str, ...]
 
 
 PROJECTS = (
@@ -254,6 +274,16 @@ PROJECTS = (
         # page nobody visits. `host_provenance` below is what stops that, and
         # the reason it is DRIFT rather than UNKNOWN.
         "https://getapplied.vercel.app/api/version",
+        # Read from the live API on 2026-09-05 off this project's newest READY
+        # production deployment. `jobtracker-web.vercel.app` is deliberately
+        # ABSENT: it is not this project's, it serves the pre-rename app, and
+        # it is the host #798 was pointed at by mistake.
+        (
+            "getapplied.vercel.app",
+            "jobtracker-web-five.vercel.app",
+            "jobtracker-web-aesh0323-7401s-projects.vercel.app",
+            "jobtracker-web-git-main-aesh0323-7401s-projects.vercel.app",
+        ),
     ),
     Project(
         "api",
@@ -263,6 +293,12 @@ PROJECTS = (
         # vanity URL: those do not follow, and one being stale is a separate
         # bug this check should be able to see rather than inherit.
         "https://jobtracker-api-seven.vercel.app/health",
+        # Same reading, same day, off the api project's own deployment.
+        (
+            "jobtracker-api-seven.vercel.app",
+            "jobtracker-api-aesh0323-7401s-projects.vercel.app",
+            "jobtracker-api-git-main-aesh0323-7401s-projects.vercel.app",
+        ),
     ),
 )
 
@@ -726,6 +762,94 @@ def host_provenance(
     )
 
 
+def host_is_pinned(project: Project) -> tuple[Finding | None, str]:
+    """(a failure, or None; and a note either way) — with NO credential.
+
+    THE HALF #798 SKETCHED AND #844 REGISTERED. `host_provenance` above asks
+    Vercel whether the probed host is an alias of the newest deployment, which
+    is the stronger question and needs a token. The token is dead, so that
+    check has been proven and inert since it landed: every live run takes its
+    announced-vacuity path.
+
+    This asks the weaker question that needs nothing: is the host we are about
+    to trust on the list of hosts this project is allowed to be probed on? It
+    catches the mistake this repository actually made — `health_url` edited to
+    a hostname belonging to somebody else — and it catches it on every run.
+
+    Pure, and deliberately not clever: no network, no environment, no reading
+    `health_url` back out of the config it is supposed to be checking.
+    """
+
+    host = urllib.parse.urlparse(project.health_url or "").hostname
+    if not host:
+        return None, f"{project.vercel_name} exposes no host to check."
+    if not project.pinned_aliases:
+        # Recorded rather than silently skipped, for the same reason the alias
+        # path announces its own vacuity: a gate that did not run must never
+        # read like a gate that passed.
+        return None, (
+            f"{project.vercel_name} has no pinned alias list, so {host} was "
+            "checked against nothing; this gate did not run."
+        )
+    if host in project.pinned_aliases:
+        return None, (
+            f"{host} is on {project.vercel_name}'s pinned alias list "
+            f"(checked against the pinned list, not against Vercel)"
+        )
+    return (
+        Finding(
+            project.vercel_name,
+            DRIFT,
+            "config-host-not-pinned",
+            f"{host} is not on {project.vercel_name}'s pinned alias list",
+            [
+                f"this check probes {project.health_url} and treats whatever it",
+                "answers as production. The hosts this project is allowed to be",
+                "probed on are: " + ", ".join(project.pinned_aliases),
+                "A host that is not the project's can report any sha, main's",
+                "tip included, and this check would pass while certifying a",
+                "page nobody visits. DRIFT and not UNKNOWN: this is not",
+                "'could not determine', it is determined and wrong.",
+                "Checked against the pinned literal, which needs no token —",
+                "so unlike the alias check below, this one always runs.",
+            ],
+        ),
+        "",
+    )
+
+
+def pinned_matches_live(project: Project, aliases: list[str]) -> str:
+    """A note on whether the pinned literal still describes Vercel's answer.
+
+    THIS IS WHERE THE TOKEN BELONGS (#844): verifying a literal occasionally,
+    not gating every run. It returns a NOTE and never a Finding — a pinned list
+    that has fallen behind Vercel is a maintenance fact about this file, not a
+    statement that production is wrong, and conflating the two is how a stale
+    constant starts reading as an outage.
+    """
+
+    if not aliases or not project.pinned_aliases:
+        return ""
+    pinned, live = set(project.pinned_aliases), set(aliases)
+    if pinned == live:
+        return (
+            f"{project.vercel_name}'s pinned alias list still matches Vercel's "
+            f"({len(live)} aliases), confirmed against the live API"
+        )
+    missing = sorted(live - pinned)
+    extra = sorted(pinned - live)
+    parts = []
+    if missing:
+        parts.append("Vercel now serves " + ", ".join(missing) + " which is not pinned")
+    if extra:
+        parts.append("pinned but no longer served: " + ", ".join(extra))
+    return (
+        f"{project.vercel_name}'s pinned alias list has drifted from Vercel's — "
+        + "; ".join(parts)
+        + ". Update the literal in check_production_drift.py."
+    )
+
+
 def deployment_sha(deployment: dict) -> str | None:
     meta = deployment.get("meta") or {}
     return meta.get("githubCommitSha")
@@ -785,6 +909,12 @@ def live_findings(head_sha: str, now: datetime, grace: timedelta) -> list[Findin
             else None
         )
 
+        # THE PINNED CHECK RUNS FIRST AND ALWAYS (#844), before anything asks
+        # whether a token exists. `host_provenance` below is the stronger
+        # question and needs a credential; this one needs nothing, so it is
+        # the half that actually executes on a scheduled run.
+        pinned_finding, pinned_note = host_is_pinned(project)
+
         if not token:
             vercel_note = (
                 "VERCEL_TOKEN is not set, so the Vercel API was not consulted."
@@ -837,6 +967,18 @@ def live_findings(head_sha: str, now: datetime, grace: timedelta) -> list[Findin
                             provenance, alias_note = host_provenance(
                                 project, aliases, uid
                             )
+                            # The token's real job (#844): confirming the
+                            # literal occasionally, not gating every run. A
+                            # note, never a Finding -- a pinned list that has
+                            # fallen behind is a fact about this file, not a
+                            # statement that production is wrong.
+                            drift_note = pinned_matches_live(project, aliases)
+                            if drift_note:
+                                pinned_note = (
+                                    f"{pinned_note}; {drift_note}"
+                                    if pinned_note
+                                    else drift_note
+                                )
                 else:
                     vercel_note = (
                         "the Vercel API reports no READY production deployment "
@@ -893,7 +1035,7 @@ def live_findings(head_sha: str, now: datetime, grace: timedelta) -> list[Findin
                 "not run."
             )
 
-        for note in (health_note, vercel_note, alias_note):
+        for note in (health_note, vercel_note, pinned_note, alias_note):
             if note:
                 finding.evidence.append(note)
 
@@ -902,6 +1044,14 @@ def live_findings(head_sha: str, now: datetime, grace: timedelta) -> list[Findin
         # so reporting it as this project's verdict is the defect. The
         # comparison is kept as evidence rather than dropped, because a real
         # drift and a wrong host can be true at once.
+        # A host that is not on the pinned list replaces the comparison for
+        # the same reason a non-alias does: every line above was measured
+        # against a page that may not be this project's. Preferred over the
+        # alias finding when both fire, because they say the same thing and
+        # this one is the check that RAN.
+        if pinned_finding is not None:
+            provenance = pinned_finding if provenance is None else provenance
+
         if provenance is not None:
             provenance.evidence.append(
                 f"the comparison this replaces, made against {probed_host} and "
