@@ -199,7 +199,7 @@ went 139 to 119 with no confirmation family losing a single message
 ([#455](https://github.com/yadava5/applied/issues/455)).
 
 **And read it knowing it is a property of the mix, not of the engine.** It was 93.05% on
-2026-08-22 and is 92.36%
+2026-08-22 and is 93.46%
 on the same engine, and it has moved three times since without a rule changing. It went DOWN first,
 to 92.87%, because the corpus stopped being written entirely by the author of the classifier. It went
 back up to 93.24% because [#626](https://github.com/yadava5/applied/issues/626) added 760 messages
@@ -220,14 +220,14 @@ engine pattern verbatim**, and **123 of 160 engine patterns were never exercised
 in that state cannot find a gap — it can only confirm the pattern list against itself, and its
 headline describes the author's vocabulary rather than the product's reach. `observed.py` holds 36
 wordings transcribed from mail that actually arrived, from ten applicant tracking platforms, written
-by recruiting teams with no knowledge of this repository. 92.36% is the first number here that was
+by recruiting teams with no knowledge of this repository. 93.46% is the first number here that was
 not partly graded by the person who set the exam — a fact about who wrote the mail, and not the
 reason for the 0.88 points above, which was the instrument.
 
 | | measured 2026-09-06 |
 | --- | --- |
-| Correct | **16,810 of 18,200 — 92.36%** |
-| Wrong | **304** |
+| Correct | **17,010 of 18,200 — 93.46%** |
+| Wrong | **104** |
 | **Wrong AND stated to the user as fact** | **0** |
 | Abstained (below the 0.70 review floor, the product says nothing) | **1086** |
 | Board: cards / splits / merges / noise / misrouted review | **9,908 / 0 / 0 / 0 / 0** |
