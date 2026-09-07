@@ -35,6 +35,13 @@ export const NO_SESSION_DETAIL =
 export const AUTH_DELETE_FAILED_DETAIL =
   "Your data was removed but the account itself couldn’t be closed. Try again — nothing will be lost.";
 
+/** The rows are gone, the profile photo is not, and the account is still open
+ *  so the whole thing can be retried. Named as its own outcome because "your
+ *  data was removed" would be a lie while a photograph of the user's face is
+ *  still in a bucket. */
+export const AVATAR_PURGE_FAILED_DETAIL =
+  "Your applications were removed but your profile photo couldn’t be, so the account is still open. Try again in a moment.";
+
 /** Just enough of a `Response` to decide on. `fetch`'s own shape, narrowed. */
 export interface PurgeResponse {
   ok: boolean;
@@ -55,6 +62,19 @@ export interface PurgeResponse {
  */
 export interface AccountDeletionPorts {
   purge: (() => Promise<PurgeResponse>) | null;
+  /**
+   * Remove the caller's stored profile photos (Supabase Storage — a store the
+   * backend's `DELETE /account` knows nothing about, because it is not in
+   * Postgres). Omit it and the step does not run; that is the shape every
+   * caller written before profile photos existed still compiles as.
+   *
+   * `ok: false` means objects may still be there. It is treated as a stop,
+   * not a shrug: deleting the auth user at that point would leave a photograph
+   * of the user's face in a bucket with nothing left that could ever ask for it
+   * back — the orphaning shape of #214 with a worse artifact. A bucket that
+   * does not exist is not a failure; the caller resolves that (`isBucketMissing`).
+   */
+  purgeAvatars?: (() => Promise<{ ok: boolean }>) | null;
   deleteAuthUser: (() => Promise<{ error: { message: string } | null }>) | null;
 }
 
@@ -106,6 +126,15 @@ export async function runAccountDeletion(
   const purged = await ports.purge().catch(() => null);
   if (!purged || !purged.ok) {
     return { status: 502, body: { detail: PURGE_FAILED_DETAIL } };
+  }
+
+  // Between the rows and the auth user, and in that order for two reasons: the
+  // rows are the thing the user asked to be rid of, and the objects are owned
+  // by an auth user that is about to stop existing — after `deleteUser` there
+  // is no session left to authorise a storage delete with.
+  if (ports.purgeAvatars) {
+    const { ok } = await ports.purgeAvatars();
+    if (!ok) return { status: 502, body: { detail: AVATAR_PURGE_FAILED_DETAIL } };
   }
 
   const { error } = await ports.deleteAuthUser();

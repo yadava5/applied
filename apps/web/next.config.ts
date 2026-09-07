@@ -197,6 +197,80 @@ const nextConfig: NextConfig = {
   experimental: {
     staleTimes: { dynamic: 300, static: 300 },
   },
+  /**
+   * The image optimizer, and the two hosts profile photos may come from.
+   *
+   * THIS BLOCK IS THE PRIVACY MECHANISM, not a performance tweak. Applied
+   * renders one remote image — the account's profile photo — and it has two
+   * possible origins: Google's avatar CDN for a Google sign-in, and this
+   * project's Supabase Storage bucket for an uploaded one. Naming them here is
+   * what lets `next/image` fetch them SERVER-SIDE, so the browser only ever
+   * requests `/_next/image?url=…` from Applied's own origin. Take this out and
+   * "fix" the tile with a plain `<img>` and every signed-in page load becomes a
+   * request to Google carrying the reader's IP and the timing of their job
+   * search — on a product whose pitch is that nothing reads your mail. The long
+   * version is in `lib/profile/avatar.ts`.
+   *
+   * IT IS ALSO WHY THE CSP DID NOT MOVE. `img-src 'self' data:` in
+   * `lib/security/csp.ts` is unchanged by this feature, because there is no
+   * cross-origin image load left to permit. If a future change points an
+   * `<img>` straight at either host, the image will be BLOCKED and it will look
+   * like a bug in the tile rather than a policy decision — that is the trap,
+   * and it is deliberate.
+   *
+   * THE SUPABASE HOST IS SPELLED OUT rather than derived from
+   * `NEXT_PUBLIC_SUPABASE_URL`, and the reason is that this file is EXECUTED BY
+   * TESTS. `tests/unit/api-no-store-headers.test.mjs` and
+   * `tests/unit/profile-avatar.test.mjs` both transpile it and import it from a
+   * `data:` URL, where there is no relative import to resolve and no env
+   * loaded — a read of `process.env` here would fail the gate rather than the
+   * app, or, worse, fall back to something and pass. The second test also
+   * writes this origin out in full on its own side precisely so that the two
+   * copies CAN disagree; a config reading the same variable the test read would
+   * be comparing itself to itself, and would stay green through every edit.
+   * Its pathname is pinned to the avatars bucket's public prefix so the
+   * optimizer cannot be driven at anything else in the project.
+   *
+   * WHAT THE LITERAL COSTS, said rather than left to be discovered: this is the
+   * shape #740 took OUT of the CSP's `connect-src`, where one project ref
+   * written into a policy meant a deployment pointed at any other Supabase
+   * project built green and then blocked its own auth traffic. The consequence
+   * here is much smaller — a deployment on a different project renders uploaded
+   * photos as the monogram and nothing else degrades — but it is the same
+   * shape, and it is accepted for the testability above rather than missed.
+   *
+   * `*.googleusercontent.com` covers the `lh3`…`lh6` shards Google has served
+   * avatars from; `lib/profile/avatar.ts` validates the same family before a
+   * URL ever reaches this component, and `tests/unit/profile-avatar.test.mjs`
+   * asserts the two agree — a URL this config refuses would otherwise fall back
+   * to the monogram silently.
+   *
+   * `minimumCacheTTL` IS LONG ON PURPOSE, and it is safe because of a decision
+   * made elsewhere: an uploaded photo's object path carries a UUID
+   * (`newAvatarPath`), so replacing one produces a new URL rather than needing
+   * a cached one invalidated. Thirty days means Google is asked for a given
+   * avatar roughly once a month instead of once a page — the point of the whole
+   * arrangement — and it caps what Vercel's Image Optimization is billed for.
+   * The trade, stated plainly: a user who changes their photo AT GOOGLE and
+   * keeps the same URL can see the old one here for up to thirty days, and
+   * uploading their own is the immediate way out.
+   *
+   * `dangerouslyAllowSVG` is left at its `false` default and must stay there:
+   * an SVG is a script vector, and the one thing this optimizer fetches is a
+   * file chosen by a third party.
+   */
+  images: {
+    remotePatterns: [
+      { protocol: "https", hostname: "*.googleusercontent.com", search: "" },
+      {
+        protocol: "https",
+        hostname: "jbyvatoodyqqvkqbsrju.supabase.co",
+        pathname: "/storage/v1/object/public/avatars/**",
+        search: "",
+      },
+    ],
+    minimumCacheTTL: 60 * 60 * 24 * 30,
+  },
   async headers() {
     return [
       { source: "/(.*)", headers: securityHeaders },
