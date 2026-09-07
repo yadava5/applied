@@ -5,6 +5,25 @@
 -- supabase_migrations.schema_migrations` is the authority on whether a given
 -- environment has it; this file is the reviewable source of what was run.
 --
+-- RE-VERIFIED AGAINST PRODUCTION 2026-09-07, read-only, when this work was
+-- ported onto a much later main. The claim above is not being taken on trust
+-- from its own commit -- it was checked, and this is what was found:
+--
+--   * `storage.buckets` holds exactly one row, `avatars`, with `public = true`,
+--     `file_size_limit = 524288` and
+--     `allowed_mime_types = {image/webp, image/png}` -- the three values this
+--     file sets, unchanged since. `created_at` is 2026-08-19 20:09:25 UTC,
+--     which is the date in the line above and in this file's name.
+--   * All four policies below are live on `storage.objects`, under these exact
+--     names, with the clause shape each one is written with here: SELECT and
+--     DELETE carry USING only, INSERT carries WITH CHECK only, and UPDATE
+--     carries both. Production and this document had NOT drifted.
+--
+-- The date of the check is the part worth keeping. "It was applied" ages badly
+-- on its own -- a bucket can be dropped, a policy can be edited in the
+-- dashboard, and nothing in this repository would notice. What is established
+-- is the state on the date named, not a standing guarantee.
+--
 -- This is DELIBERATELY NOT an alembic revision. CI runs `alembic upgrade head`
 -- against SQLite (tests/test_alembic.py), which has neither RLS machinery nor a
 -- `storage` schema, so such a revision would have to be gated on the dialect

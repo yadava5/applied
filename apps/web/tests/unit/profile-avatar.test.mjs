@@ -301,3 +301,83 @@ test("every URL this module permits, next/image's optimizer will actually fetch"
     false,
   );
 });
+
+/**
+ * `covers()` above models protocol, hostname and pathname — and NOT `search`.
+ * That is deliberate rather than an oversight, and it is exactly why the test
+ * below exists instead of a fourth clause in the predicate: a reimplementation
+ * that grew to model `search` would be a second place for the two halves to
+ * disagree, and it would still be comparing this module against a hand-written
+ * copy of the rule rather than against the rule itself.
+ *
+ * THE GAP THIS CLOSES, measured on a production build before the fix. The
+ * Google entry in `images.remotePatterns` carries `search: ""`, which refuses
+ * any URL with a query string, while `googleAvatarUrl` returned its candidate
+ * VERBATIM after checking only protocol and host. So a `picture` claim carrying
+ * `?sz=96` passed the validator and was refused by the optimizer:
+ *
+ *     /_next/image?url=https%3A%2F%2Flh3.googleusercontent.com%2Fa%2FX%3Fsz%3D96
+ *       -> 400  "url" parameter is not allowed
+ *     /_next/image?url=https%3A%2F%2Flh3.googleusercontent.com%2Fa%2FX
+ *       -> 400  "url" parameter is valid but upstream response is invalid
+ *
+ * Two different refusals behind one status code. On screen there is only one
+ * outcome: the tile falls back to the monogram, which is indistinguishable from
+ * an account that never had a photo, and nothing logs.
+ */
+test("googleAvatarUrl and next.config.ts agree about query strings", async () => {
+  const { default: config } = await loadConfig();
+  const patterns = config.images?.remotePatterns ?? [];
+  const google = patterns.find((pattern) =>
+    pattern.hostname?.endsWith("googleusercontent.com"),
+  );
+  assert.ok(google, "next.config.ts declares no googleusercontent pattern at all");
+
+  // Half one, pinned. The expectation is the literal here and the ACTUAL comes
+  // from the config, which is the direction that catches a change: reading the
+  // expectation out of the config would compare it to itself.
+  assert.equal(
+    google.search,
+    "",
+    'the Google remotePattern no longer pins `search: ""`. `googleAvatarUrl` strips the ' +
+      "query specifically to satisfy it, so dropping one without the other leaves an " +
+      "unexplained narrowing in lib/profile/avatar.ts. Change both, deliberately, or neither.",
+  );
+
+  // Half two: what this module hands to `next/image`, for a claim that carries
+  // a query. Google's own `picture` puts sizing in the path, but nothing in the
+  // token forbids a query and this function is what stands between the two.
+  const resolved = googleAvatarUrl({
+    id: UID,
+    identities: [{ provider: "google", identity_data: { picture: `${GOOGLE_PHOTO}?sz=96` } }],
+  });
+  assert.ok(resolved, "a Google photo carrying a query string was refused outright");
+
+  // The agreement itself, asserted between the two halves rather than against a
+  // literal: whatever `search` the config declares, the URL this module emits
+  // has to satisfy it. Red if the strip is reverted (`?sz=96` !== ""), and red
+  // if `search: ""` is deleted (`undefined` !== "") — neither half can move
+  // alone.
+  assert.equal(
+    new URL(resolved).search,
+    google.search,
+    `googleAvatarUrl returned ${resolved}, whose query next.config.ts's ` +
+      `search: ${JSON.stringify(google.search)} refuses. The optimizer answers 400 and the ` +
+      "tile falls back to the monogram, silently.",
+  );
+
+  // A control, so the strip is not passing by refusing everything: the URL with
+  // the query resolves to the SAME address as the one without, and a real claim
+  // is untouched.
+  assert.equal(resolved, GOOGLE_PHOTO);
+  assert.equal(googleAvatarUrl(googleUser()), GOOGLE_PHOTO);
+  // And the fragment goes too — never part of an image address, and the
+  // optimizer would forward it.
+  assert.equal(
+    googleAvatarUrl({
+      id: UID,
+      identities: [{ provider: "google", identity_data: { picture: `${GOOGLE_PHOTO}#x` } }],
+    }),
+    GOOGLE_PHOTO,
+  );
+});

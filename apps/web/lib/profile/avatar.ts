@@ -188,6 +188,30 @@ function googleAvatarCandidate(user: AvatarBearer | null): unknown {
  * The Google photo for this account, or `null`. HTTPS and the Google host
  * family are both required: this string ends up as the `url` parameter of the
  * image optimizer, and the optimizer is a fetch made by Applied's server.
+ *
+ * THE QUERY AND FRAGMENT ARE STRIPPED, and that is not tidying — it is what
+ * makes this function agree with `next.config.ts`. The Google entry in
+ * `images.remotePatterns` carries `search: ""`, which admits a URL with NO
+ * query string and refuses every URL that has one. This function used to
+ * return the candidate verbatim after checking only the protocol and the host,
+ * so a `picture` claim carrying `?sz=96` passed here, reached the optimizer,
+ * and was refused there — and the refusal is SILENT: `next/image` 400s, the
+ * tile falls back to the monogram, and it looks exactly like an account with
+ * no photo. Two guards disagreeing about what a valid URL is, with nothing on
+ * screen and nothing in a log to say so.
+ *
+ * Returning the raw candidate is what made that disagreement invisible, so the
+ * fix is to make the two agree BY CONSTRUCTION rather than to widen `search`.
+ * Nothing real is lost: Google's OIDC `picture` claim carries its sizing in the
+ * PATH (`…=s96-c`), not in a query, so on every URL the live account actually
+ * produces this strip is a no-op — `new URL(x).toString()` round-trips it
+ * unchanged. A fragment goes with it for the same reason; it is never part of
+ * an image address and the optimizer would forward it.
+ *
+ * `tests/unit/profile-avatar.test.mjs` asserts the agreement against the
+ * `search` value read out of `next.config.ts` itself, so it reds if either half
+ * changes alone — reverting this strip, or dropping `search: ""` from the
+ * config. Neither is safe to do on its own.
  */
 export function googleAvatarUrl(user: AvatarBearer | null): string | null {
   const candidate = googleAvatarCandidate(user);
@@ -199,7 +223,10 @@ export function googleAvatarUrl(user: AvatarBearer | null): string | null {
     return null;
   }
   if (parsed.protocol !== "https:") return null;
-  return parsed.hostname.endsWith(GOOGLE_AVATAR_HOST_SUFFIX) ? candidate : null;
+  if (!parsed.hostname.endsWith(GOOGLE_AVATAR_HOST_SUFFIX)) return null;
+  parsed.search = "";
+  parsed.hash = "";
+  return parsed.toString();
 }
 
 /**
