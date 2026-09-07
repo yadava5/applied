@@ -634,3 +634,70 @@ async def test_the_rebuild_persist_keeps_every_message_the_additive_one_drops(
         await _rows_for(test_session, dropped_by_the_additive_path) == dropped_by_the_additive_path
     )
     assert dropped_by_the_additive_path <= replayed.reviewed
+
+
+async def test_the_refusal_names_which_refs_it_dropped(
+    test_session, monkeypatch, caplog
+) -> None:
+    """The drop is attributable, not just counted (#630).
+
+    The log line used to emit ``refused``, ``offered`` and ``user_id`` and
+    nothing else. A refused ref gets no row, no queue entry and no counter, so
+    the event's whole signature is ABSENCE — and a count with no identifiers is
+    not attributable. Nobody could take one of these back to the mailbox and
+    ask what was lost, which is why the issue records the real-mail rate as
+    unmeasurable by construction. This is the smallest step it asks for.
+
+    THE CONTROL IS THE SECOND ASSERTION, and it is what makes this a test
+    rather than a substring check: a line that named EVERY offered ref would
+    satisfy "the triggers appear" and tell a reader nothing. The controls are
+    the messages one edit away that the filter keeps, and their ids must be
+    absent.
+
+    IDS ONLY. The line must not carry a subject, a snippet, or the dedup key —
+    ``review_dedup_key``'s second component comes from ``application_sub_key``
+    and can hold a job title, and this repository does not put mail content in
+    logs (same rule as ``_warn_if_capped``).
+    """
+    import logging
+    import re
+
+    cases = family()
+    _every_message_is_dated(cases)
+    _instrument(monkeypatch)
+
+    caplog.set_level(logging.INFO, logger=applications.logger.name)
+    await replay(test_session, classify_all(cases))
+
+    lines = [r.getMessage() for r in caplog.records if "Settled filter refused" in r.getMessage()]
+    assert lines, "the refusal was not logged at all"
+    line = " ".join(lines)
+
+    # 1 — every refused ref is named.
+    refused = set(TRIGGERS) | {SAME_BATCH_TRIGGER}
+    missing = sorted(mid for mid in refused if mid not in line)
+    assert not missing, f"refused refs the log does not name: {missing}"
+
+    # 2 — THE CONTROL. A line naming everything would pass the assertion above.
+    named_controls = sorted(mid for mid in CONTROLS if mid in line)
+    assert not named_controls, (
+        f"the log names refs the filter KEPT, so it is not a refusal list: {named_controls}"
+    )
+
+    # 3 — the counts are still exact and still there. They are SUMMED across
+    # lines on purpose: the replay is day-batched, so the refusals arrive in
+    # more than one sync (measured: 1 in one batch and 3 in another). Asserting
+    # a single line said "4" would have been asserting the shape of the batching
+    # rather than the count, and it is the sum that has to match the drop.
+    counts = [int(m) for m in re.findall(r"refused (\d+) of ", line)]
+    assert counts, "the line no longer reports a count"
+    assert sum(counts) == len(refused), (
+        f"the log accounts for {sum(counts)} refusals, the filter made {len(refused)}"
+    )
+    assert len(lines) == len(counts)
+
+    # 4 — no mail content. Subjects and snippets in this family are distinctive
+    # enough that a substring check is meaningful.
+    for case in cases:
+        if case.subject:
+            assert case.subject not in line, f"the log carries a subject: {case.subject!r}"

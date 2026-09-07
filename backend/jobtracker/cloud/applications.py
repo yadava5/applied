@@ -3289,6 +3289,17 @@ async def _persist_review_items(session, user_id: uuid.UUID, review) -> int:
     return sum(1 for r in refs if r.received_at is not None)
 
 
+#: How many refused message ids one log line will name (#630).
+#:
+#: A cap, not a sample size. The point of the line is attribution -- taking an
+#: id back to the mailbox and asking what was lost -- and twenty is enough to
+#: start that on any sync while keeping a first backfill, which can refuse
+#: hundreds, from writing an unbounded list into the log. The count beside it
+#: is always exact, so the cap can never make the refusal look smaller than it
+#: was.
+_REFUSED_IDS_LOGGED = 20
+
+
 async def _persist_review_items_additive(session, user_id: uuid.UUID, review) -> int:
     """Additively surface uncertain verdicts to the needs-review queue.
 
@@ -3397,6 +3408,7 @@ async def _persist_review_items_additive(session, user_id: uuid.UUID, review) ->
             if thread_id
         }
         offered = len(refs)
+        before = refs
         refs = [
             r
             for r in refs
@@ -3425,12 +3437,41 @@ async def _persist_review_items_additive(session, user_id: uuid.UUID, review) ->
         # :func:`_warn_if_capped`.
         refused = offered - len(refs)
         if refused:
+            # WHICH ONES, not just how many (#630). The line used to emit
+            # `refused`, `offered` and `user_id` and nothing else, so it
+            # recorded that refs were dropped and never which — and since a
+            # refused ref gets no row, no queue entry and no counter, the
+            # event's whole signature is ABSENCE. A count with no identifiers
+            # is not attributable: nobody can take one of these to the mailbox
+            # and ask what was lost, and the real-mail RATE stays unmeasurable
+            # by construction. This is the smallest step the issue asks for,
+            # and it is what makes the rest measurable.
+            #
+            # IDS ONLY, never a subject, a snippet or a dedup key — the same
+            # rule as :func:`_warn_if_capped`, and the reason the key is left
+            # out even though it is the thing the filter actually matched on:
+            # ``review_dedup_key``'s second component is derived from
+            # ``application_sub_key``, so it can carry a job title. A message
+            # id and a thread id are opaque handles that identify the mail
+            # without reproducing any of it.
+            #
+            # Bounded, because a first sync can refuse a lot and a log line is
+            # not a place to spill an unbounded list.
+            kept = {id(r) for r in refs}
+            dropped = [r for r in before if id(r) not in kept]
+            shown = dropped[:_REFUSED_IDS_LOGGED]
             logger.info(
                 "Settled filter refused %s of %s arriving review ref(s) for "
-                "user_id=%s (#630: a refused ref is never stored)",
+                "user_id=%s (#630: a refused ref is never stored). "
+                "message_id/thread_id: %s%s",
                 refused,
                 offered,
                 user_id,
+                ", ".join(
+                    f"{r.message_id}/{r.thread_id or '-'}" for r in shown
+                )
+                or "-",
+                "" if refused <= _REFUSED_IDS_LOGGED else f" (+{refused - _REFUSED_IDS_LOGGED} more)",
             )
 
     await _persist_message_refs(session, user_id, None, refs)
