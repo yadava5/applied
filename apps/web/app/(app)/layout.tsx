@@ -96,7 +96,8 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       {/* THE toaster (#511): one instance for every route in this group, as a
           sibling of the shell so a client navigation can never remount it and
           drop an in-flight toast. The /demo twins live outside this group and
-          deliberately have no toaster yet. */}
+          mount their own at `app/demo/layout.tsx` — same reasoning, separate
+          instance, because the two trees never render at once. */}
       <FeedbackToaster />
       <AppShell
         rail={rail}
