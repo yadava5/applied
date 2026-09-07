@@ -159,10 +159,34 @@ def _apply_transaction_gucs(conn: Any) -> None:
     user_id = _current_user_id.get()
     # ``user_id`` is always a uuid.UUID coming from a verified JWT / signed
     # state, so its string form is strictly ``[0-9a-fA-F-]`` — safe to embed
-    # in the JSON literal. Guard defensively anyway. When it is None
-    # (unauthenticated/health paths) request.jwt.claims stays unset so
-    # auth.uid() returns NULL and RLS fails closed (denies) rather than
-    # exposing rows. No user-scoped query should run without identity.
+    # in the JSON literal. Guard defensively anyway.
+    #
+    # WHEN IT IS None (unauthenticated/health paths) the branch below writes
+    # ONLY the search path, and ``auth.uid()`` returns NULL, so RLS fails
+    # closed (denies) rather than exposing rows. No user-scoped query should
+    # run without identity.
+    #
+    # WHAT MAKES THAT TRUE IS THE ``nullif``, NOT AN UNSET GUC, and this
+    # comment used to say the opposite: "request.jwt.claims stays unset".
+    # It does not stay unset on a REUSED connection. ``set_config(..., true)``
+    # is transaction-local, and reverting it at COMMIT leaves the empty string
+    # rather than restoring "never set". Measured on postgres:16, one backend
+    # pid throughout:
+    #
+    #     1. virgin, before anything          current_setting -> None
+    #     2. inside an identified transaction current_setting -> '{"sub":...}'
+    #     3. next transaction, no identity    current_setting -> ''
+    #
+    # So the no-identity branch does not overwrite a stale value, it inherits
+    # ``''`` — and the deployed ``auth.uid()`` survives that only because it
+    # applies ``nullif`` to the RAW setting BEFORE the ``::jsonb`` cast.
+    # ``''::jsonb`` raises ``invalid input syntax for type json``.
+    #
+    # The outcome is safe. The reason it is safe lives in the SQL function,
+    # not here, which matters to anyone reading this before enabling pooling
+    # below. See ``tests/test_rls_postgres.py`` for the shape and
+    # ``test_every_auth_uid_shim_is_the_deployed_one`` for the four copies
+    # that used to disagree with it (#634).
     if not isinstance(user_id, uuid.UUID):
         conn.exec_driver_sql(f"SELECT {search_path_guc}")
         return

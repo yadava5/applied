@@ -270,8 +270,10 @@ def engine() -> Iterator[Engine]:
             text(
                 "CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid "
                 "LANGUAGE sql STABLE AS $$ "
-                "SELECT nullif(current_setting('request.jwt.claims', true)::jsonb "
-                "->> 'sub', '')::uuid $$"
+                "select coalesce("
+                "  nullif(current_setting('request.jwt.claim.sub', true), ''),"
+                "  (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')"
+                ")::uuid $$"
             )
         )
         c.execute(
