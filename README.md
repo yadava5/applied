@@ -232,7 +232,7 @@ reason for the 0.88 points above, which was the instrument.
 | Abstained (below the 0.70 review floor, the product says nothing) | **1086** |
 | Board: cards / splits / merges / noise / misrouted review | **9,908 / 0 / 0 / 0 / 0** |
 | Updates that reached the wrong card | **0** |
-| Updates held for a person because the classifier was unsure | 360 |
+| Updates held for a person because the classifier was unsure | **685** |
 | Mail about a real application that reached nothing | **0 lost**, 0 dropped |
 
 **No message has ever landed on the wrong card.** Zero merges, zero misrouted updates over 18,200
