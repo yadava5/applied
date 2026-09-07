@@ -881,6 +881,40 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     '[data-testid="pipeline-pulse"] .truncate:not([data-clip-ok])';
   const ARRIVAL_TEXT = '[data-testid="since-last-look"] .truncate';
 
+  /**
+   * The plate's placement, in the three numbers it is made of: how far its
+   * centre sits from the bar's, and its clearance from each neighbour that
+   * shares its line (null for one that does not — below `lg` the row stacks
+   * and the gap would be a comparison between two different lines).
+   *
+   * ONE reader for every arrangement measured here. The clearances are the
+   * same subtraction `plateSlide` decides the placement with
+   * (`lib/dashboard/platePlacement.ts`, and `tests/unit/plate-placement.test.mjs`
+   * executes it against these same 1024 readings), so a second copy of it per
+   * call site is how two renderings of one number start disagreeing.
+   */
+  const chipGeometry = (page: Page) =>
+    page.evaluate(() => {
+      const section = document.querySelector(
+        '[data-testid="since-last-look"]',
+      );
+      const chip = section?.querySelector("p, button");
+      const main = document.querySelector("main");
+      const subtitle = document.querySelector("[data-sync-subtitle]");
+      const cluster = document.querySelector("[data-sync-cluster]");
+      if (!chip || !main || !subtitle || !cluster) return null;
+      const c = chip.getBoundingClientRect();
+      const m = main.getBoundingClientRect();
+      const overlaps = (b: DOMRect) => c.top < b.bottom && b.top < c.bottom;
+      const t = subtitle.getBoundingClientRect();
+      const k = cluster.getBoundingClientRect();
+      return {
+        offCentre: Math.abs((c.left + c.right) / 2 - (m.left + m.right) / 2),
+        fromTotals: overlaps(t) && t.width > 0 ? c.left - t.right : null,
+        fromCluster: overlaps(k) && k.width > 0 ? k.left - c.right : null,
+      };
+    });
+
   for (const viewport of [
     { width: 1280, height: 800 }, // the xl floor, and the commonest laptop
     { width: 1240, height: 800 }, // the header row's narrowest arrival slot
@@ -1033,32 +1067,7 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
           // surface session-edge.spec measures for row geometry, because
           // the default twin misrepresents the live row's shape (its
           // documented purpose for existing).
-          const measureChip = () =>
-            own.evaluate(() => {
-              const section = document.querySelector(
-                '[data-testid="since-last-look"]',
-              );
-              const chip = section?.querySelector("p, button");
-              const main = document.querySelector("main");
-              const subtitle = document.querySelector("[data-sync-subtitle]");
-              const cluster = document.querySelector("[data-sync-cluster]");
-              if (!chip || !main || !subtitle || !cluster) return null;
-              const c = chip.getBoundingClientRect();
-              const m = main.getBoundingClientRect();
-              const overlaps = (b: DOMRect) =>
-                c.top < b.bottom && b.top < c.bottom;
-              const t = subtitle.getBoundingClientRect();
-              const k = cluster.getBoundingClientRect();
-              return {
-                offCentre: Math.abs(
-                  (c.left + c.right) / 2 - (m.left + m.right) / 2,
-                ),
-                fromTotals:
-                  overlaps(t) && t.width > 0 ? c.left - t.right : null,
-                fromCluster:
-                  overlaps(k) && k.width > 0 ? k.left - c.right : null,
-              };
-            });
+          const measureChip = () => chipGeometry(own);
 
           const furnished = await measureChip();
           expect(
@@ -1124,6 +1133,89 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
                 gap,
                 `${state} @ ${at}: ${gap}px from the ${name} on the signed-in row`,
               ).toBeGreaterThanOrEqual(24);
+            }
+          }
+        } finally {
+          await context.close();
+        }
+      }
+
+      // --- the LOUD plate, which nothing measured until #610 ---------------
+      //
+      // The two states above are the ledger with nothing to say. The state the
+      // owner reads it in is the third — `N changes`, the press — and it is a
+      // DIFFERENT element (a `<button>` with a dot, a count and a chevron,
+      // ~112px wide at every width here), so every clearance measured above
+      // was measured on a plate the report is not about. #610's own comment
+      // recorded that gap as "the twin cannot reach the changes state". It
+      // can, without a knob: this line's branch is a function of the stored
+      // marker versus the board in front of it, so ONE VISIT TO EACH FIXTURE
+      // is the whole recipe — the first records what it saw, the second is a
+      // different board, and the ledger reports the difference. Measured 6/6
+      // at these three widths (headless Chrome, `next dev`, 2026-09-07), and
+      // deterministic under the double mount for the reason the block above
+      // needs a fresh context: with changes to report, the settle effect does
+      // NOT rewrite the record, so the second mount reads what the first did.
+      //
+      // WHAT THIS CANNOT SEE, stated so the next reader does not mistake a
+      // green here for cover on the report. #610 is the plate holding a
+      // placement computed before the subtitle GREW — the reader's-week
+      // correction (#518) makes ~70px appear in it. This twin cannot stage
+      // that: both fixtures always carry a row filed today, so `thisWeek`
+      // never crosses zero and the segment can never APPEAR (it goes `+1` to
+      // `+6`, ~0px, measured), and the plate here has 65px of slack at 1024
+      // where the owner's board has exactly the 16px budget. The re-placement
+      // itself is gated in `tests/unit/plate-replaces-on-neighbour-growth.test.mjs`,
+      // which mounts the component and grades it. Making this surface able to
+      // host the collision needs a fixture whose counts have the live board's
+      // shape; that is not this issue.
+      for (const { arrangement, floor, centred } of [
+        // The furnished twin: 167px of fixture pill on the right flank, so at
+        // 1024 the CLUSTER binds and the plate legitimately stands off the
+        // bar's centre (31.8px, measured) at exactly its 16px budget. Safety
+        // only, at the drift floor the quiet states use.
+        { arrangement: "", floor: 12, centred: false },
+        // The signed-in arrangement — the row this issue is about. Nothing
+        // binds here, so the plate must hold the bar's centre to the pixel
+        // and keep both neighbours well clear (65.0 / 67.6 at 1024).
+        { arrangement: "?session=1", floor: 24, centred: true },
+      ]) {
+        const context = await browser.newContext({
+          viewport,
+          baseURL,
+          timezoneId,
+        });
+        try {
+          const own = await context.newPage();
+          await own.goto("/demo/shell?pipeline=early");
+          await expect(own.getByTestId("since-last-look")).toBeVisible();
+          await own.goto(`/demo/shell${arrangement}`);
+          const where = `changes @ ${at} /demo/shell${arrangement}`;
+          // Asserted before anything is measured, like the states above: a
+          // reading taken off the quiet chip would pass this whole block
+          // while measuring the object it was written to stop measuring.
+          await expect(
+            own.getByTestId("since-last-look"),
+            `${where}: the loud branch did not render`,
+          ).toContainText(/\d+ changes/);
+
+          const loud = await chipGeometry(own);
+          expect(loud, `${where}: chip geometry unreadable`).not.toBeNull();
+          if (centred) {
+            expect(
+              loud!.offCentre,
+              `${where}: the press sits ${loud!.offCentre}px off the bar's centre`,
+            ).toBeLessThanOrEqual(1.5);
+          }
+          for (const [name, gap] of [
+            ["totals", loud!.fromTotals],
+            ["sync cluster", loud!.fromCluster],
+          ] as const) {
+            if (gap !== null) {
+              expect(
+                gap,
+                `${where}: ${gap}px from the ${name} — the press is on its neighbour`,
+              ).toBeGreaterThanOrEqual(floor);
             }
           }
         } finally {
