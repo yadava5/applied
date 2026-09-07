@@ -26,11 +26,19 @@
  * WHY THIS IS A UNIT TEST AND NOT A BROWSER ONE. The collision needs the
  * signed-in board. The public twin reaches the `N changes` state — proved, and
  * `tests/e2e/shell.spec.ts` now measures the plate there — but it cannot host
- * this defect: its fixtures always carry a row filed today, so `thisWeek`
- * never crosses zero and the segment can never APPEAR, and its plate has 65px
- * of slack at 1024 where the live board has 16. So the browser gate can say
- * the loud plate is placed correctly, and only this file can say the placement
- * is RE-DERIVED when an input changes.
+ * this defect, and the reason is STRUCTURAL rather than arithmetic. The
+ * mid-session appearance is `BoardSubtitle`'s, and the only file that imports
+ * it is `app/(app)/(protected)/dashboard/page.tsx`; `DemoDashboard.tsx` calls
+ * `buildSubtitle` directly and nothing corrects the line after hydration, so
+ * nothing on the twin makes the reader's-week segment appear after mount.
+ * Both renderings ARE reachable there — `weekly` is a cookie pref, off by
+ * default, so the segment is simply absent until a reader flips it, which
+ * makes both subtitle widths above readable on this surface. What the twin
+ * cannot produce is the TRANSITION between them after mount — the readings
+ * above compose two states rather than record a sequence this surface can
+ * run. Its plate also has 65px of slack at 1024 where the live board has 16.
+ * So the browser gate can say the loud plate is placed correctly, and only
+ * this file can say the placement is RE-DERIVED when an input changes.
  *
  * WHAT IS REAL HERE AND WHAT IS NOT, in the terms `helpers/mountApp.mjs` sets:
  * the component is the real one, React is real, the DOM is jsdom. jsdom has no

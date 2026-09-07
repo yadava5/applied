@@ -1161,14 +1161,23 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
       // green here for cover on the report. #610 is the plate holding a
       // placement computed before the subtitle GREW — the reader's-week
       // correction (#518) makes ~70px appear in it. This twin cannot stage
-      // that: both fixtures always carry a row filed today, so `thisWeek`
-      // never crosses zero and the segment can never APPEAR (it goes `+1` to
-      // `+6`, ~0px, measured), and the plate here has 65px of slack at 1024
-      // where the owner's board has exactly the 16px budget. The re-placement
-      // itself is gated in `tests/unit/plate-replaces-on-neighbour-growth.test.mjs`,
-      // which mounts the component and grades it. Making this surface able to
-      // host the collision needs a fixture whose counts have the live board's
-      // shape; that is not this issue.
+      // that, and the reason is STRUCTURAL rather than arithmetic: the
+      // mid-session appearance is `BoardSubtitle`'s, and the only file that
+      // imports it is `app/(app)/(protected)/dashboard/page.tsx`.
+      // `DemoDashboard.tsx` calls `buildSubtitle` directly and nothing
+      // corrects the line after hydration, so nothing on this surface makes
+      // the reader's-week segment appear after mount. Both renderings of the
+      // line ARE reachable here — `weekly` is a cookie pref, off by default
+      // (`DEFAULT_PREFS`), which is what `settings.spec.ts` asserts before it
+      // flips the toggle — so both subtitle widths are readable on this
+      // surface. What it has no way to produce is the TRANSITION from one to
+      // the other after mount, which is the defect. Its plate also has 65px
+      // of slack at 1024 where the owner's board has exactly the 16px budget.
+      // The re-placement itself is gated in
+      // `tests/unit/plate-replaces-on-neighbour-growth.test.mjs`, which mounts
+      // the component and grades it. Making this surface able to host the
+      // collision needs the correction to RUN here, not a different fixture;
+      // that is not this issue.
       for (const { arrangement, floor, centred } of [
         // The furnished twin: 167px of fixture pill on the right flank, so at
         // 1024 the CLUSTER binds and the plate legitimately stands off the
