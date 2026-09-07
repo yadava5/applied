@@ -26,6 +26,11 @@
  * the `"+N this wk · "` segment at 69.4px; the same segment lays out at
  * 69.71px here, and the corrected subtitle's right edge at 580.8 in both).
  *
+ * The GROWN readings are staged ones: the segment is appended to
+ * `[data-sync-subtitle]` and the rects re-read, because nothing on this
+ * surface grows the line after mount. Said here so the pair is not mistaken
+ * for something an unaided load of the twin produces.
+ *
  * Run:  pnpm test:unit
  */
 import assert from "node:assert/strict";

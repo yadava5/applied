@@ -675,12 +675,27 @@ export function SinceLastLook({
    * `buildSubtitle` omits the whole segment at zero, the correction does not
    * change a digit — it makes ~70px of subtitle appear. That re-renders a
    * SIBLING subtree: no resize, no branch swap, so neither of the two things
-   * that used to re-place this plate happened. Measured on the twin at 1024
-   * (`?session=1`, headless Chrome, `next dev`, 2026-09-07): the subtitle grew
-   * 69.7px, the plate held its position to the pixel, and 65.0px of clearance
-   * became −4.7px of overlap. On the owner's board, where the totals already
-   * bind at exactly the 16px budget, the same growth runs ~53px of the line
-   * under the chip.
+   * that used to re-place this plate happened.
+   *
+   * HOW THE GROWTH WAS STAGED, because the twin cannot produce it unaided and
+   * a reading that does not say so invites someone to try: the segment was
+   * APPENDED to `[data-sync-subtitle]` in the DOM, then the rects re-read. It
+   * has to be staged, for the structural reason the e2e block records — the
+   * mid-session correction is `BoardSubtitle`'s and only the signed-in
+   * dashboard imports it, so nothing on the twin grows this line after mount.
+   * Staging it is what isolates the defect: `placePlate` is a ref callback
+   * that re-runs on a plate-element change and on `window.resize`, so a load
+   * that already had the long line would have placed against it at mount and
+   * read the full clearance — the composite below could not come from any
+   * unaided load, and is not evidence that one exists.
+   *
+   * Twin at 1024 (`?session=1`, headless Chrome, 2026-09-07), growth staged as
+   * above: the subtitle grew 69.7px, the plate held its position to the pixel,
+   * and 65.0px of clearance became −4.7px of overlap. Reproduced independently
+   * against a `next start` production build, where the fix moves the plate
+   * `translateX(20.77px)` and the clearance lands at 16.0px. On the owner's
+   * board, where the totals already bind at exactly the 16px budget, the same
+   * growth runs ~53px of the line under the chip.
    *
    * Watching the boxes rather than the state that writes them is deliberate:
    * the widths come from three components that know nothing about each other

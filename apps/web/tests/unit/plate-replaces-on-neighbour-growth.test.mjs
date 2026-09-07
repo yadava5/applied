@@ -4,7 +4,15 @@
  * arrived.
  *
  * THE DEFECT, measured before the fix (headless Chrome, `next dev`, 1024×768,
- * `/demo/shell?session=1` in the `N changes` state, 2026-09-07):
+ * `/demo/shell?session=1` in the `N changes` state, 2026-09-07). The growth
+ * was STAGED — the segment appended to `[data-sync-subtitle]` in the DOM, then
+ * the rects re-read — because nothing on the twin grows this line after mount
+ * (see WHY THIS IS A UNIT TEST below). That staging is what isolates the
+ * defect rather than papering over it: `placePlate` re-runs on a plate-element
+ * change and on `window.resize`, so a load that already had the long line
+ * would have placed against it at mount and read the full clearance. The two
+ * readings below are therefore one before/after pair, not a sequence any
+ * unaided load produces:
  *
  *     subtitle "17 filed · 14 open · 0 offers"          right edge 511.1
  *     plate, centred on the bar                         576.0 … 688.0
