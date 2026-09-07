@@ -3248,17 +3248,28 @@ UNCAPTURED_BY_DESIGN: dict[tuple[str, str, str], str] = {
     # ── no source exists, and that is the finding ────────────────────────
     ("README.md", "0", "cards / splits / merges / noise"): (
         "the board row prints FIVE figures and the corpus gate records three "
-        "of them: cards, splits, noise_on_card. `merges` and `misrouted "
-        "review` have no RECORDED key, so these two zeros are prose. Capturing "
-        "them needs a counter in the gate first — see #700"
+        "of them in RECORDED: cards, splits, noise_on_card. The other two are "
+        "prose, but for DIFFERENT reasons and they want different work. "
+        "`merges` IS measured — `score.merges == 0` is asserted for the sync "
+        "board at test_independent_corpus.py:1458 and again at :1681, and "
+        "RECORDED_AFTER_ANSWERING carries a `merges` of 19 for the "
+        "after-answering board — it simply is not in RECORDED, which is the "
+        "only dict `corpus_recorded()` reads, so capturing it needs a RECORDED "
+        "entry and NOT a counter. `misrouted review` has no counter anywhere "
+        "in the tree; that one does need writing. This entry used to say both "
+        "lacked a counter, which sent a reader to build one that already "
+        "exists — see #700"
     ),
     ("booklet/src/content.ts", "0", "No message lands on another application's card"): (
         "the `merges` figure again, on the booklet's copy of the board "
-        "sentence. Same reason as README.md:221 — the corpus gate has no "
-        "`merges` key — and it is worth saying that this entry originally "
-        "claimed to be the skipped count, which was simply not what the "
-        "number is. A waiver with a plausible wrong reason is the failure "
-        "this list is supposed to prevent; see #700"
+        "sentence. Same reason as the README entry above — measured, but not "
+        "in RECORDED, so `corpus_recorded()` cannot reach it. This entry has "
+        "now carried TWO plausible wrong reasons: it first claimed to be the "
+        "skipped count, which is not what the number is, and then said the "
+        "gate has no `merges` key, which stopped being true. A waiver with a "
+        "plausible wrong reason is the failure this list exists to prevent, "
+        "and it is worth noticing that the failure recurred here rather than "
+        "somewhere new; see #700"
     ),
     ("README.md", "464", "Wrong verdicts stated as fact"): (
         "464 is the value BEFORE the fix and the gate records only the after; "

@@ -85,6 +85,26 @@ export function removeFromBoardRequest(id: number): ProxyRequest {
 }
 
 /**
+ * The way back from {@link removeFromBoardRequest} — the row returns to the
+ * board with its mail intact.
+ *
+ * It is the endpoint the toast's Undo sends, and that is a different job from
+ * the in-card window above. The window CANCELS a dismissal that has not been
+ * sent yet, and it dies with the row: once the request lands, `router.refresh()`
+ * unmounts the card and the tombstone with it, leaving no affordance anywhere.
+ * This one REVERSES a dismissal that already happened, from a surface that
+ * outlives the row.
+ *
+ * `dismissed_reason = "user"` is why the reversal has to be explicit rather
+ * than left to the next sync: the backend honours that flag
+ * (`applications.py:1521`) and deliberately does not put the row back on its
+ * own.
+ */
+export function restoreToBoardRequest(id: number): ProxyRequest {
+  return { path: `/api/applications/${id}/restore`, method: "POST" };
+}
+
+/**
  * Hard delete — NOT recoverable at any layer: the row and every linked email
  * are erased, so there is nothing left to undo. This is the one row action that
  * must be confirmed before it is sent.
@@ -147,9 +167,38 @@ export function removalPendingTail(secondsLeft: number): string {
  * the board and left it on disk, the other erased it. Saying "removed" for both
  * would undo, in the copy, the whole distinction this change exists to draw.
  */
-export const REMOVED_TAIL = " removed from the board · not deleted";
+const OFF_THE_BOARD = " removed from the board";
+
+export const REMOVED_TAIL = `${OFF_THE_BOARD} · not deleted`;
 
 export const DELETED_TAIL = " deleted permanently";
+
+/**
+ * What the toast says once the removal is COMMITTED — the moment the tombstone
+ * above stops existing, because the refresh it triggers unmounts the card.
+ *
+ * Same words as `REMOVED_TAIL`, built from the same fragment so the sentence
+ * the card shows for six seconds and the one the corner shows afterwards can
+ * never drift. It drops "· not deleted" because the toast carries an Undo
+ * button, which says the same thing in a form the reader can act on — and the
+ * hard delete raises no toast at all, so there is no pair here to confuse.
+ */
+export function removedToastMessage(company: string): string {
+  return `${rowName(company)}${OFF_THE_BOARD}`;
+}
+
+/**
+ * The failed Undo. It mirrors `REMOVE_FAILED`'s shape — name what did not
+ * happen, then the state the board is actually in — and it matches what the
+ * rebuild receipt already says when its own per-row restore fails
+ * ("couldn't restore — still removed"). The toast that carries it keeps the
+ * button, for the reason that receipt keeps its own: a dismissal nothing can
+ * reverse is a dead end, and there is no other surface in the app that lists
+ * dismissed rows.
+ */
+export function restoreFailedMessage(company: string): string {
+  return `Couldn't put ${rowName(company)} back — it is still off your board.`;
+}
 
 export function removalPendingMessage(company: string, secondsLeft: number): string {
   return `${rowName(company)}${removalPendingTail(secondsLeft)}`;

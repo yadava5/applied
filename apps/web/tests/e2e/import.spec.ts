@@ -272,10 +272,18 @@ test.describe("import your mail", () => {
  * second one — in the tab, with no account, which is where the landing page
  * sends people. A fix on only one layer is half a fix.
  *
- * It is asserted here rather than as a unit test because `rulesLayer.ts`
- * imports `rules.json` without an import attribute and so cannot be loaded by
- * `node --test`; driving the page runs the same code through the real bundler,
- * which is the stronger evidence in any case.
+ * It is asserted here because driving the page runs the same code through the
+ * real bundler, which is the stronger evidence.
+ *
+ * NOT because a unit test is impossible, which is what this block used to say.
+ * `rulesLayer.ts` does import `rules.json` without an import attribute, and
+ * plain Node does refuse it with `ERR_IMPORT_ATTRIBUTE_MISSING` — but
+ * `tests/unit/helpers/appModule.mjs:48` registers loader hooks that resolve
+ * exactly that, and three suites already load the rules layer under
+ * `node --test` through it. The old sentence outlived its truth and was
+ * load-bearing while it did: #427's differential harness turns on whether both
+ * engines can be imported in one process, and a comment saying they cannot is
+ * an argument against work that is now possible.
  *
  * The body is RECONSTRUCTED. The real message carries the owner's name, his
  * address and per-message tracking tokens, none of which belong in a committed
@@ -406,10 +414,9 @@ test.describe("a conditional explainer is not a rejection", () => {
  * is half a fix — this page is where the second one runs, in the tab, with no
  * account, which is where the landing page sends people.
  *
- * Asserted here rather than as a unit test for the reason the block above
- * gives: `rulesLayer.ts` imports `rules.json` without an import attribute and
- * cannot be loaded by `node --test`. Driving the page runs the same code
- * through the real bundler, which is the stronger evidence anyway.
+ * Asserted here for the reason the block above gives: driving the page runs
+ * the same code through the real bundler. A unit test is also possible now —
+ * see that block for why the sentence that said otherwise is gone.
  *
  * The parity numbers these three cases were written from, Python beside
  * TypeScript on the same inputs:
@@ -432,10 +439,15 @@ test.describe("a reply is not its own thread", () => {
     "> Hi Ayush, Thank you for applying to the Backend Engineer position at\n" +
     "> Cedarhollow Systems. Your application has been received.\n";
 
+  /**
+   * Microsoft's real wording, sender and requisition number. The role title is
+   * invented, because the real one named a specific posting — #593 and
+   * `docs/TEST_DATA_POLICY.md`.
+   */
   const MICROSOFT =
     "Hi Ayush, Thank you for taking the time to submit your application for " +
-    "Pre-Training (Job number: 200007619). We are glad you are interested in a " +
-    "career at Microsoft, and we are here to help";
+    "Fleet-Provisioning (Job number: 200007619). We are glad you are interested " +
+    "in a career at Microsoft, and we are here to help";
 
   async function classify(
     page: Page,
@@ -501,8 +513,9 @@ test.describe("a reply is not its own thread", () => {
     );
     await expect(
       results.getByText("applied", { exact: true }).first(),
-      "the wording of five real confirmations in the owner's mailbox, none of " +
-        "which the product could file before #441",
+      "the real wording of five confirmations in the owner's mailbox — with an " +
+        "invented role title, #593 — none of which the product could file " +
+        "before #441",
     ).toBeVisible();
   });
 });

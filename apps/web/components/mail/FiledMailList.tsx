@@ -344,6 +344,12 @@ export function FiledMailList({
                     // the unlinked ones — a held verdict, a dismissal, a
                     // message the sync could not place.
                     linkedApplicationId={m.application_id}
+                    // The stored verdict, which is what an undo sends back
+                    // (#511). A held row's `needs_review` is a real value here
+                    // and is NOT one the correction endpoint accepts, so the
+                    // control acknowledges those without an undo rather than
+                    // rendering a button that would 422.
+                    previousCategory={m.category}
                   />
                 </span>
               </li>

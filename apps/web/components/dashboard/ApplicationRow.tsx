@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { memo, useCallback, useEffect, useId, useRef, useState } from "react";
 
 import { DeadlineTag, FiledStamp, SameCompanyChip } from "@/components/dashboard/CardMeta";
-import { notifySuccess } from "@/components/feedback/notify";
+import { notifyError, notifySuccess, notifyUndo } from "@/components/feedback/notify";
 import { MailText } from "@/components/mail/MailText";
 import { RowActionsMenu, type RowMenuItem } from "@/components/dashboard/RowActionsMenu";
 import { safeText } from "@/lib/security/hostileText";
@@ -28,6 +28,8 @@ import {
   UNDO_LABEL,
   UNDO_WINDOW_SECONDS,
   removalPendingTail,
+  removedToastMessage,
+  restoreFailedMessage,
   rowName,
   statusChangeFailure,
 } from "@/lib/dashboard/rowActions";
@@ -444,6 +446,38 @@ export function ApplicationRow({
     [app.company, app.id, app.status, optimisticTo, router, transport],
   );
 
+  /**
+   * The way back from a COMMITTED removal — what the toast's Undo runs, and
+   * what its failure offers again.
+   *
+   * A named function expression so it can hand itself to `notifyError`'s retry
+   * without a ref: the Undo button closes its own toast the moment it is
+   * pressed, so a restore that fails would otherwise leave the row off the
+   * board with no affordance anywhere (there is no dismissed-rows view, and
+   * `dismissed_reason = "user"` means no later sync brings it back either).
+   */
+  const undoRemoval = useCallback(
+    async function undoRemoval(): Promise<void> {
+      const result = await transport.restore(app.id);
+      if (result.ok) {
+        // The card can still be mounted with its tombstone showing — the
+        // refresh that unmounts it is not guaranteed to have landed, and
+        // `removed` is client state a re-render would not clear. Without this
+        // a restored row reads as removed for the life of the mount.
+        setRemoved(null);
+        router.refresh();
+        return;
+      }
+      const head = restoreFailedMessage(safeText(app.company));
+      notifyError(
+        `application.restore.${app.id}`,
+        result.detail ? `${head} ${safeText(result.detail)}` : head,
+        { run: undoRemoval },
+      );
+    },
+    [app.company, app.id, router, transport],
+  );
+
   const commitRemoval = useCallback(async () => {
     if (committing.current) return;
     committing.current = true;
@@ -453,12 +487,25 @@ export function ApplicationRow({
     committing.current = false;
     setBusy(null);
     if (!result.ok) {
+      // Stays out of the toaster: the card is still here and owns an inline
+      // `role="alert"` for this, so a toast would say it twice.
       setError(result.detail ? `${REMOVE_FAILED} ${result.detail}` : REMOVE_FAILED);
       return;
     }
     setRemoved("dismissed");
+    // The acknowledgement that OUTLIVES the row (#511). The in-card window
+    // that just closed cancels a dismissal the server never saw; this reverses
+    // one it did, and it has to live outside the card because the refresh
+    // below unmounts the card and its tombstone together.
+    //
+    // The key names the target, as `notifyUndo` requires: two rows removed in
+    // one breath must never merge into a counted toast, because one Undo
+    // button cannot put both back.
+    notifyUndo(`application.dismiss.${app.id}`, removedToastMessage(safeText(app.company)), {
+      run: undoRemoval,
+    });
     router.refresh();
-  }, [app.id, router, transport]);
+  }, [app.company, app.id, router, transport, undoRemoval]);
 
   // The undo window. The request is sent only when it runs out, so unmounting
   // (navigation, tab close) cancels the removal rather than committing it —

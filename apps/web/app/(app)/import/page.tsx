@@ -99,12 +99,25 @@ export default async function ImportPage() {
           {gmailKnownDisconnected ? (
             <p className="border-t border-line-soft pt-6 text-center text-xs leading-relaxed text-dim">
               Prefer to connect the source directly?{" "}
-              <Link
-                href="/settings"
+              {/* The consent, not the page that holds the button (#494). This
+                  read "…in Settings" and linked there, which cost the one
+                  action it names a second hop; the label changed with the
+                  href because naming Settings became false.
+
+                  No `?from=` flag, unlike the dashboard tile: the outcome of
+                  a connect is rendered on Settings, and `/import` has nothing
+                  to show a returning user. So this keeps the default return
+                  path and lands on `/settings?gmail=…`, which is exactly
+                  where the two-hop version used to end up.
+
+                  A plain <a>, for the same reason as `ConnectGmailButton`:
+                  the target 302s to accounts.google.com. */}
+              <a
+                href="/api/gmail/authorize"
                 className="text-muted underline-offset-4 hover:text-strong hover:underline"
               >
-                Connect Gmail read-only in Settings
-              </Link>{" "}
+                Connect Gmail read-only
+              </a>{" "}
               — invite-only while we&apos;re in beta.
             </p>
           ) : null}

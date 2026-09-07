@@ -27,9 +27,31 @@
  * copy is how this feature usually leaks: "we sent you a link" for a real
  * address and "no account found" for the rest is an enumeration oracle with
  * good manners.
+ *
+ * IT ALSO HAS TO BE TRUE WHEN NOTHING WAS SENT (#292). The project's mail goes
+ * through Supabase's built-in provider, which is capped at two messages an
+ * hour PROJECT-WIDE. A third request inside that hour sends nothing at all, and
+ * the previous wording — "a link ... is on its way. Check your inbox, and your
+ * spam folder." — told that person to go and look for mail that does not exist,
+ * then left them with no idea what to do next.
+ *
+ * This is NOT the reversal DEC-005 refuses. That decision forbids the OUTCOME
+ * from carrying an error, a status code or anything a caller could branch on,
+ * because the 60-second window only fires for an address that has a user and
+ * so surfacing it confirms the account. Nothing here branches: it is the same
+ * constant for a real address, an unknown one, a 429 and a network failure. It
+ * is weakened until it is true in all four cases, which is the only move
+ * available while the outcome stays a single constant.
+ *
+ * The hour is named rather than hidden. A person who is told "it can take up
+ * to an hour" waits; a person told "it is on its way" refreshes their inbox,
+ * requests again — spending another of the two — and concludes the product is
+ * broken. Lifting the cap needs a custom SMTP provider configured in the
+ * Supabase dashboard, which is not a change this repository can make: there is
+ * no mail-sending code here at all.
  */
 export const RESET_EMAIL_SENT_NOTICE =
-  "If an account exists for that address, a link to set a new password is on its way. Check your inbox, and your spam folder.";
+  "If an account exists for that address, a link to set a new password is on its way. Delivery can take up to an hour at busy times, so check your spam folder and try again later if nothing arrives.";
 
 /** Seconds the form refuses to send again — see {@link remainingCooldown}. */
 export const RESEND_COOLDOWN_SECONDS = 60;

@@ -268,6 +268,9 @@ def test_a_requisition_id_still_outranks_everything() -> None:
     They never reach the anonymous path at all, which is the reason thread
     grouping was rejected as an identity — here it would have merged four real
     applications into one.
+
+    The requisition numbers are the real ones; two of the role titles are
+    invented, because the real ones named a specific posting (#593).
     """
 
     def microsoft(message_id: str, role: str, number: str, minute: int):
@@ -290,9 +293,9 @@ def test_a_requisition_id_still_outranks_everything() -> None:
     rolled = p.roll_up_applications(
         [
             microsoft("m1", "Software Engineer II", "200045485", 0),
-            microsoft("m2", "Customer Experience Engineer", "200049333", 3),
+            microsoft("m2", "Field Reliability Engineer", "200049333", 3),
             microsoft("m3", "Software Engineer", "200043070", 4),
-            microsoft("m4", "Pre-Training", "200007619", 5),
+            microsoft("m4", "Fleet-Provisioning", "200007619", 5),
         ]
     )
 

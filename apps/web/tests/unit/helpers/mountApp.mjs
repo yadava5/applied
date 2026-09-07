@@ -68,6 +68,26 @@ Object.defineProperty(globalThis, "navigator", {
   value: dom.window.navigator,
   configurable: true,
 });
+/**
+ * Animation frames, because a mounted component can now raise a TOAST.
+ *
+ * sonner dismisses through the bare global `requestAnimationFrame`, and since
+ * #511's call sites landed, clicking through a correction or a removal runs
+ * that path for real rather than in a stub — an undefined global there throws
+ * out of a jsdom timer, which surfaces as an unattributable failure in whatever
+ * test file happened to be running 4 seconds later.
+ *
+ * jsdom only supplies rAF under `pretendToBeVisual`, which changes what every
+ * other mounted test sees, so it is shimmed onto the task queue instead: this
+ * file drives everything through `React.act`, where a frame is a task anyway.
+ * jsdom's own is preferred if a later version starts providing it by default.
+ */
+globalThis.requestAnimationFrame =
+  dom.window.requestAnimationFrame?.bind(dom.window) ??
+  ((callback) => setTimeout(() => callback(Date.now()), 0));
+globalThis.cancelAnimationFrame =
+  dom.window.cancelAnimationFrame?.bind(dom.window) ?? ((id) => clearTimeout(id));
+
 // Makes React's `act` do its work synchronously and warn about updates that
 // escape it, instead of leaving state changes to a scheduler nothing awaits.
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;

@@ -28,6 +28,7 @@ import {
   deadlineChangeRequest,
   permanentDeleteRequest,
   removeFromBoardRequest,
+  restoreToBoardRequest,
   roleChangeRequest,
   statusChangeRequest,
   type ProxyRequest,
@@ -56,6 +57,18 @@ export interface BoardTransport {
   setRole(id: number, role: string | null): Promise<SendResult>;
   /** The RECOVERABLE removal ("Not an application") — never the hard delete. */
   dismiss(id: number): Promise<SendResult>;
+  /**
+   * The way back from `dismiss`, for the Undo the removal toast carries (#511).
+   *
+   * `SyncTransport` already has a `restore`, for the rows a REBUILD removed,
+   * and this is deliberately not a call across to it: the two are separate
+   * seams with separate demo implementations, and a card that reached into the
+   * sync transport would make every mount of `ApplicationRow` depend on one.
+   * It answers a full `SendResult`, unlike the sync side's boolean, because a
+   * failed restore is a toast the reader must be able to act on and the
+   * backend's own reason belongs in it.
+   */
+  restore(id: number): Promise<SendResult>;
   /** The hard delete — the one behind a confirmation. */
   deleteRow(id: number): Promise<SendResult>;
   /** The application plus the mail behind it (`GET /api/applications/{id}` shape). */
@@ -135,6 +148,11 @@ export const liveBoardTransport: BoardTransport = {
   },
   async dismiss(id) {
     const result = await send(removeFromBoardRequest(id));
+    if (result.ok) invalidateDetail(id);
+    return result;
+  },
+  async restore(id) {
+    const result = await send(restoreToBoardRequest(id));
     if (result.ok) invalidateDetail(id);
     return result;
   },
