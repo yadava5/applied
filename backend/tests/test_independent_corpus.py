@@ -46,7 +46,7 @@ from tests.corpus_independent.harness import (
 #: c4b1e3b6c5a4b3b9 since #626: the corpus gained a family, so it gained mail.
 #: 12ac85f9e15c0769 since #641, for the same reason — `anonymous-third-application`
 #: is 180 more messages and 60 more employers.
-CORPUS_DIGEST = "12ac85f9e15c0769"
+CORPUS_DIGEST = "912b033b6461d1ec"
 CORPUS_SIZE = 18200
 
 #: THE RECORDED RUN, in one place, because the README quotes it.
@@ -385,9 +385,23 @@ RECORDED = {
     # in `abstained` below. `wrong` does not move and `auto_filed_wrong` stays 0,
     # so nothing became a false statement to the user; 160 things stopped being
     # counted as read. The corpus was overstating accuracy by 0.88 points.
-    "correct": 16810,
+    # 16810 -> 17010 (#878): +200, the whole of `quoted-history`'s adversarial
+    # half, and it is a FIXTURE correction rather than a classifier change --
+    # no engine file moved. The reply was worded "we would love to set up a
+    # conversation"; `INTERVIEW.strong`'s volition slot wants "would LIKE to",
+    # and across the 110 externally-provenanced interview cases in
+    # `tests/corpus/mail.py` (VERIFIED = published ATS template text,
+    # COLLECTED, MEASURED) `like to` appears 63 times and `love to` ZERO.
+    # `abstained` and `auto_filed_wrong` do not move at all, so nothing was
+    # traded for it.
+    "correct": 17010,
     # 361 -> 304 (#451).
-    "wrong": 304,
+    # 304 -> 104 (#878): -200, the other side of the note above. The family was
+    # never measuring the quote-strip it exists for -- the case was wrong with
+    # the strip active AND inactive, so the 200 graded a wording. With the
+    # attested verb it is correct at 400/400 and the strip is back under test:
+    # neutering `strip_quoted_history` sends the same case to `applied` 0.95.
+    "wrong": 104,
     # 1013 -> 926 (#451). It FELL, which is not what a demotion is supposed
     # to do and is worth saying plainly: the tie-break half moves messages
     # OUT of abstention by giving a tied report the verdict, and that more
@@ -431,6 +445,21 @@ RECORDED = {
     # job search should prefer asking to guessing — and it is recorded here
     # rather than left for someone to rediscover from `cards`.
     "auto_filed_wrong": 0,
+    # WRONG VERDICTS A PERSON IS ACTUALLY SHOWN: confidence in
+    # [REVIEW_FLOOR, AUTO_FILE_GATE) = [0.70, 0.85). The third bucket, and the
+    # one the Booklet has been publishing without a check (#878).
+    #
+    # Its sentence read "0 of the 304 wrong verdicts sit above the 0.85
+    # auto-file gate ... while 200 fall below it and are held for a person to
+    # settle". 0 + 200 is not 304. The partition was understated by 104 and
+    # nothing could see it: only the table entry for `wrong` was registered,
+    # which is the same shape `corpusAutoFiledWrong` already records happening
+    # once before ("It read 119 while the number was 72").
+    #
+    # Measured, not derived. `wrong - auto_filed_wrong` would be algebra that
+    # cannot fail, and it is only equal to this while nothing falls UNDER the
+    # review floor -- which is true today (0) and is not a law.
+    "held_wrong": 104,
     # 9252 -> 9148 (#451). 104 applications that used to appear on the board
     # by themselves now wait for the user. Fully accounted for and nothing
     # became unreachable: `lost` does not move, `dropped` goes 54 -> 0, and
@@ -832,6 +861,20 @@ def test_no_wrong_verdict_is_stated_as_fact(verdicts) -> None:
 
     score = score_classifier(verdicts)
     assert score.wrong == RECORDED["wrong"]
+    held = sum(
+        1 for v in verdicts if v.bucket == "wrong" and 0.70 <= v.confidence < 0.85
+    )
+    assert held == RECORDED["held_wrong"], (
+        f"{held} wrong verdicts are held for a person, not "
+        f"{RECORDED['held_wrong']}. This is the number the Booklet publishes "
+        "beside the auto-filed count; the two plus anything under the review "
+        "floor must account for every wrong verdict."
+    )
+    under_floor = sum(1 for v in verdicts if v.bucket == "wrong" and v.confidence < 0.70)
+    assert score.auto_filed_wrong + held + under_floor == score.wrong, (
+        "the three buckets do not partition `wrong`, so at least one of the "
+        "published numbers describes something other than it claims"
+    )
     assert score.auto_filed_wrong == RECORDED["auto_filed_wrong"], (
         f"{score.auto_filed_wrong} wrong verdict(s) were stated to the user as "
         "fact. These reach the board without anyone being asked, so a rise "
@@ -860,10 +903,23 @@ def test_no_wrong_verdict_is_stated_as_fact(verdicts) -> None:
         ),
         (
             "quoted-history",
-            200,
-            "the general case behind #417, and wider than it: EVERY follow-up "
-            "that quotes its own confirmation reads as `applied`, so an "
-            "interview invite never advances the card it belongs to.",
+            0,
+            "was 200, and the 200 were the FIXTURE (#878). This entry used to "
+            "read 'EVERY follow-up that quotes its own confirmation reads as "
+            "`applied`, so an interview invite never advances the card it "
+            "belongs to' -- a claim about the product that the corpus could "
+            "not support, because the reply was worded 'we would LOVE to set "
+            "up a conversation' and `INTERVIEW.strong`'s volition slot wants "
+            "'would LIKE to'. Across the 110 externally-provenanced interview "
+            "cases in `tests/corpus/mail.py` (VERIFIED = published ATS "
+            "template text, COLLECTED, MEASURED) `like to` appears 63 times "
+            "and `love to` ZERO, so the family was grading a wording no real "
+            "invitation uses. With the attested verb it is 400/400 correct at "
+            "every seed and NO ENGINE FILE MOVED. What it cost was worse than "
+            "200 bad rows: the case came out wrong with `strip_quoted_history` "
+            "active AND inactive, so the family graded the quote-strip it "
+            "exists for not at all. It does now -- neutering the strip sends "
+            "the same case to `applied` 0.95.",
         ),
         (
             "observed-rejection",
@@ -982,9 +1038,22 @@ def test_the_defects_are_not_a_seed_artefact(seed: int) -> None:
     score = score_classifier(classify_all(generate(seed)))
 
     # Structural. These do not move, and if one ever does it is news either way.
-    assert score.by_family["quoted-history"]["wrong"] == 200, (
-        "quoted-history is 200 of 400 at every seed tried. A change here means "
-        "the defect became wording-sensitive, which is a different bug."
+    # TWO-SIDED ON PURPOSE (#878). This read `wrong == 200` while the fixture
+    # was worded in language no real invitation uses, so the number graded the
+    # wording and not the quote-strip -- the case was wrong with the strip
+    # active and inactive alike. It is 400/400 now, and a bare `wrong == 0`
+    # would be the shape this repository keeps shipping badly: a family that
+    # stopped generating cases reads zero wrong and passes. So the denominator
+    # is pinned beside it.
+    quoted = score.by_family["quoted-history"]
+    assert quoted["wrong"] == 0, (
+        f"quoted-history has {quoted['wrong']} wrong at this seed. It is 0 at "
+        "every seed tried; a move means the quote-strip regressed or the "
+        "wording drifted off the attested verb again."
+    )
+    assert quoted["correct"] == 400, (
+        f"quoted-history graded {quoted['correct']} cases, not 400 -- the "
+        "family shrank, and a zero above would then mean nothing."
     )
     # BANDED SINCE #466, and the width is the finding. This was an exact 100 at
     # every seed while every title in the corpus was short. With realistic ones

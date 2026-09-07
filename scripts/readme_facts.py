@@ -1478,6 +1478,19 @@ FACTS: dict[str, dict] = {
             {"re": r'note: "[\d,]+ wrong · ([\d,]+) abstained"', "file": BOOKLET_CONTENT},
         ],
     },
+    "corpusHeldWrong": {
+        "kind": "static",
+        "describe": f"RECORDED['held_wrong'] in {CORPUS_GATE}",
+        "compute": lambda: corpus_recorded("held_wrong"),
+        # The third bucket of `wrong`, and it was prose nobody checked (#878).
+        # The Booklet read "0 of the 304 wrong verdicts sit above the gate ...
+        # while 200 fall below it and are held": 0 + 200 is not 304, and the
+        # partition had been understated by 104 since before anyone noticed.
+        # Same shape as the 119-versus-72 slip recorded on the fact below.
+        "sites": [
+            {"re": r"while ([\d,]+) fall below it and are held", "file": BOOKLET_CONTENT},
+        ],
+    },
     "corpusAutoFiledWrong": {
         "kind": "static",
         "describe": f"RECORDED['auto_filed_wrong'] in {CORPUS_GATE}",
