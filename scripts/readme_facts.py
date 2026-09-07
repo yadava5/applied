@@ -1478,6 +1478,29 @@ FACTS: dict[str, dict] = {
             {"re": r'note: "[\d,]+ wrong · ([\d,]+) abstained"', "file": BOOKLET_CONTENT},
         ],
     },
+    # THE ROW PUBLISHED A DIFFERENT FIELD'S VALUE, and nothing could notice.
+    # `README.md`'s board row "Updates held for a person because the classifier
+    # was unsure" is `RECORDED['update_held']` — "updates the pipeline was not
+    # confident enough to file, so it ASKED". It read **360**, which is
+    # `RECORDED['refused_needs_employer']`, a different measurement entirely
+    # ("cases resolving no employer from sender + subject"). The row was
+    # hand-maintained — 358 -> 351 -> 360 across #447 and #460 — and then stood
+    # still while the field it names went 371 -> 631 -> 685. The README's own
+    # prose forty lines below already said 685, so the document disagreed with
+    # itself in public for two releases.
+    #
+    # Registering it is the fix. A hand-substituted 685 would be correct today
+    # and stale again at the next family addition, which is precisely how it
+    # got here.
+    "corpusUpdateHeld": {
+        "kind": "static",
+        "describe": f"RECORDED['update_held'] in {CORPUS_GATE}",
+        "compute": lambda: corpus_recorded("update_held"),
+        "sites": [
+            r"because the classifier was unsure \| \*\*([\d,]+)\*\* \|",
+            r"held updates rose from [\d,]+ to\s+([\d,]+)\.",
+        ],
+    },
     "corpusHeldWrong": {
         "kind": "static",
         "describe": f"RECORDED['held_wrong'] in {CORPUS_GATE}",
@@ -3103,6 +3126,14 @@ UNCAPTURED_BY_DESIGN: dict[tuple[str, str, str], str] = {
     ),
     ("docs/DEPLOYMENT.md", "3.11", "E2E CI"): (
         "a Python minor in a workflow table row, not a corpus or suite figure"
+    ),
+    ("README.md", "631", "held updates rose from"): (
+        "the BEFORE half of a 'rose from X to Y' sentence — a frozen prior "
+        "value, deliberately not tracking the current one. Y is captured by "
+        "`corpusUpdateHeld`; capturing X too would rewrite the history the "
+        "sentence exists to record. It appeared the moment that row stopped "
+        "being hand-maintained, which is the point: the sentence was always "
+        "half-checkable and nobody could see which half"
     ),
 
     # ── no source exists, and that is the finding ────────────────────────
