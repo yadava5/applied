@@ -236,8 +236,21 @@ class _ServerTimingMiddleware:
 
     - ``app``       — the whole request inside the ASGI app (excludes platform
                       routing/edge, which #203 measured separately at ~130 ms).
-    - ``db_connect``— connection establishment: the NullPool tax. ``n`` is the
-                      count; two connects on a read endpoint was the bug.
+    - ``db_connect``— time spent inside ``do_connect``: a real TCP+TLS+auth
+                      handshake to the pooler. ``n`` is how many this request
+                      opened, and two of them on a read endpoint was the #203
+                      bug. It is NOT "the NullPool tax", which is what this
+                      line used to call it: that gloss describes only the
+                      configuration this repository DEFAULTS to
+                      (``database_pool_size`` 0 → ``NullPool``, one fresh
+                      connection per session). The deployed API sets
+                      ``JOBTRACKER_DATABASE_POOL_SIZE=2`` — an operator value
+                      invisible from this tree — so every request sampled
+                      there reports ``desc="n=0"`` and this phase measures
+                      nothing at all. Which of the two you are reading is
+                      exactly what ``n`` tells you. Measured both ways in
+                      ``docs/WEB_ARCHITECTURE.md`` ("Where a request's time
+                      goes", issue #449).
     - ``db_query``  — statement round trips, INCLUDING the transaction-GUC
                       ``set_config`` — that is real request cost, not overhead
                       to hide.
