@@ -5,7 +5,7 @@ first, and what puts it back.
 
 This exists because "the app learns from your corrections" is currently a
 description of a *training* path, not of a serving one, and because the two
-gates in `backend-ci.yml` measure neither. Both committed baselines read 0.9791
+gates in `backend-ci.yml` measure neither. Both committed baselines read 0.9896
 because both runs are the deterministic path: `--mode rules`, and `--mode hybrid
 --hybrid-profile deterministic`, which calls `set_lite_mode(True)` and blanks the
 embedding store. Nothing in CI has ever scored a model.
@@ -25,6 +25,16 @@ SHA-256 `0aa053536573cd733293fa6a054076a5f78b5c01ebc559e7f912f629fd6adf7e`) by
 Delta: **−0.0210 macro-F1**. The learned layers make it worse. Verdict recorded
 in `backend/data/evaluation/baseline_cascade_v3.json` as
 `comparison.verdict = behind_rules`, `promotable = false`.
+
+**That table is one measurement and is deliberately left at what it measured.**
+Both rows come out of a single `cascade_gate.sh` run on 2026-08-11, and the delta
+is the difference between them. The rules layer alone was re-measured on
+2026-09-07 and scores **0.9896** with one mismatch (#446) — but substituting that
+into the rules row would publish a delta no run ever produced. Re-measuring the
+cascade arm needs a SetFit checkpoint and an environment meeting
+`requirements.txt`'s floors, which is tracked on #446's amendment and has not
+been done. Read the gap as **at least** −0.0210, and the rules figure in the
+prose above as the current one.
 
 Which layers answered, from the same run: `rules=58`, `setfit=20`,
 `fallback=13`, `content_filter=5` — and `embeddings=0`, because the gate runs
@@ -77,7 +87,7 @@ A learned layer may serve real user mail only when **all** of these hold.
    re-training of it: that directory.
 2. **The measurement shows the learned layers answering.** `layers.setfit > 0`
    or `layers.embeddings > 0` in the report. A cascade run that degraded to the
-   rules layer scores 0.9791 and passes every other check, which is the exact
+   rules layer scores 0.9896 and passes every other check, which is the exact
    failure this repository has shipped before; `_assert_layers_exercised`
    refuses it, and `--allow-degraded-layers` must not appear in a promotion run.
 3. **Promotion is its own commit.** Retraining writes a checkpoint. It does not

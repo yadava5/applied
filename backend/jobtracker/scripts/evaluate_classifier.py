@@ -173,7 +173,7 @@ async def predict_labels(
     model is missing — so a hybrid run whose ML layers are all dead still returns
     a full set of predictions, from rules. On this dataset rules and hybrid score
     identically (see ``data/evaluation/benchmark_history.md``), so that run scores
-    0.9791, matches the committed baseline, and passes. A green hybrid benchmark
+    0.9896, matches the committed baseline, and passes. A green hybrid benchmark
     is therefore not by itself evidence that anything hybrid ran. The tally is what
     makes the difference observable, and ``_assert_layers_exercised`` is what makes
     it fatal.
@@ -284,7 +284,7 @@ def _assert_layers_exercised(
     # An allowlist, not "anything that is not rules". ``content_filter`` is a
     # deterministic veto that fires both ahead of the rules layer (hybrid.py:238)
     # and inside the semantic branches (hybrid.py:353, :398), so its presence says
-    # nothing about whether an ML layer ran -- a lite-mode run scores 0.9791 with
+    # nothing about whether an ML layer ran -- a lite-mode run scores 0.9896 with
     # content_filter=5, rules=58, fallback=33 and no model loaded at all. Naming the
     # two layers that are actually models is the only check that excludes that run.
     if any(layers.get(name, 0) > 0 for name in SEMANTIC_LAYERS):
@@ -745,7 +745,7 @@ def build_comparison(
     The question "do the learned layers help?" has been answered in prose for
     months and measured by nothing: CI runs rules, and hybrid under the
     `deterministic` profile that switches the learned layers off, which is why
-    both committed baselines read the same 0.9791. A delta computed here, in the
+    both committed baselines read the same 0.9896. A delta computed here, in the
     same invocation and over the same examples, is the smallest thing that makes
     the answer a number rather than a claim.
 

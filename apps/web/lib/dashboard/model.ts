@@ -16,12 +16,12 @@
  *     either side moves alone. The value is deliberately not restated in this
  *     comment: a number written twice in one file is a number that gets
  *     corrected once.
- *   · MACRO_F1       — 0.979 measured macro-F1 (baseline_hybrid_v3.json).
+ *   · MACRO_F1       — 0.9896 measured macro-F1 (baseline_hybrid_v3.json).
  *   · CI_FLOOR       — 0.95 CI gate; two GitHub Actions gates fail the build
  *     below it (backend-ci.yml).
  */
 export const AUTO_FILE_GATE = 0.85;
-export const MACRO_F1 = 0.979;
+export const MACRO_F1 = 0.9896;
 export const CI_FLOOR = 0.95;
 
 // `DEFAULT_GATE_PREFERENCE`, `GATE_MIN` and `GATE_MAX` used to live here, to

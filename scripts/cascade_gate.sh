@@ -8,7 +8,7 @@
 # --hybrid-profile deterministic`, and `deterministic` switches SetFit off and
 # blanks the embedding store. That is correct for a fast, machine-stable gate --
 # and it means neither gate has ever measured a learned layer. Both committed
-# baselines read the same 0.9791 for exactly that reason.
+# baselines read the same 0.9896 for exactly that reason.
 #
 # The cascade needs a SetFit checkpoint. Checkpoints are trained on disk, live
 # under the app's data directory, are not in the repository (see .gitignore),

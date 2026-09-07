@@ -977,6 +977,41 @@ def baseline(name: str) -> dict:
     return json.loads(read(f"backend/data/evaluation/{name}"))
 
 
+#: The blocks of a baseline that are a MEASUREMENT rather than a route through
+#: the cascade. `artifacts` and `layers` are the route; so is the `method` on a
+#: mismatch record. See the invariant that uses this for why the distinction
+#: had to be drawn (#446).
+_BASELINE_METRIC_KEYS = (
+    "confusion_matrix",
+    "label_distribution",
+    "overall",
+    "per_label",
+    "prediction_distribution",
+)
+
+
+def metric_blocks(name: str) -> dict:
+    """Everything a baseline MEASURED, with the route it took dropped.
+
+    A missing block is a hard failure rather than an absent key: two baselines
+    that both stopped recording `per_label` would compare equal, which is the
+    "a check that cannot fail" shape this file is full of notes about.
+    """
+
+    data = baseline(name)
+    missing = [key for key in _BASELINE_METRIC_KEYS if key not in data]
+    if missing:
+        raise SystemExit(
+            f"  ✗ backend/data/evaluation/{name}: no {', '.join(missing)} block. "
+            f"Nothing can be compared against a baseline that did not record its metrics."
+        )
+    blocks = {key: data[key] for key in _BASELINE_METRIC_KEYS}
+    blocks["mismatches"] = [
+        {k: v for k, v in record.items() if k != "method"} for record in data["mismatches"]
+    ]
+    return blocks
+
+
 TRACKER = "docs/ML_EXECUTION_TRACKER.md"
 
 
@@ -984,7 +1019,7 @@ def tracker_metric(row: str, metric: str) -> float:
     """
     A metric off one of ML_EXECUTION_TRACKER.md's result rows, e.g.
 
-        - rules: `accuracy=0.9792`, `macro_f1=0.9791`, `misclassified=2`
+        - rules: `accuracy=0.9896`, `macro_f1=0.9896`, `misclassified=1`
         - hybrid: `accuracy=0.9583`, `macro_f1=0.9583`, `misclassified=4`
         - v2 hybrid: `accuracy=0.9844`, `macro_f1=0.9843`
 
@@ -992,7 +1027,7 @@ def tracker_metric(row: str, metric: str) -> float:
     document: the README says so itself, in the Documentation table, and there
     is nowhere else for them to come from. `baseline_hybrid_v3.json` cannot
     supply them — it was generated under the `deterministic` profile and reads
-    0.9791, which is the whole trap the Classifier-evaluation section exists to
+    0.9896, which is the whole trap the Classifier-evaluation section exists to
     defuse. Recomputing them for real needs a `--hybrid-profile full` run with
     torch and SetFit resident, which is exactly the kind of thing that must not
     live on the fast path.
@@ -1804,6 +1839,27 @@ FACTS: dict[str, dict] = {
         "sites": [r"historical-miss and (\d+) core-negative"],
     },
     # ── the committed baseline ──
+    #
+    # THE SYSTEM CARD PUBLISHES THIS BASELINE AND WAS GATED BY NOTHING (#446).
+    # Every site below used to be a bare string, i.e. README.md only, while
+    # `booklet/src/content.ts` stated the same three numbers in prose, in a
+    # `exact:` provenance line, in the chapter tagline and in the hero numeral.
+    # Re-recording the baseline and running `--write` would therefore have left
+    # `--check` green with the card still publishing the superseded figure — the
+    # green-gate shape this repository keeps finding. `corpusSize` and
+    # `corpusAccuracy` already carried BOOKLET_CONTENT sites; these did not.
+    # Measured rather than argued: with these five sites present, the `--check`
+    # taken between the re-record and the `--write` named content.ts at 89, 444,
+    # 445, 448 and 449, and every one of those lines still read 0.979x.
+    #
+    # WHY THREE FACTS AND NOT ONE SITE. The card's `exact:` line carries three
+    # numbers — "0.9895652 macro-F1 · 0.9896 accuracy · 1 misclassified" — and
+    # each already has a fact that owns it here (macro_f1, accuracy, and the
+    # length of `mismatches`). A single site cannot check three numbers: a site
+    # regex carries exactly one capture group, and a second number inside its
+    # span with no capture group is precisely what `uncaptured_numbers()` was
+    # written to report. So the line gets three sites, one per fact, each
+    # capturing only its own number.
     "rulesMacroF1": {
         "kind": "static",
         "describe": "macro_f1 in baseline_rules_v3.json",
@@ -1817,19 +1873,47 @@ FACTS: dict[str, dict] = {
             r"reports ([\d.]+) again",
             r"where ([\d.]+) lives",
             r"against a measured ([\d.]+)",
+            {"re": r"the RULES stage scores ([\d.]+) —", "file": BOOKLET_CONTENT},
+            {"re": r'exact: "([\d.]+) macro-F1 · ', "file": BOOKLET_CONTENT},
+            {"re": r'headline: "([\d.]+) macro-F1\."', "file": BOOKLET_CONTENT},
+            {
+                # The hero numeral and the chapter tagline print the figure to
+                # four places like every other site; `render` formats to the
+                # site's own precision, so a three-place "0.979" here would be
+                # rewritten to "0.990" on the next recording — a rounding that
+                # reads as a different claim.
+                "re": r'hero: "([\d.]+)",\n    heroLabel: "macro-F1 · rules stage"',
+                "file": BOOKLET_CONTENT,
+            },
+            {
+                "re": r'PROOF: "([\d.]+) macro-F1 \(rules stage\), CI-gated"',
+                "file": BOOKLET_CONTENT,
+            },
         ],
     },
     "rulesAccuracy": {
         "kind": "static",
         "describe": "accuracy in baseline_rules_v3.json",
         "compute": lambda: baseline("baseline_rules_v3.json")["overall"]["accuracy"],
-        "sites": [r"\(accuracy ([\d.]+), \d+ of \d+ misclassified\)"],
+        "sites": [
+            r"\(accuracy ([\d.]+), \d+ of \d+ misclassified\)",
+            {"re": r"— accuracy ([\d.]+), \d+ misclassified", "file": BOOKLET_CONTENT},
+            {"re": r"macro-F1 · ([\d.]+) accuracy", "file": BOOKLET_CONTENT},
+        ],
     },
     "rulesMismatches": {
         "kind": "static",
         "describe": "mismatch records in baseline_rules_v3.json",
         "compute": lambda: len(baseline("baseline_rules_v3.json")["mismatches"]),
-        "sites": [r"\(accuracy [\d.]+, (\d+) of \d+ misclassified\)"],
+        "sites": [
+            r"\(accuracy [\d.]+, (\d+) of \d+ misclassified\)",
+            # Both booklet sites stop before the "of 96", so the sample count
+            # stays outside every span here: it is a claim about the dataset,
+            # not about this baseline, and dragging it inside a site span would
+            # oblige a fact to capture it or a waiver to excuse it.
+            {"re": r"accuracy [\d.]+, (\d+) misclassified", "file": BOOKLET_CONTENT},
+            {"re": r'accuracy · (\d+) misclassified"', "file": BOOKLET_CONTENT},
+        ],
     },
     # ── the cascade, whose numbers live in the tracker and nowhere else ──
     "cascadeMacroF1": {
@@ -2755,16 +2839,41 @@ INVARIANTS = [
         ),
     },
     {
-        "name": "baseline_rules_v3.json and baseline_hybrid_v3.json differ only in `meta`",
+        "name": "baseline_rules_v3.json and baseline_hybrid_v3.json measure the same thing",
         # The README's central defusing claim. If the two files ever differ in a
         # metric block, the paragraph explaining why they read the same is wrong.
+        #
+        # NARROWED 2026-09-07 (#446), and since narrowing a gate is how gates
+        # die, here is exactly what was given up and why. This used to compare
+        # everything outside `meta`, and it held because both files were
+        # recorded on 2026-03-03 with seven keys apiece — before the evaluator
+        # learned to record `artifacts`, `layers` and the layer that answered
+        # each mismatch. Re-recording adds those three, and they differ for a
+        # reason that is the classifier working: `--mode rules` answers all 96
+        # from the rules layer, while the `deterministic` hybrid profile sends
+        # every verdict under the accept threshold on through a blanked
+        # embedding layer to `fallback` (content_filter=5, fallback=30,
+        # rules=61). Same verdicts, same metrics, different route. Requiring
+        # byte-equality there reds on a census doing its job, and the cheapest
+        # way to make it green again would be to stop recording the census.
+        #
+        # What the README's paragraph actually claims is about the NUMBERS, so
+        # that is what is compared: every metric block exactly, and each
+        # mismatch by expected/predicted/subject with `method` — the one field
+        # the route is allowed to move — dropped.
         "holds": lambda f: (
-            {k: v for k, v in baseline("baseline_rules_v3.json").items() if k != "meta"}
-            == {k: v for k, v in baseline("baseline_hybrid_v3.json").items() if k != "meta"}
+            metric_blocks("baseline_rules_v3.json") == metric_blocks("baseline_hybrid_v3.json")
         ),
         "explain": lambda f: (
-            "the two v3 baselines no longer agree outside `meta`. The README says every metric "
-            "block is identical and only `mode`/`hybrid_profile`/timestamp differ; that is now false."
+            "the two v3 baselines no longer agree on what they measured — "
+            + ", ".join(
+                key
+                for key in sorted(metric_blocks("baseline_rules_v3.json"))
+                if metric_blocks("baseline_rules_v3.json")[key]
+                != metric_blocks("baseline_hybrid_v3.json")[key]
+            )
+            + " differ. The README says the `deterministic` profile measures the rules path, so "
+            "every metric block has to match; whichever file was regenerated, the other was not."
         ),
     },
     {
@@ -2987,11 +3096,11 @@ def same_number(found: str, expected) -> bool:
     """
     Compare at the precision the site itself uses.
 
-    `baseline_rules_v3.json` stores macro_f1 as 0.9791304347826086; the README
-    quotes 0.9791. Demanding string equality against the stored float would put
+    `baseline_rules_v3.json` stores macro_f1 as 0.9895652173913043; the README
+    quotes 0.9896. Demanding string equality against the stored float would put
     sixteen digits in a sentence, and truncating the truth to four before
-    comparing would let 0.97913 and 0.97919 both satisfy a site claiming 0.9791
-    — they do, and correctly so, because that is what "0.9791" asserts. So the
+    comparing would let 0.98956 and 0.98959 both satisfy a site claiming 0.9896
+    — they do, and correctly so, because that is what "0.9896" asserts. So the
     truth is rounded to the site's own number of decimal places. A site that
     wants a tighter claim simply writes more digits.
     """
