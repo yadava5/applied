@@ -343,26 +343,39 @@ def test_subjects_without_an_at_sign_are_untouched() -> None:
     )
 
 
-def test_the_two_cases_this_rule_still_gets_wrong() -> None:
-    """Characterisation, deliberately — both are argued in ``_employer_from_subject``.
+def test_the_role_with_no_at_sign_is_no_longer_read_as_a_company() -> None:
+    """This line WAS a characterisation of a defect. It went green; rewritten.
 
-    Pinned so the next person to widen this reads the reasoning instead of
-    discovering the trade-off by accident. Either line going green is a real
-    improvement and wants this test rewritten, not deleted.
+    The previous version pinned ``"Your application to Systems Research
+    Engineer"`` returning the job title, and said so deliberately: "Either line
+    going green is a real improvement and wants this test rewritten, not
+    deleted." It is now green because `_employer_from_subject` refuses a
+    capture whose head is a title head noun.
+
+    The spelling of the old wrong answer had already moved once — #532 stopped
+    an unanchored `_CORP_TAIL` eating the leading "Systems", so it read
+    "Research Engineer" before that and "Systems Research Engineer" after —
+    which is why this is asserted as `is None` rather than against any
+    particular string.
     """
-    # 1. No at-sign, so nothing separates the role from a company: the
-    #    preposition's object wins and it is a job title.
-    #
-    #    The SPELLING of that wrong answer changed with #532 and the answer did
-    #    not. It read "Research Engineer" while `_clean_company_display` ran an
-    #    unanchored `_CORP_TAIL`, which deleted the leading "Systems" — so the
-    #    rule was wrong AND was hiding a word. It is still a job title, which is
-    #    the thing this line pins; nothing here has gone green.
     assert (
         p._employer_from_subject("Your application to Systems Research Engineer", ats_relay=True)
-        == "Systems Research Engineer"
+        is None
     )
-    # 2. The at-sign path does not ask whether it just named the COURIER.
+    # The directional control: the same shape with a real company still
+    # resolves, so the refusal above is about the TITLE and not about the
+    # "application to <X>" pattern having stopped working.
+    assert p._employer_from_subject("Your application to Stripe", ats_relay=True) == "Stripe"
+
+
+def test_the_one_case_this_rule_still_gets_wrong() -> None:
+    """Characterisation, deliberately — argued in ``_employer_from_subject``.
+
+    Pinned so the next person to widen this reads the reasoning instead of
+    discovering the trade-off by accident. This line going green is a real
+    improvement and wants this test rewritten, not deleted.
+    """
+    # The at-sign path does not ask whether it just named the COURIER.
     assert (
         p._employer_from_subject("Your application to Acme @ Greenhouse", ats_relay=True)
         == "Greenhouse"

@@ -288,11 +288,13 @@ class HybridClassifier:
         #   the content guard's own ``logger.debug`` slices ``subject[:120]``
         #         and raises ``TypeError: 'NoneType' object is not
         #         subscriptable``. It is an ARGUMENT, evaluated eagerly
-        #         whatever the log level, so a diagnostic that is switched OFF
-        #         in production still destroys the branch it exists to
-        #         describe. ``_forced_other_reason`` is itself null-safe, so
-        #         the crash lands strictly INSIDE a branch that had already
-        #         decided the answer.
+        #         whatever the log level, so being switched off buys the
+        #         branch no protection at all -- the argument is built either
+        #         way. ``_forced_other_reason`` is itself null-safe, so the
+        #         raise lands strictly INSIDE a branch that had already decided
+        #         the answer. Latent rather than live: no caller at HEAD can
+        #         pass a null, and the reachable shape is the storage layer's
+        #         ``Optional[str]`` fields, not Gmail ingestion.
         #   the lifecycle rescan composes ``f"{subject}\n{body}"``. It does not
         #         raise -- it interpolates the literal text ``None`` and scans
         #         that, which is the worse of the two because nothing

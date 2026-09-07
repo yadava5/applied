@@ -264,24 +264,26 @@ def test_the_string_path_is_unchanged(
 # returned a reason, so the answer existed and was thrown away on the way to
 # describing it.
 #
-# THE TWO ARMS DO NOT BOTH DISCRIMINATE HERE, and that is a measured result
-# rather than an oversight. Deleting each normalisation in turn, on the five
-# inputs below:
+# THE TWO ARMS RED IN DIFFERENT PLACES, and finding the body one took a
+# correction. Deleting each normalisation in turn moves nothing at all on five
+# plausible OUTCOME inputs: the subject arm raises, the body arm is invisible.
+# ``_forced_other_reason`` and the rules layer both re-normalise internally,
+# and no lifecycle pattern matches the literal text ``None`` -- measured, 0 of
+# 11 lifecycle and 0 of 31 non-application patterns, against a control where
+# real lifecycle text matches 1.
 #
-#     delete ``subject = subject or ""``  -> null-subject + digest body RAISES
-#                                            TypeError; the other four unmoved
-#     delete ``body = body or ""``        -> NOTHING MOVES. All five identical.
+# AN EARLIER VERSION OF THIS COMMENT CONCLUDED FROM THAT THAT THE BODY ARM WAS
+# UNGATEABLE, and named the lifecycle rescan as its only reader. Both halves
+# were wrong. The learned layers read the body too, and they do not merely scan
+# it: ``embeddings.py`` and ``setfit_model.py`` each build
+# ``f"{subject}\n\n{body}"`` and hand it to a model, so an unguarded ``None``
+# becomes the literal token "None" inside what gets ENCODED. That is a worse
+# reader than the rescan, not a lesser one, and it is reachable whenever the
+# rules layer neither misses nor answers confidently.
 #
-# So only the subject arm is gated, and the file says so instead of shipping a
-# body test that would pass with the line deleted. The body normalisation is
-# still correct and still lands: ``_forced_other_reason`` and the rules layer
-# each re-normalise internally, so the only reader that can currently observe a
-# raw ``None`` is the lifecycle rescan, which composes ``f"{subject}\n{body}"``
-# and would scan the literal text ``None`` — and no lifecycle pattern matches
-# that word, so the difference is real but has no outcome to show. It is kept
-# for parity with ``RulesClassifier.classify``'s signature, which is the whole
-# subject of this issue, and it is deliberately UNGATED rather than falsely
-# gated.
+# So the body arm IS gated below, by watching what the layer is HANDED rather
+# than what the classifier returns. The lesson is this file's own: "no outcome
+# moved" is a statement about the outputs you happened to look at.
 
 #: Two ``NON_APPLICATION_PATTERNS`` hits and no lifecycle hit, which is what
 #: ``_forced_other_reason`` requires to return "digest_or_promotional_content".
@@ -296,7 +298,14 @@ def _hybrid(subject, body, sender):
 
 
 def test_the_content_guard_answers_a_null_subject_instead_of_raising() -> None:
-    """The live crash, with the control that proves the branch was reached.
+    """The raise, with the control that proves the branch was reached.
+
+    LATENT, not a live production crash, and said here for the same reason the
+    module docstring says it of the rules layer: `CloudGmailMessage.subject` is
+    typed `str` and the evaluation loader coerces every field, so no caller at
+    HEAD can pass a null. What is real is the same gap one level up -- the
+    storage layer's `Email.subject` / `Email.body_text` are `Optional[str]`,
+    which is a shape this signature promised to accept and did not.
 
     ``confidence == 0.96`` and ``method == "content_filter"`` are the guard's
     own signature. Asserting them rather than "did not raise" is what stops
@@ -350,3 +359,65 @@ def test_a_null_does_not_disturb_a_verdict_the_hybrid_already_reached() -> None:
     assert _hybrid("Update on your application", "", "careers@halberd.test").category == (
         result.category
     )
+
+
+class _RecordingEmbeddings:
+    """Captures exactly what layer 2 is handed.
+
+    Swapped in through the setter ``HybridClassifier`` provides for this
+    purpose. ``classify`` returns ``None`` so the hybrid falls through
+    unchanged: this fake is an INSTRUMENT, and it must not be able to move the
+    verdict it is observing.
+    """
+
+    def __init__(self) -> None:
+        self.seen: list[tuple[object, object]] = []
+
+    def is_available(self) -> bool:
+        return True
+
+    async def classify(self, subject, body):
+        self.seen.append((subject, body))
+        return None
+
+
+#: An input that REACHES layer 2 -- the rules layer neither misses nor answers
+#: confidently, so the embedding branch runs. Chosen by measurement: three
+#: other plausible inputs ("Interview invitation for you", "Interview
+#: scheduling", "Hello there") never reach it, and a test written against one
+#: of those would assert nothing while looking identical to this one.
+LAYER_TWO_SUBJECT = "Update on your application"
+LAYER_TWO_BODY = "thanks"
+
+
+def test_the_learned_layer_is_handed_an_empty_body_not_a_null() -> None:
+    """The body arm's gate. Deleting ``body = body or ""`` reds this.
+
+    Asserted on what the layer RECEIVES, because the verdict does not move --
+    every outcome-level probe of this arm came back identical with the
+    normalisation deleted. What changes is the argument, and the argument is
+    what a model would encode.
+    """
+    hybrid = HybridClassifier()
+    fake = _RecordingEmbeddings()
+    hybrid._embeddings = fake
+
+    asyncio.run(hybrid.classify(LAYER_TWO_SUBJECT, None, "a@b.example"))
+
+    assert fake.seen == [(LAYER_TWO_SUBJECT, "")]
+
+
+def test_the_recording_layer_is_actually_reached() -> None:
+    """The control for the test above.
+
+    A fake that is never called is the classic way this shape passes dead: an
+    empty ``seen`` would satisfy any assertion phrased as "never receives
+    None". This pins that the branch runs on an ordinary string input.
+    """
+    hybrid = HybridClassifier()
+    fake = _RecordingEmbeddings()
+    hybrid._embeddings = fake
+
+    asyncio.run(hybrid.classify(LAYER_TWO_SUBJECT, LAYER_TWO_BODY, "a@b.example"))
+
+    assert fake.seen == [(LAYER_TWO_SUBJECT, LAYER_TWO_BODY)]

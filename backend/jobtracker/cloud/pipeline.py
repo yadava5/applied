@@ -2695,15 +2695,8 @@ def _employer_from_subject(
     would file as "Systems Research Engineer": still a job title, and now at
     least a whole one. The ordering fix is what makes it read the employer.
 
-    Two rules this leaves wrong, stated rather than papered over:
+    One rule this leaves wrong, stated rather than papered over:
 
-    - A subject naming a role with NO at-sign still yields the role. "Your
-      application to Systems Research Engineer" alone returns "Research
-      Engineer", because nothing in that line distinguishes it from "Your
-      application to Stripe". Deciding it would need a role-vocabulary test, and
-      the only place to put one is :func:`_valid_company_token` — which is also
-      what the USER-typed company path goes through, so a company whose name
-      reads like a title would stop being enterable by hand.
     - The at-sign path does not check whether it just named the RELAY. "Your
       application to Acme @ Greenhouse" resolves to Greenhouse, not Acme.
       Adding :func:`_names_the_relay` here would cost more than it saves: the
@@ -2750,6 +2743,14 @@ def _employer_from_subject(
             # employer even in relayed mail; #508 is the record of what a blanket
             # relay-vocabulary refusal costs a company that is also a platform.
             continue
+        # THIS IS THE ROLE-VOCABULARY TEST THIS DOCSTRING USED TO SAY WAS
+        # IMPOSSIBLE. The refused version of it said "the only place to put one
+        # is `_valid_company_token`" — which is also the USER-TYPED company
+        # path, so a company whose name reads like a title would have stopped
+        # being enterable by hand. That is true of `_valid_company_token` and
+        # not of this loop: a refusal here rejects ONE READING of ONE subject
+        # and never sees a typed name. "Your application to Systems Research
+        # Engineer" returned the job title until this line existed.
         if _names_a_role_not_an_employer(display):
             # `continue`, not `return None`, for the reason the segment reader
             # gives: this refuses THIS READING of the subject, so a later
