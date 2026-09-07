@@ -3,8 +3,17 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+# A trailing slash matches DIRECTORIES ONLY, so `.venv*/` never matched a
+# SYMLINK named `.venv311` — and an agent that pointed one at the real venv and
+# ran `git add -A` would have published this repository's blob for it, which is
+# the symlink's TARGET: a local absolute path. Both forms are kept: the
+# slashless pattern is what catches the link, the slashed one stays because it
+# is the clearer statement of the common case.
+.venv
 .venv/
+.venv*
 .venv*/
+venv
 venv/
 env/
 *.egg-info/
