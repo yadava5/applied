@@ -416,21 +416,31 @@ RECORDED = {
     # The number that matters more than `wrong`: how many wrong verdicts are
     # stated to the user as fact rather than held for them to settle.
     #
-    # 72 ENCODES KNOWN, OPEN DEFECTS and is not a target. The decomposition
-    # below accounts for 16 of the 72 and the remaining 56 are UNATTRIBUTED —
-    # said plainly, because this comment used to name two families under a
-    # headline of 116 and read as though it explained the whole number. 14 are
-    # #455:
-    # a rejection whose full body says "we have decided not to move forward" is
-    # scored `applied` at exactly the auto-file gate because the JOB TITLE
-    # contains the word "Career", so the title — reference text, naming which
-    # application — supplies the points that decide what happened to it. The
-    # other 2 are `ats-relay-noise` scoring a profile-completion nudge as job
-    # mail. The number is pinned so a fix MOVES it; nothing here is blessed by
-    # being pinned. See #455 and #451.
-    # 72 -> 0 (#451), and this is the headline of that change: the number
-    # this repository calls the one that matters more than `wrong` — a
-    # verdict stated to the user as fact without anyone being asked.
+    # IT IS 0, AND HAS BEEN SINCE #451. Read that before the paragraphs below,
+    # which describe the 72 it used to be: this comment previously opened on
+    # "72 ENCODES KNOWN, OPEN DEFECTS", in the present tense, decomposed it
+    # over eight lines, and only then mentioned that the value is 0. A reader
+    # arriving at it was told a live figure that had not existed for weeks.
+    # (#536 item 5 — and the third instance of that shape found in one pass,
+    # so it is a class rather than a slip.)
+    #
+    # 72 -> 0 (#451) is the headline of that change: the number this
+    # repository calls the one that matters more than `wrong` — a verdict
+    # stated to the user as fact without anyone being asked.
+    #
+    # WHAT THE 72 WAS, kept because a fix that regresses will land back in
+    # these families and the decomposition is the fastest way to recognise it.
+    # It encoded known, open defects and was not a target. The decomposition
+    # accounted for 16 of the 72; the remaining 56 were UNATTRIBUTED — said
+    # plainly, because an even earlier version named two families under a
+    # headline of 116 and read as though it explained the whole number. 14
+    # were #455: a rejection whose full body says "we have decided not to move
+    # forward" scored `applied` at exactly the auto-file gate because the JOB
+    # TITLE contained the word "Career", so the title — reference text, naming
+    # which application — supplied the points that decided what happened to
+    # it. The other 2 were `ats-relay-noise` scoring a profile-completion
+    # nudge as job mail. The number is pinned so a fix MOVES it; nothing here
+    # is blessed by being pinned. See #455 and #451.
     #
     # ZERO IS NOT "ELIMINATED", and the difference is measurable. At the two
     # other seeds this file re-samples it reads 0 and 1 (from 72 and 82). So
