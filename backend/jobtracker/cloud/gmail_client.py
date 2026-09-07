@@ -358,6 +358,92 @@ def _error_status(exc: BaseException) -> int | None:
         return None
 
 
+#: The longest deferral worth advertising, in seconds.
+#:
+#: A DECISION, not a defaulting rule (#869). Gmail's own guide says a daily
+#: limit "might result in these errors for multiple hours", so a refusal is
+#: entitled to name a wait longer than this. An hour is where the number stops
+#: being actionable to a person watching a scan: past it the honest instruction
+#: is "come back later", which is what the UI already says, and a larger figure
+#: only makes an automatic client sit still for longer than anyone waits.
+#:
+#: Clamping DOWN is the safe direction here. Understating the wait costs one
+#: more refusal; overstating it strands a scan that Gmail would have served --
+#: and an understated wait self-corrects, because the next refusal carries a
+#: fresh header.
+#:
+#: THIS IS NOT THE CEILING A BROWSER SEES, and the two must be read together.
+#: ``apps/web/lib/gmail/server.ts`` re-clamps to **300** on the way out
+#: ("bounded so a hostile or buggy header cannot park the UI for an hour"), so
+#: no scan-watcher can observe more than five minutes and this number is
+#: visible only to a direct API caller. Cross-referenced in both directions on
+#: purpose: raising one to match the other is a product decision, and the
+#: previous version of this comment justified 3600 by what "a person watching a
+#: scan" would see, which is a thing this value cannot reach.
+_RETRY_AFTER_MAX_SECONDS = 3600
+
+
+def retry_after_seconds(exc: BaseException) -> int | None:
+    """The wait Gmail asked for, or ``None`` when it asked for nothing.
+
+    ISSUE #869. Every rate-limited answer this app gave said 60 seconds
+    whatever the server said, because the only raise site constructed
+    ``GmailRateLimited()`` with no argument. On the 403 per-minute path 60 is
+    a good inference -- the bucket refills on a minute boundary -- but
+    ``is_rate_limited_gmail_error`` also returns True on a bare 429, and that
+    is a different family: daily per-user, bandwidth and concurrency limits,
+    which Gmail documents as lasting hours and as carrying a time to retry.
+
+    RFC 7231 allows TWO spellings and both are handled, because a parser that
+    understands only the integer silently discards the other and reads as
+    "the server said nothing":
+
+      * delta-seconds -- ``Retry-After: 180``
+      * an HTTP-date  -- ``Retry-After: Wed, 21 Oct 2026 07:28:00 GMT``
+
+    Case is not this function's problem: ``HttpError.resp`` is an
+    ``httplib2.Response``, which is a dict subclass that lower-cases every
+    header key it is constructed with, so ``Retry-After`` arrives as
+    ``retry-after``. Verified against the installed httplib2 rather than
+    assumed.
+
+    Defensive throughout, for the same reason as :func:`_error_status`: this
+    runs on the failure path, and an exception raised while inspecting an
+    exception turns a recoverable deferral into a crash.
+
+    Returns ``None`` -- meaning "fall back", not "zero" -- when the header is
+    absent, blank, unparseable, or names a moment that has already passed. A
+    date in the past is a wait of nothing, and answering 0 would invite an
+    immediate re-request into the bucket that just refused it.
+    """
+
+    resp = getattr(exc, "resp", None)
+    try:
+        raw = resp.get("retry-after")  # type: ignore[union-attr]
+    except (AttributeError, TypeError):
+        return None
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    raw = raw.strip()
+
+    try:
+        seconds = int(raw)
+    except ValueError:
+        try:
+            when = parsedate_to_datetime(raw)
+        except (TypeError, ValueError):
+            return None
+        if when is None:
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=UTC)
+        seconds = int((when - datetime.now(UTC)).total_seconds())
+
+    if seconds <= 0:
+        return None
+    return min(seconds, _RETRY_AFTER_MAX_SECONDS)
+
+
 def _error_reasons(exc: BaseException) -> frozenset[str]:
     """Every ``reason`` string Gmail attached to an error.
 

@@ -194,6 +194,13 @@ function retryAfter(headers?: Headers): number {
   const parsed = raw === null || raw === undefined ? NaN : Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) return RETRY_AFTER_FALLBACK_SECONDS;
   // Bounded so a hostile or buggy header cannot park the UI for an hour.
+  //
+  // THIS IS THE CEILING ANY VIEWER ACTUALLY SEES, and it is lower than the
+  // backend's. `gmail_client._RETRY_AFTER_MAX_SECONDS` clamps to 3600 before
+  // the header is emitted, so a wait between 300 and 3600 exists only for a
+  // direct API caller and is re-clamped here. Cross-referenced in both
+  // directions on purpose: raising one to match the other is a product
+  // decision, not a tidy-up.
   return Math.min(Math.ceil(parsed), 300);
 }
 
