@@ -8,12 +8,35 @@ const ROUTES: {
   title: string;
   body: string;
   icon: LucideIcon;
+  /**
+   * Render a plain `<a>` instead of `next/link`.
+   *
+   * Set when the href is a route handler that answers with a cross-origin
+   * redirect (here: to accounts.google.com). That is a full document
+   * navigation, not a client-side transition, and `next/link` would try to
+   * prefetch and soft-navigate a thing that is not a page. Same reasoning,
+   * and the same shape, as `ConnectGmailButton`.
+   */
+  fullNavigation?: boolean;
 }[] = [
   {
-    href: "/settings",
+    // STRAIGHT TO THE CONSENT, not to the page that holds the button (#494).
+    // This tile is labelled "Connect Gmail" and used to land on `/settings`,
+    // where the reader then had to find `ConnectGmailButton` and press it —
+    // two hops and a hunt for the one action the tile names. Every route into
+    // the product except a first Google signup paid that.
+    //
+    // `?from=dashboard` is what makes the one hop safe to take: the authorize
+    // route reads it and returns BOTH the success and the failure to
+    // `/dashboard`, the place this was clicked, rather than to
+    // `/settings?gmail=…` — a preferences page nobody asked for. The flag's
+    // full vocabulary is defined and explained in
+    // `app/api/gmail/authorize/route.ts`; this is one of its two values.
+    href: "/api/gmail/authorize?from=dashboard",
     title: "Connect Gmail",
     body: "Read-only. The classifier reads job mail at the source and files it for you.",
     icon: Mail,
+    fullNavigation: true,
   },
   {
     href: "/import",
@@ -36,12 +59,12 @@ export function ForwardRoutes() {
     <div className="grid gap-3 sm:grid-cols-2">
       {ROUTES.map((route) => {
         const Icon = route.icon;
-        return (
-          <Link
-            key={route.href}
-            href={route.href}
-            className="group rounded-xl border border-line bg-surface-2 p-4 transition-colors hover:border-line-strong"
-          >
+        const tileClass =
+          "group rounded-xl border border-line bg-surface-2 p-4 transition-colors hover:border-line-strong";
+        // One body, two wrappers — written out rather than picked through an
+        // `ElementType`, which would type-check the props of neither.
+        const body = (
+          <>
             <div className="flex items-center justify-between">
               <Icon
                 className="h-4 w-4 text-muted transition-colors group-hover:text-strong"
@@ -57,6 +80,15 @@ export function ForwardRoutes() {
             <p className="mt-1 text-[12px] leading-snug text-muted">
               {route.body}
             </p>
+          </>
+        );
+        return route.fullNavigation ? (
+          <a key={route.href} href={route.href} className={tileClass}>
+            {body}
+          </a>
+        ) : (
+          <Link key={route.href} href={route.href} className={tileClass}>
+            {body}
           </Link>
         );
       })}
