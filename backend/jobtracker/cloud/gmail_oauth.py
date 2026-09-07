@@ -1817,12 +1817,22 @@ async def gmail_inbox(
         # user to wait for something waiting cannot fix.
         if not is_rate_limited_gmail_error(exc):
             raise
+        # THE INSTRUMENT FOR THIS CHANGE'S OWN UNMEASURED HALF (#869). Nobody
+        # has yet observed whether Gmail's 429s on the READ paths this app uses
+        # carry `Retry-After` at all -- the sentence in Google's guide that
+        # promises one sits in a section that also covers sending. Logging what
+        # was parsed turns that from an argument into something answerable from
+        # production logs, with no new machinery and nothing private: it is an
+        # integer or the word "absent".
+        supplied = retry_after_seconds(exc)
         logger.warning(
             "Gmail deferred an inbox page for user_id=%s beyond retry; "
-            "answering 429 so the mine can resume from its cursor.",
+            "answering 429 so the mine can resume from its cursor. "
+            "Retry-After supplied by Gmail: %s",
             user_id,
+            "absent" if supplied is None else supplied,
         )
-        raise GmailRateLimited(retry_after_seconds(exc)) from exc
+        raise GmailRateLimited(supplied) from exc
     if page is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

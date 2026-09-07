@@ -165,36 +165,88 @@ def test_the_default_is_still_a_minute() -> None:
 def test_the_raise_site_passes_the_refusal_to_the_parser() -> None:
     """A source-level check, and its limits are worth stating.
 
-    The regression this catches is precise and is exactly what was there
-    before: ``raise GmailRateLimited() from exc``. A helper that parses
-    perfectly and is never called reads identically to a fixed constant from
-    the client's side, and every test above would still pass.
+    The regressions this catches are precise, and both were found by mutating
+    rather than reasoned about:
+
+    * ``raise GmailRateLimited() from exc`` — the shape that was there before,
+      which makes every rate-limited answer a constant again.
+    * ``retry_after_seconds()`` with no argument — which passed an earlier
+      version of this test GREEN and raises ``TypeError: missing 1 required
+      positional argument`` **while handling the original exception**, so every
+      rate-limited scan becomes a 500. A gate written to guard a line, green
+      while the line 500s, is this estate's recurring defect.
+
+    It accepts either spelling — the parser called inline, or bound to a name
+    first so the value can be logged — and checks the LINKAGE rather than the
+    text, so hoisting the call is a refactor and not a failure. The argument's
+    name is deliberately not pinned; renaming ``exc`` is not a defect.
 
     It is source-level because ``gmail_inbox`` is a FastAPI endpoint behind
     ``current_user``, a credentials lookup and a database session, and no
-    harness in this suite drives it -- ``GmailRateLimited`` is referenced by no
+    harness in this suite drives it — ``GmailRateLimited`` is referenced by no
     other test file at all, so the 429 path has never been exercised at the
-    endpoint. Building that harness is worth doing and is not this change.
+    endpoint. That debt predates this change. It is also cheaper to retire than
+    it looks: ``fetch_message_page`` is imported lazily inside ``gmail_inbox``,
+    so monkeypatching it to raise a header-carrying ``HttpError`` plus one
+    dependency override would drive the real ``except`` branch and demote this
+    test to belt-and-braces. Filed as follow-up rather than done here.
 
-    So: this asserts the CALL SHAPE and cannot prove the branch executes. What
-    it can prove is that nobody quietly reverted the argument.
+    So: this asserts the call shape and cannot prove the branch executes. What
+    it proves is that nobody quietly severed the wiring.
     """
     from jobtracker.cloud import gmail_oauth
 
     tree = ast.parse(inspect.getsource(gmail_oauth.gmail_inbox))
-    calls = [
+
+    parser_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "retry_after_seconds"
+    ]
+    assert parser_calls, "gmail_inbox never calls retry_after_seconds"
+    for call in parser_calls:
+        assert len(call.args) == 1 and not call.keywords, (
+            "retry_after_seconds is called with the wrong number of arguments. "
+            "This raises inside an except block, turning a recoverable deferral "
+            f"into a 500: {ast.dump(call)}"
+        )
+        assert isinstance(call.args[0], ast.Name), ast.dump(call)
+
+    # Names bound to the parser's result, so the hoisted spelling is accepted.
+    bound = {
+        target.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "retry_after_seconds"
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+
+    raises = [
         node
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "GmailRateLimited"
     ]
-    assert calls, "gmail_inbox no longer raises GmailRateLimited at all"
-    for call in calls:
+    assert raises, "gmail_inbox no longer raises GmailRateLimited at all"
+    for call in raises:
         assert call.args, (
             "GmailRateLimited() is constructed with no argument again, so every "
             "rate-limited answer is a constant whatever Gmail said (#869)"
         )
         arg = call.args[0]
-        assert isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name), arg
-        assert arg.func.id == "retry_after_seconds", ast.dump(arg)
+        inline = (
+            isinstance(arg, ast.Call)
+            and isinstance(arg.func, ast.Name)
+            and arg.func.id == "retry_after_seconds"
+        )
+        hoisted = isinstance(arg, ast.Name) and arg.id in bound
+        assert inline or hoisted, (
+            "GmailRateLimited is constructed with something that did not come "
+            f"from retry_after_seconds: {ast.dump(arg)}"
+        )

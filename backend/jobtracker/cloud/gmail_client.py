@@ -368,7 +368,18 @@ def _error_status(exc: BaseException) -> int | None:
 #: only makes an automatic client sit still for longer than anyone waits.
 #:
 #: Clamping DOWN is the safe direction here. Understating the wait costs one
-#: more refusal; overstating it strands a scan that Gmail would have served.
+#: more refusal; overstating it strands a scan that Gmail would have served --
+#: and an understated wait self-corrects, because the next refusal carries a
+#: fresh header.
+#:
+#: THIS IS NOT THE CEILING A BROWSER SEES, and the two must be read together.
+#: ``apps/web/lib/gmail/server.ts`` re-clamps to **300** on the way out
+#: ("bounded so a hostile or buggy header cannot park the UI for an hour"), so
+#: no scan-watcher can observe more than five minutes and this number is
+#: visible only to a direct API caller. Cross-referenced in both directions on
+#: purpose: raising one to match the other is a product decision, and the
+#: previous version of this comment justified 3600 by what "a person watching a
+#: scan" would see, which is a thing this value cannot reach.
 _RETRY_AFTER_MAX_SECONDS = 3600
 
 
