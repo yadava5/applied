@@ -326,7 +326,15 @@ test("the board row neutralises and flags a hostile company AND role", async () 
         SameCompanyChip: stubLeaf("chip"),
       }),
       "@/components/dashboard/RowActionsMenu": stubModule({ RowActionsMenu: stubLeaf("menu") }),
-      "@/components/feedback/notify": stubModule({ notifySuccess: () => {} }),
+      // All three, not just the one the row happened to import when this was
+      // written: a stub missing an export the module now names fails at import
+      // with `SyntaxError`, which reads as a broken component rather than a
+      // stale stub.
+      "@/components/feedback/notify": stubModule({
+        notifySuccess: () => {},
+        notifyError: () => {},
+        notifyUndo: () => {},
+      }),
       "@/lib/dashboard/transport": stubModule({ liveBoardTransport: {} }),
       ...REAL_MAIL_TEXT,
     },
@@ -406,7 +414,15 @@ test("the removal tombstone neutralises and flags the employer it names", async 
         SameCompanyChip: stubLeaf("chip"),
       }),
       "@/components/dashboard/RowActionsMenu": stubModule({ RowActionsMenu: stubLeaf("menu") }),
-      "@/components/feedback/notify": stubModule({ notifySuccess: () => {} }),
+      // All three, not just the one the row happened to import when this was
+      // written: a stub missing an export the module now names fails at import
+      // with `SyntaxError`, which reads as a broken component rather than a
+      // stale stub.
+      "@/components/feedback/notify": stubModule({
+        notifySuccess: () => {},
+        notifyError: () => {},
+        notifyUndo: () => {},
+      }),
       "@/lib/dashboard/transport": stubModule({ liveBoardTransport: {} }),
       ...REAL_MAIL_TEXT,
     },

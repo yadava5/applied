@@ -4,6 +4,7 @@ import { ExternalLink, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
+import { notifySuccess } from "@/components/feedback/notify";
 import { MailText } from "@/components/mail/MailText";
 import { ApplicationPicker } from "@/components/review/ApplicationPicker";
 import { GateMeter } from "@/components/viz/GateMeter";
@@ -15,6 +16,7 @@ import {
   asksWhichApplication,
   canNameCompany,
   canSubmitReview,
+  classifiedMessage,
   classifyDecisionBody,
   confirmCompanyPrompt,
   employerPromptFor,
@@ -68,6 +70,14 @@ const CATEGORY_CHOICES: { value: string; label: string }[] = [
   { value: "rejection", label: "rejection" },
   { value: "other", label: "not job related" },
 ];
+
+/** The word this control showed for a value, for the toast that reports what
+ *  the click did. Read off the list above rather than resolved centrally: the
+ *  acknowledgement has to name what the reader picked, and this list is not
+ *  the ledger control's (see `reclassifiedMessage`). */
+function categoryChoiceLabel(value: string): string {
+  return CATEGORY_CHOICES.find((c) => c.value === value)?.label ?? value;
+}
 
 const PLACEHOLDER = "";
 
@@ -193,6 +203,23 @@ function ReviewRow({
       }
       // Resolved: the item has left the queue on the server. Stay busy through
       // the refresh that unmounts this row.
+      //
+      // The row vanishing IS the whole feedback, and #511's own words for that
+      // case are that it is indistinguishable from a bug — so say what
+      // happened, in the word the select just showed. NO UNDO here, and the
+      // asymmetry with the ledger's control is the point: undoing a
+      // correction means re-sending the message's previous verdict, and a
+      // queue row's previous verdict is `needs_review`, which the classify
+      // endpoint does not accept. There is nothing to send back, and
+      // `notifyUndo` is never rendered decoratively.
+      //
+      // The key is target-FREE for the same reason `application.status` is
+      // (see `lib/feedback/coalesce.ts`): with no undo button to misdirect,
+      // triaging a queue collapses into one counted line instead of stacking
+      // one toast per row.
+      notifySuccess("review.classify", classifiedMessage(categoryChoiceLabel(category)), {
+        countMessage: (n) => `${n} items classified`,
+      });
       router.refresh();
     } catch {
       setError(CLASSIFY_FAILED);

@@ -129,10 +129,29 @@ export function notifySuccess(
   emit({ key, kind: "success", message, countMessage: opts?.countMessage });
 }
 
-/** A mutation failed somewhere with no inline error of its own. Holds until
- *  dismissed — `DURATIONS.error` is null and stays null. */
-export function notifyError(key: string, message: string) {
-  emit({ key, kind: "error", message });
+/**
+ * A mutation failed somewhere with no inline error of its own. Holds until
+ * dismissed — `DURATIONS.error` is null and stays null, with or without
+ * `retry`.
+ *
+ * `retry` is optional and exists for one shape: a failure whose ONLY way back
+ * left with the toast that carried it. The Undo on a removal closes its own
+ * toast the moment it is pressed, so a restore that then fails would leave the
+ * row off the board with no affordance anywhere in the app — there is no
+ * dismissed-rows view. The rebuild receipt already answers that shape the same
+ * way (`SyncBar.tsx:1465-1475`: "couldn't restore — still removed", button
+ * intact), so this is that pattern reaching the toaster rather than a new one.
+ * Every other failure passes nothing and renders exactly as before.
+ */
+export function notifyError(
+  key: string,
+  message: string,
+  retry?: { label?: string; run: () => void | Promise<void> },
+) {
+  emit(
+    { key, kind: "error", message },
+    retry ? { label: retry.label ?? "Try again", run: () => void retry.run() } : undefined,
+  );
 }
 
 /**
