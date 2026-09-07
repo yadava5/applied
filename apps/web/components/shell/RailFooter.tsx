@@ -3,6 +3,7 @@
 import Link from "next/link";
 
 import { LastSynced } from "@/components/gmail/LastSynced";
+import { AvatarTile } from "@/components/ui/AvatarTile";
 import type { RailGmailData } from "@/lib/shell/rail";
 import { useDemoMode } from "./demo-mode";
 import { demoHrefFor } from "./nav";
@@ -27,6 +28,14 @@ import { DemoSignupCta } from "./SessionControls";
  * bottom-left (the Linear/Notion convention); sign-out lives in the top
  * chrome — the bar, or the board header's ⋯ menu where the bar yields at
  * `lg`+ (#172) — never here.
+ *
+ * The row's tile carries the account's PHOTO when there is one — an upload, or
+ * the picture Google has been sending since the first OAuth sign-in and the app
+ * spent months discarding. The monogram is still drawn, underneath, and is
+ * still what most accounts show; `components/ui/AvatarTile` explains why the
+ * letter is layered under the image rather than swapped for it, and
+ * `lib/profile/avatar.ts` explains why the image never comes from Google's
+ * servers to the reader's browser. The box did not change size.
  *
  * The identity row shows the user's NAME, not the address — chosen explicitly
  * ("(A) Ayush Yadav" over the email), falling back to the address only when no
@@ -111,6 +120,10 @@ type FooterProps = {
   /** Display name; `null` falls back to the email so the row is never blank. */
   userName?: string | null;
   userEmail: string | null;
+  /** The account's profile photo, resolved server-side by `lib/profile/avatar`
+   *  (an upload, else Google's, else nothing). `null` — the majority state —
+   *  leaves the monogram exactly as it was. */
+  userAvatar?: string | null;
 };
 
 /**
@@ -205,7 +218,12 @@ function ConnectionLine({ gmail, userEmail }: { gmail: RailGmailData; userEmail:
   );
 }
 
-export function RailFooter({ gmail, userName = null, userEmail }: FooterProps) {
+export function RailFooter({
+  gmail,
+  userName = null,
+  userEmail,
+  userAvatar = null,
+}: FooterProps) {
   const demo = useDemoMode();
   // The avatar initial follows whatever the row prints, so the two agree.
   const identity = userName ?? userEmail;
@@ -230,12 +248,20 @@ export function RailFooter({ gmail, userName = null, userEmail }: FooterProps) {
         }
         className={`${ROW} items-center gap-2.5`}
       >
-        <span
-          aria-hidden="true"
-          className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-line bg-surface-2 text-sm font-semibold text-strong"
-        >
-          {initial}
-        </span>
+        {/* Same box as before, to the pixel: `h-8 w-8` inside the same border
+            and radius, so the footer's height budget (see the note above — 157px
+            available at the owner's real 1309×693, ~115 spent) is untouched by
+            the photo arriving. The monogram is not replaced by the image, it is
+            drawn UNDER it, which is what keeps this row full during SSR, before
+            the decode, and if the object ever 404s. The tile stays out of the
+            accessible name: the link already carries the identity, and a second
+            copy of it here is the adjacent-name problem the note above avoids. */}
+        <AvatarTile
+          src={userAvatar}
+          initial={initial}
+          size={32}
+          className="h-8 w-8 text-sm"
+        />
         <span
           title={userEmail ?? undefined}
           className="min-w-0 flex-1 truncate text-xs text-muted transition-colors group-hover:text-strong"

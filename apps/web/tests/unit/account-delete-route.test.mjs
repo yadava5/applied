@@ -28,6 +28,7 @@ import test from "node:test";
 
 import {
   AUTH_DELETE_FAILED_DETAIL,
+  AVATAR_PURGE_FAILED_DETAIL,
   DELETION_DISABLED_DETAIL,
   NO_SESSION_DETAIL,
   PURGE_FAILED_DETAIL,
@@ -141,6 +142,84 @@ test("the purge runs BEFORE the auth user is destroyed, not alongside it", async
 
   assert.deepEqual(order, ["purge", "deleteAuthUser"]);
   assert.equal(out.status, 200);
+});
+
+test("a profile photo that cannot be removed must not close the account", async () => {
+  // The rows live in Postgres and the photo lives in Supabase Storage, which
+  // the backend's `DELETE /account` cannot see and `auth.admin.deleteUser` does
+  // not cascade into. Destroy the auth user with the object still there and it
+  // is orphaned permanently — nothing left can authenticate a delete for it —
+  // and the artifact is a photograph of the user's face. Same shape as #214,
+  // worse object.
+  //
+  // Red when: `purgeAvatars` is called but its answer is ignored, or the step
+  // is moved after `deleteAuthUser`.
+  const order = [];
+  const out = await runAccountDeletion({
+    purge: async () => {
+      order.push("purge");
+      return { ok: true, status: 200 };
+    },
+    purgeAvatars: async () => {
+      order.push("purgeAvatars");
+      return { ok: false };
+    },
+    deleteAuthUser: async () => {
+      order.push("deleteAuthUser");
+      return { error: null };
+    },
+  });
+
+  assert.deepEqual(order, ["purge", "purgeAvatars"], "the auth user must survive");
+  assert.equal(out.status, 502);
+  assert.equal(out.body.detail, AVATAR_PURGE_FAILED_DETAIL);
+  // The reassurance has to be accurate rather than soothing: the rows really
+  // are gone by this point, and saying "nothing was deleted" would be false.
+  assert.match(out.body.detail, /still open/i);
+});
+
+test("the photo purge runs after the rows and before the auth user", async () => {
+  // Ordering asserted as ordering. After `deleteUser` there is no session left
+  // to authorise a storage delete with, so "later" is not an option; before the
+  // row purge would mean deleting a photo for a deletion that then refuses.
+  //
+  // Red when: the three effects are started together, or the photo step is
+  // hoisted above the purge.
+  const order = [];
+  const out = await runAccountDeletion({
+    purge: async () => {
+      order.push("purge");
+      return { ok: true, status: 200 };
+    },
+    purgeAvatars: async () => {
+      order.push("purgeAvatars");
+      return { ok: true };
+    },
+    deleteAuthUser: async () => {
+      order.push("deleteAuthUser");
+      return { error: null };
+    },
+  });
+
+  assert.deepEqual(order, ["purge", "purgeAvatars", "deleteAuthUser"]);
+  assert.equal(out.status, 200);
+});
+
+test("a failed purge never reaches the photo step either", async () => {
+  // Red when: the photo purge is moved above the purge guard, so a deployment
+  // whose backend is down still deletes the user's photo.
+  let reached = false;
+  const out = await runAccountDeletion({
+    purge: async () => ({ ok: false, status: 500 }),
+    purgeAvatars: async () => {
+      reached = true;
+      return { ok: true };
+    },
+    deleteAuthUser: async () => ({ error: null }),
+  });
+
+  assert.equal(reached, false, "nothing may be destroyed once the purge has refused");
+  assert.equal(out.body.detail, PURGE_FAILED_DETAIL);
 });
 
 test("a deployment with no service-role key answers 501 and attempts nothing", async () => {
