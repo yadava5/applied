@@ -50,6 +50,9 @@ const WEB_ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), "../..");
 const SUPABASE_URL = "https://jbyvatoodyqqvkqbsrju.supabase.co";
 const UID = "11111111-2222-4333-8444-555555555555";
 const GOOGLE_PHOTO = "https://lh3.googleusercontent.com/a/ACg8ocKexample=s96-c";
+/** The Google host pattern `next.config.ts` declares, spelled out so the test
+ *  compares against a literal rather than a substring of one. */
+const GOOGLE_REMOTE_PATTERN_HOST = "*.googleusercontent.com";
 
 /** The shape `getUser()` hands back for a Google sign-in. */
 function googleUser(extra = {}) {
@@ -328,9 +331,15 @@ test("every URL this module permits, next/image's optimizer will actually fetch"
 test("googleAvatarUrl and next.config.ts agree about query strings", async () => {
   const { default: config } = await loadConfig();
   const patterns = config.images?.remotePatterns ?? [];
-  const google = patterns.find((pattern) =>
-    pattern.hostname?.endsWith("googleusercontent.com"),
-  );
+  // EXACT, not `endsWith`. A suffix test on a bare host name is the shape
+  // CodeQL flags as `js/incomplete-url-substring-sanitization`, because
+  // `evilgoogleusercontent.com` ends with it too. It is not exploitable here —
+  // the value is this repository's own declared pattern, not an untrusted URL
+  // — but a test that models the rule more loosely than the rule cannot notice
+  // the rule being loosened, which is the whole job of this file. The
+  // production check is already anchored: `GOOGLE_AVATAR_HOST_SUFFIX` carries
+  // a leading dot (`lib/profile/avatar.ts:123`).
+  const google = patterns.find((pattern) => pattern.hostname === GOOGLE_REMOTE_PATTERN_HOST);
   assert.ok(google, "next.config.ts declares no googleusercontent pattern at all");
 
   // Half one, pinned. The expectation is the literal here and the ACTUAL comes
