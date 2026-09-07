@@ -402,14 +402,38 @@ class GmailRateLimited(HTTPException):
     information the client needs — ``Retry-After`` — so the mine can wait and
     resume from its existing ``page_token`` instead of restarting.
 
-    Why the default is a full minute: the limit that fires here is Gmail's
+    Why the FALLBACK is a full minute: the limit that fires here is Gmail's
     **units per minute per user** (6,000 for this project). A per-minute bucket
     refills on a minute boundary, so a shorter wait just spends another request
     to be refused again — and that second refusal costs the very budget the
     wait is supposed to be accumulating.
+
+    IT IS A FALLBACK NOW AND IT USED TO BE THE ONLY ANSWER (#869). The single
+    raise site constructed this with no argument, so every rate-limited reply
+    said 60 seconds whatever the server said. That inference is good for the
+    403 path it was written for and wrong for the other family this exception
+    also covers: ``is_rate_limited_gmail_error`` returns True on a bare 429,
+    which Gmail documents as daily per-user, bandwidth and concurrency limits —
+    lasting **hours**, and carrying a time to retry. Substituting a minute for
+    something that lasts hours makes the client re-request from its cursor, be
+    refused, and loop, which is the app's own doing rather than Gmail's.
+
+    So a supplied wait is passed through and only an ABSENT one falls back
+    here. ``gmail_client.retry_after_seconds`` does the reading and the
+    clamping; see it for the two RFC 7231 spellings and for why the ceiling is
+    a decision rather than a defaulting rule.
+
+    THE CONSUMER ALREADY EXISTS, which is why this is a passthrough and not new
+    machinery: ``apps/web/lib/gmail/transport.ts`` reads ``Retry-After`` off
+    the 429 and falls back to 60 itself, ``lib/gmail/server.ts`` carries it as
+    ``retryAfterSeconds`` on ``{kind: "rate_limited"}``, and ``sync-plan.ts``
+    deliberately keeps its copy number-free against "the day the backend tunes
+    Retry-After". This is that day.
     """
 
-    def __init__(self, retry_after_seconds: int = 60) -> None:
+    def __init__(self, retry_after_seconds: int | None = None) -> None:
+        if retry_after_seconds is None:
+            retry_after_seconds = 60
         super().__init__(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=(
@@ -1742,6 +1766,7 @@ async def gmail_inbox(
         build_gmail_query,
         fetch_message_page,
         is_rate_limited_gmail_error,
+        retry_after_seconds,
     )
 
     range_months = _parse_range_months(range)
@@ -1797,7 +1822,7 @@ async def gmail_inbox(
             "answering 429 so the mine can resume from its cursor.",
             user_id,
         )
-        raise GmailRateLimited() from exc
+        raise GmailRateLimited(retry_after_seconds(exc)) from exc
     if page is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
