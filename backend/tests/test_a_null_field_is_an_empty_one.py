@@ -67,8 +67,11 @@ Employers, roles and senders are invented and every domain is reserved.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
+from jobtracker.classifier.hybrid import HybridClassifier
 from jobtracker.classifier.rules import RulesClassifier
 from jobtracker.database.models import EmailCategory
 
@@ -240,3 +243,181 @@ def test_the_string_path_is_unchanged(
 
     assert result.category == category
     assert result.confidence == pytest.approx(confidence)
+
+
+# ---------------------------------------------------------------------------
+# The HYBRID entry, which is the one every reachable caller actually enters
+# ---------------------------------------------------------------------------
+#
+# #427 item 1 was closed on the RULES layer above, and that left the defect
+# live one level up. ``HybridClassifier.classify`` is what the pipeline calls;
+# ``RulesClassifier.classify`` is what the hybrid calls. So the fix above made
+# the inner engine answer a null while the outer one still raised on it, and
+# the parity claim item 1 is about was still false at the boundary that runs.
+#
+# THE CRASH WAS IN A LOG LINE, which is why nothing found it by reading the
+# classification path. The content guard's ``logger.debug`` takes
+# ``subject[:120]`` as an ARGUMENT, and arguments are evaluated eagerly no
+# matter what the log level is, so a diagnostic that is switched off in
+# production still destroyed the branch it exists to describe. Worse, the
+# branch had already decided: ``_forced_other_reason`` is null-safe and had
+# returned a reason, so the answer existed and was thrown away on the way to
+# describing it.
+#
+# THE TWO ARMS RED IN DIFFERENT PLACES, and finding the body one took a
+# correction. Deleting each normalisation in turn moves nothing at all on five
+# plausible OUTCOME inputs: the subject arm raises, the body arm is invisible.
+# ``_forced_other_reason`` and the rules layer both re-normalise internally,
+# and no lifecycle pattern matches the literal text ``None`` -- measured, 0 of
+# 11 lifecycle and 0 of 31 non-application patterns, against a control where
+# real lifecycle text matches 1.
+#
+# AN EARLIER VERSION OF THIS COMMENT CONCLUDED FROM THAT THAT THE BODY ARM WAS
+# UNGATEABLE, and named the lifecycle rescan as its only reader. Both halves
+# were wrong. The learned layers read the body too, and they do not merely scan
+# it: ``embeddings.py`` and ``setfit_model.py`` each build
+# ``f"{subject}\n\n{body}"`` and hand it to a model, so an unguarded ``None``
+# becomes the literal token "None" inside what gets ENCODED. That is a worse
+# reader than the rescan, not a lesser one, and it is reachable whenever the
+# rules layer neither misses nor answers confidently.
+#
+# So the body arm IS gated below, by watching what the layer is HANDED rather
+# than what the classifier returns. The lesson is this file's own: "no outcome
+# moved" is a statement about the outputs you happened to look at.
+
+#: Two ``NON_APPLICATION_PATTERNS`` hits and no lifecycle hit, which is what
+#: ``_forced_other_reason`` requires to return "digest_or_promotional_content".
+#: Written out rather than imported from the pattern list: an expectation read
+#: from the thing it checks compares a value to itself.
+DIGEST_BODY = "Here are your recommended jobs this week. Click unsubscribe to stop."
+
+
+def _hybrid(subject, body, sender):
+    """Drive the real async entry point. Not a helper around a helper."""
+    return asyncio.run(HybridClassifier().classify(subject, body, sender))
+
+
+def test_the_content_guard_answers_a_null_subject_instead_of_raising() -> None:
+    """The raise, with the control that proves the branch was reached.
+
+    LATENT, not a live production crash, and said here for the same reason the
+    module docstring says it of the rules layer: `CloudGmailMessage.subject` is
+    typed `str` and the evaluation loader coerces every field, so no caller at
+    HEAD can pass a null. What is real is the same gap one level up -- the
+    storage layer's `Email.subject` / `Email.body_text` are `Optional[str]`,
+    which is a shape this signature promised to accept and did not.
+
+    ``confidence == 0.96`` and ``method == "content_filter"`` are the guard's
+    own signature. Asserting them rather than "did not raise" is what stops
+    this passing because the guard silently stopped firing.
+    """
+    result = _hybrid(None, DIGEST_BODY, "a@b.example")
+
+    assert result.method == "content_filter"
+    assert result.confidence == 0.96
+
+
+def test_the_content_guard_fires_on_a_real_subject_too() -> None:
+    """The directional control for the test above.
+
+    Same body, a real subject. If this ever stops returning the guard's
+    signature then the test above is asserting something other than the
+    branch it names, and both need re-deriving.
+    """
+    result = _hybrid("Jobs for you", DIGEST_BODY, "a@b.example")
+
+    assert result.method == "content_filter"
+    assert result.confidence == 0.96
+
+
+def test_a_null_subject_reaches_the_hybrid_answer_an_empty_one_reaches() -> None:
+    """The semantic claim: ``or ""`` is the identity, at the outer entry too.
+
+    Compared on the three fields the pipeline reads. Whole-object equality is
+    not available here — ``ClassificationResult`` carries a ``details`` dict
+    whose contents are not part of the claim.
+    """
+    got = _hybrid(None, DIGEST_BODY, "a@b.example")
+    want = _hybrid("", DIGEST_BODY, "a@b.example")
+
+    assert (got.category, got.confidence, got.method) == (
+        want.category,
+        want.confidence,
+        want.method,
+    )
+
+
+def test_a_null_does_not_disturb_a_verdict_the_hybrid_already_reached() -> None:
+    """A lifecycle message still classifies, with a null in the other field.
+
+    The refusal this pins is the tempting one: normalising at the entry must
+    not change what a message that was already answered comes back as.
+    """
+    result = _hybrid("Update on your application", None, "careers@halberd.test")
+
+    assert result.category is not None
+    assert _hybrid("Update on your application", "", "careers@halberd.test").category == (
+        result.category
+    )
+
+
+class _RecordingEmbeddings:
+    """Captures exactly what layer 2 is handed.
+
+    Swapped in through the setter ``HybridClassifier`` provides for this
+    purpose. ``classify`` returns ``None`` so the hybrid falls through
+    unchanged: this fake is an INSTRUMENT, and it must not be able to move the
+    verdict it is observing.
+    """
+
+    def __init__(self) -> None:
+        self.seen: list[tuple[object, object]] = []
+
+    def is_available(self) -> bool:
+        return True
+
+    async def classify(self, subject, body):
+        self.seen.append((subject, body))
+        return None
+
+
+#: An input that REACHES layer 2 -- the rules layer neither misses nor answers
+#: confidently, so the embedding branch runs. Chosen by measurement: three
+#: other plausible inputs ("Interview invitation for you", "Interview
+#: scheduling", "Hello there") never reach it, and a test written against one
+#: of those would assert nothing while looking identical to this one.
+LAYER_TWO_SUBJECT = "Update on your application"
+LAYER_TWO_BODY = "thanks"
+
+
+def test_the_learned_layer_is_handed_an_empty_body_not_a_null() -> None:
+    """The body arm's gate. Deleting ``body = body or ""`` reds this.
+
+    Asserted on what the layer RECEIVES, because the verdict does not move --
+    every outcome-level probe of this arm came back identical with the
+    normalisation deleted. What changes is the argument, and the argument is
+    what a model would encode.
+    """
+    hybrid = HybridClassifier()
+    fake = _RecordingEmbeddings()
+    hybrid._embeddings = fake
+
+    asyncio.run(hybrid.classify(LAYER_TWO_SUBJECT, None, "a@b.example"))
+
+    assert fake.seen == [(LAYER_TWO_SUBJECT, "")]
+
+
+def test_the_recording_layer_is_actually_reached() -> None:
+    """The control for the test above.
+
+    A fake that is never called is the classic way this shape passes dead: an
+    empty ``seen`` would satisfy any assertion phrased as "never receives
+    None". This pins that the branch runs on an ordinary string input.
+    """
+    hybrid = HybridClassifier()
+    fake = _RecordingEmbeddings()
+    hybrid._embeddings = fake
+
+    asyncio.run(hybrid.classify(LAYER_TWO_SUBJECT, LAYER_TWO_BODY, "a@b.example"))
+
+    assert fake.seen == [(LAYER_TWO_SUBJECT, LAYER_TWO_BODY)]

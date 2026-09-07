@@ -1206,6 +1206,58 @@ _ROLE_HEAD_NOUNS: frozenset[str] = frozenset(
     }
 )
 
+
+def _names_a_role_not_an_employer(display: str) -> bool:
+    """True when a subject capture is a JOB TITLE rather than a company.
+
+    THE LAST WORD, because it is the phrase's head; everything before it
+    modifies it. Testing every word would refuse "Team Liquid", "People Data
+    Labs" and "Lead Bank" — real employers that merely CONTAIN one of these
+    words — which :data:`_NAME_ROLE_TAIL` already records as names that must
+    not be shredded from the middle out.
+
+    The lifecycle words go through :data:`_LIFECYCLE_WORD` and not
+    :data:`_COMPANY_STOPWORDS` alone, because that set spells them as single
+    words and subjects do not: ``_normalize_token("Follow-Up")`` is
+    ``"follow up"``, which is neither "follow" nor "up", so "Staff Data
+    Scientist Follow-Up" survived every other guard.
+
+    WHY IT IS A FUNCTION AND NOT A SECOND COPY. This test was written for
+    :func:`_employer_from_subject_segment` — step 3b of
+    :func:`resolve_employer` — and lived only there. :func:`_employer_from_subject`
+    is step 2, runs FIRST, and outranks both the segment reader and the sender
+    display name, so the guard sat behind the branch that needed it most:
+
+        "Final Interview for Data Scientist | Larkspur"
+            before  ('data', 'Data Scientist')   <- and with
+                    sender_name="Larkspur Recruiting" it was STILL that
+            after   ('larkspur', 'Larkspur') from the display name
+
+    ``interview`` is an anchor word in :data:`_EMPLOYER_ANCHORED` and ``for`` is
+    one of its connectives, so "Interview for <Role>" reads the role into the
+    company capture. :func:`_employer_from_subject`'s own docstring names this
+    defect and says the only place to decide it is :func:`_valid_company_token`
+    — which the USER-TYPED company path also goes through, so a company whose
+    name reads like a title would stop being enterable by hand. That is why the
+    refusal is HERE instead: per-reading, in the loop, exactly where
+    :func:`_names_the_relay` already sits.
+
+    :data:`_ROLE_HEAD_NOUNS` is the set the ROLE half uses to tell a title from
+    a company, and ``_TITLE_SHAPED``'s note says the two halves must not end up
+    disagreeing about what a job title looks like. Before this function they
+    did, on step 2.
+    """
+
+    if not display:
+        return False
+    last = display.split(" ")[-1]
+    tail = _normalize_token(last)
+    return bool(
+        tail in _ROLE_HEAD_NOUNS
+        or tail in _COMPANY_STOPWORDS
+        or _LIFECYCLE_WORD.match(last)
+    )
+
 # Role-ish tails an ATS sender's display name carries AFTER the company name:
 # "Crusoe Hiring Team", "Supabase Recruiting", "Acme Talent Acquisition".
 # Anchored to the END (and applied repeatedly) so a company whose own name
@@ -2643,15 +2695,8 @@ def _employer_from_subject(
     would file as "Systems Research Engineer": still a job title, and now at
     least a whole one. The ordering fix is what makes it read the employer.
 
-    Two rules this leaves wrong, stated rather than papered over:
+    One rule this leaves wrong, stated rather than papered over:
 
-    - A subject naming a role with NO at-sign still yields the role. "Your
-      application to Systems Research Engineer" alone returns "Research
-      Engineer", because nothing in that line distinguishes it from "Your
-      application to Stripe". Deciding it would need a role-vocabulary test, and
-      the only place to put one is :func:`_valid_company_token` — which is also
-      what the USER-typed company path goes through, so a company whose name
-      reads like a title would stop being enterable by hand.
     - The at-sign path does not check whether it just named the RELAY. "Your
       application to Acme @ Greenhouse" resolves to Greenhouse, not Acme.
       Adding :func:`_names_the_relay` here would cost more than it saves: the
@@ -2697,6 +2742,21 @@ def _employer_from_subject(
             # other patterns, whose shapes ("application to <X>") name the
             # employer even in relayed mail; #508 is the record of what a blanket
             # relay-vocabulary refusal costs a company that is also a platform.
+            continue
+        # THIS IS THE ROLE-VOCABULARY TEST THIS DOCSTRING USED TO SAY WAS
+        # IMPOSSIBLE. The refused version of it said "the only place to put one
+        # is `_valid_company_token`" — which is also the USER-TYPED company
+        # path, so a company whose name reads like a title would have stopped
+        # being enterable by hand. That is true of `_valid_company_token` and
+        # not of this loop: a refusal here rejects ONE READING of ONE subject
+        # and never sees a typed name. "Your application to Systems Research
+        # Engineer" returned the job title until this line existed.
+        if _names_a_role_not_an_employer(display):
+            # `continue`, not `return None`, for the reason the segment reader
+            # gives: this refuses THIS READING of the subject, so a later
+            # pattern — and then the sender display name at step 3 — still get
+            # their turn. Making it purely subtractive on one reading is what
+            # keeps a real employer from being lost along with the title.
             continue
         if _valid_company_token(token):
             return display
@@ -3651,13 +3711,7 @@ def _employer_from_subject_segment(
         # single words and the subjects do not: "Follow-Up" normalises to
         # neither "follow" nor "up", so "Staff Data Scientist Follow-Up"
         # survived every other guard here.
-        last = display.split(" ")[-1]
-        tail = _normalize_token(last)
-        if (
-            tail in _ROLE_HEAD_NOUNS
-            or tail in _COMPANY_STOPWORDS
-            or _LIFECYCLE_WORD.match(last)
-        ):
+        if _names_a_role_not_an_employer(display):
             continue
         # #733 again, and this door is why guarding the display name alone is
         # not a fix: "Sarah Chen - quick chat?" reaches here with NO display
