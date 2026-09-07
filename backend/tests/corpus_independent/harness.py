@@ -1274,7 +1274,26 @@ def score_board(
             continue
         label = card_of.get(case.message_id)
         if label is None:
-            continue  # already counted as UPDATE-REACHED-NO-CARD or LOST
+            # THE MAIL NEVER REACHED ITS CARD, and the card may be overstating
+            # BECAUSE of that. #748: this branch used to `continue`, so
+            # ``card_overstates`` was only ever computed for mail that reached
+            # ``replayed.reviewed`` -- the review queue. That made the
+            # counter's population downstream of the settled filter, which is
+            # one of the things it exists to notice.
+            #
+            # Measured: keying the additive persist's settled filter on the
+            # thread alone (reverting #454's identity component, both sites)
+            # suppresses 602 more messages and drops the queue 2833 -> 2231 --
+            # strictly worse filing -- and took ``card_overstates`` 260 -> 0.
+            # The defect count went to zero because the evidence stopped being
+            # stored, not because any card got better.
+            #
+            # A card overstates or it does not. WHERE the mail that would
+            # correct it ended up -- queue, suppressed, dropped -- is a
+            # different question with its own counters, and conditioning this
+            # one on the answer is what made it unable to fall the wrong way.
+            _overstates(score, replayed, card_of, case)
+            continue  # otherwise counted as UPDATE-REACHED-NO-CARD or LOST
         actual = replayed.status.get(label)
         if actual == case.card_status:
             continue
