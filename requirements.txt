@@ -50,7 +50,7 @@ email-validator>=2.3.0
 # -----------------------------------------------------------------------------
 # Database (Postgres via Supabase)
 # -----------------------------------------------------------------------------
-sqlmodel>=0.0.39
+sqlmodel>=0.0.42
 sqlalchemy[asyncio]>=2.0.52
 asyncpg>=0.31.0
 
@@ -58,20 +58,22 @@ asyncpg>=0.31.0
 # Auth (Supabase JWT verification, wired in C3)
 # -----------------------------------------------------------------------------
 pyjwt[crypto]>=2.13.0         # PYSEC-2026-175..179
-cryptography>=50.0.0
+cryptography>=50.0.1
 
 # -----------------------------------------------------------------------------
 # Email Integration (cloud Gmail OAuth wired in C5, IMAP stays)
 # -----------------------------------------------------------------------------
-google-api-python-client>=2.199.0
-google-auth-httplib2>=0.1.1
-# >=1.2.4: Flow.from_client_config must accept + forward the explicit
+google-api-python-client>=2.200.0
+google-auth-httplib2>=0.4.2
+# The constraint that first set this floor landed in 1.2.4 and the floor
+# now sits above it, so it holds either way:
+# Flow.from_client_config must accept + forward the explicit
 # code_verifier / autogenerate_code_verifier kwargs the stateless PKCE
 # flow in cloud/gmail_oauth.py depends on (older versions vary between
 # silently autogenerating a verifier per Flow — which broke the split
 # authorize/callback exchange with invalid_grant — and dropping the
 # kwargs entirely).
-google-auth-oauthlib>=1.2.4
+google-auth-oauthlib>=1.4.1
 aioimaplib>=2.0.1
 
 # -----------------------------------------------------------------------------

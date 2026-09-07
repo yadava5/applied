@@ -34,10 +34,10 @@
 # Excluded from the cloud manifest on purpose — see its "DO NOT add" list.
 # websockets and aiosqlite are not needed on Vercel; keyring is macOS Keychain
 # only and is replaced there by Fernet encryption.
-uvicorn[standard]>=0.27.0     # ASGI server with uvloop
+uvicorn[standard]>=0.52.4     # ASGI server with uvloop
 websockets>=17.1              # WebSocket support for real-time sync updates
 aiosqlite>=0.22.1             # Async SQLite driver (desktop/tests)
-alembic>=1.13.0               # DB migrations (owns schema on Postgres)
+alembic>=1.19.1               # DB migrations (owns schema on Postgres)
 keyring>=25.7.0               # Secure credential storage (macOS Keychain)
 
 # -----------------------------------------------------------------------------
@@ -72,7 +72,7 @@ keyring>=25.7.0               # Secure credential storage (macOS Keychain)
 sentence-transformers>=6.0.0  # Sentence embeddings (loads e5-small-v2)
 transformers>=5.10.0          # HuggingFace transformers (see the note above)
 setfit>=1.2.0                 # Few-shot text classification; 1.1.3 breaks on 5.x
-scikit-learn>=1.3.0           # ML utilities (cosine similarity, etc.)
+scikit-learn>=1.9.0           # ML utilities (cosine similarity, etc.)
 numpy>=2.4.6                 # Numerical operations, embedding serialization
 
 # -----------------------------------------------------------------------------
