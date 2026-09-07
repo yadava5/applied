@@ -991,10 +991,26 @@ class BoardScore:
     #:     it is the same "an arm no fixture can reach" shape #624 removed one
     #:     arm over.
     #:
-    #: The only evidence today that the FILTER itself bites — as opposed to this
-    #: counter counting — is an uncommitted control that reverts #454's identity
-    #: component inside the additive persist and takes this to 602. That control
-    #: belongs in the tree; it is named as the first item of #614's control set.
+    #: The evidence that the FILTER itself bites — as opposed to this counter
+    #: counting — is a control that reverts #454's identity component inside the
+    #: additive persist and takes this to 602. Run 2026-09-07, with the mutant
+    #: printing a marker so its activity is observed rather than assumed:
+    #:
+    #:     clean          suppressed   0   queued 2833
+    #:     thread-alone   suppressed 602   queued 2231
+    #:
+    #: WHAT IS COMMITTED IS THE PROPERTY, NOT THE REVERT.
+    #: ``test_the_overstates_counter_cannot_be_silenced.py`` (#748) pins that
+    #: ``card_overstates`` does not care WHERE the corrective mail ended up,
+    #: which is what that control demonstrated; the revert itself still is not
+    #: in the tree, because running the corpus twice is minutes per arm.
+    #:
+    #: A TRAP FOR WHOEVER RE-RUNS IT. "Revert #454's identity component" and
+    #: "key on the thread alone" are DIFFERENT edits. ``review_dedup_key`` keys
+    #: on the thread PLUS subject, snippet and identity, so nulling only the two
+    #: identity arguments moves nothing at all — suppressed stays 0 — and reads
+    #: as "does not reproduce". The reproducing edit replaces the key with
+    #: ``thread_id`` at both sites.
     suppressed_as_settled: int = 0
     failures: list[Failure] = field(default_factory=list)
 
