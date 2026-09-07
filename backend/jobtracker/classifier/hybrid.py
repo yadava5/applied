@@ -262,21 +262,56 @@ class HybridClassifier:
 
     async def classify(
         self,
-        subject: str,
-        body: str,
+        subject: Optional[str],
+        body: Optional[str],
         sender_email: Optional[str] = None,
     ) -> ClassificationResult:
         """
         Classify an email using the 3-layer hybrid approach.
 
         Args:
-            subject: Email subject line
-            body: Email body text (plain text preferred)
+            subject: Email subject line. ``None`` reads as empty.
+            body: Email body text (plain text preferred). ``None`` reads as empty.
             sender_email: Sender email address (for ATS detection)
 
         Returns:
             ClassificationResult with category, confidence, and metadata
         """
+        # HERE, FOR THE REASON ``RulesClassifier.classify`` NORMALISES HERE.
+        #
+        # #809 gave the rules layer this exact statement and this exact
+        # placement, and the argument transfers unchanged: guard one reader and
+        # a null-subject test goes green while a second reader is still live.
+        # This method has three, and they fail three different ways, which is
+        # why none of them is the right place to write a guard:
+        #
+        #   the content guard's own ``logger.debug`` slices ``subject[:120]``
+        #         and raises ``TypeError: 'NoneType' object is not
+        #         subscriptable``. It is an ARGUMENT, evaluated eagerly
+        #         whatever the log level, so a diagnostic that is switched OFF
+        #         in production still destroys the branch it exists to
+        #         describe. ``_forced_other_reason`` is itself null-safe, so
+        #         the crash lands strictly INSIDE a branch that had already
+        #         decided the answer.
+        #   the lifecycle rescan composes ``f"{subject}\n{body}"``. It does not
+        #         raise -- it interpolates the literal text ``None`` and scans
+        #         that, which is the worse of the two because nothing
+        #         announces it.
+        #   the embeddings and SetFit layers receive the ``None`` unexamined.
+        #
+        # Line numbers are deliberately absent: this method is 350 lines and
+        # every previous note about it in the tracker cites offsets that have
+        # since drifted.
+        #
+        # ``x or ""`` is the identity on the whole string domain, ``""``
+        # included, so nothing that already classified moves. The signature is
+        # widened to match ``RulesClassifier.classify``'s: two implementations
+        # of one classifier disagreeing about whether ``None`` is an input is
+        # the parity defect #427 is about, and the hybrid entry is the one
+        # every reachable caller actually enters.
+        subject = subject or ""
+        body = body or ""
+
         forced_other_reason = self._forced_other_reason(subject, body, sender_email)
         if forced_other_reason:
             logger.debug(

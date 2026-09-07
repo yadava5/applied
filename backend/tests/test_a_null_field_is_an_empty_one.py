@@ -67,8 +67,11 @@ Employers, roles and senders are invented and every domain is reserved.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
+from jobtracker.classifier.hybrid import HybridClassifier
 from jobtracker.classifier.rules import RulesClassifier
 from jobtracker.database.models import EmailCategory
 
@@ -240,3 +243,110 @@ def test_the_string_path_is_unchanged(
 
     assert result.category == category
     assert result.confidence == pytest.approx(confidence)
+
+
+# ---------------------------------------------------------------------------
+# The HYBRID entry, which is the one every reachable caller actually enters
+# ---------------------------------------------------------------------------
+#
+# #427 item 1 was closed on the RULES layer above, and that left the defect
+# live one level up. ``HybridClassifier.classify`` is what the pipeline calls;
+# ``RulesClassifier.classify`` is what the hybrid calls. So the fix above made
+# the inner engine answer a null while the outer one still raised on it, and
+# the parity claim item 1 is about was still false at the boundary that runs.
+#
+# THE CRASH WAS IN A LOG LINE, which is why nothing found it by reading the
+# classification path. The content guard's ``logger.debug`` takes
+# ``subject[:120]`` as an ARGUMENT, and arguments are evaluated eagerly no
+# matter what the log level is, so a diagnostic that is switched off in
+# production still destroyed the branch it exists to describe. Worse, the
+# branch had already decided: ``_forced_other_reason`` is null-safe and had
+# returned a reason, so the answer existed and was thrown away on the way to
+# describing it.
+#
+# THE TWO ARMS DO NOT BOTH DISCRIMINATE HERE, and that is a measured result
+# rather than an oversight. Deleting each normalisation in turn, on the five
+# inputs below:
+#
+#     delete ``subject = subject or ""``  -> null-subject + digest body RAISES
+#                                            TypeError; the other four unmoved
+#     delete ``body = body or ""``        -> NOTHING MOVES. All five identical.
+#
+# So only the subject arm is gated, and the file says so instead of shipping a
+# body test that would pass with the line deleted. The body normalisation is
+# still correct and still lands: ``_forced_other_reason`` and the rules layer
+# each re-normalise internally, so the only reader that can currently observe a
+# raw ``None`` is the lifecycle rescan, which composes ``f"{subject}\n{body}"``
+# and would scan the literal text ``None`` — and no lifecycle pattern matches
+# that word, so the difference is real but has no outcome to show. It is kept
+# for parity with ``RulesClassifier.classify``'s signature, which is the whole
+# subject of this issue, and it is deliberately UNGATED rather than falsely
+# gated.
+
+#: Two ``NON_APPLICATION_PATTERNS`` hits and no lifecycle hit, which is what
+#: ``_forced_other_reason`` requires to return "digest_or_promotional_content".
+#: Written out rather than imported from the pattern list: an expectation read
+#: from the thing it checks compares a value to itself.
+DIGEST_BODY = "Here are your recommended jobs this week. Click unsubscribe to stop."
+
+
+def _hybrid(subject, body, sender):
+    """Drive the real async entry point. Not a helper around a helper."""
+    return asyncio.run(HybridClassifier().classify(subject, body, sender))
+
+
+def test_the_content_guard_answers_a_null_subject_instead_of_raising() -> None:
+    """The live crash, with the control that proves the branch was reached.
+
+    ``confidence == 0.96`` and ``method == "content_filter"`` are the guard's
+    own signature. Asserting them rather than "did not raise" is what stops
+    this passing because the guard silently stopped firing.
+    """
+    result = _hybrid(None, DIGEST_BODY, "a@b.example")
+
+    assert result.method == "content_filter"
+    assert result.confidence == 0.96
+
+
+def test_the_content_guard_fires_on_a_real_subject_too() -> None:
+    """The directional control for the test above.
+
+    Same body, a real subject. If this ever stops returning the guard's
+    signature then the test above is asserting something other than the
+    branch it names, and both need re-deriving.
+    """
+    result = _hybrid("Jobs for you", DIGEST_BODY, "a@b.example")
+
+    assert result.method == "content_filter"
+    assert result.confidence == 0.96
+
+
+def test_a_null_subject_reaches_the_hybrid_answer_an_empty_one_reaches() -> None:
+    """The semantic claim: ``or ""`` is the identity, at the outer entry too.
+
+    Compared on the three fields the pipeline reads. Whole-object equality is
+    not available here — ``ClassificationResult`` carries a ``details`` dict
+    whose contents are not part of the claim.
+    """
+    got = _hybrid(None, DIGEST_BODY, "a@b.example")
+    want = _hybrid("", DIGEST_BODY, "a@b.example")
+
+    assert (got.category, got.confidence, got.method) == (
+        want.category,
+        want.confidence,
+        want.method,
+    )
+
+
+def test_a_null_does_not_disturb_a_verdict_the_hybrid_already_reached() -> None:
+    """A lifecycle message still classifies, with a null in the other field.
+
+    The refusal this pins is the tempting one: normalising at the entry must
+    not change what a message that was already answered comes back as.
+    """
+    result = _hybrid("Update on your application", None, "careers@halberd.test")
+
+    assert result.category is not None
+    assert _hybrid("Update on your application", "", "careers@halberd.test").category == (
+        result.category
+    )
