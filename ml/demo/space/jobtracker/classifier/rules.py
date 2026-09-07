@@ -863,10 +863,35 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
         # and a tie is decided by enum order at confidence 0.60. Vetoing gives
         # the rejection the whole margin, which is what it has earned.
         #
-        # This IS the decision block from EmailCategory.REJECTION.strong,
-        # repeated verbatim. See the note above PATTERNS for why it is copied
-        # rather than shared: three files count these as literals. Change one,
-        # change the other.
+        # This IS EmailCategory.REJECTION.strong, repeated in full. See the note
+        # above PATTERNS for why it is copied rather than shared: three files
+        # count these as literals and cannot see through a splat.
+        #
+        # "Change one, change the other" was the whole of the instruction here,
+        # and it was not followed (#876). REJECTION.strong grew to 33 entries;
+        # this copy stayed at the 25 it was taken with, and the 8 that never
+        # arrived were contiguous at the tail — the signature of appending to
+        # one list and forgetting the other.
+        #
+        # It reproduced, exactly, the defect this block exists to prevent. A
+        # rejection reading "we will keep your resume on file" under a
+        # "Following up on your application" subject scored follow_up 0.90 and,
+        # off an ATS domain, reached neither `_qualifies_for_hard_row` nor
+        # `collect_review_items` nor even the `dropped_out` count — one log line
+        # and gone, which is the same disappearance the header comment on this
+        # file records for the real rejection that forced the veto in 2026-08.
+        # 7 of the 8 measured that way; the 8th escaped only by incidentally
+        # matching a pattern that HAD been copied.
+        #
+        # The instruction is now checked rather than written down:
+        # `tests/test_the_veto_copy_cannot_drift.py` asserts
+        # `set(REJECTION.strong) <= set(FOLLOW_UP.veto)` here, in the Space
+        # mirror and in both rules.json exports, so a 34th rejection pattern
+        # that is not mirrored goes red instead of silently losing mail.
+        #
+        # NOT a superset rule in the other direction. The five INTERVIEW.strong
+        # scheduling frames below are a deliberate curated subset (5 of 27) and
+        # the gate must not sweep them into the same assertion.
         veto=[
             r"regret to inform",
             r"decided not to proceed",
@@ -893,6 +918,14 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"not (be )?advancing (your|the) (application|candidacy)",
             r"position has been filled",
             r"we('ve| have) decided to go in (a )?different direction",
+            r"unfortunately.{0,50}(not|won't|will not|unable)",
+            r"(role|position).{0,20}(closed|filled)",
+            r"decision on (your |my )?candidacy",
+            r"after careful (consideration|review).{0,30}(not|decided|unfortunately)",
+            r"wish you (all |only |nothing but )?(the (very )?best|well|success|luck) in your",
+            r"encourage you to apply (for )?future.{0,20}(position|role|opening)",
+            r"keep your (resume|application) on file",
+            r"not a (good )?fit.{0,20}(at this time|for this role)",
             # --- end of the block copied from REJECTION.strong ---------------
             #
             # A SECOND GROUP, not part of that copy, and it must not be mirrored

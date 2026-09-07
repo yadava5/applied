@@ -339,6 +339,29 @@ def json_patterns(rel: str) -> int:
     )
 
 
+def _veto_by_category(rel: str = BACKEND_RULES) -> dict[str, int]:
+    """Per-category veto counts, keyed by the lowercased EmailCategory member.
+
+    `_rules` sums the tiers across every category, which is the right shape for
+    the totals the README publishes and the wrong one for the sentence that
+    breaks those totals down. That sentence ("`assessment` has 10 ... `follow_up`
+    has 30") was prose nothing computed, and it went wrong the moment #876
+    mirrored eight patterns into the veto: `--check` moved the total from 40 to
+    48 and left the breakdown reading 10 and 30, which no longer sums to it.
+    """
+    node = _assigned(rel, "PATTERNS")
+    if not isinstance(node, ast.Dict):
+        raise SystemExit(f"  ✗ {rel}: PATTERNS is not a dict literal")
+    out: dict[str, int] = {}
+    for key, value in zip(node.keys, node.values, strict=True):
+        if not isinstance(key, ast.Attribute) or not isinstance(value, ast.Call):
+            raise SystemExit(f"  ✗ {rel}: PATTERNS holds an unexpected entry")
+        for kw in value.keywords:
+            if kw.arg == "veto" and isinstance(kw.value, ast.List):
+                out[key.attr.lower()] = len(kw.value.elts)
+    return out
+
+
 def json_veto_patterns(rel: str) -> int:
     """Veto count in one of the JS ports' rules.json.
 
@@ -1614,6 +1637,22 @@ FACTS: dict[str, dict] = {
             r"A further (\d+) \*\*veto\*\* patterns",
         ],
     },
+    "assessmentVeto": {
+        "kind": "static",
+        "describe": "veto patterns declared by EmailCategory.ASSESSMENT",
+        "compute": lambda: _veto_by_category()["assessment"],
+        "sites": [
+            r"`assessment` has (\d+)",
+        ],
+    },
+    "followUpVeto": {
+        "kind": "static",
+        "describe": "veto patterns declared by EmailCategory.FOLLOW_UP",
+        "compute": lambda: _veto_by_category()["follow_up"],
+        "sites": [
+            r"`follow_up` has (\d+)",
+        ],
+    },
     "rulesCategories": {
         "kind": "static",
         "describe": "categories keyed in PATTERNS",
@@ -2627,6 +2666,18 @@ INVARIANTS = [
         "explain": lambda f: (
             f"{f['emailCategories']} enum members vs {f['evalLabels']} labels + needs_review. "
             f"The README's 'eight of the nine are predicted labels' no longer holds."
+        ),
+    },
+    {
+        # Two categories declare vetoes and the README says so by name. If a
+        # third ever does, the breakdown stops summing and this is what says so
+        # -- the totals fact alone would stay green.
+        "name": "the per-category veto counts sum to the published total",
+        "holds": lambda f: f["assessmentVeto"] + f["followUpVeto"] == f["rulesVeto"],
+        "explain": lambda f: (
+            f"assessment {f['assessmentVeto']} + follow_up {f['followUpVeto']} "
+            f"!= {f['rulesVeto']}. Either a third category declares a veto now, "
+            "or the README's breakdown has drifted from its own total."
         ),
     },
     {
