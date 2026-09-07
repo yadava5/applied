@@ -165,6 +165,25 @@ interface FetchState {
    */
   unreadable: number;
   /**
+   * Of `unreadable`, the share Gmail refused with a reason this client does
+   * not recognise (#744).
+   *
+   * A SUBSET, not a sibling, which is why it renders inside a parenthetical
+   * and is never added to anything. `MessagePage.unrecognised` says so in the
+   * backend's own words: "Of `unreadable`, the share Gmail refused without a
+   * reason we recognise." Rendering it as a second additive count would
+   * double-report every message it names.
+   *
+   * It is worth separating from the total because the two have different
+   * remedies. An ordinary unreadable message is a deletion or a revoked grant
+   * and there is nothing to be done. An UNRECOGNISED refusal means Gmail
+   * answered in a shape this client cannot read, which is how a scan silently
+   * shrinks when Google changes an error envelope. The backend counts it
+   * precisely so that change is loud -- and until now the number stopped at
+   * the wire, because nothing on any screen read it.
+   */
+  unrecognised: number;
+  /**
    * While `phase === "deferred"`: the epoch-ms instant the wait ends.
    *
    * A DEADLINE, not a duration, and the distinction is the whole of #750. The
@@ -398,6 +417,7 @@ interface InboxSnapshot {
    *  those hydrate as 0 rather than forcing a version bump and a re-mine for
    *  every reader mid-session. */
   unreadable?: number;
+  unrecognised?: number;
 }
 
 /** The fetch inputs that define a distinct mine — a snapshot is valid only for its own. */
@@ -479,6 +499,7 @@ export function InboxWorkbench({
     phase: "loading",
     fetched: 0,
     unreadable: 0,
+    unrecognised: 0,
     target: DEFAULT_FILTERS.count,
   });
   const [filing, setFiling] = useState<FileState>({
@@ -518,7 +539,7 @@ export function InboxWorkbench({
       setVerdicts([]);
       setAnalysis(null);
       setAnalysisFailed(false);
-      setState({ phase: "loading", fetched: 0, target, unreadable: 0 });
+      setState({ phase: "loading", fetched: 0, target, unreadable: 0, unrecognised: 0 });
       // A new mine invalidates the last filing report — it described a different set.
       setFiling({ phase: "idle", note: null });
 
@@ -536,6 +557,7 @@ export function InboxWorkbench({
       // Summed across pages, not per page: the user asked one question ("scan
       // my mail") and is owed one answer about what it cost.
       let unreadable = 0;
+      let unrecognised = 0;
 
       try {
         while (acc.length < target) {
@@ -572,12 +594,14 @@ export function InboxWorkbench({
                 fetched: acc.length,
                 target,
                 unreadable,
+                unrecognised,
               });
               setState({
                 phase: "error",
                 fetched: acc.length,
                 target,
                 unreadable,
+                unrecognised,
                 errorStatus: 429,
               });
               return;
@@ -612,13 +636,14 @@ export function InboxWorkbench({
               fetched: acc.length,
               target,
               unreadable,
+              unrecognised,
               resumesAt: Date.now() + waitMs,
             });
             const resumed = await waitOrAbort(waitMs, ac.signal);
             if (!resumed || runId !== runIdRef.current) return;
             // A fresh window: the next refusal is measured from here.
             burstStartedAt = Date.now();
-            setState({ phase: "loading", fetched: acc.length, target, unreadable });
+            setState({ phase: "loading", fetched: acc.length, target, unreadable, unrecognised });
             continue;
           }
           if (status === 409) {
@@ -627,6 +652,7 @@ export function InboxWorkbench({
               fetched: acc.length,
               target,
               unreadable,
+              unrecognised,
             });
             return;
           }
@@ -636,6 +662,7 @@ export function InboxWorkbench({
               fetched: acc.length,
               target,
               unreadable,
+              unrecognised,
               errorStatus: 401,
             });
             return;
@@ -646,15 +673,17 @@ export function InboxWorkbench({
               fetched: acc.length,
               target,
               unreadable,
+              unrecognised,
               errorStatus: status,
             });
             return;
           }
           acc.push(...page.verdicts);
           unreadable += page.unreadable ?? 0;
+          unrecognised += page.unrecognised ?? 0;
           if (runId !== runIdRef.current) return;
           setVerdicts([...acc]);
-          setState({ phase: "loading", fetched: acc.length, target, unreadable });
+          setState({ phase: "loading", fetched: acc.length, target, unreadable, unrecognised });
           token = page.next_page_token;
           if (!token) break;
           // A page with no verdicts used to end the mine as SUCCESS. That is
@@ -706,7 +735,7 @@ export function InboxWorkbench({
           analysisBroke = true;
         }
         setAnalysisFailed(analysisBroke);
-        setState({ phase: "ready", fetched: acc.length, target, unreadable });
+        setState({ phase: "ready", fetched: acc.length, target, unreadable, unrecognised });
 
         // Persist this mine so a remount with the same filters (e.g. navigating
         // Inbox → Dashboard → Inbox) hydrates instantly instead of re-hitting Gmail.
@@ -719,6 +748,7 @@ export function InboxWorkbench({
           fetched: acc.length,
           target,
           unreadable,
+          unrecognised,
         });
 
         // NOTE: the mine deliberately does NOT persist anything by itself. It
@@ -728,7 +758,7 @@ export function InboxWorkbench({
         // now the explicit action below, which says what actually happened.
       } catch {
         if (ac.signal.aborted || runId !== runIdRef.current) return;
-        setState({ phase: "error", fetched: acc.length, target, unreadable });
+        setState({ phase: "error", fetched: acc.length, target, unreadable, unrecognised });
       }
     },
     [transport],
@@ -776,6 +806,7 @@ export function InboxWorkbench({
               fetched: snap.fetched,
               target: snap.target,
               unreadable: snap.unreadable ?? 0,
+              unrecognised: snap.unrecognised ?? 0,
             });
             return;
           }
@@ -1084,6 +1115,20 @@ export function InboxWorkbench({
             job-related
             {state.unreadable > 0
               ? ` · ${state.unreadable.toLocaleString()} could not be read`
+              : ""}
+            {/* A PARENTHETICAL, because `unrecognised` is a SUBSET of
+                `unreadable` and not a sibling — see the field's own note.
+                Adding it would double-report every message it names.
+
+                Shown at all because the two have different meanings to the
+                reader. Ordinary unreadable mail is deleted or de-authorised
+                and there is nothing to do. An unrecognised refusal means
+                Gmail answered in a shape this client cannot read, which is
+                the signature of an error-envelope change silently shrinking a
+                scan (#744) — the backend counts it so that is loud, and the
+                number stopped at the wire until this line. */}
+            {state.unrecognised > 0
+              ? ` (${state.unrecognised.toLocaleString()} refused in a way this app doesn't recognise)`
               : ""}
           </p>
         )}
