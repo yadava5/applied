@@ -4,18 +4,24 @@ import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import { notifyError, notifySuccess, notifyUndo } from "@/components/feedback/notify";
 import { MailText } from "@/components/mail/MailText";
 import { ApplicationPicker } from "@/components/review/ApplicationPicker";
 import {
   CLASSIFY_FAILED,
+  CORRECTION_CHOICES,
   asksWhichApplication,
+  categoryLabel,
   canNameCompany,
   canSubmitReview,
   classifyDecisionBody,
   confirmCompanyPrompt,
   employerPromptFor,
   readClassifyOutcome,
+  reclassifiedMessage,
   rowStaysInQueue,
+  undoClassifyFailedMessage,
+  undoableVerdict,
   type CandidateApplication,
   type ReviewAssignment,
 } from "@/lib/dashboard/review";
@@ -62,20 +68,6 @@ import { liveClassify, type ClassifyFn } from "@/lib/gmail/transport";
  *   - UNLINKED, several candidates, a lifecycle category → asked, and the
  *     answer rides the request as `application_id` / `none_of_these`.
  */
-const CATEGORY_CHOICES: { value: string; label: string }[] = [
-  { value: "applied", label: "applied" },
-  // The label is the CATEGORY's word, not the stage's. `EmailCategory.INTERVIEW`
-  // is "interview" (models.py:131); `ApplicationStatus.INTERVIEWING` is
-  // "interviewing" (:109). Two vocabularies on purpose -- one names what a
-  // message IS, the other names where a card SITS -- and this list asks the
-  // first question, so it answers in the first vocabulary. #425.
-  { value: "interview", label: "interview" },
-  { value: "assessment", label: "assessment" },
-  { value: "offer", label: "offer" },
-  { value: "rejection", label: "rejection" },
-  { value: "other", label: "not job related" },
-];
-
 const PLACEHOLDER = "";
 
 export function ReclassifyControl({
@@ -84,6 +76,7 @@ export function ReclassifyControl({
   company,
   candidates,
   linkedApplicationId,
+  previousCategory,
   message,
   onCorrected,
   classify = liveClassify,
@@ -124,6 +117,22 @@ export function ReclassifyControl({
    * link-first branch still finds it.
    */
   linkedApplicationId: number | null;
+  /**
+   * The verdict this message holds RIGHT NOW, which is the only thing an undo
+   * has to send back (#511).
+   *
+   * REQUIRED, and deliberately not defaulted: a correction removes the row
+   * from the list it was in, so the acknowledgement is the whole evidence the
+   * click landed, and whether it carries a way back depends entirely on this.
+   * A mount that cannot say what the verdict was has to say so rather than
+   * inherit `null` from a default and silently drop the affordance — the same
+   * rule `candidates` follows above, for the same reason.
+   *
+   * `null` is a legitimate answer (the live scan's unstored rows), and so is a
+   * verdict the correction endpoint would refuse. `undoableVerdict` decides;
+   * see `acknowledge` below.
+   */
+  previousCategory: string | null;
   /**
    * The message's own metadata, for a row that may not be STORED yet — every
    * row in the live-scan view. Absent for the filed ledger, whose rows are
@@ -200,6 +209,91 @@ export function ReclassifyControl({
   const applyLocked =
     busy || !canSend || (employerPrompt !== null && !canNameCompany(namedCompany));
 
+  /**
+   * The correction stuck and the row is leaving the list — say so, and carry
+   * the way back when there genuinely is one (#511).
+   *
+   * TWO THINGS DISQUALIFY AN UNDO, and both leave a plain acknowledgement
+   * rather than a button that cannot deliver:
+   *
+   *  1. A prior verdict the endpoint would refuse. An undo is a re-send of the
+   *     previous category, so `needs_review` — a real stored verdict that is
+   *     not one of `CORRECTION_CHOICES` — has nothing to send.
+   *  2. A prior verdict that would have to ASK which application. Re-sending a
+   *     lifecycle answer for an unlinked message at an employer holding
+   *     several is exactly #560: with no assignment on the wire the backend
+   *     tie-breaks onto the employer's oldest row, and a toast button cannot
+   *     put the question. `asksWhichApplication` is the same predicate the
+   *     panel uses, so the two cannot drift about when an answer is required.
+   *
+   * The `linkedApplicationId` read here is the PRE-correction one, which is
+   * the conservative direction: a correction can add a link, never remove one,
+   * so a message that was unambiguous before is unambiguous now.
+   */
+  function acknowledge(applied: string) {
+    const previous = undoableVerdict(previousCategory);
+    if (
+      previous === null ||
+      asksWhichApplication({ category: previous, candidates, linkedApplicationId })
+    ) {
+      // The key is written out at each call rather than hoisted into a `const`.
+      // That is deliberate and `feedback-call-sites.test.mjs` enforces it: a
+      // key reached through a variable is invisible to the gate that checks no
+      // call site emits on a silent action and that every undo names its
+      // target, so hoisting one buys tidiness and loses the check.
+      notifySuccess(`review.classify.${messageId}`, reclassifiedMessage(categoryLabel(applied)));
+      return;
+    }
+    // Re-bound after the guard: control-flow narrowing does not cross into the
+    // closure below, so the verdict the undo sends is declared `string` here
+    // rather than asserted there.
+    const target: string = previous;
+
+    // A named function expression so the failed undo can offer itself again:
+    // the Undo button closes its own toast when pressed, and the panel that
+    // held the inline error unmounted with the row.
+    async function undo(): Promise<void> {
+      try {
+        const res = await classify(
+          messageId,
+          classifyDecisionBody({
+            category: target,
+            // Nothing to name: the backend has this message stored by now and
+            // resolves the employer from it. Sending a company here would
+            // override one the mail itself names.
+            company: null,
+            candidates,
+            linkedApplicationId,
+            assignment: null,
+            message,
+          }),
+        );
+        if (!rowStaysInQueue(readClassifyOutcome(res.ok, res.body))) {
+          // Back where it started: the panel returns to its resting state so
+          // the row does not keep reading "corrected" for a correction that
+          // has been taken back.
+          setDone(false);
+          setCategory(PLACEHOLDER);
+          onCorrected?.(target);
+          router.refresh();
+          return;
+        }
+      } catch {
+        // Falls through to the same failure toast a refusal gets — from here
+        // there is no difference the reader can act on.
+      }
+      notifyError(
+        `review.classify.undo.${messageId}`,
+        undoClassifyFailedMessage(categoryLabel(applied)),
+        { run: undo },
+      );
+    }
+
+    notifyUndo(`review.classify.${messageId}`, reclassifiedMessage(categoryLabel(applied)), {
+      run: undo,
+    });
+  }
+
   async function apply(answer?: { company?: string; confirmNewCompany?: boolean }) {
     // ENFORCED HERE, NOT ON THE BUTTON, for the reason `canSubmitReview`'s own
     // docstring gives: the two confirmation buttons and the employer prompt all
@@ -256,6 +350,11 @@ export function ReclassifyControl({
       setDone(true);
       setBusy(false);
       onCorrected?.(category);
+      // The note above lives in the row, and the row is on its way out — on
+      // the ledger the refresh below re-renders it away, and on the scan view
+      // a long list scrolls it off. The toast is what is still there
+      // afterwards, and it is where the undo lives (#511).
+      acknowledge(category);
       router.refresh();
     } catch {
       setError(CLASSIFY_FAILED);
@@ -384,7 +483,7 @@ export function ReclassifyControl({
         <option value={PLACEHOLDER} disabled>
           choose a category…
         </option>
-        {CATEGORY_CHOICES.map((c) => (
+        {CORRECTION_CHOICES.map((c) => (
           <option key={c.value} value={c.value}>
             {c.label}
           </option>

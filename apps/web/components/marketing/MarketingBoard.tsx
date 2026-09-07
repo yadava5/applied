@@ -119,6 +119,9 @@ export function MarketingBoard({ verdict, docked, onVisitorOpen }: {
   // fresh transport each render re-triggers the detail sheet's load effect
   // on every board change.
   const appsRef = useRef(apps);
+  /** The rows this mount began with, so a removal has something to come back
+   *  from — `DemoDashboard.original`, for the same reason. */
+  const seedRef = useRef(apps);
   const commit = useCallback((next: (rows: Application[]) => Application[]) => {
     appsRef.current = next(appsRef.current);
     setApps(appsRef.current);
@@ -211,6 +214,15 @@ export function MarketingBoard({ verdict, docked, onVisitorOpen }: {
       },
       async dismiss(id) {
         commit((rows) => rows.filter((app) => app.id !== id));
+        return { ok: true };
+      },
+      async restore(id) {
+        // The removal toast's Undo (#511). Recovered from the seed, like the
+        // demo board: a removal takes the row's session edits with it, which
+        // is what a real dismissal does too.
+        const row = seedRef.current.find((app) => app.id === id);
+        if (!row) return { ok: false };
+        commit((rows) => (rows.some((app) => app.id === id) ? rows : [...rows, row]));
         return { ok: true };
       },
       async deleteRow(id) {

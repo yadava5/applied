@@ -38,6 +38,9 @@ import {
   removalPendingMessage,
   removeFromBoardRequest,
   removedMessage,
+  removedToastMessage,
+  restoreFailedMessage,
+  restoreToBoardRequest,
   rovingIndex,
   statusChangeFailure,
   statusChangeRequest,
@@ -58,6 +61,38 @@ test("the hard delete is a separate request, and it is the one that erases", () 
   // Different endpoint AND different verb from the recoverable one, so a
   // mis-wired menu item cannot silently become the destructive path.
   assert.notEqual(permanentDeleteRequest(ID).path, removeFromBoardRequest(ID).path);
+});
+
+test("the undo hits restore — the recoverable removal's only way back", () => {
+  const restore = restoreToBoardRequest(ID);
+  assert.deepEqual(restore, { path: "/api/applications/66/restore", method: "POST" });
+  // Same three separations the pair above draws. A restore that reached the
+  // delete endpoint would erase the row the reader just asked to keep, and one
+  // that reached `dismiss` would be a no-op wearing a success.
+  assert.notEqual(restore.method, "DELETE");
+  assert.notEqual(restore.path, permanentDeleteRequest(ID).path);
+  assert.notEqual(restore.path, removeFromBoardRequest(ID).path);
+});
+
+test("the removal toast says what the tombstone says, minus the tail the button carries", () => {
+  // Both come off one fragment, so the sentence the card shows for six seconds
+  // and the one the corner shows afterwards cannot drift (#424 keeps the two
+  // COMMITTED outcomes apart; this keeps one outcome's two renderings together).
+  assert.equal(removedToastMessage("Northwind"), "Northwind removed from the board");
+  assert.ok(removedMessage("Northwind").startsWith(removedToastMessage("Northwind")));
+  assert.equal(removedMessage("Northwind").includes(deletedMessage("Northwind")), false);
+  // An empty employer falls back the same way every other outcome line does.
+  assert.equal(removedToastMessage("   "), "This row removed from the board");
+});
+
+test("a failed undo names the state the board is actually in", () => {
+  // Not "try again later" and not an apology: the row is off the board, no
+  // later sync brings it back (`dismissed_reason = "user"`), and the toast that
+  // carries this keeps the button. Same shape as REMOVE_FAILED's.
+  assert.equal(
+    restoreFailedMessage("Northwind"),
+    "Couldn't put Northwind back — it is still off your board.",
+  );
 });
 
 test("a stage change PATCHes the chosen status and nothing else", () => {

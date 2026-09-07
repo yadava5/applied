@@ -281,6 +281,43 @@ export function DemoDashboard({
     return () => window.clearTimeout(id);
   }, [today, datedFor, pipeline, commit]);
 
+  /**
+   * Put a removed row back. ONE implementation, because the twin now has two
+   * ways to ask for it — the rebuild receipt's per-row restore and the removal
+   * toast's Undo (#511) — and the `touched` line below is what a second,
+   * naive copy would drop.
+   *
+   * Everything here was `syncTransport.restore`'s body; the comments are its
+   * own, and they are the reason it is shared rather than rewritten.
+   */
+  const restoreRow = useCallback(
+    (id: number): boolean => {
+      const s = store.current;
+      // The removed row is not in `apps` anymore; recover it from the
+      // fixtures this mount started with (its edits died with the removal,
+      // as a real dismissal's board row does — restore brings back the row,
+      // not the session).
+      const row = original.current.find((app) => app.id === id);
+      if (!row) return false;
+      // A restore is a CORRECTION — the visitor has said "keep this one" —
+      // so the row joins `touched` and the next pass leaves it alone, the
+      // same promise the rebuild dialog makes. Without that it was removed
+      // again on every pass, and because re-removing it made the pass
+      // "change" something, a shallow scan re-reported the same stopped-early
+      // stop at PARTIAL_SCAN: the receipt never resolved, the scanned count
+      // never moved past 100, and the visitor could continue forever.
+      // Continuing after a restore now reads exactly like continuing
+      // without one.
+      commit({
+        ...s,
+        apps: [...s.apps, row],
+        touched: s.touched.includes(id) ? s.touched : [...s.touched, id],
+      });
+      return true;
+    },
+    [commit],
+  );
+
   const boardTransport = useMemo<BoardTransport>(
     () => ({
       async changeStatus(id, status) {
@@ -363,6 +400,15 @@ export function DemoDashboard({
         commit({ ...s, apps: s.apps.filter((app) => app.id !== id) });
         return { ok: true };
       },
+      async restore(id) {
+        await delay(300);
+        // A row this mount never held cannot be recovered from the fixtures,
+        // and saying so is the honest answer — the toast's Undo then reports a
+        // failed restore rather than closing over nothing.
+        return restoreRow(id)
+          ? { ok: true }
+          : { ok: false, detail: "This row is not in the demo's fixtures." };
+      },
       async deleteRow(id) {
         await delay(300);
         const s = store.current;
@@ -377,7 +423,7 @@ export function DemoDashboard({
           : { ok: false, body: {} };
       },
     }),
-    [commit],
+    [commit, restoreRow],
   );
 
   const syncTransport = useMemo<SyncTransport>(
@@ -487,31 +533,10 @@ export function DemoDashboard({
       },
       async restore(id) {
         await delay(300);
-        const s = store.current;
-        // The removed row is not in `apps` anymore; recover it from the
-        // fixtures this mount started with (its edits died with the removal,
-        // as a real dismissal's board row does — restore brings back the row,
-        // not the session).
-        const row = original.current.find((app) => app.id === id);
-        if (!row) return false;
-        // A restore is a CORRECTION — the visitor has said "keep this one" —
-        // so the row joins `touched` and the next pass leaves it alone, the
-        // same promise the rebuild dialog makes. Without that it was removed
-        // again on every pass, and because re-removing it made the pass
-        // "change" something, a shallow scan re-reported the same stopped-early
-        // stop at PARTIAL_SCAN: the receipt never resolved, the scanned count
-        // never moved past 100, and the visitor could continue forever.
-        // Continuing after a restore now reads exactly like continuing
-        // without one.
-        commit({
-          ...s,
-          apps: [...s.apps, row],
-          touched: s.touched.includes(id) ? s.touched : [...s.touched, id],
-        });
-        return true;
+        return restoreRow(id);
       },
     }),
-    [commit],
+    [commit, restoreRow],
   );
 
   // THE READER'S DAY, not the UTC one (#584). `summarize` buckets "this wk"
