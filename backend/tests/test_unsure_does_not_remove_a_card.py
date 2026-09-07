@@ -52,13 +52,15 @@ USER = uuid.UUID("00000000-0000-0000-0000-0000000000ee")
 
 MESSAGE = "1a0234892a06beef"
 
-#: The real one, as Microsoft sends it. It names a requisition number, which is
-#: what makes the removal so hard to defend: the message the scan could not
-#: settle is more identifying than most mail the product files without asking.
+#: Microsoft's real wording, as the snippet delivers it, carrying the real
+#: requisition number — which is what makes the removal so hard to defend: the
+#: message the scan could not settle is more identifying than most mail the
+#: product files without asking. The role title is invented, because the real
+#: one named a specific posting (#593).
 SNIPPET = (
     "Hi Ayush, Thank you for taking the time to submit your application for "
-    "Pre-Training (Job number: 200007619). We're glad you're interested in a "
-    "career at Microsoft, and we're here to help"
+    "Fleet-Provisioning (Job number: 200007619). We're glad you're interested "
+    "in a career at Microsoft, and we're here to help"
 )
 
 
@@ -66,7 +68,7 @@ async def _seed(session) -> int:
     row = Application(
         user_id=USER,
         company="Microsoft",
-        position="Pre-Training",
+        position="Fleet-Provisioning",
         status=ApplicationStatus.APPLIED,
         applied_date=datetime.date(2026, 8, 21),
         source="gmail",

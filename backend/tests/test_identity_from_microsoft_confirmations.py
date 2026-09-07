@@ -8,7 +8,10 @@ IMPORTANT, received at 07:38:41, 07:41:09, 07:42:15 and 07:43:23, hours before
 the sync ran. Four applications, four roles, four requisition numbers. Not one
 produced a row.
 
-The wordings below are the real ones, taken from the mailbox:
+The wording below is real — Microsoft's ATS confirmation, transcribed for the
+pattern the classifier must read — and so are the employer, the sender address
+and the requisition numbers. The role titles that named a specific posting are
+invented; see `docs/TEST_DATA_POLICY.md` (#593).
 
     Hi Ayush, Thank you for taking the time to submit your application for
     Software Engineer II (Job number: 200045485). We're glad you're interested
@@ -45,12 +48,14 @@ from jobtracker.cloud.pipeline import extract_req_id, role_from_message
 
 SUBJECT = "Thank you for your application!"
 
-#: The four real applications, as they arrived.
+#: The four applications, as they arrived. The requisition numbers are real; two
+#: of the role titles are invented, because the real ones named a specific
+#: posting rather than a generic one (#593).
 MICROSOFT = [
     ("Software Engineer II", "200045485"),
-    ("Customer Experience Engineer", "200049333"),
+    ("Field Reliability Engineer", "200049333"),
     ("Software Engineer", "200043070"),
-    ("Pre-Training", "200007619"),
+    ("Fleet-Provisioning", "200007619"),
 ]
 
 

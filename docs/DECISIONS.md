@@ -287,3 +287,41 @@ Valid while: production stays at a scale where the index's write-time cost is
   measurement and revisit — the arithmetic that makes dropping it not worth a
   migration is the arithmetic that reverses first.
 Markers: backend/alembic/versions/c8f3a1d64b27_read_path_indexes.py, backend/tests/test_read_path_indexes_postgres.py
+
+## DEC-008 — a real sender domain is allowed only where the test keys on that exact domain
+
+Status: active (2026-09-07)
+Claim: a fixture may carry a real, routable sender domain only where the test
+  exercises code that keys on that exact domain, and only if it names the
+  `file:line` it keys on. Everything else uses a reserved domain. The ATS relay
+  address already published across seven tracked files is kept, unedited, and
+  is not licensed by this carve-out.
+Why: the domain is the input production reads.
+  `backend/jobtracker/tracking/extractor.py:85` maps that relay's registrable
+  domain to a public employer name in the direct-company-domain table, matched
+  as a proper subdomain, and the reserved TLDs are not in that table and never
+  will be — so a test of the mapping written on a `.test` domain asserts
+  nothing at all. That gap is real, and it is the only one: measured on this
+  tree, no module carrying the address reaches the table, so the residue is
+  retained under the policy's "nothing already published is deleted" section
+  rather than by this entry. The carve-out is written for the NEXT fixture, so
+  that it is a decision instead of a copy of the last one.
+Moved away from: two alternatives, and the first is the obvious tidy-up.
+  (1) Substituting a reserved domain everywhere. It removes nothing — the blobs
+  stay in history, in code search and in every fork — and in the one place the
+  domain is load-bearing it converts a test into a tautology.
+  (2) The wide version of this permission: "real domains are fine in tests,
+  they identify companies and not people". That is precisely the precedent that
+  produced #593. It reasons about harm rather than about whether a test can
+  fail, it scopes to nothing, and each new fixture then cites the last one.
+Enforced by: scripts/check_test_data.py enforces the visible half — a new
+  non-reserved address reds the gate in either direction, so one cannot arrive
+  without a deliberate `--write-baseline` commit somebody has to justify. It
+  cannot see WHY a domain is there, and no text scan can. For the condition
+  this entry actually sets — that the test keys on that exact domain and names
+  the file:line — nothing enforces this; prose only.
+Valid while: the employer map keys on bare registrable domains and is matched
+  with `rules.domain_matches`. If it ever moves to full hostnames, or is
+  derived rather than written out, re-read this entry: the reason a reserved
+  substitute asserts nothing is that the key is a real registration.
+Markers: docs/TEST_DATA_POLICY.md

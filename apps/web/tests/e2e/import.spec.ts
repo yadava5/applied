@@ -432,10 +432,15 @@ test.describe("a reply is not its own thread", () => {
     "> Hi Ayush, Thank you for applying to the Backend Engineer position at\n" +
     "> Cedarhollow Systems. Your application has been received.\n";
 
+  /**
+   * Microsoft's real wording, sender and requisition number. The role title is
+   * invented, because the real one named a specific posting — #593 and
+   * `docs/TEST_DATA_POLICY.md`.
+   */
   const MICROSOFT =
     "Hi Ayush, Thank you for taking the time to submit your application for " +
-    "Pre-Training (Job number: 200007619). We are glad you are interested in a " +
-    "career at Microsoft, and we are here to help";
+    "Fleet-Provisioning (Job number: 200007619). We are glad you are interested " +
+    "in a career at Microsoft, and we are here to help";
 
   async function classify(
     page: Page,
@@ -501,8 +506,9 @@ test.describe("a reply is not its own thread", () => {
     );
     await expect(
       results.getByText("applied", { exact: true }).first(),
-      "the wording of five real confirmations in the owner's mailbox, none of " +
-        "which the product could file before #441",
+      "the real wording of five confirmations in the owner's mailbox — with an " +
+        "invented role title, #593 — none of which the product could file " +
+        "before #441",
     ).toBeVisible();
   });
 });
