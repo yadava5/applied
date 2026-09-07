@@ -263,12 +263,16 @@ def test_a_reply_subject_still_counts_for_something(rules) -> None:
 # ── Microsoft's wording ──────────────────────────────────────────────────────
 
 MICROSOFT_SUBJECT = "Thank you for your application!"
+
+#: Five confirmations, as they arrived. The wording, the sender, the subject and
+#: the requisition numbers are real; three of the role titles are invented,
+#: because the real ones named a specific posting (#593).
 MICROSOFT = [
     ("Software Engineer II", "200045485"),
-    ("Customer Experience Engineer", "200049333"),
+    ("Field Reliability Engineer", "200049333"),
     ("Software Engineer", "200043070"),
-    ("Pre-Training", "200007619"),
-    ("Software Engineer-MCAPS Core", "200044387"),
+    ("Fleet-Provisioning", "200007619"),
+    ("Software Engineer-Platform Core", "200044387"),
 ]
 
 
@@ -293,6 +297,9 @@ def test_a_microsoft_confirmation_reaches_the_board(
     queue. The report was "I applied to 4 new Microsoft and a Google
     application, but when I sync it in the app, I'm not getting anything", and
     the identity work answered the second half of that sentence only.
+
+    The wording and the requisition numbers are the real ones; three of the
+    role titles parametrized above are invented (#593).
 
     Message ids, all in the owner's mailbox: 1a02341f84f11426,
     1a023443b385563f, 1a023453e5cd359d, 1a023464635139a1, 19ff98d36594296d.

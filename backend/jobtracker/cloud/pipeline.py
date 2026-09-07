@@ -1659,11 +1659,16 @@ _REQ_ID_PATTERNS: tuple[re.Pattern[str], ...] = (
     #
     # THIS COST FOUR REAL APPLICATIONS. On 2026-08-21 four Microsoft
     # applications were submitted within five minutes of each other, for
-    # Software Engineer II (200045485), Customer Experience Engineer
-    # (200049333), Software Engineer (200043070) and Pre-Training (200007619).
-    # Every confirmation carries its own number, in the Gmail snippet, well
-    # inside the 200 characters the snippet gives us. None was read, so all
-    # four had null identity at an employer that already had a row.
+    # Software Engineer II (200045485), Field Reliability Engineer
+    # (200049333), Software Engineer (200043070) and Fleet-Provisioning
+    # (200007619). Every confirmation carries its own number, in the Gmail
+    # snippet, well inside the 200 characters the snippet gives us. None was
+    # read, so all four had null identity at an employer that already had a
+    # row.
+    #
+    # The requisition numbers are as they arrived; two of the role titles are
+    # invented, because the real ones named a specific posting — #593 and
+    # docs/TEST_DATA_POLICY.md.
     #
     # THE PREFIX IS MANDATORY HERE, unlike the `id` pattern above where it is
     # optional. "id" is already a strong enough token to stand alone; "number"

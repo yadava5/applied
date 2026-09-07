@@ -497,17 +497,21 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             # applications have never once auto-filed. Nothing above matches
             # either the subject "Thank you for your application!" or the body
             # "Thank you for taking the time to submit your application for
-            # Pre-Training (Job number: 200007619)", so a plain, unambiguous,
-            # requisition-bearing confirmation scored 0.80 — under the 0.85
-            # gate — and sat in the review queue forever. It was reported as
+            # Fleet-Provisioning (Job number: 200007619)", so a plain,
+            # unambiguous, requisition-bearing confirmation scored 0.80 — under
+            # the 0.85 gate — and sat in the review queue forever. It was
+            # reported as
             # "I applied to 4 new Microsoft and a Google application, but when
             # I sync it in the app, I'm not getting anything", and the identity
             # work that followed fixed how those four would be TOLD APART
             # without fixing whether any of them arrives at all.
             #
-            # Both are taken from the mailbox, not invented: message ids
-            # 1a023464635139a1, 1a023453e5cd359d, 1a023443b385563f,
-            # 1a02341f84f11426 and 19ff98d36594296d.
+            # Both wordings are taken from the mailbox, not invented, with
+            # one exception: the role title quoted above is invented, because
+            # the real one named a specific posting — #593 and
+            # docs/TEST_DATA_POLICY.md. Message ids 1a023464635139a1,
+            # 1a023453e5cd359d, 1a023443b385563f, 1a02341f84f11426 and
+            # 19ff98d36594296d.
             r"thank(s| you) for (taking the time to )?submit(ting)? your application",
             r"successfully submitted",
             r"confirm(ing)? receipt",
