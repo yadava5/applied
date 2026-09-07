@@ -3872,11 +3872,51 @@ def _brand_display(brand: str, sender_name: str | None) -> str:
     return brand.replace("-", " ").title()
 
 
-# "Thanks for applying to Twitch", "Thank you for applying to DoorDash" — the
-# employer, spelled by the employer, in its own subject line.
+# "Thanks for applying to Twitch", "Thank you for applying to DoorDash",
+# "Thank you for your application to Notion" — the employer, spelled by the
+# employer, in its own subject line.
+#
+# ``application`` TAKES ONLY ``to``/``with``, WHILE ``apply``/``applying`` KEEP
+# ``for`` AS WELL. That asymmetry is the whole of the widening's safety. "apply
+# for Notion" is not English about a job; "application for Software Engineer"
+# is the commonest subject line in the corpus, and admitting ``for`` here would
+# capture the ROLE as the company — the exact defect #882 removed from the
+# relay half of this module. The noun and the verb do not license the same
+# prepositions, so they do not get the same alternation.
 _SUBJECT_NAMES_EMPLOYER = re.compile(
     r"\bapply(?:ing)?\s+(?:to|with|for)\s+(?:the\s+)?(?P<name>[A-Z][\w&.\-]*(?:\s+[A-Z][\w&.\-]*){0,2})",
 )
+
+#: The NOUN form, kept as a second pattern rather than an alternation in the
+#: one above, and the separation is the whole of this change's safety.
+#:
+#: Folding ``application to`` into :data:`_SUBJECT_NAMES_EMPLOYER` re-keyed 43
+#: corpus employers that had nothing to do with the defect being fixed: a
+#: subject reading "Update on your application to Sabledale Analytics" from
+#: ``sabledaleanalytics``'s own domain began matching, and the PREFIX agreement
+#: that was already there then shortened the token from ``sabledale analytics``
+#: to ``sabledale``. Tokens fell 9113 -> 9070 and displays 9353 -> 9310, which
+#: `test_one_employer_gets_one_spelling` catches and which its message correctly
+#: reads as "messages stopped resolving an employer at all".
+#:
+#: So the noun form licenses ONLY the brand-head agreement it was added for.
+#: The verb form keeps every agreement it had. A widening that changes what
+#: already worked is not a widening, and the corpus is what said so.
+_SUBJECT_NAMES_EMPLOYER_NOUN = re.compile(
+    r"\bapplication\s+(?:to|with)\s+(?:the\s+)?(?P<name>[A-Z][\w&.\-]*(?:\s+[A-Z][\w&.\-]*){0,2})",
+)
+
+#: Domain labels that are a marketing prefix glued to the brand. A SaaS company
+#: whose bare name was already registered mails from ``make<brand>.com``,
+#: ``get<brand>.com``, ``join<brand>.com`` — and title-casing that label prints
+#: "Makenotion" on a board where the message itself said "Notion".
+#:
+#: A CLOSED LIST RATHER THAN A SUFFIX TEST, and that is the point. Bare
+#: ``brand.endswith(token)`` would let a subject that merely mentions "Ace"
+#: agree with ``palace.com``; requiring the removed head to be one of these
+#: keeps the agreement anchored, which is what the prefix test already gives in
+#: the other direction. Add to it only with a real domain in hand.
+_BRAND_HEADS: tuple[str, ...] = ("make", "get", "join", "try", "use", "hi", "meet", "go")
 
 
 def _corporate_identity(
@@ -3907,8 +3947,24 @@ def _corporate_identity(
     """
 
     match = _SUBJECT_NAMES_EMPLOYER.search(subject or "")
+    # The verb form keeps both agreements it always had; the noun form is new
+    # and reaches only `_brand_head_agrees` (see the pattern's own note).
+    heads_only = False
+    if match is None:
+        match = _SUBJECT_NAMES_EMPLOYER_NOUN.search(subject or "")
+        heads_only = match is not None
     if match:
         named = _clean_company_display(match.group("name"))
+        # THE SAME GUARD THE RELAY HALF ALREADY APPLIES. `_TITLE_SHAPED`'s note
+        # says the two halves of this module read one set of role head nouns
+        # "so the two halves cannot end up disagreeing" — and this branch was
+        # not consulting it. It is reachable now that the noun form is matched,
+        # and a subject reading "…application to Data Engineer" must resolve
+        # the domain, not the job. Cheap insurance either way: before the
+        # widening no wording could get a role here, and the guard costs one
+        # call on a branch that already found a capitalised name.
+        if _names_a_role_not_an_employer(named):
+            return brand, _brand_display(brand, sender_name)
         # The FIRST normalized word, not the whole name space-stripped. Every
         # other token in this module is a single word, and
         # `matches_company_token` compares normalized names word-wise — so a
@@ -3917,9 +3973,32 @@ def _corporate_identity(
         # lookup never found the existing one, the upsert minted another, and the
         # emptied predecessor was dismissed, forever.
         token = _normalize_token(named).split(" ")[0]
-        if token and (brand.startswith(token) or token.startswith(brand)):
+        agrees = _brand_head_agrees(brand, token) or (
+            not heads_only and (brand.startswith(token) or token.startswith(brand))
+        )
+        if token and agrees:
             return token, named
     return brand, _brand_display(brand, sender_name)
+
+
+def _brand_head_agrees(brand: str, token: str) -> bool:
+    """Is ``brand`` the subject's ``token`` behind a marketing head?
+
+    ``makenotion`` for "Notion", ``getbuilt`` for "Built". The prefix test above
+    reads a domain that ADDS to the brand ("twitchjobs" for Twitch); this reads
+    one that PRECEDES it, which the same companies do just as often because the
+    bare name was taken.
+
+    Both fences matter and neither is decoration. The head must come from
+    :data:`_BRAND_HEADS`, so this can never become bare containment. And the
+    token must be four characters or more: ``my``, ``us`` and ``co`` are real
+    two-letter company names, and at that length the residue of almost any
+    domain agrees with almost any subject.
+    """
+
+    if len(token) < 4:
+        return False
+    return any(brand == head + token for head in _BRAND_HEADS)
 
 
 def resolve_employer(
