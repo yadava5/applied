@@ -405,9 +405,30 @@ async def _probe_sync_position(
     cannot hold two identities at once anyway.
 
     Returns ``(has_gmail, last_sync_at)``. ``last_sync_at`` is the ``min`` over
-    the user's Gmail ``sync_state`` rows, so a user with more than one linked
-    address still yields one value — the oldest, which is the one that decides
-    how urgently they need a run.
+    the user's Gmail ``sync_state`` rows.
+
+    THE ``min`` IS DEFENSIVE, NOT A MULTI-MAILBOX FEATURE, and this sentence
+    used to say the opposite — that "a user with more than one linked address
+    still yields one value". Read as a promise it is false, because a second row
+    cannot be written through any path the product has: the mail path derives
+    ``account_email`` from the single stored credential
+    (:mod:`jobtracker.cloud.gmail_oauth`), and
+    :func:`jobtracker.credentials.cloud.get_gmail_credentials` takes a
+    ``user_id`` and no address at all across its seventeen call sites. The
+    schema agrees — ``user_credentials`` is keyed ``(user_id, kind)``.
+
+    ONE MAILBOX PER USER IS THE CONTRACT (#296). ``sync_state``'s
+    ``(user_id, account_email)`` unique key is wider than that contract, so this
+    aggregate is what keeps a stray row from making the query ambiguous rather
+    than what makes many rows work. A second row arriving would be an orphan:
+    read by this ranking, never advanced by a sync, and pinning the user to the
+    front of the least-recently-synced queue forever.
+
+    The alternative — many mailboxes per user — is priced and rejected in
+    ``docs/DECISIONS.md``: it needs the credential primary key widened, a
+    migration across three RLS revisions, an address argument at every call
+    site, and it redefines what the Google restricted-scope connection cap
+    counts.
     """
 
     from jobtracker.cloud.sync_state import GMAIL_ACCOUNT_TYPE
