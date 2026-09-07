@@ -861,7 +861,16 @@ def _quoted_history(b: _Builder, n: int) -> None:
             sender=b.ats(i),
             sender_name=f"{display} Recruiting",
             body=(
-                "Hi Ayush, Following up on the below — we would love to set up a "
+                # "would LIKE to", not "would love to". Measured across the 110
+                # externally-provenanced interview cases in tests/corpus/mail.py
+                # (VERIFIED = published ATS template text, COLLECTED, MEASURED):
+                # `like to` appears 63 times, `love to` ZERO. The engine's
+                # INTERVIEW.strong volition slot wants the attested verb, and a
+                # fixture written in language no real invitation uses graded the
+                # wording rather than the defect -- 200 of 400 "wrong" at every
+                # seed, with the quote-strip this family exists to test never
+                # reached. See #878.
+                "Hi Ayush, Following up on the below — we would like to set up a "
                 "conversation with you next week. Are you free Thursday?\n\n"
                 f"On Tuesday, {display} Recruiting wrote:\n"
                 f"> Hi Ayush, Thank you for applying to the {role} position at\n"
