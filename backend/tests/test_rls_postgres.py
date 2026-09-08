@@ -1604,8 +1604,33 @@ async def test_the_identity_guc_does_not_survive_a_commit_on_a_reused_connection
     )
 
 
+@pytest.mark.parametrize(
+    "guc",
+    [
+        # BOTH names auth.uid() reads, because neutralising one is not
+        # neutralising the other. The deployed definition is
+        #     coalesce(nullif(current_setting('request.jwt.claim.sub', …), ''),
+        #              nullif(current_setting('request.jwt.claims',    …), '')
+        #                ::jsonb ->> 'sub')
+        # and the SINGULAR name is the FIRST coalesce argument, so it outranks
+        # the plural one. Measured while writing this, identity-less
+        # transaction on a poisoned connection:
+        #
+        #     branch writes        poisoned claims   poisoned claim.sub
+        #     nothing (pre-#634)   LEAK              LEAK
+        #     plural only          closed            LEAK
+        #     both                 closed            closed
+        #
+        # The middle row is why this is parametrized rather than a single case:
+        # the plural-only fix passed a one-vector test while leaving the
+        # higher-precedence vector wide open.
+        "request.jwt.claims",
+        "request.jwt.claim.sub",
+    ],
+)
 async def test_the_no_identity_branch_defeats_a_foreign_session_level_claim(
     pg_app: AsyncEngine,
+    guc: str,
 ) -> None:
     """The threat nothing defended against, and #634's fix for it, as behaviour.
 
@@ -1626,10 +1651,18 @@ async def test_the_no_identity_branch_defeats_a_foreign_session_level_claim(
     this repo neither owns nor pins, and it only ever covered values we wrote
     ourselves.
 
-    The branch now writes ``'{}'``: valid JSON naming no subject, so
+    The branch now neutralises BOTH names ``auth.uid()`` reads. ``'{}'`` for
+    the plural ``request.jwt.claims`` — valid JSON naming no subject, so
     ``->> 'sub'`` is NULL by construction rather than by a foreign function's
-    good behaviour. ``''`` would not do — that is the one value the cast-first
-    shim raises on (#847).
+    good behaviour; ``''`` would not do there, being the one value the
+    cast-first shim raises on (#847). ``''`` for the singular
+    ``request.jwt.claim.sub``, which auth.uid() nullifs directly.
+
+    THE SINGULAR ONE IS NOT AN AFTERTHOUGHT: it is the FIRST argument of the
+    deployed ``coalesce`` and therefore outranks the plural one. The first
+    version of this fix wrote only ``'{}'``, passed a single-vector version of
+    this test, and left the higher-precedence vector wide open. Parametrizing
+    over both is what turned that from an argument into a measurement.
 
     THREE THINGS MAKE THIS TEST ABLE TO FAIL, and each closes a way the obvious
     version of it would be vacuous:
@@ -1648,9 +1681,11 @@ async def test_the_no_identity_branch_defeats_a_foreign_session_level_claim(
        count 0. The two states are distinguishable in both the GUC and the
        rows, so the count is asserted and not just the GUC.
 
-    Verified by mutation: deleting the ``set_config('request.jwt.claims', '{}',
-    true)`` term from ``_apply_transaction_gucs`` reds this test on the count
-    and on the claims, and restoring it greens it.
+    Verified by mutation, one term at a time, which is what proves each is
+    load-bearing rather than decoration: dropping the plural ``set_config``
+    reds only the ``request.jwt.claims`` case, dropping the singular one reds
+    only the ``request.jwt.claim.sub`` case, and each reds on the GUC, on
+    ``auth.uid()`` and on the row count together. Restoring greens both.
     """
 
     from jobtracker.credentials.cloud import save_gmail_credentials
@@ -1667,14 +1702,27 @@ async def test_the_no_identity_branch_defeats_a_foreign_session_level_claim(
     # the wrong reason.
     assert get_current_user_id() is None
 
-    poison = f'{{"sub":"{USER_B}"}}'
+    # The poison is shaped for the GUC under test: the plural name carries the
+    # whole claims JSON, the singular one carries the bare subject.
+    poison = f'{{"sub":"{USER_B}"}}' if guc == "request.jwt.claims" else str(USER_B)
+    # ...and so is the value the branch must overwrite it with. THEY DIFFER ON
+    # PURPOSE: auth.uid() casts the plural setting to jsonb, so it needs valid
+    # JSON naming no subject; it nullifs the singular setting directly, so ''
+    # is what makes that coalesce arm fall through.
+    neutralised = "{}" if guc == "request.jwt.claims" else ""
+
+    # A sentinel, not '', as the coalesce default. For the singular vector ''
+    # IS the expected neutralised value, so defaulting to '' would make "we
+    # wrote ''" and "it was never set" the same reading, and the assertion
+    # could not tell them apart.
+    unset = "<<unset>>"
 
     async with get_engine().connect() as conn:
         raw = (await conn.get_raw_connection()).driver_connection
 
         # ---- 1. The foreign client. A session-level SET, autocommitted by the
         # driver, exactly what a co-tenant leaves on a pooled connection.
-        await raw.execute(f"SET request.jwt.claims = '{poison}'")
+        await raw.execute(f"SET {guc} = '{poison}'")
 
         # ---- 2. THE POSITIVE CONTROL, before the property under test.
         control = await raw.fetchrow(
@@ -1689,7 +1737,7 @@ async def test_the_no_identity_branch_defeats_a_foreign_session_level_claim(
             await conn.execute(
                 text(
                     "SELECT pg_backend_pid(), "
-                    "coalesce(current_setting('request.jwt.claims', true), ''), "
+                    f"coalesce(current_setting('{guc}', true), '{unset}'), "
                     "current_setting('search_path'), "
                     "coalesce(auth.uid()::text, ''), "
                     "(SELECT count(*) FROM user_credentials)"
@@ -1704,9 +1752,9 @@ async def test_the_no_identity_branch_defeats_a_foreign_session_level_claim(
         # session-level write, i.e. the very thing every test above forbids.
         raw = (await conn.get_raw_connection()).driver_connection
         still_poisoned = await raw.fetchval(
-            "SELECT current_setting('request.jwt.claims', true)"
+            f"SELECT current_setting('{guc}', true)"
         )
-        await raw.execute("RESET request.jwt.claims")
+        await raw.execute(f"RESET {guc}")
 
     txn_pid, claims, search_path, uid, count = observed
 
@@ -1734,25 +1782,27 @@ async def test_the_no_identity_branch_defeats_a_foreign_session_level_claim(
     # evaluated — so a run that reds proves only the cheapest of them. As a
     # tuple, a single mutation run reports all three actual values and shows
     # each of them discriminating. Equality, not membership: the failure being
-    # closed here is a claims GUC holding the WRONG subject, which every
-    # substring test of "request.jwt.claims" passes.
-    assert (claims, uid, count) == ("{}", "", 0), (
-        "the identity-less transaction inherited the foreign claim.\n"
-        f"  request.jwt.claims : {claims!r}\t(want '{{}}')\n"
-        f"  auth.uid()         : {uid!r}\t(want '', i.e. NULL)\n"
-        f"  unfiltered rows    : {count}\t(want 0)\n"
-        "The branch must write '{}' over whatever the connection carries: "
-        "leaving the GUC alone inherits a foreign co-tenant's subject, every "
-        "RLS policy on the transaction then evaluates as that user, and the "
-        "row count is the bite a GUC assertion alone cannot see. '' would not "
-        "do either — it is the one value the cast-first auth.uid() shim raises "
-        "on (#847)."
+    # closed here is a GUC holding the WRONG subject, which every substring
+    # test of the GUC's name passes.
+    assert (claims, uid, count) == (neutralised, "", 0), (
+        f"the identity-less transaction inherited the foreign {guc}.\n"
+        f"  {guc:<22}: {claims!r}\t(want {neutralised!r})\n"
+        f"  {'auth.uid()':<22}: {uid!r}\t(want '', i.e. NULL)\n"
+        f"  {'unfiltered rows':<22}: {count}\t(want 0)\n"
+        f"The branch must overwrite {guc} rather than leave it: leaving it "
+        "inherits a foreign co-tenant's subject, every RLS policy on the "
+        "transaction then evaluates as that user, and the row count is the "
+        "bite a GUC assertion alone cannot see.\n"
+        "If this is the SINGULAR name, note it is the FIRST coalesce argument "
+        "in the deployed auth.uid() and therefore outranks the plural one — "
+        "neutralising only request.jwt.claims leaves this vector open, which "
+        "is what the first version of this fix did."
     )
     assert still_poisoned == poison, (
-        f"after the transaction the connection carried {still_poisoned!r}. The "
-        "'{}' must be transaction-local: a session-level write here would "
-        "outlive the transaction into the next tenant, which is the leak this "
-        "module exists to prevent."
+        f"after the transaction the connection carried {still_poisoned!r} for "
+        f"{guc}. The neutralising write must be transaction-local: a "
+        "session-level one would outlive the transaction into the next tenant, "
+        "which is the leak this module exists to prevent."
     )
 
 

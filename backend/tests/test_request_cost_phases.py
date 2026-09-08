@@ -351,12 +351,15 @@ def test_transaction_gucs_without_identity_neutralise_the_claims_guc() -> None:
     connection the identity-less branch INHERITED whatever was there. Our own
     ``''`` was harmless; a foreign co-tenant's session-level
     ``SET request.jwt.claims`` on a shared pooler connection is not, and
-    writing nothing is precisely what let it through. So the branch now writes
-    ``'{}'`` — valid JSON naming no subject — and this test asserts the new
-    behaviour rather than guarding the old one. The behavioural half, against a
-    real Postgres and a real poisoned connection, is
+    writing nothing is precisely what let it through. So the branch now
+    neutralises BOTH names ``auth.uid()`` reads — ``'{}'`` for the plural
+    ``request.jwt.claims`` and ``''`` for the singular
+    ``request.jwt.claim.sub``, which is FIRST in the deployed coalesce and so
+    outranks the other. This test asserts the new behaviour rather than
+    guarding the old one. The behavioural half, against a real Postgres and a
+    real poisoned connection, is
     ``test_the_no_identity_branch_defeats_a_foreign_session_level_claim`` in
-    tests/test_rls_postgres.py.
+    tests/test_rls_postgres.py, parametrized over both poison vectors.
 
     Equality, not ``in``: a substring check on ``request.jwt.claims`` passes for
     a branch that writes a STALE subject, which is the whole failure being
@@ -375,15 +378,20 @@ def test_transaction_gucs_without_identity_neutralise_the_claims_guc() -> None:
     assert len(conn.statements) == 1, conn.statements
     assert conn.statements[0] == (
         "SELECT set_config('search_path', 'public', true), "
-        "set_config('request.jwt.claims', '{}', true)"
+        "set_config('request.jwt.claims', '{}', true), "
+        "set_config('request.jwt.claim.sub', '', true)"
     ), conn.statements[0]
 
     # What survives of the ORIGINAL claim, and the reason '{}' rather than '':
     # the empty string is what the cast-first shim (#847) raises on, so it must
-    # never be what this branch emits.
+    # never be what the PLURAL setting is given. The SINGULAR one is a different
+    # case — auth.uid() nullifs it directly, so '' is correct there. The two
+    # values differ on purpose and this pins the difference; "harmonising" them
+    # either reintroduces the cast hazard or stops neutralising the singular.
     assert "set_config('request.jwt.claims', '', true)" not in conn.statements[0]
-    # And it must be transaction-local, like the identity itself.
+    # And both must be transaction-local, like the identity itself.
     assert re.search(r"request\.jwt\.claims'\s*,\s*'\{\}'\s*,\s*true", conn.statements[0])
+    assert re.search(r"request\.jwt\.claim\.sub'\s*,\s*''\s*,\s*true", conn.statements[0])
 
 
 @pytest.mark.asyncio

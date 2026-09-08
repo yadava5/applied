@@ -191,17 +191,49 @@ def _apply_transaction_gucs(conn: Any) -> None:
     # ``'{}'`` is valid JSON naming no subject, so ``->> 'sub'`` is NULL and
     # ``NULL::uuid`` is NULL: fail-closed BY CONSTRUCTION, not by trusting a
     # ``nullif`` in a Supabase-managed function this repo neither owns nor
-    # pins. ``''`` would NOT do — it is one edit away from the cast-first shim
-    # that raises on it (#847), and it re-bets the property on that function.
+    # pins. ``''`` would NOT do for THAT one — it is one edit away from the
+    # cast-first shim that raises on it (#847), and it re-bets the property on
+    # that function.
+    #
+    # BOTH GUCs ARE NEUTRALISED, BECAUSE auth.uid() READS BOTH. The deployed
+    # definition is a coalesce and the SINGULAR name comes FIRST:
+    #
+    #     select coalesce(
+    #       nullif(current_setting('request.jwt.claim.sub', true), ''),
+    #       (nullif(current_setting('request.jwt.claims', true), '')::jsonb
+    #          ->> 'sub')
+    #     )::uuid
+    #
+    # so overwriting only the plural one leaves the higher-precedence name in
+    # force. Measured, identity-less transaction on a poisoned connection:
+    #
+    #     branch writes        poisoned claims   poisoned claim.sub
+    #     nothing (pre-#634)   LEAK              LEAK
+    #     plural only          closed            LEAK
+    #     both                 closed            closed
+    #
+    # THE TWO VALUES DIFFER ON PURPOSE — do not "harmonise" them. The singular
+    # setting is wrapped in ``nullif(…, '')`` directly, so ``''`` becomes NULL
+    # and the coalesce falls through. The plural one is CAST before it is read,
+    # which is why it needs ``'{}'`` and not ``''``.
     #
     # It stays ONE statement, so it costs no extra round trip on the request's
-    # critical path — measured +0.03 ms p50 against a ~13 ms production hop.
+    # critical path, and the round-trip count is the term that matters against
+    # a ~13 ms hop to the pooler. The rest is below what the measurement can
+    # resolve: 4000 interleaved samples on a loopback postgres:16 put the
+    # three-call shape +0.02 ms on p50 and MINUS 0.03 ms on the minimum, i.e.
+    # the larger statement won one of the two statistics. Do not quote a
+    # sharper number than that from this bench.
     # See ``tests/test_rls_postgres.py`` for the deployed shim's shape and
     # ``test_every_auth_uid_shim_is_the_deployed_one`` for the four copies that
-    # used to disagree with it (#634).
+    # used to disagree with it — five exist; #847 had already corrected one
+    # (#634).
     if not isinstance(user_id, uuid.UUID):
         # NOT an f-string: the ``{}`` here is a JSON literal, not a field.
-        no_identity_claims = "set_config('request.jwt.claims', '{}', true)"
+        no_identity_claims = (
+            "set_config('request.jwt.claims', '{}', true), "
+            "set_config('request.jwt.claim.sub', '', true)"
+        )
         conn.exec_driver_sql(f"SELECT {search_path_guc}, {no_identity_claims}")
         return
 
