@@ -309,6 +309,24 @@ RECORDED_FAMILIES: dict[str, tuple[int, int, int]] = {
     # so weakly that the engine reaches them only through `weak` rules,
     # which is the property the family exists to measure. Reading this 50%
     # as reach would be the mistake `observed.py` is written to prevent.
+    # #614 and #630. Four families whose subject is what happens AFTER a
+    # message is classified — a card the user dismisses, a queue item they
+    # answer, a second mailbox — so their wordings are few and deliberately
+    # shared between them: what varies in these families is the SEQUENCE, not
+    # the vocabulary, and inventing more phrasings would only dilute that.
+    #
+    # `no_strong` is high for three of them BY CONSTRUCTION and is not a gap.
+    # The uncertain updates they turn on are mail the classifier is supposed to
+    # be unsure about — a message matching no strong pattern is exactly what
+    # reaches the review queue, which is where the settled filter can be
+    # measured at all. `hand-dismissal-swallows-later-mail` is 0 because the
+    # mail it sends after the dismissal is confident lifecycle wording on
+    # purpose: it has to clear the auto-file gate to reach the rollup, which is
+    # what makes it vanish.
+    "settled-suppresses-an-update": (120, 7, 50),
+    "hand-dismissal-swallows-later-mail": (140, 5, 0),
+    "answered-then-more-mail": (120, 4, 90),
+    "another-mailbox-cannot-settle-mine": (120, 7, 60),
     "outreach-autoresponder": (160, 16, 80),
     "quoted-history": (400, 2, 0),
     "rejection-plain": (1100, 4, 0),
@@ -874,7 +892,18 @@ def test_the_invented_families_still_discover_nothing(measured) -> None:
     # against 60 twins that must stay them — and that is a different question
     # from discovery. Said here rather than left to read as evidence about
     # real mail, which it is not.
-    assert len(zeros) == 30, "the recorded set of circular families"
+    # 30 -> 31 (#614). The 31st is `hand-dismissal-swallows-later-mail`, and it
+    # belongs here for the reason the docstring gives rather than by exception:
+    # every wording in it was written by the author of this corpus, so no
+    # sentence in it can be one the engine has never seen. Its `no_strong` is 0
+    # BECAUSE of what the family is for — the mail it sends after the dismissal
+    # has to clear the auto-file gate to reach the rollup at all, which is what
+    # makes it vanish onto a card the user removed. What it measures is a
+    # SEQUENCE (file, dismiss, deliver), not a vocabulary, and this metric does
+    # not see sequences. Its three sibling families are NOT here: their
+    # `no_strong` is non-zero by construction, because the uncertain updates
+    # they turn on are mail the classifier is supposed to be unsure about.
+    assert len(zeros) == 31, "the recorded set of circular families"
     moved = {
         family: measured.families[family].no_strong
         for family in sorted(zeros)
