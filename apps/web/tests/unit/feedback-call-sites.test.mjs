@@ -15,15 +15,18 @@
  *     with the control that a `sync.*` key IS caught, because "nothing emits
  *     for sync" is the rule the issue says the next change will break.
  *  2. `notifyUndo` is reached, and every undo key names its target.
- *  3. A committed dismissal offers an Undo that CALLS RESTORE. Mounted,
- *     clicked, timer run out — not a regex over the source, which is how the
- *     neighbouring #560 gate was defeated twice.
- *  4. Two rows removed in one breath produce TWO undo toasts. Fed through the
- *     real `FeedbackChannel`, so the assertion is on the rendered text: this is
+ *  3. A dismissal's acknowledgement is INSIDE THE ROW'S OWN CELL and the
+ *     corner says nothing at all (#903). Mounted, clicked, timer run out — not
+ *     a regex over the source, which is how the neighbouring #560 gate was
+ *     defeated twice. This is the item that reds on the build before it: that
+ *     one raised an undo toast at focusable index 0 of 69 while painting it
+ *     bottom-right, 32 Shift+Tabs behind where it left the reader.
+ *  4. Two undoable actions on different targets are TWO toasts, not one
+ *     counted one. Fed through the real `FeedbackChannel` with the key shape
+ *     the app actually emits, so the assertion is on the rendered text: this is
  *     the count-collapse acceptance test read from the other end. Break the key
- *     back to a bare `"application.dismiss"` and it goes red with
- *     "2 applications updated"-shaped merging over rows one button cannot both
- *     restore.
+ *     back to a target-free one and it goes red with "2 applications
+ *     updated"-shaped merging over targets one button cannot both undo.
  *
  * Run:  node --test --experimental-strip-types tests/unit/feedback-call-sites.test.mjs
  */
@@ -33,6 +36,7 @@ import { join, relative, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { UNDO_WINDOW_SECONDS } from "../../lib/dashboard/rowActions.ts";
 import { undoableVerdict } from "../../lib/dashboard/review.ts";
 import { FeedbackChannel, isSilentAction, renderToast } from "../../lib/feedback/coalesce.ts";
 import { React, importApp, mount } from "./helpers/mountApp.mjs";
@@ -149,11 +153,13 @@ test("every undo key names its target — one Undo cannot restore two rows", () 
   }
 });
 
-test("the transport the Undo calls reaches the restore endpoint, not a local no-op", async () => {
-  // The last link. The mounted test above proves the button calls
-  // `transport.restore`; this proves the LIVE transport's `restore` is a
-  // request to the recoverable endpoint — without it, a stub that resolved
-  // `{ ok: true }` and touched nothing would satisfy everything else here.
+test("the transport's restore reaches the restore endpoint, not a local no-op", async () => {
+  // The last link, and it outlived the call site it was written for: the
+  // board's own post-commit Undo went with #903, and the caller left is the
+  // scan receipt's per-row `restore` (SyncBar), which answers for rows the
+  // SYNC removed. This proves the LIVE transport's `restore` is a request to
+  // the recoverable endpoint — without it, a stub that resolved `{ ok: true }`
+  // and touched nothing would satisfy everything else here.
   // `importApp`, not a static import: `lib/dashboard/transport.ts` reaches
   // `@/lib/*`, and a hoisted import would run before `mountApp.mjs` registers
   // the hooks that resolve the alias.
@@ -316,8 +322,19 @@ async function dismissRow(t, app) {
   // only thing standing between this test and a false pass.
   assert.deepEqual(calls.toasts, [], "a toast fired while the removal was still cancellable");
   assert.deepEqual(calls.dismissed, []);
-  // The window, second by second, exactly as the card counts it down.
-  for (let i = 0; i < 8; i += 1) {
+  // AND THE UNDO IS IN THIS ROW'S OWN MARKUP (#903). Not "an Undo exists
+  // somewhere" — that was true of the build this replaces, in a corner card at
+  // focusable index 0 of 69 while painted bottom-right. `view.html()` is this
+  // row's subtree and nothing else, so a button found here is a button beside
+  // the control that opened the menu, which is the property the issue is
+  // about. Asserted before the clock is ticked, so a card that renders the
+  // affordance only after the commit cannot satisfy it.
+  assert.match(view.html(), /Undo<\/button>/, "the row's own cell carries no Undo");
+  assert.match(view.html(), /undo within \d+s/, "the row's cell does not say how long is left");
+  // The window, second by second, exactly as the card counts it down. Derived
+  // from the constant: a literal here was two seconds clear of a six-second
+  // window and would silently stop reaching the commit the moment it grew.
+  for (let i = 0; i < UNDO_WINDOW_SECONDS + 2; i += 1) {
     await React.act(async () => {
       t.mock.timers.tick(1000);
     });
@@ -325,7 +342,7 @@ async function dismissRow(t, app) {
   return { calls, view, transport };
 }
 
-test("a committed dismissal offers an Undo, and the Undo restores the row", async (t) => {
+test("a removal is acknowledged in the row's own cell, and nowhere else (#903)", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const { calls, view } = await dismissRow(t, ROW);
 
@@ -334,61 +351,68 @@ test("a committed dismissal offers an Undo, and the Undo restores the row", asyn
     [ROW.id],
     "the window expired without sending the dismissal",
   );
-  const undo = calls.toasts.find((toast) => toast.kind === "undo");
-  assert.ok(undo, "a committed removal raised no undo toast");
-  // Stated as the RELATIONSHIP — the action's namespace and THIS row's id —
-  // rather than as one flat literal. That is the rule being pinned, and it also
-  // keeps a dotted identifier ending in digits out of the tree: the generic
-  // entropy rule in the secret scanner reads one as a candidate key, and
-  // narrowing that rule to admit a toast fixture would be a poor trade.
-  assert.equal(undo.key, `application.dismiss.${ROW.id}`);
-  assert.equal(undo.message, `${ROW.company} removed from the board`);
 
-  // THE PART THAT MATTERS. `notifyUndo`'s own docstring forbids rendering this
-  // decoratively, and a button that closes its toast and does nothing is
-  // exactly that. Run what it was given and watch the endpoint get hit.
-  assert.deepEqual(calls.restored, []);
-  await React.act(async () => {
-    await undo.action.run();
-  });
-  assert.deepEqual(calls.restored, [ROW.id], "the Undo did not call restore");
+  // RED ON THE BUILD BEFORE THIS ONE, which is the point of it. That build
+  // answered the commit with `notifyUndo("application.dismiss.41", …)`, and
+  // the card it raised measured at focusable index 0 of 69 while painted
+  // bottom-right at 1024 — 32 Shift+Tabs behind the successor row the board
+  // had just handed focus to, over the stage select of the row beneath it.
+  //
+  // The rule replacing it: a removal's acknowledgement is the row's own cell
+  // for the whole window (asserted in `dismissRow`), and the corner is left
+  // for actions that have no surface of their own. `deepEqual` on the empty
+  // array rather than a find-and-refute, so a success or an error raised here
+  // is caught too — the point is that this path is silent, not that one kind
+  // of card is missing.
+  assert.deepEqual(
+    calls.toasts,
+    [],
+    "the removal raised a corner toast; #903 is that nobody can reach one",
+  );
 
-  // And the card stops claiming to be removed: the refresh that would unmount
-  // it is not guaranteed to have landed, and `removed` is client state.
-  assert.doesNotMatch(view.html(), /removed from the board/);
+  // The Undo is gone WITH the window, not before it and not after it: what is
+  // left is the committed tombstone, which says which of the two outcomes
+  // happened and offers nothing, because there is nothing left to offer.
+  assert.match(view.html(), /removed from the board/);
+  assert.doesNotMatch(view.html(), /Undo<\/button>/, "an Undo outlived the window it belongs to");
+  assert.doesNotMatch(view.html(), /undo within/);
+  assert.deepEqual(calls.restored, [], "the board sent a restore it has no affordance for");
 });
 
-test("two rows removed in one breath are two undos, not one counted toast", async (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
-  const OTHER = { ...ROW, id: 42, company: "Kestrel" };
-  const first = await dismissRow(t, ROW);
-  const second = await dismissRow(t, OTHER);
-
-  const keys = [first, second].map(
-    ({ calls }) => calls.toasts.find((toast) => toast.kind === "undo").key,
-  );
+test("two undoable actions on different targets are two toasts, not one counted toast", () => {
+  // The key shape read off the APP rather than written here: whatever call
+  // site `notifyUndo` still has, this is its key with two different targets in
+  // it. The board's dismissal used to be that call site; the rule it was
+  // pinning outlives it, because it is a rule about the channel.
+  const templates = harvestKeys()
+    .filter((k) => k.fn === "notifyUndo")
+    .map((k) => k.key);
+  assert.ok(templates.length > 0, "no undo call site to read a key shape from");
+  const keys = ["41", "42"].map((id) => templates[0].replace("${}", id));
+  assert.notEqual(keys[0], keys[1], "the harvested key does not vary with its target");
+  const names = ["Northwind", "Kestrel"];
 
   // Read through the REAL channel and asserted on the RENDERED text — the
   // acceptance test the issue predicted would be skipped, run from the call
   // sites rather than from hand-written events. It comes FIRST so a regression
   // fails on what actually goes wrong: a target-free key merges these two into
   // one toast whose text says "×2" over one surviving Undo button, which can
-  // put back at most one of the two rows.
+  // undo at most one of the two.
   const channel = new FeedbackChannel();
   const decisions = keys.map((key, i) =>
     channel.decide({
       key,
       kind: "undo",
-      message: `${[ROW, OTHER][i].company} removed from the board`,
+      message: `${names[i]} removed from the board`,
     }),
   );
   assert.deepEqual(
     decisions.map((d) => renderToast(d.toast)),
     [
-      { text: `${ROW.company} removed from the board`, countBadge: null },
-      { text: `${OTHER.company} removed from the board`, countBadge: null },
+      { text: `${names[0]} removed from the board`, countBadge: null },
+      { text: `${names[1]} removed from the board`, countBadge: null },
     ],
-    "two removed rows collapsed into one counted undo toast",
+    "two distinct targets collapsed into one counted undo toast",
   );
   assert.deepEqual(
     decisions.map((d) => d.action),
@@ -398,10 +422,6 @@ test("two rows removed in one breath are two undos, not one counted toast", asyn
     decisions.map((d) => d.toast.count),
     [1, 1],
   );
-  assert.deepEqual(keys, [
-    `application.dismiss.${ROW.id}`,
-    `application.dismiss.${OTHER.id}`,
-  ]);
 
   // The control for that: the SAME row twice does merge, and the count reaches
   // the text. Without this the assertion above passes on a channel that never

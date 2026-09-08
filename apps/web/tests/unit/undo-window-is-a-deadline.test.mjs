@@ -1,5 +1,7 @@
 /**
- * Is the undo window six SECONDS, or six wakeups? (#902)
+ * Is the undo window `UNDO_WINDOW_SECONDS` SECONDS, or that many wakeups?
+ * (#902. It was six when this was written and is ten since #903, which is why
+ * nothing below names a number it did not derive.)
  *
  * The row shipped holding `secondsLeft` in state and taking one off it inside a
  * `setTimeout(…, 1000)`. On a quiet main thread that is indistinguishable from
@@ -179,7 +181,18 @@ test("the dismissal is sent when the deadline passes, not one second per render 
   // are what makes the bound tight enough to mean something. A decremented
   // counter spends one second per step whatever the clock did during the
   // stall, so it is still counting long after this bound.
-  const steps = [4500, ...Array.from({ length: 24 }, () => 250)];
+  //
+  // DERIVED FROM THE WINDOW, not written next to it. These were `4500` and 24
+  // steps, sized when the window was 6s; at 10s that plan still reached the
+  // deadline, with 500ms of the run to spare and the "long stall" covering
+  // under half of what it claims to. A step plan that has to be re-checked by
+  // hand every time the constant moves is a red waiting for whoever moves it.
+  const FINE_STEP = 250;
+  const FINE_SPAN = 3000;
+  const steps = [
+    WINDOW_MS - FINE_SPAN / 2,
+    ...Array.from({ length: FINE_SPAN / FINE_STEP }, () => FINE_STEP),
+  ];
   let elapsed = 0;
   for (const step of steps) {
     if (dismissedAt.length > 0) break;
@@ -201,7 +214,7 @@ test("the dismissal is sent when the deadline passes, not one second per render 
     `the removal committed after ${lasted}ms, inside its own ${WINDOW_MS}ms window`,
   );
   assert.ok(
-    lasted <= WINDOW_MS + 250,
+    lasted <= WINDOW_MS + FINE_STEP,
     `the removal committed after ${lasted}ms on a ${WINDOW_MS}ms window. The window is ` +
       "being spent in wakeups rather than in time — #902's shape, and #750's before it",
   );

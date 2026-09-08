@@ -2021,20 +2021,46 @@ _SYNC_DEFAULT_SCAN_TARGET = 297
 # So the bound is the MESSAGE target, and these two are only safety rails on a
 # pathological mailbox (Gmail returning a handful of ids per page forever):
 #
-# - ``_SYNC_MAX_LIST_CALLS`` — enough list calls to reach the message target
-#   even at 30 messages a page, which is well below anything observed.
+# - ``_SYNC_MAX_LIST_CALLS`` — 12, WHICH IS WHAT THE MINUTE PAYS FOR rather
+#   than a round number. The target above spends ``20 * 297 = 5,940`` of the
+#   6,000 units Gmail affords one user in a minute; the 60 left over buy
+#   exactly twelve ``messages.list`` calls at 5 units each, and
+#   ``20*297 + 5*12`` is 6,000 on the nose. Twelve is the last list call a
+#   default scan can make and still fit the bucket its target was derived
+#   against.
+#
+#   IT WAS 25, AND THAT IS WHAT MADE THE DERIVATION ABOVE A FLOOR INSTEAD OF A
+#   CEILING (#912). A message bound and a page rail MULTIPLY: the same 297
+#   messages take 13 list calls and 6,005 units at 24 messages a page, 15 and
+#   6,015 at 20 a page, and the whole 25 calls and 6,065 at 12 a page. The old
+#   comment here priced the rail at "30 messages a page, which is well below
+#   anything observed" — 5,990 units, ten of six thousand to spare — and an
+#   estimate of what Gmail will do is not a bound on what the scan may spend.
+#
+#   The cost of 12 is real and it is the honest one. Below 25 messages a page
+#   the scan now stops after ``12 * page`` messages and SAYS SO with
+#   ``STOPPED_PAGE_LIMIT``, where before it reached 297 by outspending the
+#   bucket and taking the 429 on its last page or two. At 25 a page and up —
+#   every page size this project has measured, the worst being 41 — the target
+#   is still reached whole: ``ceil(297/25) = 12``. A caller passing an explicit
+#   ``count`` deeper than the default is asking for a scan that never fitted a
+#   minute (#743 took 500/750/1000/2000 out of the web menu for exactly that);
+#   it is now cut at 1,188 messages and told which rail stopped it, rather than
+#   spending four buckets to discover the same thing.
 # - ``_SYNC_TIME_BUDGET_SECONDS`` — the real backstop. Checked BEFORE each page
 #   is started, against a monotonic deadline taken at scan entry, so a page can
 #   never begin at 39 s and run past the 60 s function limit. Sized to leave
 #   ~30 s for what follows the scan (rollup, the additive/rebuild merge and its
 #   Supabase round-trips, the count query, the cursor write).
 #
-# Worst case is deliberately more expensive than the old 4-page bound: up to 25
-# ``messages.list`` calls plus one metadata batch each (~1 s per page in
-# practice; the inter-batch pause does not fire for a page under 100 messages),
-# i.e. ~30 s of Gmail I/O instead of ~19 s, for a scan that is finally monotonic
-# in the width of its window. Whichever rail stops it is REPORTED, never hidden.
-_SYNC_MAX_LIST_CALLS = 25
+# Worst case is 12 ``messages.list`` calls plus one metadata batch each (~1 s
+# per page in practice; the inter-batch pause does not fire for a page under
+# 100 messages), i.e. ~12 s of Gmail I/O well inside the 30 s scan budget —
+# where the 25-call rail's ~30 s worst case left the budget nothing at all and
+# only the deadline check kept the page from starting. Still deliberately more
+# expensive than the old 4-page bound, for a scan that is finally monotonic in
+# the width of its window. Whichever rail stops it is REPORTED, never hidden.
+_SYNC_MAX_LIST_CALLS = 12
 _SYNC_TIME_BUDGET_SECONDS = 30.0
 
 
@@ -2206,6 +2232,15 @@ async def _full_scan(
     query can only ever match a superset of the mail, so it can only ever
     examine as many messages or more.
 
+    ``target`` counts the messages the scan ASKS Gmail for, not the ones it
+    manages to read back. Those differ by ``MessagePage.unreadable``, and the
+    difference is what the scan SPENDS: an id that came back unparseable still
+    took its ``messages.get`` slot, so counting only the parsed ones let the
+    loop buy a replacement page the quota derivation never paid for (#912).
+    What the caller is told — ``scanned`` — is still messages actually read,
+    beside ``unreadable``; the two numbers are different questions and the
+    user-facing one is not quietly redefined to make a budget work.
+
     Keeps paging through an EMPTY page that still carries a token — Gmail
     returns those, and treating one as the end of the mailbox is the same class
     of bug as counting pages.
@@ -2225,6 +2260,13 @@ async def _full_scan(
 
     items: list[Any] = []
     scanned = 0
+    # What the pages ASKED Gmail for, which is what they COST. A page's
+    # ``len(messages) + unreadable`` is the number of ids it set out to fetch
+    # (:class:`MessagePage` states that contract), and every one of those ids
+    # was a ``messages.get`` sub-request whether or not it came back parseable.
+    # This is the loop's bound; ``scanned`` below is the report, and they are
+    # equal only in the happy case.
+    requested = 0
     unreadable = 0
     unrecognised = 0
     estimate: int | None = None
@@ -2232,7 +2274,7 @@ async def _full_scan(
     stopped_by = STOPPED_COMPLETE
 
     for page_index in range(_SYNC_MAX_LIST_CALLS):
-        remaining = target - scanned
+        remaining = target - requested
         if remaining <= 0:
             stopped_by = STOPPED_TARGET
             break
@@ -2286,6 +2328,7 @@ async def _full_scan(
             )
         )
         scanned += len(page.messages)
+        requested += len(page.messages) + page.unreadable
         unreadable += page.unreadable
         unrecognised += page.unrecognised
         if page.result_size_estimate is not None:
@@ -2297,8 +2340,11 @@ async def _full_scan(
         # The call ceiling ran out. It is only the REASON when it actually cut
         # the scan short: a last page that happened to complete the target
         # stopped on the target, and saying otherwise would report a budget
-        # failure for a scan that got everything it asked for.
-        if scanned >= target:
+        # failure for a scan that got everything it asked for. Asked for is the
+        # test, matching the loop's own bound — a scan whose last page filled
+        # the target with unreadable ids got everything it asked Gmail for and
+        # cannot ask for more inside the minute, however few messages it read.
+        if requested >= target:
             stopped_by = STOPPED_TARGET
         else:
             stopped_by = STOPPED_PAGE_LIMIT
