@@ -29,6 +29,14 @@ every occurrence to be claimed makes that loud. Where a file names an id to
 explain why the decision does **not** apply to it, list it anyway and say so in
 a parenthetical — the gate reads the paths and ignores the prose.
 
+Because that reading makes the lists grow, **a field value may wrap**: it
+continues onto every following line that is indented and not blank, and ends at
+a blank line or at anything starting in column one. That is the shape every
+entry below already uses for its prose fields, and until #958 the parser read
+only the first physical line of each — so a wrapped `Markers:` list lost its
+continuation and the completeness check then reported a file as unlisted while
+a reader could see it listed directly above.
+
 **Three things it cannot see, stated so nobody mistakes this file for cover:**
 
 1. A decision nobody wrote down. This file cannot notice its own gaps.
