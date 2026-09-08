@@ -16,11 +16,24 @@ WHAT IT CHECKS
     is a tracked file. An entry claiming enforcement by a test that was deleted
     is the failure this repository keeps re-finding — a check that cannot fail,
     wearing a citation.
-3.  **Markers point both ways.** Every path in a ``Markers:`` line exists AND
-    contains the entry's own ``DEC-nnn`` literal; and every ``DEC-nnn`` marker
-    found anywhere in the tracked tree has an entry here. One direction alone
-    is unchecked coverage: forward-only misses a marker for a deleted entry,
+3.  **Markers point both ways, and the reverse direction is COMPLETE.** Every
+    path in a ``Markers:`` line exists AND contains the entry's own ``DEC-nnn``
+    literal; and every ``DEC-nnn`` marker found anywhere in the tracked tree
+    both has an entry here AND is listed by that entry. One direction alone is
+    unchecked coverage: forward-only misses a marker for a deleted entry,
     reverse-only misses an entry whose marker was edited away.
+
+    The completeness half is #950, and "does this marker resolve?" is not the
+    same question as "does it resolve to the entry it MEANT?". Two branches
+    independently allocated ``DEC-009``; resolving the merge by keeping either
+    entry left the loser's three marker sites resolving — to somebody else's
+    decision. Landing on a real, well-formed entry about something else is
+    strictly worse than landing on nothing, and the gate printed OK. It cannot
+    now: a file carrying an id that does not claim it is a problem, which makes
+    a number collision loud at exactly the moment it becomes silent.
+
+4.  **Ids are contiguous.** ``DEC-001``..``DEC-nnn`` with no gaps, so a deleted
+    entry is visible and the next number to allocate is not a guess.
 
 WHAT IT CANNOT CHECK, and the header of the document says so rather than
 implying otherwise:
@@ -173,9 +186,33 @@ def check(text: str, tracked: set[str], tree: Path) -> list[str]:
                         f"the literal {eid}."
                     )
 
+    # Ids run without gaps. A gap is the shape a deleted entry leaves behind
+    # once its markers have been tidied away too: the file is then internally
+    # consistent and there is nothing local to detect. It also makes the next
+    # allocation unambiguous, which is half of why two authors collided.
+    numbers = sorted({int(str(e["id"])[4:]) for e in entries})
+    for expected, got in enumerate(numbers, start=1):
+        if expected != got:
+            problems.append(
+                f"DEC-{got:03d}: ids must run from DEC-001 with no gaps; "
+                f"DEC-{expected:03d} is missing. An entry that was deleted takes "
+                f"its number out of use — supersede it in place instead."
+            )
+            break
+
     # The reverse direction. A marker in the tree with no entry here is a
     # pointer into a document that will not answer.
     known = {e["id"] for e in entries}
+    #: Which entry claims which file. The forward check above asks whether a
+    #: declared file carries the id; this asks the other half — whether a file
+    #: carrying the id was declared. Both are needed, and the gap between them
+    #: is #950: two authors picked one number, the merge kept one entry, and
+    #: the losing branch's marker sites went on resolving to the survivor.
+    declared: dict[str, set[str]] = {}
+    for e in entries:
+        for value in e["fields"].get("Markers", []):  # type: ignore[union-attr]
+            for p in PATH.finditer(value):
+                declared.setdefault(str(e["id"]), set()).add(p.group(1))
     for p in sorted(tracked):
         if p == "docs/DECISIONS.md" or p == "scripts/check_decisions.py":
             continue
@@ -184,6 +221,12 @@ def check(text: str, tracked: set[str], tree: Path) -> list[str]:
         except (OSError, UnicodeDecodeError):
             continue
         for found in sorted(set(MARKER.findall(content))):
+            if found in known and p not in declared.get(found, set()):
+                problems.append(
+                    f"{p} carries the marker {found}, which does not list it under "
+                    f"'Markers:'. Either add the file to that entry, or this marker "
+                    f"belongs to a different decision that shares the number."
+                )
             if found not in known:
                 problems.append(
                     f"{p} carries the marker {found}, which has no entry in "

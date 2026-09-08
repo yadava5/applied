@@ -1122,6 +1122,14 @@ def extract_body_text(payload: dict | None) -> str:
     # The walk still VISITS every part: the tree is what says which branch wins,
     # and skipping a `text/plain` part because the budget is spent must not turn
     # a plain-bodied message into an HTML-bodied one.
+    #
+    # ONE BEHAVIOUR CHANGE, RECORDED RATHER THAN DISCOVERED LATER. A message
+    # whose first 256,000 `text/plain` characters are ENTIRELY whitespace now
+    # yields an empty `text` and falls through to the HTML branch, where before
+    # `strip()` would have reached content sitting past the bound. That input is
+    # pathological, the fallback reads the same message by another route, and
+    # the alternative — an unbounded search for the first non-space — is the
+    # cost this whole function is here to avoid.
     # CUT BEFORE STRIP, and the order is load-bearing. `_decode_part`'s
     # pre-decode bound must over-approximate — it counts bytes and a character
     # is up to four of them — so an ASCII part can come back several times the

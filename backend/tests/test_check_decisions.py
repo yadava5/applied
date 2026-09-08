@@ -157,3 +157,105 @@ def test_every_declared_field_is_actually_required(tmp_path: Path, field: str) -
     line = next(ln for ln in GOOD.splitlines() if ln.startswith(field + ":"))
     problems = mod.check(GOOD.replace(line + "\n", ""), tracked, tree)
     assert any(f"missing required field '{field}:'" in p for p in problems), problems
+
+
+#: A second well-formed id, assembled for the same reason `ID` is: a literal
+#: here would be an unregistered marker in the tracked tree and the
+#: completeness check below would red on its own test module.
+ID2 = "DEC-" + "002"
+
+
+def _entry(eid: str, title: str, markers: str) -> str:
+    """One well-formed entry. Only id, title and Markers vary between tests."""
+    return (
+        f"## {eid} — {title}\n\n"
+        "Status: active (2026-09-05)\n"
+        "Claim: something\n"
+        "Why: because\n"
+        "Moved away from: the other thing\n"
+        "Enforced by: nothing enforces this; prose only\n"
+        "Valid while: the sun rises\n"
+        f"Markers: {markers}\n"
+    )
+
+
+def test_a_marker_the_entry_does_not_claim_is_a_problem(tmp_path: Path) -> None:
+    """Reverse direction, COMPLETENESS half -- #950.
+
+    The forward check asks whether a declared file carries the id. This asks
+    the other half: whether a file carrying the id was declared. Both arms are
+    here, in one test, because a check that reds on everything is not a check.
+    """
+    doc = "# Decision record\n\n" + _entry(ID, "a claim", "src/declared.py")
+
+    # Arm 1 -- the file is declared. Must stay silent, or the assertion below
+    # proves nothing about unlisted files specifically.
+    tracked, tree = _tree(tmp_path, {"src/declared.py": f"# {ID} why this exists\n"})
+    assert mod.check(doc, tracked, tree) == []
+
+    # Arm 2 -- a second file carries the same id and no entry claims it.
+    tracked, tree = _tree(
+        tmp_path,
+        {
+            "src/declared.py": f"# {ID} why this exists\n",
+            "src/unlisted.py": f"# {ID} why this exists\n",
+        },
+    )
+    problems = mod.check(doc, tracked, tree)
+    assert any("src/unlisted.py" in p and "does not list it" in p for p in problems), problems
+    assert not any("src/declared.py" in p for p in problems), problems
+
+
+def test_the_950_collision_reds_where_it_used_to_pass(tmp_path: Path) -> None:
+    """The exact shape #950 was filed for, end to end.
+
+    Two branches independently allocate one id. `docs/DECISIONS.md` conflicts
+    textually -- the good case, and the only thing that catches this today --
+    and the conflict is resolved by keeping ONE side, which is the reflex. The
+    losing branch's marker sites survive in the tree and go on resolving, to a
+    real and well-formed entry about something else.
+
+    Before this check the gate printed `OK` here with three marker sites
+    pointing at the wrong decision. Landing on the wrong entry is strictly
+    worse than landing on nothing, so it has to red.
+    """
+    merged = "# Decision record\n\n" + _entry(ID, "branch A's decision", "src/a1.py")
+    tracked, tree = _tree(
+        tmp_path,
+        {
+            "src/a1.py": f"# {ID} branch A\n",
+            "src/b1.py": f"# {ID} branch B\n",
+            "src/b2.py": f"# {ID} branch B\n",
+            "src/b3.py": f"# {ID} branch B\n",
+        },
+    )
+    problems = mod.check(merged, tracked, tree)
+    losers = [p for p in problems if "does not list it" in p]
+    assert len(losers) == 3, problems
+    for f in ("src/b1.py", "src/b2.py", "src/b3.py"):
+        assert any(f in p for p in losers), (f, problems)
+
+
+def test_two_entries_sharing_one_id_is_a_problem(tmp_path: Path) -> None:
+    """The other resolution of the same conflict: keep BOTH headings.
+
+    This branch already existed and had no test, which is its own instance of
+    the shape -- a check nothing had ever made red.
+    """
+    doc = "# Decision record\n\n" + _entry(ID, "first", "none") + "\n" + _entry(ID, "second", "none")
+    tracked, tree = _tree(tmp_path, {})
+    problems = mod.check(doc, tracked, tree)
+    assert any("duplicate id" in p for p in problems), problems
+
+
+def test_a_gap_in_the_ids_is_a_problem(tmp_path: Path) -> None:
+    """A deleted entry, once its markers are tidied away too, leaves a file
+    that is internally consistent and locally unimpeachable. The sequence is
+    the only thing left that remembers the entry was there."""
+    contiguous = "# Decision record\n\n" + _entry(ID, "one", "none") + "\n" + _entry(ID2, "two", "none")
+    tracked, tree = _tree(tmp_path, {})
+    assert mod.check(contiguous, tracked, tree) == []
+
+    gapped = "# Decision record\n\n" + _entry(ID, "one", "none") + "\n" + _entry("DEC-" + "003", "three", "none")
+    problems = mod.check(gapped, tracked, tree)
+    assert any("no gaps" in p and ID2 in p for p in problems), problems

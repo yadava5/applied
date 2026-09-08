@@ -126,7 +126,7 @@ nonetheless the narrower scope, so it was evaluated on capability:
 
 | Scope | Google's tier | Why it does not work |
 | --- | --- | --- |
-| `gmail.metadata` | **Restricted** | **Cannot run a Gmail query.** Applied lists messages with a `q` it builds itself — by default `in:inbox` plus a `newer_than:<N>m` age filter (`DEFAULT_QUERY`, `backend/jobtracker/cloud/gmail_client.py:96`, composed by `build_gmail_query`, `:1212-1249`), passed to `users.messages.list` inside `_collect_page` at `:1667`. Google documents on [`users.messages.list`](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list) that the `q` parameter "cannot be used when accessing the api using the gmail.metadata scope." Without `q`, Applied cannot restrict its read to the inbox or to a recent window — it would have to enumerate *more* of the mailbox, not less. Separately, it returns no message body, which §3 shows is decisive. |
+| `gmail.metadata` | **Restricted** | **Cannot run a Gmail query.** Applied lists messages with a `q` it builds itself — by default `in:inbox` plus a `newer_than:<N>m` age filter (`DEFAULT_QUERY`, `backend/jobtracker/cloud/gmail_client.py:96`, composed by `build_gmail_query`, `:1220-1257`), passed to `users.messages.list` inside `_collect_page` at `:1675`. Google documents on [`users.messages.list`](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list) that the `q` parameter "cannot be used when accessing the api using the gmail.metadata scope." Without `q`, Applied cannot restrict its read to the inbox or to a recent window — it would have to enumerate *more* of the mailbox, not less. Separately, it returns no message body, which §3 shows is decisive. |
 | `gmail.addons.current.message.metadata` | Sensitive | Grants access only to the message a Google Workspace Add-on is currently open on. Applied is a standalone web application whose sync runs on a schedule with no user present and no add-on surface. |
 | `gmail.addons.current.message.readonly` | Sensitive | Same architectural limitation. |
 | `gmail.labels` | Non-sensitive | Labels only — no message content of any kind. |
@@ -316,7 +316,7 @@ prominent, user-facing feature the data serves; there is no other use.
    stops short of the sentinel.
 5. **Server-side narrowing before any message is transferred.** Applied builds
    a Gmail `q` rather than enumerating the mailbox (`build_gmail_query`,
-   `gmail_client.py:1212-1249`), and the default read is `in:inbox` plus a
+   `gmail_client.py:1220-1257`), and the default read is `in:inbox` plus a
    `newer_than:<N>m` age filter, so ordinary syncs never see archived or sent
    mail, or mail older than the window. This is the minimisation that
    `gmail.metadata` would make impossible (§3.2).
@@ -326,7 +326,7 @@ prominent, user-facing feature the data serves; there is no other use.
 
    - **Three paths read `in:anywhere`**, which includes archived mail. Sent
      mail is not included: `build_gmail_query` composes the base as
-     `in:anywhere -in:sent` (`gmail_client.py:1246`), because the first windowed
+     `in:anywhere -in:sent` (`gmail_client.py:1254`), because the first windowed
      scan ever run against the owner's mailbox filed four of its five new rows
      off outreach he had written himself. One of the three paths forces the
      wider read and two are the caller's own choice — an asymmetry the web
@@ -357,8 +357,8 @@ prominent, user-facing feature the data serves; there is no other use.
      stale row is, by the time anyone notices, archived. Listed here are the
      paths that build an `in:anywhere` *query*; a sync resuming from a Gmail
      `historyId` cursor issues no query at all and narrows by label instead
-     (`_HISTORY_EXCLUDED_LABELS`, `gmail_client.py:1804`, and the label filter
-     itself at `:1936-1937`).
+     (`_HISTORY_EXCLUDED_LABELS`, `gmail_client.py:1812`, and the label filter
+     itself at `:1944-1945`).
    - **`range` is not a closed set, and "All time" is a choice the product
      offers.** `_parse_range_months` accepts 3, 6, 9 and 12
      (`_ALLOWED_RANGE_MONTHS`). `all`, `any`, `0`, an empty value and an
