@@ -96,9 +96,25 @@
     "rules": 96
   },
   "meta": {
+    "code_rev": {
+      "commit": "dacf6d40972b9b0f2f6b35084fad2ae101a34fbe",
+      "dirty": false
+    },
     "dataset": "data/evaluation/classifier_eval_v3.jsonl",
     "dataset_sha256": "0aa053536573cd733293fa6a054076a5f78b5c01ebc559e7f912f629fd6adf7e",
-    "generated_at": "2026-09-07T22:59:45.443001+00:00",
+    "environment": {
+      "packages": {
+        "numpy": "2.4.6",
+        "scikit-learn": "1.9.0",
+        "sentence-transformers": "6.0.1",
+        "setfit": "1.2.0",
+        "torch": "2.10.0",
+        "transformers": "5.16.1"
+      },
+      "platform": "Darwin-arm64",
+      "python": "3.11.14"
+    },
+    "generated_at": "2026-09-08T03:53:55.230018+00:00",
     "mode": "rules",
     "sample_count": 96
   },

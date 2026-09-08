@@ -1868,6 +1868,42 @@ html[data-boot="1"] .boot-overlay {
   }
 }
 
+/* /import's classify field, where the quiet form stops standing in for work
+ * and reports it (#390). `components/import/ImportMail.tsx` draws one envelope
+ * per batch of the visitor's own mail and marks it `data-lit` when that batch
+ * has come back, so here — and only here — `data-lit` means DONE rather than
+ * "the row that keeps its verdict when motion is off".
+ *
+ * THE WAVE IS OFF IN THIS FIELD, and that is the point rather than an
+ * omission. Everywhere else `boot-quiet-classify` moves the rules hue along a
+ * row of envelopes because the surface has nothing real to report and is
+ * standing in for a pass it cannot see. Here the pass is in the tab. Sharing
+ * the hue between "this batch came back" and "the wave happens to be over this
+ * one" was measured on screen and it reads as neither: stalled at batch 12 of
+ * 25, the field showed twelve finished envelopes and two more lit ahead of
+ * them with nothing behind it. So the field carries exactly one moving thing
+ * and it is the work — nothing in here can advance while the classify pass is
+ * stopped, which is the whole claim the indicator makes.
+ *
+ * It also settles reduced motion by construction rather than by branch: with
+ * no animation to freeze, the field a reader with `prefers-reduced-motion` gets
+ * is pixel-for-pixel the field everyone else gets.
+ *
+ * Scoped to the field rather than fixed in the base rules, because the other
+ * three call sites (`inbox`, `dashboard` and `LandingBoard`) pass `lit` for its
+ * original meaning and would all turn into one static blue envelope. */
+.import-classify .boot-quiet-env,
+.import-classify .boot-quiet-env .boot-quiet-dot {
+  animation: none;
+}
+.import-classify .boot-quiet-env[data-lit] {
+  color: var(--viz-rules);
+  opacity: 1;
+}
+.import-classify .boot-quiet-env[data-lit] .boot-quiet-dot {
+  opacity: 1;
+}
+
 /* ---------------------------------------------------------------------------
  * THE LANDING'S COLUMN RULES — the missing perpendicular, and only where the
  * column stops being self-evident.
