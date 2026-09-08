@@ -99,6 +99,53 @@ export const MAX_BODY_CHARS = 8000;
 const SNIPPET_CHARS = 180;
 
 /**
+ * Upper bound on the subject handed to the classifier. #427.
+ *
+ * The body has been bounded here since the beginning and the subject was
+ * bounded nowhere, on either engine. `classifyWithRules` takes it as its first
+ * argument and scans it with every pattern in the set, so the cost is linear in
+ * a header nobody bounded: measured on the Python side of the same rules,
+ * 100,000 characters costs 232 ms and 1,000,000 costs 2.33 s.
+ *
+ * NOT A NUMBER CHOSEN HERE. It is `PipelineItemIn.subject`'s `max_length` in
+ * `backend/jobtracker/cloud/gmail_oauth.py` — the bound the API has always
+ * refused above — which `SampleInbox.tsx` already mirrors for the playground
+ * textarea and which the Gmail fetch path now applies at ingest. One quantity,
+ * four sites, so a subject cannot classify differently depending on which door
+ * it came through.
+ */
+export const MAX_SUBJECT_CHARS = 2000;
+
+/**
+ * And the raw bound, applied BEFORE `decodeEncodedWords`, for the reason
+ * `MAX_RAW_BODY_CHARS` below states at length: a bound on a decode's output is
+ * not a bound on the decode. A folded RFC 2047 subject is unfolded into one
+ * string by `parseHeaders` before it gets here, so "the header is short because
+ * lines are short" is not a property this code may assume.
+ *
+ * WHERE THE NUMBER COMES FROM, AND THE FIRST ANSWER WAS WRONG. This read
+ * 8,000, justified as "four raw characters yield three bytes, so 2,000 decoded
+ * characters need at most ~2,667 raw ones" — which counts BYTES and then spends
+ * them as CHARACTERS, the identical confusion the Python half of this change
+ * exists to correct. Measured against `decodeEncodedWords` itself, 8,000 raw
+ * characters of RFC 2047 encoded words yield:
+ *
+ *     B-encoded  ASCII 5706   CJK 2078   emoji 2668
+ *     Q-encoded  ASCII 7412   CJK 1412   emoji 1358   <- under the 2,000 bound
+ *
+ * Quoted-printable spends three raw characters per byte, so a four-byte
+ * character costs twelve, and the "three times" headroom was in fact four per
+ * cent for B-encoded CJK and NEGATIVE for Q-encoded. The claim that the cut
+ * "can never starve the bound it protects" was false for real, well-formed mail.
+ *
+ * So the budget is the worst case rather than the best: 12 raw characters per
+ * decoded character, plus encoded-word wrappers, is 24,000 plus slack. Decoding
+ * 32,000 characters is microseconds — the bound exists to stop a 1 MB header
+ * costing seconds, and it still does.
+ */
+const MAX_RAW_SUBJECT_CHARS = 32_000;
+
+/**
  * Upper bound on the RAW text handed to a decoder, applied BEFORE the decode.
  *
  * MAX_BODY_CHARS above is applied to the decode's OUTPUT, which is far too late
@@ -812,7 +859,10 @@ export function parseRfc822(raw: string, salt: string): ParsedMessage | null {
   const fromRaw = headers.get("from") ?? "";
   if (!subjectRaw && !fromRaw && !body.trim()) return null;
 
-  const subject = decodeEncodedWords(subjectRaw).trim();
+  // Raw bound first, decoded bound second — see MAX_RAW_SUBJECT_CHARS.
+  const subject = decodeEncodedWords(subjectRaw.slice(0, MAX_RAW_SUBJECT_CHARS))
+    .trim()
+    .slice(0, MAX_SUBJECT_CHARS);
   const { name, email } = parseFrom(fromRaw);
 
   const fullText = extractText(headers, body).slice(0, MAX_BODY_CHARS);
@@ -1339,7 +1389,7 @@ function parseJsonMessage(entry: unknown, salt: string): ParsedMessage | null {
   if (typeof entry !== "object" || entry === null) return null;
   const item = entry as LooseJsonMessage;
 
-  const subject = str(item.subject).trim();
+  const subject = str(item.subject).trim().slice(0, MAX_SUBJECT_CHARS);
   const body = str(item.body ?? item.text ?? item.snippet);
   const fromField = str(item.from ?? item.sender ?? item.sender_email ?? item.senderEmail);
   if (!subject && !fromField && !body.trim()) return null;
