@@ -40,6 +40,7 @@ import { demoDetailBody } from "@/lib/demo/demoDetail";
 import { datedById, redate } from "@/lib/demo/redate";
 import { reinsertByReference } from "@/lib/demo/restoreOrder";
 import { demoReviewQueueAsApi } from "@/lib/demo/reviewQueue";
+import { REMOVED_PAGE_SIZE, clampPage } from "@/lib/applications/removed";
 
 /**
  * The demo dashboard: the REAL components — SyncBar, PipelineBoard, the cards,
@@ -80,6 +81,34 @@ interface DemoBoard {
   pool: Application[];
   /** Rows the visitor corrected by hand — a rebuild must not remove these. */
   touched: number[];
+  /**
+   * What is OFF the board and still on file — the twin of the backend's
+   * `dismissed_at IS NOT NULL` set, and what "Removed rows" reads here (#921).
+   *
+   * WHOLE ROWS, not ids, and stamped as they leave. The panel names WHO took a
+   * row off and WHEN, from `dismissed_reason` / `dismissed_at`, and the
+   * fixtures carry neither — a list of ids would render the twin's panel with
+   * the actor line blank, which is the one part of that surface a browser test
+   * exists to check.
+   *
+   * BOTH AUTHORS, because the real set has both: a hand removal lands here with
+   * `reason: "user"` and a rebuild's purge with `"resync"`. A twin that only
+   * ever produced one of them could not fail if the panel started claiming
+   * "you removed this" over every row.
+   *
+   * The hard delete deliberately writes nothing here. It erases the row on the
+   * live backend, so a twin that offered to restore one would be demonstrating
+   * a recovery the product does not have.
+   */
+  removed: Application[];
+}
+
+/**
+ * Stamp a row as removed the way the backend does, so the panel reads the same
+ * fields on the twin that it reads on the live account.
+ */
+function asRemoved(app: Application, reason: "user" | "resync"): Application {
+  return { ...app, dismissed_at: new Date().toISOString(), dismissed_reason: reason };
 }
 
 /** The stale row a rebuild detects and removes (its mail no longer matches). */
@@ -138,6 +167,7 @@ function buildStore(today: string, pipeline: DemoPipeline): DemoBoard {
         : demoApplicationsAsApi(today),
     pool: demoUnsyncedAsApi(today),
     touched: [],
+    removed: [],
   };
 }
 
@@ -320,6 +350,13 @@ export function DemoDashboard({
         ...s,
         apps: reinsertByReference(s.apps, row, original.current),
         touched: s.touched.includes(id) ? s.touched : [...s.touched, id],
+        // And OFF the removed list, which is the half a third caller made
+        // necessary: the receipt and the row's own Undo both die with the
+        // surface that raised them, so leaving a restored row in the set cost
+        // nothing visible. "Removed rows" outlives every restore it performs —
+        // a row still listed there after being put back would offer to restore
+        // a row that is already on the board.
+        removed: s.removed.filter((app) => app.id !== id),
       });
       return true;
     },
@@ -405,8 +442,32 @@ export function DemoDashboard({
       async dismiss(id) {
         await delay(300);
         const s = store.current;
-        commit({ ...s, apps: s.apps.filter((app) => app.id !== id) });
+        const row = s.apps.find((app) => app.id === id);
+        commit({
+          ...s,
+          apps: s.apps.filter((app) => app.id !== id),
+          // Off the board and onto the removed list, which is what the live
+          // backend does: `dismiss` sets `dismissed_at` and leaves the row and
+          // its mail on disk. Before this the twin's removal was a delete
+          // wearing a dismissal's name, so /demo could not have shown a
+          // recovery surface anything at all.
+          removed: row ? [asRemoved(row, "user"), ...s.removed] : s.removed,
+        });
         return { ok: true };
+      },
+      async removed(page) {
+        await delay(250);
+        const all = store.current.removed;
+        const first = (clampPage(page) - 1) * REMOVED_PAGE_SIZE;
+        // `total` is the whole set and the slice is one page, exactly as the
+        // backend answers it — a twin that returned `all` with
+        // `total: all.length` would render a pager that never pages and could
+        // not fail if the live path stopped paginating.
+        return {
+          ok: true,
+          applications: all.slice(first, first + REMOVED_PAGE_SIZE),
+          total: all.length,
+        };
       },
       async restore(id) {
         await delay(300);
@@ -498,7 +559,15 @@ export function DemoDashboard({
             ...filed,
             ...s.apps.filter((app) => app.id !== stale?.id),
           ];
-          commit({ ...s, apps: nextApps, pool: [] });
+          commit({
+            ...s,
+            apps: nextApps,
+            pool: [],
+            // A purge is a dismissal too, with the OTHER author on it. This is
+            // what gives the twin's panel two kinds of row, so "you removed
+            // this" over a rebuild's row is a claim a browser test can catch.
+            removed: stale ? [asRemoved(stale, "resync"), ...s.removed] : s.removed,
+          });
           const changed = filed.length > 0 || removed.length > 0;
           // A shallow scan that still had work to do stops at its message
           // limit — the second pass (via "continue the scan") finds nothing
@@ -638,6 +707,11 @@ export function DemoDashboard({
         subtitle={subtitle}
         gmail={DEMO_GMAIL}
         transport={syncTransport}
+        // The removed-rows panel mounted inside this row reads the fixture
+        // store rather than the proxy, which is the whole reason the twin can
+        // execute #921's path end to end: remove a row, let the window close,
+        // find it in the panel, put it back on the board — with no session.
+        boardTransport={boardTransport}
         title={locked ? "Applications" : undefined}
         // The session edge, and only one of them: the pill is the twin's
         // honest default (no session to end), `sessionEdge` swaps in the
@@ -678,6 +752,11 @@ export function DemoDashboard({
           applications={snapshot.apps}
           pulse={{ needsReview }}
           transport={boardTransport}
+          // The `SyncBar` above mounts the Removed rows panel, so this board's
+          // nothing-matched line may point at it — the same composition the
+          // signed-in page has, which is what makes the twin the surface the
+          // e2e can drive.
+          canRecover
           beforeList={slot === "before" ? queue : null}
           afterList={slot === "after" ? queue : null}
         />

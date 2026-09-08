@@ -93,7 +93,7 @@ apps/web/
 │   └── account/ applications/ ambient/ boot/ dashboard/ demo/ gmail/
 │       import/ mail/ security/ settings/ shell/
 ├── tests/
-│   ├── e2e/                       # 22 Playwright spec files
+│   ├── e2e/                       # 23 Playwright spec files
 │   └── unit/                      # node --test suite (`pnpm test:unit`)
 ├── scripts/                       # csp-gate.mjs, no-session-census.mjs,
 │                                  # footage/
@@ -179,7 +179,7 @@ export default async function Page() {
 - Monorepo tooling. Neither `pnpm-workspace.yaml` nor `turbo.json` exists;
   `apps/web` is still a standalone pnpm project.
 
-**Playwright shipped and is no longer on this list.** 22 spec files live under
+**Playwright shipped and is no longer on this list.** 23 spec files live under
 `tests/e2e/` and two CI jobs run them — `playwright` against `pnpm dev` and
 `playwright-production` against a real `next build` + `next start`
 (`.github/workflows/e2e-ci.yml`). `pnpm e2e` runs them locally. The unit suite

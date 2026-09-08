@@ -202,7 +202,7 @@ apps/web/
 │   ├── supabase/{client,server,admin,auth,middleware,protectedRoutes,…}.ts
 │   └── account, applications, boot, dashboard, demo, gmail, import, mail,
 │       security, settings, shell, ambient, theme.ts, utils.ts
-├── tests/{e2e,unit}/           # 22 Playwright specs + the node --test unit suite
+├── tests/{e2e,unit}/           # 23 Playwright specs + the node --test unit suite
 ├── scripts/                    # csp-gate.mjs, no-session-census.mjs, footage/
 ├── proxy.ts                    # session refresh + auth gate
 └── components.json             # shadcn config
