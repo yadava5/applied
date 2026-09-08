@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { memo, useCallback, useEffect, useId, useRef, useState } from "react";
 
 import { DeadlineTag, FiledStamp, SameCompanyChip } from "@/components/dashboard/CardMeta";
-import { notifyError, notifySuccess, notifyUndo } from "@/components/feedback/notify";
+import { notifySuccess } from "@/components/feedback/notify";
 import { MailText } from "@/components/mail/MailText";
 import { RowActionsMenu, type RowMenuItem } from "@/components/dashboard/RowActionsMenu";
 import { safeText } from "@/lib/security/hostileText";
@@ -27,8 +27,6 @@ import {
   REMOVE_STICKY_HINT,
   UNDO_LABEL,
   removalPendingTail,
-  removedToastMessage,
-  restoreFailedMessage,
   rowName,
   statusChangeFailure,
   undoSecondsLeft,
@@ -257,14 +255,18 @@ const StageSelect = memo(function StageSelect({
  *
  * Three behaviours here are load-bearing:
  *
- *  1. **Removal is recoverable.** "Not an application" no longer fires
- *     anything: the row becomes a tombstone with an Undo for
+ *  1. **Removal is recoverable, in the row's own place.** "Not an application"
+ *     no longer fires anything: the row becomes a tombstone with an Undo for
  *     `UNDO_WINDOW_SECONDS`, and only when that expires does it POST the
  *     backend's *soft* dismiss (row + emails stay on disk, restorable).
  *     Undo is a cancelled timer — nothing was sent, so there is nothing to
- *     reverse and no training example written and then written over. The hard
- *     `DELETE` — which erases the row and its linked mail, and which no layer
- *     can undo — is a separate item behind an inline confirm.
+ *     reverse and no training example written and then written over. That
+ *     tombstone is the ONLY acknowledgement a removal raises (#903): the
+ *     corner toast that used to follow it is gone, because a card painted
+ *     bottom-right and reached from DOM index 0 is not a way back for anyone
+ *     using a keyboard. The hard `DELETE` — which erases the row and its
+ *     linked mail, and which no layer can undo — is a separate item behind an
+ *     inline confirm.
  *  2. **The stage control is optimistic.** The chosen stage (and the row's
  *     stage accent) change on click instead of after the round trip, with an
  *     in-flight state on the control; a failure rolls the value back visibly
@@ -484,38 +486,6 @@ export function ApplicationRow({
     [app.company, app.id, app.status, onRevealStage, optimisticTo, router, transport],
   );
 
-  /**
-   * The way back from a COMMITTED removal — what the toast's Undo runs, and
-   * what its failure offers again.
-   *
-   * A named function expression so it can hand itself to `notifyError`'s retry
-   * without a ref: the Undo button closes its own toast the moment it is
-   * pressed, so a restore that fails would otherwise leave the row off the
-   * board with no affordance anywhere (there is no dismissed-rows view, and
-   * `dismissed_reason = "user"` means no later sync brings it back either).
-   */
-  const undoRemoval = useCallback(
-    async function undoRemoval(): Promise<void> {
-      const result = await transport.restore(app.id);
-      if (result.ok) {
-        // The card can still be mounted with its tombstone showing — the
-        // refresh that unmounts it is not guaranteed to have landed, and
-        // `removed` is client state a re-render would not clear. Without this
-        // a restored row reads as removed for the life of the mount.
-        setRemoved(null);
-        router.refresh();
-        return;
-      }
-      const head = restoreFailedMessage(safeText(app.company));
-      notifyError(
-        `application.restore.${app.id}`,
-        result.detail ? `${head} ${safeText(result.detail)}` : head,
-        { run: undoRemoval },
-      );
-    },
-    [app.company, app.id, router, transport],
-  );
-
   const commitRemoval = useCallback(async () => {
     if (committing.current) return;
     committing.current = true;
@@ -531,19 +501,35 @@ export function ApplicationRow({
       return;
     }
     setRemoved("dismissed");
-    // The acknowledgement that OUTLIVES the row (#511). The in-card window
-    // that just closed cancels a dismissal the server never saw; this reverses
-    // one it did, and it has to live outside the card because the refresh
-    // below unmounts the card and its tombstone together.
+    // AND NOTHING IS SAID IN THE CORNER (#903).
     //
-    // The key names the target, as `notifyUndo` requires: two rows removed in
-    // one breath must never merge into a counted toast, because one Undo
-    // button cannot put both back.
-    notifyUndo(`application.dismiss.${app.id}`, removedToastMessage(safeText(app.company)), {
-      run: undoRemoval,
-    });
+    // #511 put a second Undo in a toast here, on the reasoning that an
+    // acknowledgement has to outlive the card because the refresh below
+    // unmounts it. The reasoning was right about the constraint and wrong
+    // about the answer. Measured on /demo at 1024: that toast rendered at
+    // focusable index 0 of 69 while painted bottom-right, so from where the
+    // reader is left — index 33, on the successor row's trigger — its Undo sat
+    // 32 Shift+Tabs BACKWARDS (WCAG 2.4.3), and its card covered the stage
+    // select and the menu trigger of the row beneath it for 8.2 s. It carried
+    // `tabindex="0"` and a focus ring throughout, so it was dressed as
+    // reachable and was not.
+    //
+    // The affordance the reader can actually use is the one in this row's own
+    // cell: focus is put on it, it measured TWO stops from the `···` that
+    // opened the menu, it cancels a dismissal the server has never seen, and
+    // it cannot cover anything because it occupies the row's own place — the
+    // list closes up around it rather than over it. So the window IS the
+    // acknowledgement, `UNDO_WINDOW_SECONDS` is its whole life, and this
+    // moment — the countdown reaching zero — is the confirmation. A card in
+    // the corner repeating it, over another row's controls, was the part that
+    // could be removed.
+    //
+    // WHAT THAT COSTS, said plainly: a removal noticed AFTER the window is no
+    // longer reversible from the board. `POST /restore` still exists and the
+    // scan receipt still calls it, but nothing here does. The window is ten
+    // seconds for that reason.
     router.refresh();
-  }, [app.company, app.id, router, transport, undoRemoval]);
+  }, [app.id, router, transport]);
 
   // The undo window. The request is sent only when it runs out, so unmounting
   // (navigation, tab close) cancels the removal rather than committing it —
@@ -636,9 +622,16 @@ export function ApplicationRow({
   ];
 
   // --- Pending removal: the row is still here, and one click keeps it --------
+  //
+  // THE WHOLE UNDO, NOT THE FIRST HALF OF IT (#903). Nothing follows this slot
+  // any more, so it carries the amber the app already spends on a closing undo
+  // window — `ToastCard` set its kind dot the same way, and that card is what
+  // this replaces. Amber on the DASHED border only: the ink stays exactly what
+  // it was, so no text contrast moves, and the row's place is marked as
+  // time-bound without turning a routine correction into an alarm.
   if (removalPending) {
     return (
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-dashed border-line bg-surface-2/60 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-dashed border-review/40 bg-surface-2/60 px-3 py-2">
         <p role="status" className="min-w-0 flex-1 text-xs leading-snug text-muted">
           <RowOutcome company={app.company} tail={removalPendingTail(secondsLeft ?? 0)} />
         </p>
@@ -649,7 +642,7 @@ export function ApplicationRow({
             refocusTrigger.current = true;
             setRemovalEndsAt(null);
           }}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded border border-line px-2 py-1 text-xs text-strong transition-colors hover:border-line-strong hover:bg-surface"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded border border-line-strong px-2 py-1 text-xs text-strong transition-colors hover:border-review/60 hover:bg-surface"
         >
           <Undo2 className="h-3.5 w-3.5" aria-hidden />
           {UNDO_LABEL}
