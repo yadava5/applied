@@ -351,14 +351,26 @@ RECORDED_FAMILIES: dict[str, tuple[int, int, int]] = {
     "repeat-anonymous": (600, 1, 0),
     "req-id-same-title": (400, 1, 0),
     "requisition-inside-the-bound": (120, 2, 0),
-    "rescinded-offer": (520, 4, 0),
+    # 0 -> 260 (#934). NOT a corpus change: the census used to search the raw
+    # delivered text, and the only `strong` match on the 260 rescind halves was
+    # inside the offer they QUOTE. `classify` strips quoted history before any
+    # pattern sees a body, so the engine reaches nothing on them — its verdict
+    # is `other` at 0.50 against a ground truth of `rejection`. The zero was a
+    # claim about text no shipped classifier reads.
+    "rescinded-offer": (520, 4, 260),
     "update-before-confirmation": (600, 5, 0),
     "update-from-another-domain": (600, 5, 0),
     "update-in-thread": (600, 2, 0),
     "update-joins-one-application": (1200, 5, 0),
     "update-outside-the-thread": (600, 5, 0),
     "update-picks-between-two": (750, 5, 0),
-    "verdict-past-the-body-cap": (320, 2, 0),
+    # 0 -> 160 (#934), and by a different mechanism from `rescinded-offer`
+    # above: the census used to read past the 4,000-character cap
+    # `normalise_body_text` applies. #767 fixed exactly that for the classifier
+    # half — `harness.as_classified` — and the census never got it, so the one
+    # family built to measure the cap was the one family the census read past.
+    # The 160 are the same 160 #767 measured.
+    "verdict-past-the-body-cap": (320, 2, 160),
     # #626, and it is invented in the same sense as everything above it: the
     # BODIES are the author's, so its discovery rate is 0.0% by construction and
     # it belongs in this block. What is real about it is the half this metric
@@ -920,7 +932,12 @@ def test_the_invented_families_still_discover_nothing(measured) -> None:
     # not see sequences. Its three sibling families are NOT here: their
     # `no_strong` is non-zero by construction, because the uncertain updates
     # they turn on are mail the classifier is supposed to be unsure about.
-    assert len(zeros) == 31, "the recorded set of circular families"
+    # 31 -> 29 (#934). `rescinded-offer` and `verdict-past-the-body-cap` leave
+    # this set, and neither leaves it by gaining a wording: the census started
+    # searching what `classify` searches, and both families turned out to hold
+    # messages the engine reaches nothing on. See their entries in
+    # RECORDED_FAMILIES for which mechanism hid which.
+    assert len(zeros) == 29, "the recorded set of circular families"
     moved = {
         family: measured.families[family].no_strong
         for family in sorted(zeros)
