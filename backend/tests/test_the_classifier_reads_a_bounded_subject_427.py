@@ -87,7 +87,7 @@ def test_an_oversized_subject_is_cut_at_the_bound() -> None:
         thread_id="t",
         subject="S" * OVERSIZE,
         sender_name=None,
-        sender_email="a@b.com",
+        sender_email="jobs@cedar.example",
         snippet="",
         received_at=None,
     )
@@ -152,7 +152,7 @@ def test_the_bound_holds_through_the_real_parser() -> None:
         "payload": {
             "headers": [
                 {"name": "Subject", "value": "S" * OVERSIZE},
-                {"name": "From", "value": f'"{"N" * OVERSIZE}" <{"e" * OVERSIZE}@x.com>'},
+                {"name": "From", "value": f'"{"N" * OVERSIZE}" <{"e" * OVERSIZE}@cedar.example>'},
             ]
         },
         "snippet": "p" * OVERSIZE,
