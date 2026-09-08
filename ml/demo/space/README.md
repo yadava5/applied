@@ -10,7 +10,7 @@ license: mit
 ---
 
 Rules → e5-small-v2 embeddings → SetFit, the hybrid classifier behind
-Applied, CI-gated at a 0.95 macro-F1 floor (0.979 measured on the
+Applied, CI-gated at a 0.95 macro-F1 floor (0.9896 measured on the
 committed eval set — that figure is the **rules** stage, not the full
 cascade). Paste any job-pipeline email — synthetic examples provided;
 no inbox is read, ever.

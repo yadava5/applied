@@ -11,11 +11,11 @@ MLOps trail around the evaluation.
 
 ## What the numbers are, and which stage they belong to
 
-**The rules layer scores 0.9791 macro-F1. The full cascade scores 0.9582.**
-This file used to quote "0.98 measured on the v3 eval set" without naming a
-stage, which is exactly the misattribution the root README exists to prevent:
-*"The 0.9791 belongs to the rules layer. It is not a whole-system accuracy
-figure, and the filenames actively mislead on this point."*
+**The rules layer scores 0.9896 macro-F1. The full cascade scored 0.9582 when it
+was last run.** This file used to quote "0.98 measured on the v3 eval set"
+without naming a stage, which is exactly the misattribution the root README
+exists to prevent: *"The 0.9896 belongs to the rules layer. It is not a
+whole-system accuracy figure, and the filenames actively mislead on this point."*
 
 Measured by `scripts/cascade_gate.sh` on the committed 96-example v3 set and
 recorded in [`docs/ML_PROMOTION_POLICY.md`](../docs/ML_PROMOTION_POLICY.md):
@@ -25,7 +25,14 @@ recorded in [`docs/ML_PROMOTION_POLICY.md`](../docs/ML_PROMOTION_POLICY.md):
 | rules only | 0.9791 | 0.9792 | 2 of 96 |
 | full cascade, checkpoint `setfit_model_20260306_175404` | 0.9582 | 0.9583 | 4 of 96 |
 
-The learned layers make it **worse**, by −0.0210 macro-F1. That is recorded as
+Both rows are one run, taken 2026-08-11, and are left at what that run measured.
+The rules layer alone was re-recorded on 2026-09-07 at **0.9896 / 0.9896 / 1 of
+96** (#446); rewriting only its row here would publish a delta no run produced,
+and the cascade arm cannot be re-measured without a SetFit checkpoint and an
+environment meeting `requirements.txt`'s floors.
+
+The learned layers make it **worse**, by −0.0210 macro-F1 as of that run and by
+more than that against the rules layer as it stands. That is recorded as
 `comparison.verdict = behind_rules`, `promotable = false` in
 `backend/data/evaluation/baseline_cascade_v3.json`, and it is why the deployed
 app runs rules only. CI gates the rules figure at a 0.95 floor.
