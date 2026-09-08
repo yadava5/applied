@@ -2841,6 +2841,178 @@ def _concatenated_post_names(b: _Builder, n: int) -> None:
         )
 
 
+# ── eligibility and identity verification, both ways round ───────────────────
+
+
+#: The genre this family exists for, and its near-twin, as (subject, sender,
+#: body) triples paired by index: ``_ELIGIBILITY_REFUSALS[k]`` and
+#: ``_ELIGIBILITY_TWINS[k]`` differ in the NOUN whose verification failed and in
+#: nothing else that matters. See ``_eligibility_verification``.
+_ELIGIBILITY_REFUSALS: tuple[tuple[str, str, str], ...] = (
+    (
+        "We need more information to approve your Student status",
+        "verify@verifyfast.example",
+        "An update on verifying your eligibility. Thank you for uploading your "
+        "documentation for confirmation. Unfortunately we were unable to "
+        "confirm your status. During the review process it was not possible to "
+        "match the document you sent.",
+    ),
+    (
+        "We could not verify your address",
+        "no-reply@addrcheck.example",
+        "Unfortunately we were unable to verify your address. Our review "
+        "process could not match the proof of address you uploaded, so your "
+        "submission was declined. Please upload a clearer document to continue.",
+    ),
+    (
+        "Your identity check was unsuccessful",
+        "compliance@ledgerpay.example",
+        "Thank you for submitting your documents for our know your customer "
+        "checks. Unfortunately we could not complete your KYC review, so the "
+        "submission was not approved. You may try again with a clearer photo.",
+    ),
+    (
+        "Identity verification declined",
+        "trust@parcelhold.example",
+        "Unfortunately we are unable to complete identity verification for "
+        "your account. During the review process the document you sent could "
+        "not be read, so the request was declined.",
+    ),
+    (
+        "Your account recovery request was declined",
+        "support@mailnest.example",
+        "Unfortunately we could not complete your account recovery request. "
+        "The review process was unable to match the details you provided "
+        "against the account on file.",
+    ),
+    (
+        "Student verification: more information needed",
+        "students@campusverify.example",
+        "Unfortunately we were unable to confirm your student status from the "
+        "document you uploaded. Our review process needs a dated enrolment "
+        "letter before the discount can be applied.",
+    ),
+)
+
+#: The other way round. Same negative determination, same genre-neutral
+#: vocabulary, one noun away — and every one of them IS a rejection.
+#:
+#: Index 3 is the expensive one and is not a near-miss at all: it carries the
+#: refusal vocabulary ("identity verification") AND a full rejection verdict,
+#: so it is what bounds the cost of the filter rather than avoiding it.
+_ELIGIBILITY_TWINS: tuple[tuple[str, str], ...] = (
+    (
+        "Update on your application to {e}",
+        "Unfortunately we were unable to verify your references for the {r} "
+        "role, so we are not moving forward with your application at {e}.",
+    ),
+    (
+        "Your {e} application",
+        "Your background check is complete. Unfortunately we are unable to "
+        "proceed with your application for the {r} position at {e}.",
+    ),
+    (
+        "Thank you from {e}",
+        "Unfortunately we were unable to verify your employment history, and "
+        "we will not be proceeding with your candidacy for the {r} role at {e}.",
+    ),
+    (
+        "Update on your {e} application",
+        "We have completed identity verification for your candidate profile. "
+        "After careful consideration we have decided not to move forward with "
+        "your application for the {r} role at {e}. We wish you the best in "
+        "your search.",
+    ),
+    (
+        "Your application to the {e} student engineering programme",
+        "Thank you for applying to the {e} student engineering programme. "
+        "Unfortunately we are unable to offer you a position on this year's "
+        "programme and will not be moving forward with your application.",
+    ),
+    (
+        "Update on your {e} application",
+        "Thank you for submitting your documents. Unfortunately, after review, "
+        "we are not moving forward with your candidacy for the {r} position "
+        "at {e}.",
+    ),
+)
+
+
+def _eligibility_verification(b: _Builder, n: int) -> None:
+    """A negative determination about a PERSON, not about an application (#522).
+
+    "Unfortunately we were unable to confirm your student status. During the
+    review process …" is a discount-eligibility refusal. It is not job mail at
+    all, and the classifier scored it ``rejection`` 0.70 — into the review
+    queue, under a suggestion the reader never applied for. The vocabulary it
+    matched is genre-NEUTRAL: ``unfortunately … unable``, "review process",
+    "declined", "was unsuccessful" describe any refusal, and nothing in the
+    rules layer asked what KIND of determination it was.
+
+    WHY THIS FAMILY HAD TO EXIST BEFORE THE FILTER DID. #521's finding, one
+    category over: a negative added without a corpus case to judge it against
+    cannot be shown to help OR to be safe. The 700-case ``not-job-mail`` family
+    is the nearest thing here and nothing in it looks like this — a job alert,
+    a newsletter, a receipt and an OTP all fail to score ``rejection`` for
+    reasons that have nothing to do with #522.
+
+    BUILT BOTH WAYS ROUND, which is the whole of the discipline. Even indices
+    are REFUSALS (``identity=None``: the board must stay untouched); odd
+    indices are their TWINS — the same courtesy, the same "unfortunately …
+    unable", one noun away, and every one a real rejection that must keep its
+    verdict. A family of refusals alone would be green for a filter that
+    deleted the whole category.
+
+    Measured at the recorded seed with the family present and the filter NOT
+    yet added: 60 of the 60 refusals scored ``rejection`` 0.70 (wrong) and 60
+    of the 60 twins scored ``rejection`` 0.95 (correct). Adding the filter
+    moves exactly those 60 refusals, to ``other`` 0.50, and NOTHING else in the
+    18,320 cases — per case, not per family total.
+
+    Twin index 3 is the cost bound rather than a near-miss: it carries the
+    filter's own vocabulary AND a full rejection verdict, so it is what pays
+    the -5. WHAT THIS FAMILY CANNOT SHOW is that cost, and it is said here
+    rather than left to read as coverage: its twins arrive over an ATS relay,
+    12 - 5 = 7 lands on 0.90, and the +0.05 sender bonus takes it straight back
+    to 0.95. The confidence drop is pinned off-relay, in
+    ``tests/test_a_verification_refusal_is_not_a_rejection_522.py``, where it
+    shows.
+    """
+
+    for i in range(n):
+        shape = (i // 2) % len(_ELIGIBILITY_REFUSALS)
+        if i % 2 == 0:
+            subject, sender, body = _ELIGIBILITY_REFUSALS[shape]
+            b.add(
+                family="eligibility-verification",
+                subject=subject,
+                sender=sender,
+                sender_name=None,
+                body=body,
+                expected_category="other",
+                identity=None,
+                employer=None,
+                adversarial=True,
+                note="a refusal about a person, in the vocabulary of a rejection",
+            )
+            continue
+        display, token = b.employer()
+        role = b.role(i)
+        subject, body = _ELIGIBILITY_TWINS[shape]
+        b.add(
+            family="eligibility-verification",
+            subject=subject.format(e=display, r=role),
+            sender=b.ats(i),
+            sender_name=f"{display} Recruiting",
+            body=body.format(e=display, r=role),
+            expected_category="rejection",
+            identity=f"{token}|{role}",
+            employer=token,
+            day=i % 60,
+            note="one noun from the refusal above it, and still a rejection",
+        )
+
+
 _FAMILIES: tuple[tuple[str, object, int], ...] = (
     ("confirmation", _confirmations, 1100),
     ("rejection-plain", _rejections_plain, 550),
@@ -2896,6 +3068,12 @@ _FAMILIES: tuple[tuple[str, object, int], ...] = (
     # employer carries BOTH a named identity and an anonymous one. Nothing else
     # here could produce the composition the issue is about.
     ("anonymous-third-application", _anonymous_third_application, 60),
+    # #522. Appended last for the reason three entries above states — the
+    # builder shares one seeded RNG — and it is the first family here whose
+    # refusals carry a REJECTION's whole vocabulary while being about a person
+    # rather than an application. 120 messages: 60 refusals (``identity=None``)
+    # and the 60 twins that keep them honest.
+    ("eligibility-verification", _eligibility_verification, 120),
 )
 
 
