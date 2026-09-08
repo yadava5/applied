@@ -1432,8 +1432,17 @@ async def _resolve_application(
     rolled: pipeline.RolledApplication,
     home: int | None = None,
     blocked: frozenset[int] = frozenset(),
-) -> Application | None:
+) -> tuple[Application | None, bool]:
     """Which stored application, if any, this rolled cluster is — or None to mint.
+
+    Returns ``(row, landed_blind)``. The second value is the resolver saying it
+    DOES NOT KNOW: True only when rule 4 picked one of several candidates on
+    sort order alone. Every other landing is a claim — a stored link, a
+    conversation, a requisition id, a role token, or an employer's single row —
+    and a claim may license things a tie-break may not. The one consumer today
+    is :func:`_reopening_evidence` (#655); the caller must pass it rather than
+    re-deriving it, because the derivation needs ``blocked`` and the branch that
+    fired, and neither survives outside this function.
 
     The employer narrows the field; these rules pick the row inside it. They are
     the persistent mirror of :func:`pipeline.partition_applications`, and the
@@ -1485,7 +1494,7 @@ async def _resolve_application(
         if home is not None:
             found = next((row for row in rows if row.id == home), None)
             if found is not None:
-                return found
+                return found, False
         # A CONFIRMATION IS NEVER ROUTED BY ITS THREAD. It asserts an
         # application, so it opens a card or lands on its own stored one and
         # nothing else; only an update asks "which of these is this about?".
@@ -1496,13 +1505,28 @@ async def _resolve_application(
         # rebuild and two applications on a delta.
         if any(m.category in pipeline.APPLIED_SIGNAL_CATEGORIES for m in rolled.messages):
             if await _is_a_further_application(session, user_id, rolled, rows):
-                return None
+                return None, False
         else:
             conversation = await _application_in_conversation(session, user_id, rolled, rows)
             if conversation is not None:
-                return conversation
+                return conversation, False
         rows = [row for row in rows if row.id not in blocked]
-    return _pick_application(rows, rolled.req_id, rolled.role_token)
+        # RULE 4 IS THE ONLY BLIND LANDING, AND ONLY WHEN IT HAD A CHOICE.
+        #
+        # It returns ``rows[0]`` — the employer's oldest live row — for a
+        # cluster that names no role and no requisition number. With SEVERAL
+        # candidates that is a tie-break and nothing more: the cluster carries
+        # no evidence about which of them it belongs to, and the row it gets is
+        # a function of `_company_rows`'s sort order. With exactly ONE candidate
+        # there is no tie to break; the rule-4 contract above ("joins the
+        # employer's only row if there is exactly one") is satisfied literally,
+        # and calling that blind would refuse the ordinary re-application this
+        # resolver exists to place — an employer with one settled card and a
+        # fresh role-less confirmation. Measured: `test_reopen_after_rejection`
+        # is entirely identified mail, so that single-row anonymous shape had no
+        # test at all and a coarser `anonymous ⇒ blind` rule broke it silently.
+        return _pick_application(rows, None, None), len(rows) > 1
+    return _pick_application(rows, rolled.req_id, rolled.role_token), False
 
 
 async def _application_in_conversation(
@@ -1646,17 +1670,24 @@ async def _is_a_further_application(
     target is also ``rows[0]``. Steering rule 4 would change three call sites
     that are right about their own callers.
 
-    AND A DECLINE CAN STILL COST A REOPEN. Measured, not supposed: where the
-    unconfirmed anonymous auto row is ALSO the employer's oldest live row, it is
+    A DECLINE USED TO COST A REOPEN, AND NO LONGER DOES (#655). Where the
+    unconfirmed anonymous auto row is ALSO the employer's oldest live row it is
     rule 4's fold target, and if it is REJECTED with the arriving confirmation
-    newer than its stored rejection then :func:`_reopening_evidence` still walks
-    it out of its terminal status. So #641 closes that corruption for a settled
-    row that holds its own confirmation or names a role — the shapes a board
-    normally has, and the ones its controls pin — and leaves it open for a row
-    whose only mail is the rejection that minted it. Closing that one means
-    steering rule 4, which two other callers depend on, so it is written down as
-    the boundary of this fix rather than widened into it. See
-    ``test_an_unconfirmed_anonymous_row_holds_the_mint_back``.
+    newer than its stored rejection then :func:`_reopening_evidence` walked it
+    out of its terminal status. #641 closed that for a settled row holding its
+    own confirmation or naming a role, and left it open for a row whose only
+    mail is the rejection that minted it — on the stated grounds that closing it
+    meant steering rule 4, which two other callers depend on.
+
+    THAT GROUND WAS WRONG AND IS KEPT HERE SO IT IS NOT RE-DERIVED. Rule 4 is
+    untouched and still returns the same row to all three callers. What changed
+    is what a rule-4 landing may LICENSE: :func:`_resolve_application` reports
+    whether it picked one of SEVERAL candidates on sort order alone, and
+    :func:`_reopening_evidence` refuses a reopen on that landing while a keyed,
+    linked or single-row landing reopens exactly as before. See
+    ``test_an_unconfirmed_anonymous_row_holds_the_mint_back`` for the decline
+    itself and ``test_a_tie_break_may_not_un_reject_655.py`` for both halves of
+    what now happens instead.
 
     THE REMEDY FOR A SPARE CARD IS A DISMISS CLICK, not a merge. There is no
     merge endpoint in this repository — ``POST /applications/{id}/split`` exists
@@ -2615,6 +2646,8 @@ async def _reopening_evidence(
     user_id: uuid.UUID,
     existing: Application,
     rolled: pipeline.RolledApplication,
+    *,
+    landed_blind: bool,
 ) -> tuple[datetime, datetime] | None:
     """May this REJECTED auto row leave the terminal state — and on what proof?
 
@@ -2639,8 +2672,37 @@ async def _reopening_evidence(
     and ghosted stay settled, and so does anything without a dated applied signal
     strictly newer than the rejection. A false stay is today's bug once and a
     human can correct it in one click; a false reopen re-fires on every rebuild.
+
+    AND NEVER ON A BLIND LANDING (#655). Every test below asks what the MAIL
+    says. None of them asks whether this is the row the mail is about, because
+    until now the caller had already decided that — and for one shape it had
+    decided it by tie-break. An anonymous cluster that reaches
+    :func:`_pick_application`'s rule 4 lands on the employer's oldest live row,
+    a rejected row is live, and ``_company_rows`` sorts it first: so a
+    confirmation naming no role at all, arriving at an employer whose oldest
+    card is settled, walked that card out of its terminal status. The evidence
+    for the reopen was real and it was about a DIFFERENT application.
+
+    ``landed_blind`` is the caller saying it does not know which application
+    this is. It is keyword-only and has no default deliberately: this function
+    has one caller today, and a second one that forgets to answer would
+    reinstate the defect with every test still green. The vocabulary is the same
+    one :const:`LANDED_BLIND` already spells for
+    :func:`_resolve_application_for_email`, and the rule is the same rule
+    :func:`_adopt_mail_identity` already applies to titles — a tie-break may
+    file new mail on a row, it may not restate what the row IS.
+
+    THIS DOES NOT STEER RULE 4, which is what #641 recorded as the reason it
+    left this open: rule 4 serves review-classify and orphan-reconcile as well
+    as the sync, and all three still get the same row. What changes is only what
+    a rule-4 landing is allowed to LICENSE. A keyed or linked landing reopens
+    exactly as before, and that direction has its own control — a fix that
+    stopped those would have broken re-application to a role you were turned
+    down for, which is the feature this function exists for.
     """
 
+    if landed_blind:
+        return None
     if existing.status != ApplicationStatus.REJECTED:
         return None
     if pipeline.is_terminal_status(rolled.status):
@@ -2736,7 +2798,7 @@ async def upsert_applications_for_user(
     for index, r in enumerate(order):
         anonymous_cluster = r.req_id is None and r.role_token is None
         home = homes.get(index)
-        existing = await _resolve_application(
+        existing, landed_blind = await _resolve_application(
             session,
             user_id,
             r,
@@ -2783,7 +2845,19 @@ async def upsert_applications_for_user(
                 existing.dismissed_at = None
                 existing.dismissed_reason = None
             if _is_auto_row(existing.source):
-                reopen = await _reopening_evidence(session, user_id, existing, r)
+                # HOW THIS ROW WAS REACHED, not just which row it is (#655).
+                #
+                # The comment twenty lines above already draws this distinction
+                # for message refs — a rule-4 landing "may file NEW messages
+                # there; it may not take one off a sibling". A status is the
+                # stronger claim of the two, so the landing that may not move a
+                # sibling's mail may not restate what the row IS either.
+                # ``landed_blind`` comes from the resolver rather than being
+                # re-derived here, because deriving it needs ``blocked`` and the
+                # branch that fired and neither is visible from this scope.
+                reopen = await _reopening_evidence(
+                    session, user_id, existing, r, landed_blind=landed_blind
+                )
                 if reopen is not None:
                     rejected_at, applied_signal_at = reopen
                     # The id, not the company name (see :func:`_warn_if_capped`).
