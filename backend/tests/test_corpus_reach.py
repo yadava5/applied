@@ -19,22 +19,22 @@ does on this corpus. This asks how much of the product the corpus is able to say
 anything about at all, and the answer today is:
 
     positive engine patterns                              160
-      exercised by at least one of 18,320 messages         52   (32.5%)
-        of those, fired ONLY by invented families          21
+      exercised by at least one of 18,480 messages         54   (33.8%)
+        of those, fired ONLY by invented families          23
         fired by at least one ``observed-*`` family        31   (19.4%)
-      never fired by anything                             108   (67.5%)
+      never fired by anything                             106   (66.3%)
 
     never fired, by category:  interview 26 of 31 · rejection 16 of 36
       offer 17 of 20 · assessment 16 of 24 · pending_application 14 of 15
-      applied 11 of 25 · follow_up 8 of 9
+      applied 9 of 25 · follow_up 8 of 9
 
-    18,320 messages · 372 distinct wordings corpus-wide
+    18,480 messages · 388 distinct wordings corpus-wide
 
-So 108 rules ship to users with nothing in the largest body of evidence this
+So 106 rules ship to users with nothing in the largest body of evidence this
 product has exercising them, and the two worst categories are the two stages a
 user cares most about.
 
-AND 32.5% IS THE GENEROUS READING OF THE 52. For 21 of them "fired" means an
+AND 33.8% IS THE GENEROUS READING OF THE 54. For 23 of them "fired" means an
 invented fixture quotes the pattern's own wording back at it — the author of
 ``rules.py`` wrote both — so the coverage that rests on mail nobody here wrote
 is 31 of 160, **19.4%**. For interview it is 1 of 31 and for offer 1 of 20.
@@ -107,17 +107,24 @@ POSITIVE_CATEGORIES = frozenset(
     }
 )
 
-#: METRIC 1 — PATTERN COVERAGE. The 52 patterns at least one message fires.
+#: METRIC 1 — PATTERN COVERAGE. The 54 patterns at least one message fires.
 #:
-#: DIRECTION: this set may only GROW. Pinned as a SET and not as the count 52,
-#: because ``>= 52`` is satisfied by a DIFFERENT 52 — a rewritten pattern that
+#: DIRECTION: this set may only GROW. Pinned as a SET and not as the count 54,
+#: because ``>= 54`` is satisfied by a DIFFERENT 54 — a rewritten pattern that
 #: stops matching while a new one starts would leave the number still reading
-#: 48 and the rule silently unexercised.
+#: 54 and the rule silently unexercised.
 RECORDED_FIRED: tuple[tuple[str, str, str], ...] = (
-    # applied — 14 of 25
+    # applied — 16 of 25
     ('applied', 'strong', 'application.{0,20}received'),
     ('applied', 'strong', 'application.{0,30}has been (received|submitted)'),
     ('applied', 'strong', 'be in touch (soon|shortly|if)'),
+    # #521. Two rules that had shipped with NOTHING exercising them, both
+    # reached by the `outreach-autoresponder` family: a contact-form
+    # autoresponder is the shape that says "confirming receipt", and
+    # "hearing from us" is what a weak confirmation closes with. That is a
+    # side effect of the family rather than its point, and it is the reason
+    # `RECORDED_NEVER_FIRED['applied']` falls 11 -> 9.
+    ('applied', 'strong', 'confirm(ing)? receipt'),
     ('applied', 'strong', 'reviewing (applications|candidates)'),
     ('applied', 'strong', 'thank(s| you) for (taking the time to )?submit(ting)? your application'),
     ('applied', 'strong', 'thank(s| you) for applying'),
@@ -131,6 +138,7 @@ RECORDED_FIRED: tuple[tuple[str, str, str], ...] = (
     # moved, so the entry moves with it rather than leaving this ledger. The
     # count is still 14 of 25 and `RECORDED_POSITIVE_PATTERNS` is still 159.
     ('applied', 'weak', 'application.{0,20}(for|to).{0,40}(position|role|job)'),
+    ('applied', 'weak', 'hearing from us'),
     ('applied', 'weak', 'review your (application|resume|qualifications)'),
     ('applied', 'weak', 'thank you for your interest'),
     ('applied', 'weak', 'thank(s| you) for your application'),
@@ -200,7 +208,7 @@ RECORDED_NEVER_FIRED: dict[str, int] = {
     "offer": 17,              # of 20 — the other one
     "assessment": 16,         # of 24
     "pending_application": 14,  # of 15
-    "applied": 11,            # of 25
+    "applied": 9,             # of 25 — 11 before #521; see RECORDED_FIRED
     "follow_up": 8,           # of 9
 }
 
@@ -291,6 +299,17 @@ RECORDED_FAMILIES: dict[str, tuple[int, int, int]] = {
     "offer": (440, 2, 0),
     "one-thread-many-roles": (240, 1, 0),
     "one-thread-many-roles-in-the-queue": (240, 1, 0),
+    # #521, AND IT IS NOT IN THE ZEROS BLOCK ABOVE — 80 of its 160 messages
+    # match no strong pattern anywhere in the engine, which is 50.0%. That
+    # is recorded rather than absorbed, and it is not a discovery claim:
+    # this family is INVENTED like every other one here, so its wordings
+    # cannot be evidence about real mail. Half of it is contact-form NOISE,
+    # which is exactly where `not-job-mail` (100.0%) and `ats-relay-noise`
+    # (100.0%) already sit; the other half is genuine confirmations worded
+    # so weakly that the engine reaches them only through `weak` rules,
+    # which is the property the family exists to measure. Reading this 50%
+    # as reach would be the mistake `observed.py` is written to prevent.
+    "outreach-autoresponder": (160, 16, 80),
     "quoted-history": (400, 2, 0),
     "rejection-plain": (1100, 4, 0),
     "reopen-after-rejection": (750, 2, 0),
@@ -430,7 +449,7 @@ def _every_pattern_in(table) -> int:
 
 
 def test_the_record_is_arithmetically_whole(measured) -> None:
-    """52 fired plus 108 never fired is 160, AND the engine still holds 160.
+    """54 fired plus 106 never fired is 160, AND the engine still holds 160.
 
     Two separate claims, and only the second one touches the engine.
 
@@ -460,9 +479,9 @@ def test_the_record_is_arithmetically_whole(measured) -> None:
     shortfall = _engine_shortfall(measured)
     assert shortfall is None, shortfall
     assert len(RECORDED_FIRED) / RECORDED_POSITIVE_PATTERNS == pytest.approx(
-        0.325, abs=0.0005
+        0.3375, abs=0.0005
     ), (
-        "the 32.5% this gate's docstring publishes. Two constants divided: this "
+        "the 33.8% this gate's docstring publishes. Two constants divided: this "
         "catches a mistyped ledger, never a moved engine."
     )
 
@@ -949,7 +968,7 @@ def test_copying_an_engine_pattern_into_an_observed_wording_reds_this_gate(
     Two of the three metrics move, in opposite directions, which is what makes
     them independent measurements rather than one number twice:
 
-    * pattern coverage RISES, 52 -> 53, and ``interview``'s ledger of
+    * pattern coverage RISES, 54 -> 55, and ``interview``'s ledger of
       unexercised rules falls 26 -> 25. Coverage alone would call that an
       improvement, which is exactly why coverage alone is not the gate.
     * ``observed-closure``'s discovery rate COLLAPSES, 52.5% -> 2.5%, and
@@ -993,7 +1012,7 @@ def test_copying_an_engine_pattern_into_an_observed_wording_reds_this_gate(
 
     assert _MUTATION in mutated.fired
     assert mutated.fired == measured.fired | {_MUTATION}
-    assert len(mutated.fired) == len(measured.fired) + 1 == 53
+    assert len(mutated.fired) == len(measured.fired) + 1 == 55
     assert mutated.never_fired_by_category["interview"] == 25
 
     closure = mutated.families["observed-closure"]

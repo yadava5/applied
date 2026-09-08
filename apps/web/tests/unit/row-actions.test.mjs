@@ -27,6 +27,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { DURATIONS } from "../../lib/feedback/coalesce.ts";
 import {
   REMOVE_HINT,
   REMOVE_STICKY_HINT,
@@ -38,8 +39,6 @@ import {
   removalPendingMessage,
   removeFromBoardRequest,
   removedMessage,
-  removedToastMessage,
-  restoreFailedMessage,
   restoreToBoardRequest,
   rovingIndex,
   statusChangeFailure,
@@ -74,25 +73,17 @@ test("the undo hits restore — the recoverable removal's only way back", () => 
   assert.notEqual(restore.path, removeFromBoardRequest(ID).path);
 });
 
-test("the removal toast says what the tombstone says, minus the tail the button carries", () => {
-  // Both come off one fragment, so the sentence the card shows for six seconds
-  // and the one the corner shows afterwards cannot drift (#424 keeps the two
-  // COMMITTED outcomes apart; this keeps one outcome's two renderings together).
-  assert.equal(removedToastMessage("Northwind"), "Northwind removed from the board");
-  assert.ok(removedMessage("Northwind").startsWith(removedToastMessage("Northwind")));
+test("the committed removal names the row and stays out of the delete's words", () => {
+  // One fragment behind the pending sentence and the committed one, so a row
+  // that says "removed from the board" while its window is open and after it
+  // closes cannot drift (#424 keeps the two COMMITTED outcomes apart; this
+  // keeps one outcome's two renderings together). The third rendering this
+  // used to have — a corner toast — is gone with #903.
+  assert.equal(removedMessage("Northwind"), "Northwind removed from the board · not deleted");
+  assert.ok(removalPendingMessage("Northwind", 4).startsWith("Northwind removed from the board"));
   assert.equal(removedMessage("Northwind").includes(deletedMessage("Northwind")), false);
   // An empty employer falls back the same way every other outcome line does.
-  assert.equal(removedToastMessage("   "), "This row removed from the board");
-});
-
-test("a failed undo names the state the board is actually in", () => {
-  // Not "try again later" and not an apology: the row is off the board, no
-  // later sync brings it back (`dismissed_reason = "user"`), and the toast that
-  // carries this keeps the button. Same shape as REMOVE_FAILED's.
-  assert.equal(
-    restoreFailedMessage("Northwind"),
-    "Couldn't put Northwind back — it is still off your board.",
-  );
+  assert.ok(removedMessage("   ").startsWith("This row removed from the board"));
 });
 
 test("a stage change PATCHes the chosen status and nothing else", () => {
@@ -106,6 +97,28 @@ test("a stage change PATCHes the chosen status and nothing else", () => {
 test("the undo window is long enough to notice and short enough to be honest", () => {
   assert.ok(Number.isInteger(UNDO_WINDOW_SECONDS), "the countdown is rendered per second");
   assert.ok(UNDO_WINDOW_SECONDS >= 5 && UNDO_WINDOW_SECONDS <= 10, `got ${UNDO_WINDOW_SECONDS}`);
+});
+
+test("no undo toast is offered for longer than the window it can undo inside", () => {
+  // #903, item 4, and it is RED ON THE BUILD THAT SHIPPED: 8_000 against a
+  // 6_000 ms window. Two constants that had never been compared, in two files,
+  // one of them chosen for the toast stack and one for a destructive action —
+  // and the toast, which was the harder of the two to reach, was the longer.
+  //
+  // Compared rather than derived, deliberately. Importing one into the other
+  // would make this an expectation read from the thing it checks: it would
+  // then pass for every pair of equal values including a future pair chosen by
+  // accident. Two independent literals, one relation, and a change to either
+  // side is what has to justify itself.
+  assert.ok(
+    DURATIONS.undo !== null && DURATIONS.undo <= UNDO_WINDOW_SECONDS * 1000,
+    `an undo toast holds for ${DURATIONS.undo} ms while the app says an action ` +
+      `stays undoable for ${UNDO_WINDOW_SECONDS * 1000} ms`,
+  );
+  // The control: this comparison can fail. A null duration (the error rule)
+  // must not read as "shorter than the window" and quietly satisfy it.
+  assert.equal(DURATIONS.error, null);
+  assert.ok((DURATIONS.error ?? Infinity) > UNDO_WINDOW_SECONDS * 1000);
 });
 
 test("the menu hints state the undo window in seconds, never 'undoable'", () => {

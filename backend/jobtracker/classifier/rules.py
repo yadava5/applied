@@ -713,11 +713,39 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             # already sits at 5, one point under the gate — goes to OTHER and
             # is dropped SILENTLY, which is the worst failure this pipeline has.
             #
-            # Neither risk is measurable today: the phrase family appears 0
-            # times in the 17,260-case independent corpus and once in the
-            # owner's whole stored mailbox. So the rule ships nothing until the
-            # corpus grows an outreach-autoresponder family to judge it
-            # against; #521 carries it.
+            # THAT USED TO BE UNMEASURABLE AND IS NOT ANY MORE (#521), so
+            # this note is a DECISION now rather than a deferral. The phrase
+            # appeared 0 times in the whole independent corpus, which is why a
+            # green run proved nothing in either direction. The
+            # `outreach-autoresponder` family was written to close exactly that
+            # gap: 160 messages built both ways round — 80 autoresponders that
+            # must not become applications, and 80 genuine confirmations one
+            # slot away from them that must keep a verdict. All three
+            # placements were then run PER CASE over the 18,480:
+            #
+            #   (a) not shipped, today  40 autoresponders sit at `applied` 0.70
+            #                           and reach the review queue. No wrong
+            #                           card: 0.70 is under AUTO_FILE_GATE.
+            #   (b) in _NOISE_NEGATIVES ZERO of those 40 move — every one of
+            #                           them carries a strong `applied` BODY
+            #                           match — and 40 genuine confirmations
+            #                           fall under REVIEW_FLOOR to `other`
+            #                           0.50. Nothing that should move, 40 that
+            #                           must not: a regression, not a fix.
+            #   (c) out of it           the 40 are fixed, 55 genuine
+            #                           confirmations are destroyed SILENTLY
+            #                           and 25 more fall from auto-file to the
+            #                           queue. Corpus `correct` goes 17250 ->
+            #                           17235: the repair costs more accuracy
+            #                           than the defect does.
+            #
+            # Nothing outside the family moved in either arm, because nothing
+            # outside it says the phrase.
+            #
+            # So it stays out, and the defect is pinned instead of papered
+            # over: `RECORDED["wrong"]` in `tests/test_independent_corpus.py`
+            # carries those 40 at their measured size. Re-proposing this rule
+            # means moving those numbers first.
             r"\b(unsubscribe|manage preferences|newsletter|digest)\b",
             r"\b(discount|promo(?:tion)?|coupon|sale|limited time offer|flash sale)\b",
             r"\b(shop|buy|cart|checkout|order|purchase|shipment|tracking number)\b",
