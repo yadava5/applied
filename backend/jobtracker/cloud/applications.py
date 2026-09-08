@@ -1670,17 +1670,24 @@ async def _is_a_further_application(
     target is also ``rows[0]``. Steering rule 4 would change three call sites
     that are right about their own callers.
 
-    AND A DECLINE CAN STILL COST A REOPEN. Measured, not supposed: where the
-    unconfirmed anonymous auto row is ALSO the employer's oldest live row, it is
+    A DECLINE USED TO COST A REOPEN, AND NO LONGER DOES (#655). Where the
+    unconfirmed anonymous auto row is ALSO the employer's oldest live row it is
     rule 4's fold target, and if it is REJECTED with the arriving confirmation
-    newer than its stored rejection then :func:`_reopening_evidence` still walks
-    it out of its terminal status. So #641 closes that corruption for a settled
-    row that holds its own confirmation or names a role — the shapes a board
-    normally has, and the ones its controls pin — and leaves it open for a row
-    whose only mail is the rejection that minted it. Closing that one means
-    steering rule 4, which two other callers depend on, so it is written down as
-    the boundary of this fix rather than widened into it. See
-    ``test_an_unconfirmed_anonymous_row_holds_the_mint_back``.
+    newer than its stored rejection then :func:`_reopening_evidence` walked it
+    out of its terminal status. #641 closed that for a settled row holding its
+    own confirmation or naming a role, and left it open for a row whose only
+    mail is the rejection that minted it — on the stated grounds that closing it
+    meant steering rule 4, which two other callers depend on.
+
+    THAT GROUND WAS WRONG AND IS KEPT HERE SO IT IS NOT RE-DERIVED. Rule 4 is
+    untouched and still returns the same row to all three callers. What changed
+    is what a rule-4 landing may LICENSE: :func:`_resolve_application` reports
+    whether it picked one of SEVERAL candidates on sort order alone, and
+    :func:`_reopening_evidence` refuses a reopen on that landing while a keyed,
+    linked or single-row landing reopens exactly as before. See
+    ``test_an_unconfirmed_anonymous_row_holds_the_mint_back`` for the decline
+    itself and ``test_a_tie_break_may_not_un_reject_655.py`` for both halves of
+    what now happens instead.
 
     THE REMEDY FOR A SPARE CARD IS A DISMISS CLICK, not a merge. There is no
     merge endpoint in this repository — ``POST /applications/{id}/split`` exists
