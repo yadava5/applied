@@ -451,7 +451,7 @@ def _assert_layers_exercised(
     # deterministic veto that fires both ahead of the rules layer (hybrid.py:238)
     # and inside the semantic branches (hybrid.py:353, :398), so its presence says
     # nothing about whether an ML layer ran -- a lite-mode run scores 0.9896 with
-    # content_filter=5, rules=58, fallback=33 and no model loaded at all. Naming the
+    # content_filter=5, rules=61, fallback=30 and no model loaded at all. Naming the
     # two layers that are actually models is the only check that excludes that run.
     if any(layers.get(name, 0) > 0 for name in SEMANTIC_LAYERS):
         return []
@@ -854,7 +854,7 @@ def fail_diagnosis(report: dict[str, Any], baseline: dict[str, Any] | None = Non
                            healthy. Without it ``sf2`` is a number with nothing
                            to be small against. Only one committed baseline
                            carries a ``layers`` key --
-                           ``baseline_cascade_v3.json``, at ``setfit=20`` -- so
+                           ``baseline_cascade_v3.json``, at ``setfit=18`` -- so
                            this line prints on the cascade gate and nowhere
                            else, which is the gate the ambiguity was found on.
 

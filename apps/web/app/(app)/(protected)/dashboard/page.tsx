@@ -513,6 +513,7 @@ export default async function DashboardPage({
           note exists for. */}
       <PipelineBoard
         variant="locked"
+        canRecover
         applications={state.applications}
         total={state.total}
         stageTotals={stageCountsOf(state.summary)}

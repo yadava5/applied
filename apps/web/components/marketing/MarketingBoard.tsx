@@ -225,6 +225,16 @@ export function MarketingBoard({ verdict, docked, onVisitorOpen }: {
         commit((rows) => (rows.some((app) => app.id === id) ? rows : [...rows, row]));
         return { ok: true };
       },
+      async removed() {
+        // EMPTY, AND NOT A STUB THROWING (#921). The landing renders no
+        // `SyncBar`, so no Removed rows panel is mounted here and nothing ever
+        // calls this — but `BoardTransport` is one interface and a surface
+        // that could not answer at all would be a hole waiting for the first
+        // caller. An honest empty page is what this board's set actually is:
+        // its dismissals are session-local, and `canRecover` is false on the
+        // `PipelineBoard` below precisely so no door offers to show them.
+        return { ok: true, applications: [], total: 0 };
+      },
       async deleteRow(id) {
         commit((rows) => rows.filter((app) => app.id !== id));
         return { ok: true };

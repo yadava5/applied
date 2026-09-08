@@ -220,8 +220,18 @@ impossible to skip.
 So: removal is allowed, it is not routine, and it is never silent. State in the
 commit body which files moved and why, and read the three reasons above first.
 
-Record it the way `docs/ML_PROMOTION_POLICY.md` records Cycle H's 0.9583: a
-number that is correct as it stands and must not be corrected.
+Record it the way `docs/ML_PROMOTION_POLICY.md` records a figure it is choosing
+not to change: say which run produced it and why it stands, so the next reader
+can tell a deliberate value from a stale one.
+
+That document used to be cited here for a specific example — Cycle H's 0.9583,
+"a number that is correct as it stands and must not be corrected". It is worth
+knowing that the example did not survive: the number was a macro-F1 column
+holding an accuracy, the note defending it kept the wrong digit published for
+months, and #446 corrected it. The habit is still right. The lesson is that
+"leave it, it's historical" is a claim that needs a check behind it, because
+prose asserting a number is deliberate reads exactly like prose asserting a
+number nobody re-derived.
 
 ## What is already clean
 

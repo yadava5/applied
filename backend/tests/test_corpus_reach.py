@@ -117,7 +117,24 @@ RECORDED_FIRED: tuple[tuple[str, str, str], ...] = (
     # applied — 16 of 25
     ('applied', 'strong', 'application.{0,20}received'),
     ('applied', 'strong', 'application.{0,30}has been (received|submitted)'),
-    ('applied', 'strong', 'be in touch (soon|shortly|if)'),
+    # THE STRING MOVED, THE ENTRY DID NOT — #928. The rule shipped as
+    # `be in touch (soon|shortly|if)` and the `if` arm could never fire through
+    # `classify`: patterns are matched against `rules.asserted_text`, which
+    # masks from a conditional marker to the end of its sentence, and `if` is
+    # the first marker in `_CONDITIONAL`. The arm was deleted; this ledger
+    # records the pattern by its literal, so the literal follows it.
+    #
+    # THE COUNTS DO NOT MOVE, and the reason is measured rather than assumed.
+    # `scan_text` searches the RAW delivered text, before any mask, so this
+    # pattern's matches were nearly all the dead arm. Counted three ways rather
+    # than apportioned from one number: of 18,480 cases the three-arm pattern
+    # matched 547, the two-arm pattern matches 20, and 527 matched ONLY through
+    # `if`. Twenty is still one, so the pattern stays FIRED,
+    # `RECORDED_NEVER_FIRED['applied']` stays 9, and
+    # `RECORDED_POSITIVE_PATTERNS` stays 160: an alternation arm is not a
+    # pattern. What this does record is that reach is counted on text the
+    # scorer never sees, so a fired arm here is not a fired arm there.
+    ('applied', 'strong', 'be in touch (soon|shortly)'),
     # #521. Two rules that had shipped with NOTHING exercising them, both
     # reached by the `outreach-autoresponder` family: a contact-form
     # autoresponder is the shape that says "confirming receipt", and

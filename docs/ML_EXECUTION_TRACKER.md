@@ -375,7 +375,7 @@ Artifacts:
 
 Verification on v3:
 - rules: `accuracy=0.9896`, `macro_f1=0.9896`, `misclassified=1`
-- hybrid: `accuracy=0.9583`, `macro_f1=0.9583`, `misclassified=4`
+- hybrid: `accuracy=0.9688`, `macro_f1=0.9686`, `misclassified=3`
 
 The `- rules:` row is **not** a frozen record of what Cycle H measured, and is the
 one row in this file that gets rewritten. `scripts/readme_facts.py` reads it as the
@@ -387,10 +387,29 @@ themselves (#446). Two mismatches became one: a rejection worded as a courtesy
 close is now read correctly, and the follow-up that the rules layer answers
 `assessment` is the one that remains.
 
-The `- hybrid:` row is the full cascade and did **not** move. Its source is
-`baseline_cascade_v3.json`, which needs a SetFit checkpoint and an environment
-meeting `requirements.txt`'s floors; neither re-recording it nor the provenance
-work of #446's amendment is done here.
+The `- hybrid:` row is the full cascade, and it is no longer frozen either. It
+was re-measured and rewritten on 2026-09-08 (#446) by
+`scripts/cascade_gate.sh --update-baseline`, which needs a SetFit checkpoint and
+an environment meeting `requirements.txt`'s floors — both of which this machine
+now has. Cycle H recorded `accuracy=0.9583`, `macro_f1=0.9583`,
+`misclassified=4`; the re-record measured `0.9688` / `0.9686` / `3`.
+
+Two things about that row are worth stating rather than leaving to be
+rediscovered. Its `macro_f1` was **wrong before it was stale**: the artifact it
+names as its source recorded 0.9581695, which rounds to 0.9582, and this row
+said 0.9583 — so the repository published two different cascade macro-F1s at
+once, this one and the 0.9582 that `ml/README.md` and
+`docs/ML_PROMOTION_POLICY.md` read straight out of the JSON. Nothing could see
+it, because no invariant compared the row to its own source. One does now, and
+`scripts/readme_facts.py` computes the cascade facts from
+`baseline_cascade_v3.json` rather than from this row, so the row is a mirror
+and no longer a second original.
+
+And the movement from 4 misclassified to 3 is **not** the learned layers
+improving. The example that changed is the rejection worded as a courtesy close,
+which the rules layer now answers correctly before the cascade reaches a model
+at all — the same fix that moved the `- rules:` row. SetFit's own three errors
+are the same three examples, unchanged.
 
 ### Step H4 - CI + regression coverage updates (`completed`)
 
@@ -706,11 +725,19 @@ Measured on `classifier_eval_v3.jsonl` (96 examples), checkpoint
 - exchange: SetFit fixed 1 (`follow_up` read as `assessment` by the rules layer) and
   broke 3 (two `applied` -> `pending_application`, one `other` -> `interview`)
 
-Note on the fourth decimal: Cycle H records `macro_f1=0.9583` for this configuration.
-The measured value is `0.9581695...` (0.9582 at four decimals); `0.9583` is the
-accuracy. Cycle H stands as the record of what was run in March -- `README.md` and
-`scripts/readme_facts.py` both pin it -- and `baseline_cascade_v3.json` is the
-definition site from here.
+The figures above are what the 2026-08-11 run measured and stand as its record.
+**Superseded on 2026-09-08** by a re-record (#446); the v3 hybrid row in Step H3
+carries the current numbers, and the difference is not the model — see that row's
+note.
+
+Note on the fourth decimal, kept because it explains a correction rather than a
+measurement: this step recorded `macro_f1=0.9582` (the measured `0.9581695...`),
+while Cycle H's row said `macro_f1=0.9583`, which is the *accuracy*. That
+disagreement was argued at the time to be a historical record worth preserving,
+and `README.md` and `scripts/readme_facts.py` read the Cycle H row, so the wrong
+digit was the published one. #446 reversed that: the facts compute from
+`baseline_cascade_v3.json` and an invariant holds the Cycle H row to it, so the
+two can no longer disagree in either direction.
 
 Reproducibility check: the Cycle-H-era checkpoint `setfit_model_20260228_131948`
 produces identical metrics and identical mismatches, differing only in how many

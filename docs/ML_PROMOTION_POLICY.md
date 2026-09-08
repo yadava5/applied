@@ -10,7 +10,7 @@ because both runs are the deterministic path: `--mode rules`, and `--mode hybrid
 --hybrid-profile deterministic`, which calls `set_lite_mode(True)` and blanks the
 embedding store. Nothing in CI has ever scored a model.
 
-## Status today — 2026-08-11
+## Status today — 2026-09-08
 
 Measured on the committed 96-example v3 set
 (`backend/data/evaluation/classifier_eval_v3.jsonl`,
@@ -19,29 +19,28 @@ SHA-256 `0aa053536573cd733293fa6a054076a5f78b5c01ebc559e7f912f629fd6adf7e`) by
 
 | configuration | macro-F1 | accuracy | misclassified |
 | --- | --- | --- | --- |
-| rules only | 0.9791 | 0.9792 | 2 |
-| full cascade, checkpoint `setfit_model_20260306_175404` | 0.9582 | 0.9583 | 4 |
+| rules only | 0.9896 | 0.9896 | 1 |
+| full cascade, checkpoint `setfit_model_20260306_175404` | 0.9686 | 0.9688 | 3 |
 
 Delta: **−0.0210 macro-F1**. The learned layers make it worse. Verdict recorded
 in `backend/data/evaluation/baseline_cascade_v3.json` as
 `comparison.verdict = behind_rules`, `promotable = false`.
 
-**That table is one measurement and is deliberately left at what it measured.**
-Both rows come out of a single `cascade_gate.sh` run on 2026-08-11, and the delta
-is the difference between them. The rules layer alone was re-measured on
-2026-09-07 and scores **0.9896** with one mismatch (#446) — but substituting that
-into the rules row would publish a delta no run ever produced. Re-measuring the
-cascade arm needs a SetFit checkpoint and an environment meeting
-`requirements.txt`'s floors, which is tracked on #446's amendment and has not
-been done. Read the gap as **at least** −0.0210, and the rules figure in the
-prose above as the current one.
+**That table is one measurement**, both rows from a single `cascade_gate.sh`
+run on 2026-09-08, and the delta is the subtraction between them. It is worth
+naming what that replaced: for four weeks the table held a 2026-08-11 pair whose
+rules arm had since been re-recorded and whose cascade arm had not, so it
+published a hedge — *read the gap as at least −0.0210* — where a number belongs.
+Re-recording the cascade (#446) closed that. The delta happens to round to the
+same −0.0210 it did before, which is a coincidence of two arms moving together
+and not evidence that nothing changed.
 
-Which layers answered, from the same run: `rules=58`, `setfit=20`,
-`fallback=13`, `content_filter=5` — and `embeddings=0`, because the gate runs
+Which layers answered, from the same run: `rules=61`, `setfit=18`,
+`fallback=12`, `content_filter=5` — and `embeddings=0`, because the gate runs
 against an empty embedding store on purpose (see "Why the store is empty"
 below).
 
-The delta is not diffuse. SetFit answered 20 of the 96 and the exchange is
+The delta is not diffuse. SetFit answered 18 of the 96 and the exchange is
 one-for-three, recorded per example in `comparison.fixed_vs_reference` and
 `comparison.broken_vs_reference`:
 
@@ -52,8 +51,12 @@ one-for-three, recorded per example in `comparison.fixed_vs_reference` and
   for Site Reliability Engineer*, both `applied` pulled to
   `pending_application`; and *Interview prep webinar this Thursday*, an `other`
   pulled to `interview`.
-- **Shared** — *Thank you for interviewing with us*, `rejection` read as
-  `other`, missed by both and answered by the fallback path.
+There is no longer a **shared** row. Until this table was re-measured there was
+one — *Thank you for interviewing with us*, a `rejection` read as `other`,
+missed by both arms and answered by the fallback path. The rules layer now
+answers it correctly at 0.90 on a veto pattern, before the cascade reaches a
+model at all, and it is the whole of the cascade's move from 4 misclassified to
+3. Nothing the learned layers do improved; the floor underneath them rose.
 
 So the learned layer is not uniformly worse; it is worse on the
 `applied` / `pending_application` boundary and on promotional mail that reads
@@ -64,16 +67,20 @@ Two notes on that table, so neither reads as a correction later:
 
 - The cascade number is reproducible from the checkpoint alone. Both checkpoints
   on this machine — `setfit_model_20260228_131948`, contemporary with Cycle H,
-  and `setfit_model_20260306_175404` — produce the identical metrics and the
-  identical four mismatches, differing only in how many examples SetFit chose to
-  answer (22 vs 20).
-- `docs/ML_EXECUTION_TRACKER.md` Cycle H records this configuration as
-  `macro_f1=0.9583`. The measured value is 0.9581695…, which is 0.9582 at four
-  decimals; 0.9583 is the accuracy. Cycle H is the historical record of what was
-  run in March and is left exactly as it stands — `README.md` and
-  `scripts/readme_facts.py` both pin it. From here the number to compare against
-  is the one in `baseline_cascade_v3.json`, which was produced by a run whose
-  artifacts are named in the file.
+  and `setfit_model_20260306_175404` — produced the identical metrics and the
+  identical mismatches when that was checked, differing only in how many
+  examples SetFit chose to answer.
+- **The `macro_f1=0.9583` this note used to defend was simply wrong, and the
+  arrangement that protected it has been reversed (#446).** The reasoning was
+  that `docs/ML_EXECUTION_TRACKER.md`'s v3 hybrid row is a historical record of
+  what March measured and should be left as it stands, even though the artifact
+  it names as its source recorded 0.9581695… — 0.9582 at four decimals, where
+  0.9583 is the *accuracy*. But `README.md` and `scripts/readme_facts.py` read
+  that row as the live cascade figure, so the repository published 0.9583 in one
+  place and 0.9582 in another, from the same run, with no gate able to see it.
+  A row cannot be a frozen historical record and a live source at the same time.
+  It is now the mirror: `readme_facts.py` computes the cascade facts from
+  `baseline_cascade_v3.json`, and an invariant holds the tracker row to it.
 
 ## The rule
 
@@ -317,17 +324,29 @@ where the baseline carries a `layers` key — which is exactly one file,
 absolute version does not reach it.
 
 It is deferred on evidence, not on principle. Choosing `k` needs the natural
-run-to-run variation of the census, and that has never been measured: the
-cascade has been recorded twice, at `setfit=20` (committed) and `setfit=17`/`18`
-(#446, #811), and three points spanning two code revisions cannot separate
-"the model degraded" from "a rules pattern moved a case". Setting `k` from them
-would be a threshold read off the same three numbers it is meant to judge.
+run-to-run variation of the census, and until 2026-09-08 that had never been
+measured: the cascade had been recorded at `setfit=20` (committed) and seen at
+`setfit=17`/`18` (#446, #811), and points spanning two code revisions cannot
+separate "the model degraded" from "a rules pattern moved a case".
 
-**What would settle it:** several cascade runs on one checkpoint and one code
-revision, on a stack that satisfies `backend/requirements.txt` — which no
-machine here currently has (#698). If the census is stable across those, `k`
-can be tight and the floor is worth having; if it moves, the census is a
-diagnostic and not a gate, and this section becomes a rejection.
+**Partial evidence now exists, and it points at stability.** #698's floor pass
+landed, so this machine's stack does satisfy `backend/requirements.txt`, and the
+2026-09-08 re-record ran the cascade three times on one checkpoint and one code
+revision — the recording run and two clean verification runs. All three returned
+an identical census, `content_filter=5, fallback=12, rules=61, setfit=18`, and
+identical metrics to every printed digit.
+
+That is enough to say the census is not visibly noisy on this stack. It is not
+yet enough to set `k`: three runs on one checkpoint bound the variation loosely,
+and the quantity `k` has to survive is variation across *checkpoints*, which
+rotate. The earlier `setfit=20` → `18` move is still explained by a rules
+pattern taking a case, not by the model, so it is not a sample of the noise `k`
+would have to tolerate either.
+
+**What would still settle it:** the same repetition across a checkpoint
+rotation. If the census holds there too, `k` can be tight and the floor is worth
+having; if it moves, the census is a diagnostic and not a gate, and this section
+becomes a rejection.
 
 Until then the census is **reported** beside every FAIL verdict
 (`evaluate_classifier.fail_diagnosis`) and gated by nothing. A reader gets the

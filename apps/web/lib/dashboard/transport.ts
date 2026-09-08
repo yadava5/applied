@@ -33,7 +33,9 @@ import {
   statusChangeRequest,
   type ProxyRequest,
 } from "@/lib/dashboard/rowActions";
+import { removedPagePath } from "@/lib/applications/removed";
 import { publishAmbientPulse } from "@/lib/shell/ambient-bus";
+import type { Application } from "@/lib/dashboard/summary";
 
 /** What a row mutation came back with. */
 export interface SendResult {
@@ -42,6 +44,19 @@ export interface SendResult {
   detail?: string;
   /** The status the server says the row now holds, when it echoed one. */
   status?: string;
+}
+
+/**
+ * One page of removed rows. `total` is the backend's full count under the same
+ * predicate — never the length of `applications` — so the panel's "1–10 of 47"
+ * describes the account rather than the page that happened to load.
+ */
+export interface RemovedPage {
+  ok: boolean;
+  applications: Application[];
+  total: number;
+  /** The backend's own reason, when it gave one. */
+  detail?: string;
 }
 
 /** Row-level operations the board's cards and detail sheet perform. */
@@ -69,6 +84,24 @@ export interface BoardTransport {
    * backend's own reason belongs in it.
    */
   restore(id: number): Promise<SendResult>;
+  /**
+   * One page of the rows that are OFF the board — what "Removed rows" reads
+   * (#921).
+   *
+   * ON THE TRANSPORT, not a `fetch` inside the panel, and that placement is
+   * what makes the feature testable at all. The e2e suite has no Supabase
+   * session, so every board path it can execute runs on /demo against the
+   * fixture transport; a panel that issued its own request would be a surface
+   * CI can render and can never drive. Here the demo answers from its own
+   * store, and "remove a row, wait out the window, find it, put it back" runs
+   * end to end in a browser.
+   *
+   * `page` is 1-based, matching the backend. The pure half of the request —
+   * the `dismissed` flag that separates this list from the board — lives in
+   * `lib/applications/removed.ts`, because it is the one part of this path a
+   * browser test cannot reach.
+   */
+  removed(page: number): Promise<RemovedPage>;
   /** The hard delete — the one behind a confirmation. */
   deleteRow(id: number): Promise<SendResult>;
   /** The application plus the mail behind it (`GET /api/applications/{id}` shape). */
@@ -155,6 +188,34 @@ export const liveBoardTransport: BoardTransport = {
     const result = await send(restoreToBoardRequest(id));
     if (result.ok) invalidateDetail(id);
     return result;
+  },
+  /**
+   * `cache: "no-store"`, like `detail` and the sync: a reader opens this
+   * BECAUSE the board just changed under them, and a page served from bfcache
+   * or a router cache would answer with the set as it stood before the removal
+   * they are looking for.
+   */
+  async removed(page) {
+    try {
+      const res = await fetch(removedPagePath(page), { cache: "no-store" });
+      const body = (await res.json().catch(() => ({}))) as {
+        applications?: unknown;
+        total?: unknown;
+        detail?: unknown;
+      };
+      // Shape-checked rather than cast. Everything here arrives from the wire,
+      // and a panel that mapped over a non-array would throw inside a render —
+      // in the one surface whose whole job is to be reachable when something
+      // has already gone wrong.
+      return {
+        ok: res.ok && Array.isArray(body.applications),
+        applications: Array.isArray(body.applications) ? (body.applications as Application[]) : [],
+        total: typeof body.total === "number" ? body.total : 0,
+        detail: typeof body.detail === "string" ? body.detail : undefined,
+      };
+    } catch {
+      return { ok: false, applications: [], total: 0 };
+    }
   },
   async deleteRow(id) {
     const result = await send(permanentDeleteRequest(id));

@@ -445,7 +445,7 @@ export const PROOF = {
     hero: "0.9896",
     heroLabel: "macro-F1 · rules stage",
     body:
-      "Macro-F1 averages the per-class F1 so no category can hide behind the frequent ones. On the held-out evaluation the RULES stage scores 0.9896 — accuracy 0.9896, 1 misclassified out of 96. Not the full cascade, which scores 0.9583 on the same set: the evaluation runs under the `deterministic` hybrid profile, which disables SetFit and blanks the embedding examples, so the file named baseline_hybrid_v3.json measures the regexes alone. It is not a cherry-picked accuracy headline; it is the metric that punishes a weak class.",
+      "Macro-F1 averages the per-class F1 so no category can hide behind the frequent ones. On the held-out evaluation the RULES stage scores 0.9896 — accuracy 0.9896, 1 misclassified out of 96. Not the full cascade, which scores 0.9686 on the same set: the evaluation runs under the `deterministic` hybrid profile, which disables SetFit and blanks the embedding examples, so the file named baseline_hybrid_v3.json measures the regexes alone. It is not a cherry-picked accuracy headline; it is the metric that punishes a weak class.",
     exact: "0.9895652 macro-F1 · 0.9896 accuracy · 1 misclassified",
     ciValue: "0.95",
     ciLabel: "CI floor — the merge blocks below it",

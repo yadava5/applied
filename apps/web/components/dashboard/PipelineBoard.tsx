@@ -36,6 +36,8 @@ import {
   neighbourIdsToWarm,
 } from "@/lib/dashboard/neighbourWarm";
 import { liveBoardTransport, type BoardTransport } from "@/lib/dashboard/transport";
+import { REMOVED_TITLE } from "@/lib/applications/removed";
+import { requestRemoved } from "@/lib/dashboard/removed-bus";
 
 /**
  * The pipeline worklist — the answer to "is a four-column kanban the right
@@ -419,6 +421,7 @@ export function PipelineBoard({
   beforeList,
   afterList,
   search = true,
+  canRecover = false,
   openDetailId,
   travel,
   focusScrollOnOpen = true,
@@ -430,6 +433,17 @@ export function PipelineBoard({
    *  a sales page shows what the product did, not its query tools. Every
    *  product surface keeps the default. */
   search?: boolean;
+  /**
+   * A "Removed rows" panel is mounted on this surface, so a track emptied by
+   * a filter may point at it (#921).
+   *
+   * OPT-IN, and false by default, because the panel is `SyncBar`'s to mount:
+   * the two callers that render that row — the dashboard page and the /demo
+   * twin — pass this, and every other embed keeps a board whose empty track
+   * says exactly what it said before. A default of true would put a door on
+   * the landing page with no room behind it.
+   */
+  canRecover?: boolean;
   /** `locked` fills the shell's viewport pane and scrolls only the list;
    *  `flow` renders natural height for pages that scroll themselves. */
   variant?: "locked" | "flow";
@@ -1417,6 +1431,46 @@ export function PipelineBoard({
       </div>
     ) : null;
 
+  /**
+   * What an empty track says — and, when a filter is what emptied it, where
+   * else the row could be (#921).
+   *
+   * THE PANIC MOMENT, in the place the reader is already looking. Someone
+   * hunting for a row they cannot find types its employer into the search
+   * field, and this line is what answers them. Before this, "none match" was
+   * the end of the road; a row taken off the board yesterday and a row that
+   * never existed produced the identical three words. The door costs no
+   * persistent chrome — it appears only in a state that already had a line —
+   * and it claims nothing it cannot know: it does not say the row IS in there,
+   * it says where the only other place is.
+   *
+   * Gated on `canRecover`, and that gate is not decoration: the door has to
+   * be false wherever the room is not built. `SyncBar` is what mounts the
+   * panel, so a board rendered without one — the landing's, the empty-state
+   * preview's — would otherwise paint a control whose click reaches no
+   * listener. `requestRemoved` returns a boolean for the same reason; this
+   * just declines to render the thing rather than discovering it at the click.
+   */
+  const emptyTrackLine = filterActive ? (
+    <>
+      none match
+      {canRecover ? (
+        <>
+          {" · "}
+          <button
+            type="button"
+            onClick={() => requestRemoved()}
+            className="text-muted underline-offset-2 transition-colors hover:text-strong hover:underline"
+          >
+            check {REMOVED_TITLE.toLowerCase()}
+          </button>
+        </>
+      ) : null}
+    </>
+  ) : (
+    "none yet"
+  );
+
   return (
     <div
       data-testid="pipeline-board"
@@ -1609,7 +1663,7 @@ export function PipelineBoard({
                   <ul className="space-y-1.5">
                     {items.length === 0 ? (
                       <li className="rounded-lg border border-dashed border-line-soft p-4 text-center text-xs text-dim">
-                        {filterActive ? "none match" : "none yet"}
+                        {emptyTrackLine}
                       </li>
                     ) : grouping ? (
                       // One entry per employer within this stage: singletons
@@ -1651,7 +1705,7 @@ export function PipelineBoard({
               ))}
               {stageFilter === "all" && groups.length === 0 ? (
                 <p className="rounded-lg border border-dashed border-line-soft p-4 text-center text-xs text-dim">
-                  {filterActive ? "none match" : "none yet"}
+                  {emptyTrackLine}
                 </p>
               ) : null}
               {afterList}

@@ -94,7 +94,7 @@ FROM emails;
 **`training_data.body_text` is a badly named column, and the name is the whole
 risk of misreading this system.** It does not hold a body. It holds the same
 snippet, copied from `emails.body_snippet` by `_add_training_example`
-(`backend/jobtracker/cloud/applications.py:3705`, the copy itself at `:3724`).
+(`backend/jobtracker/cloud/applications.py:3779`, the copy itself at `:3798`).
 Two independent facts establish it:
 
 1. The longest value in that column across all 11 rows is **201 characters** —
@@ -112,7 +112,7 @@ Two disclosures an assessor should have without asking:
 
 - **`training_data` has no foreign key to `emails`.** `training_data.email_id`
   is a bare indexed integer, documented as such in `_orphan_training_examples`
-  (`backend/jobtracker/cloud/applications.py:3677`). One of the 7 populated rows
+  (`backend/jobtracker/cloud/applications.py:3751`). One of the 7 populated rows
   today points at an `emails` row that no longer exists — its snippet copy
   (199 characters) outlived its source. This is deliberate: a `training_data`
   row is a *human's correction*, retained as the record of a decision rather

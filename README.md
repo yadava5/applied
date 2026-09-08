@@ -159,11 +159,11 @@ checker can no longer find it fails too. Where each number terminates is in [Ver
 
 **The 0.9896 belongs to the rules layer. It is not a whole-system accuracy figure, and the filenames actively mislead on this point.**
 
-The **rules layer** — 220 regex patterns and no model — scores **0.9896 macro-F1** (accuracy 0.9896, 1 of 96 misclassified) on the v3 evaluation set, committed at `backend/data/evaluation/baseline_rules_v3.json` over `classifier_eval_v3.jsonl`, and `backend-ci.yml` fails any merge below a **0.95** floor. Accuracy and macro-F1 are two different measurements that happen to print the same four digits at this score: they separate in the fifth place now, where until 2026-09-07 they rounded apart — the recorded pair was 0.9792 accuracy against 0.9791 macro-F1, with two of 96 misclassified rather than one. The **full three-layer cascade** scores **0.9583** on that same set (accuracy 0.9583, 4 misclassified), recorded in `docs/ML_EXECUTION_TRACKER.md` Cycle H.
+The **rules layer** — 220 regex patterns and no model — scores **0.9896 macro-F1** (accuracy 0.9896, 1 of 96 misclassified) on the v3 evaluation set, committed at `backend/data/evaluation/baseline_rules_v3.json` over `classifier_eval_v3.jsonl`, and `backend-ci.yml` fails any merge below a **0.95** floor. Accuracy and macro-F1 are two different measurements that happen to print the same four digits at this score: they separate in the fifth place now, where until 2026-09-07 they rounded apart — the recorded pair was 0.9792 accuracy against 0.9791 macro-F1, with two of 96 misclassified rather than one. The **full three-layer cascade** scores **0.9686** on that same set (accuracy 0.9688, 3 misclassified), re-measured on 2026-09-08 and recorded — with the checkpoint that produced it and the interpreter and package versions it ran under — in `backend/data/evaluation/baseline_cascade_v3.json`. The cascade's own two figures *do* separate at four places, unlike the rules layer's, so the pair above is worth reading as two measurements rather than one number printed twice.
 
 The trap is that `baseline_hybrid_v3.json` reports 0.9896 too. It does so because it was regenerated under the evaluator's `deterministic` hybrid profile, which calls `set_lite_mode(True)` and blanks `_known_embeddings` — so it measures the deterministic path, which is the regexes. Every metric block in the two files is identical — overall, per-label, confusion matrix, both distributions — and so is the single mismatch, down to its subject. What differs is `meta` and the **route**: `--mode rules` answers all 96 from the rules layer, while the deterministic profile passes every verdict under the accept threshold on through a blanked embedding layer, so much of what a rules-only run credits to `rules` is credited to `fallback` in its `layers` census, and the mismatch is recorded as answered by `fallback`. Same verdicts, same numbers, different path — `readme_facts.py`'s invariant is on the numbers and deliberately not on the route, because a census doing its job must not turn a build red, and the census itself is left in the file rather than copied into this paragraph, since a number quoted in a second place is a number that gets corrected in one of them. `benchmark_history.md` says this in its own header. CI runs that profile on purpose, because a gate that consults a stochastic model is a gate that goes red for reasons unrelated to the change under test.
 
-Being fair to the model: on the **v2** set the cascade beat the rules — 0.9843 against 0.9686 macro-F1 (`docs/ML_EXECUTION_TRACKER.md`, Cycle B5). The learned layers are not decoration; they lost on v3.
+Being fair to the model: on the **v2** set the cascade beat the rules — 0.9843 against 0.9686 macro-F1 (`docs/ML_EXECUTION_TRACKER.md`, Cycle B5). Both of those are v2 numbers, on a different and easier set. The v2 *rules* figure happens to print the same four digits as the v3 *cascade* figure a paragraph above; they are unrelated measurements and the coincidence is worth naming once so nobody reads it as a link. The learned layers are not decoration; they lost on v3.
 
 That comparison is now a measurement rather than a citation. `scripts/cascade_gate.sh` scores the full cascade and the rules layer over the same set in one run, and commits the delta, the per-example exchange and the checkpoint that produced it to `backend/data/evaluation/baseline_cascade_v3.json`. It does **not** run in CI, and the reason is not an omission: no SetFit checkpoint ships in this repository, so a GitHub-hosted runner has nothing to load. `learning-gate.yml` is therefore `workflow_dispatch`, and on a hosted runner it fails naming the directory it searched rather than degrading to the rules layer and reporting that as the cascade. What the number gates — the margin a learned layer has to clear before it may touch real mail, and what puts it back — is [`docs/ML_PROMOTION_POLICY.md`](docs/ML_PROMOTION_POLICY.md).
 
@@ -381,7 +381,7 @@ python -m jobtracker.scripts.evaluate_classifier \
   --baseline data/evaluation/baseline_hybrid_v3.json \
   --tolerance 0.001 --min-macro-f1 0.95
 
-# the full cascade — this is the one that reads 0.9583
+# the full cascade — this is the one that reads 0.9686
 python -m jobtracker.scripts.evaluate_classifier \
   --mode hybrid --hybrid-profile full \
   --dataset data/evaluation/classifier_eval_v3.jsonl
@@ -545,7 +545,7 @@ page you can show is wrong, and security findings are genuinely wanted: email th
 | [`docs/WEB_ARCHITECTURE.md`](docs/WEB_ARCHITECTURE.md) | Deployment modes, cloud auth flow, credential storage |
 | [`docs/API_SPEC.md`](docs/API_SPEC.md) | Backend REST contract — auth, the 29-route table, and the shapes worth stating in prose. The machine-checked authority is `apps/web/lib/api/schema.d.ts`, generated from the app and gated by `e2e-ci.yml` |
 | [`docs/ML_STRATEGY.md`](docs/ML_STRATEGY.md) | Classifier behaviour, training lifecycle, metadata contract |
-| [`docs/ML_EXECUTION_TRACKER.md`](docs/ML_EXECUTION_TRACKER.md) | Every ML cycle with its measured results — the source for the cascade's 0.9583 |
+| [`docs/ML_EXECUTION_TRACKER.md`](docs/ML_EXECUTION_TRACKER.md) | Every ML cycle with its measured results. The cascade's 0.9686 is measured into `backend/data/evaluation/baseline_cascade_v3.json` and mirrored on this file's v3 hybrid row, which `readme_facts.py` holds to it |
 | [`docs/ML_PROMOTION_POLICY.md`](docs/ML_PROMOTION_POLICY.md) | What a learned layer must beat before it serves real mail, and what puts it back |
 | [`docs/ML_WEEKLY_OPERATIONS.md`](docs/ML_WEEKLY_OPERATIONS.md) · [`docs/ML_MONITORING_RUNBOOK.md`](docs/ML_MONITORING_RUNBOOK.md) | Weekly SOP and monitoring triage |
 | [`docs/RLS-AUDIT-2026-08-03.md`](docs/RLS-AUDIT-2026-08-03.md) | Live row-level-security audit |
@@ -729,7 +729,7 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 | **Styling** | Tailwind CSS 4, shadcn/ui-compatible scaffold, Radix Slot |
 | **Auth** | Supabase Auth via `@supabase/ssr` `^0.12.5` (SSR cookie `getAll`/`setAll`) |
 | **API client** | `openapi-fetch` 0.17 over types generated by `openapi-typescript` 7 |
-| **Testing** | Playwright `^1.62.1` (22 spec files under `apps/web/tests/e2e/`) |
+| **Testing** | Playwright `^1.62.1` (23 spec files under `apps/web/tests/e2e/`) |
 
 #### Backend
 
@@ -760,7 +760,7 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 
 ### Testing
 
-**3163 tests collected, 0 skipped.** These figures were recorded on 2026-09-05 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. `--record` refuses to write at all unless that run was whole — Docker reachable, nothing skipped, suite green — because skipped tests are still *collected*, so a recording taken without the Postgres extras used to publish "0 skipped" while five modules sat out (#351). The artifact names the interpreter that ran the suite rather than the one that ran the script; those differ here, and a Python 3.14 run is exactly what produced the wrong coverage figures corrected below. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 1965 `test_*` functions across 173 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 3163 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
+**3163 tests collected, 0 skipped.** These figures were recorded on 2026-09-05 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. `--record` refuses to write at all unless that run was whole — Docker reachable, nothing skipped, suite green — because skipped tests are still *collected*, so a recording taken without the Postgres extras used to publish "0 skipped" while five modules sat out (#351). The artifact names the interpreter that ran the suite rather than the one that ran the script; those differ here, and a Python 3.14 run is exactly what produced the wrong coverage figures corrected below. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 1989 `test_*` functions across 177 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 3163 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
 
 The Postgres row-level-security module is the only thing in the repo that can demonstrate the isolation the product claims, and **25 tests** now exercise it. It has not always run: its tests waited on a database URL no workflow set, and a skip is green, so the 10 it held on 2026-08-02 had **never executed anywhere**. Two fixes: `test_rls_postgres.py` now starts its own `postgres:16` via testcontainers when `JOBTRACKER_TEST_PG_ADMIN_URL` is absent and Docker is available, and the `rls-postgres` CI job supplies its own service container. That job then parses the JUnit XML and **fails the build if the suite reports zero tests or any skip**, because a skipped security test and a passing one produce the same green tick.
 
@@ -776,7 +776,7 @@ This paragraph read "54% overall, 61% excluding one-off scripts … 2,163 statem
 | --- | --- | --- |
 | **Backend unit + integration** | pytest | classifier, API, sync, auth, cloud entrypoint, evaluator, ML-ops scripts |
 | **Database isolation** | pytest + testcontainers / CI service container | 25 RLS enforcement tests against real Postgres |
-| **Web e2e** | Playwright | 22 spec files — auth, beta, boot, connect, dashboard, demo, file-application, import, inbox-geometry, landing, navigation, production, review-picker, sample-inbox, scan-correct, security-headers, session-edge, settings, shell, smoke, stage-focus |
+| **Web e2e** | Playwright | 23 spec files — auth, beta, boot, connect, dashboard, demo, file-application, import, inbox-geometry, landing, navigation, production, review-picker, sample-inbox, scan-correct, security-headers, session-edge, settings, shell, smoke, stage-focus |
 | **Web e2e, production build** | Playwright vs `next build` + `next start` | the `production` spec: every route driven against a real production build, failing on React hydration errors, uncaught exceptions and 5xx |
 | **Web static** | `tsc --noEmit`, ESLint, `next build` | every push touching `apps/web/**` |
 | **README claims** | `scripts/readme_facts.py --check` | every **registered** fact, at every **registered** claim site; no path filter. Both words are load-bearing and #401 is why: a site that names no file defaults to `README.md`, so for six months this row read "across every file that holds one" while four claims in three other files said 18 against a tree of 20. Coverage here is set membership in two dimensions — which facts are registered, and which files their sites point at — and the second one is the quiet one. Most are recomputed from source on each run; the ones needing a pytest + coverage run are replayed from `docs/readme-facts.json`. The totals used to be written out here and in the workflow table below, in two different and both-wrong versions — a hand-maintained count of a checker is the one number the checker cannot check. A number that is not registered is not checked — see the note under Tech Stack |
@@ -881,7 +881,7 @@ applied/
 │   ├── web/                 # Next.js 16 App Router product (the cloud UI)
 │   │   ├── app/             # (auth) · (app) · demo · import · api routes
 │   │   ├── lib/demo/        # rulesLayer.ts — layer 1 ported to run live in the tab
-│   │   └── tests/e2e/       # 22 Playwright specs
+│   │   └── tests/e2e/       # 23 Playwright specs
 │   └── mobile/              # reserved; empty
 │
 ├── backend/
@@ -895,7 +895,7 @@ applied/
 │   │   └── scripts/         # evaluator, latency benchmark, ML-ops tooling
 │   ├── alembic/versions/    # 24 revisions incl. the RLS + InitPlan-hoist migrations
 │   ├── data/evaluation/     # eval sets, committed baselines, benchmark + monitoring history
-│   └── tests/               # 173 modules
+│   └── tests/               # 177 modules
 │
 ├── ml/                      # the classifier as a deployable service
 │   ├── browser/             # ONNX export + the in-browser site (Transformers.js)
