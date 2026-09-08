@@ -23,10 +23,8 @@ output-identical to the Python pipeline.
 > `model_quantized.onnx` to `model/onnx/model.onnx`. Restoring this as a
 > *public* demo needs a checkpoint trained on synthetic data only.
 
-On the 96-email v3 held-out set the full cascade scores **0.958** macro-F1
-and the rules stage alone scores **0.979** — which is why the hosted app
+On the 96-email v3 held-out set the full cascade scores **0.9686** macro-F1
+and the rules stage alone scores **0.9896** — which is why the hosted app
 classifies with the rules, and why all three layers run here instead. Those
-two are one measurement from 2026-08-11 and are quoted as a pair for that
-reason; the rules layer alone was re-recorded on 2026-09-07 at **0.9896**
-(#446), and the cascade arm has not been re-run, so the gap is at least as
-wide as it looks. CI gates the rules figure at 0.95.
+two are one measurement, taken 2026-09-08, and are quoted as a pair for that
+reason. CI gates the rules figure at 0.95.
