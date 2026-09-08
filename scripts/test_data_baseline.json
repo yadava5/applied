@@ -176,7 +176,7 @@
       "digest": "9aaba5d790318bf6"
     },
     "backend/tests/corpus/generator.py": {
-      "count": 73,
+      "count": 74,
       "digest": "98447e48bb1b59ee"
     },
     "backend/tests/corpus/mail.py": {

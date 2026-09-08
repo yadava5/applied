@@ -34,4 +34,25 @@ one you hit would depend on the write path.
 #: in production is 21 characters (76 rows, read 2026-09-06), and the longest
 #: sender name in the independent corpus is 42. This is a rail against a hostile
 #: or malformed value, not an editorial judgement about names.
+#:
+#: WHAT TO RE-MEASURE BEFORE MOVING IT (#737). Read those two figures as REACH,
+#: not as acceptance. Neither corpus came near this number, so the diff offered
+#: as evidence that 300 refuses no real mail — every corpus re-run with the
+#: bound lifted to 1e9, zero movers — was arithmetic: over ``tests/corpus/`` the
+#: longest display ``resolve_employer`` produced was 19 characters, so that same
+#: zero would have come back for any bound above 19, including a badly wrong
+#: one. ``tests/corpus/generator.py``'s ``employer-name-length`` axis now holds
+#: a message at 300 and at 301 on every door mail can reach (2 sender display
+#: name, 3 domain brand, 4 subject), and
+#: ``tests/test_the_corpus_reaches_the_employer_bound.py`` runs the corpus both
+#: ways: measured 2026-09-08, 0 movers over the 202 cases that predate the axis
+#: and 4 over the 210 that include it. Every one of those four is ADMISSIBLE at
+#: the wire — ``ScannedMessageIn`` bounds the same fields at 512/512/2000 and
+#: takes all of them — so this constant really is the only thing refusing them.
+#: Door 1 is an HTTP body rather than mail and keeps its synthetic on-boundary
+#: cover in ``tests/test_an_employer_name_is_bounded.py``.
+#:
+#: Changing this number reds that module by design. The fixtures were built
+#: against 300 and stop sitting on the bound the moment it moves — re-measure
+#: them against the new value instead of re-baselining the assertion.
 MAX_COMPANY_LEN = 300
