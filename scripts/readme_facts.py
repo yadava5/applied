@@ -2509,7 +2509,8 @@ FACTS: dict[str, dict] = {
     },
     "e2eSpecNames": {
         # THE COUNT WAS GATED AND THE LIST BESIDE IT WAS NOT (#944). `e2eSpecs`
-        # above checks the digit at six sites and has been green throughout,
+        # above checks the digit at SEVEN sites — three bare patterns and four
+        # with a file named — and has been green throughout,
         # while the enumeration in the same sentence drifted freely: at the
         # time this was written README.md named 21 of 24 and docs/DEPLOYMENT.md
         # named 19 of 24, and the two disagreed with each other as well as with
@@ -2534,7 +2535,7 @@ FACTS: dict[str, dict] = {
             )
         ),
         "sites": [
-            {"re": r"\d+ spec files — ([a-z0-9,\- ]+) \|", "exact": True},
+            {"re": r"\d+ spec files — ([a-z0-9,._\- ]+) \|", "exact": True},
         ],
     },
     "webComponentDirs": {
