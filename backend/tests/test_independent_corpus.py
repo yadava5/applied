@@ -49,8 +49,8 @@ from tests.corpus_independent.harness import (
 #: is 180 more messages and 60 more employers.
 #: 6753126bb7f4c48b since #522; 50f770359b07d783 since #521, which appends
 #: `outreach-autoresponder` — 160 more messages and 80 more employers.
-CORPUS_DIGEST = "50f770359b07d783"
-CORPUS_SIZE = 18480
+CORPUS_DIGEST = "8cc2a35b2f877169"
+CORPUS_SIZE = 18980
 
 #: THE RECORDED RUN, in one place, because the README quotes it.
 #:
@@ -95,7 +95,7 @@ RECORDED_AFTER_ANSWERING = {
     # +60 (#522), the `eligibility-verification` twins, the same move the
     # sync phase reports. Answering the queue adds nothing for this family:
     # its twins auto-file and its refusals never reach the queue at all.
-    "cards": 10469,
+    "cards": 10589,
     "update_opened_a_card": 19,
     "noise_on_card": 0,
     # 62 BEFORE, 75 AFTER — and the interesting number is the one that is not
@@ -170,9 +170,9 @@ RECORDED_AFTER_ANSWERING = {
     # populations still close: 8864 + 1186 + 400 == 10450, against 10469
     # cards.
     "roles_graded": 8864,
-    "blank_required": 1186,
+    "blank_required": 1306,
     "role_unsettleable": 400,
-    "titles_graded": 10450,
+    "titles_graded": 10570,
     # `score_board`'s `wrong_review`, READ UNDER A NAME THAT IS TRUE HERE. That
     # counter means "the product guessed instead of asking". After the phase the
     # product DID ask and was answered, so 150 is not 150 failures — it is 150
@@ -206,8 +206,8 @@ RECORDED_ANSWERS = {
     # confirmations worded too weakly to auto-file. BOTH halves of the
     # family reach the queue, which is exactly the shape #520 complained
     # about.
-    "queued": 3123,
-    "answered": 3123,
+    "queued": 3183,
+    "answered": 3183,
     # THE GUARD THAT NEVER FIRES, said plainly rather than left to read as
     # coverage. `_settle_thread_siblings` can remove a queue entry when a
     # sibling is answered, and `classify_review_item` has no `is_reviewed`
@@ -236,7 +236,7 @@ RECORDED_ANSWERS = {
     # are not lost; a person mints them by answering the question the product
     # now asks instead of guessing. `RECORDED_AFTER_ANSWERING["cards"]` is
     # unchanged at 9569, which is the same fact stated as a total.
-    "minted_a_card": 471,
+    "minted_a_card": 531,
     # 0 -> 40 (#521), AND IT IS THE FIRST TIME THIS BRANCH IS REACHED.
     # Answering "this is not job mail" settles a queue row without touching
     # the board, and until this family nothing in the corpus both reached
@@ -275,7 +275,7 @@ RECORDED_ANSWERS = {
     # 2079 -> 2090 (#458): all eleven recovered messages land at an employer
     # holding exactly one live card, so none of them exercises rule 4's choice
     # and `landed_where_several_did` is unchanged at 423.
-    "landed_where_one_card_existed": 2140,
+    "landed_where_one_card_existed": 2200,
     # 423 -> 583 (#626), and this is the counter that says the family is built
     # correctly rather than merely large. All 160 refusals land at an employer
     # holding SEVERAL cards; `landed_where_one_card_existed` is unmoved at
@@ -333,10 +333,10 @@ RECORDED_SYNC = {
     # refusals, and at `other` 0.50 they are under `REVIEW_FLOOR`, so they
     # reach neither the board nor the queue. Before the filter they were
     # `rejection` 0.70 and this number would have read 3093.
-    "created": 9998,
+    "created": 10118,
     "updated": 4019,
     "purged": 0,
-    "needs_review": 3123,
+    "needs_review": 3243,
 }
 
 #: How many spellings the resolver gives one employer, over the whole corpus.
@@ -383,8 +383,8 @@ RECORDED_EMPLOYER_SPELLINGS = {
     # its twin share a sender and a display name. That sharing is what makes
     # the pair a control, and the fact that it adds a token and a display
     # APIECE rather than two of either is the number that says it held.
-    "tokens": 9259,
-    "distinct_displays": 9499,
+    "tokens": 9499,
+    "distinct_displays": 9739,
     # UNMOVED, and that is the assertion. 150 is documented above as entirely the
     # `employer-spelling` family; a family that added one would be #532 returning.
     "tokens_with_several_spellings": 150,
@@ -400,13 +400,13 @@ RECORDED = {
 #: segment, 320 sibling confirmations that give those refusals somewhere to be
 #: ambiguous, 160 role-less updates the reader declines, and 40 messages of the
 #: both-placements pair. See the family's docstring in `generate.py`.
-    "size": 18480,
+    "size": 18980,
     # DISTINCT FAMILY LABELS in the generated corpus, which is 37 and not the
     # 35 generators in ``_FAMILIES``: two generators emit a second label of
     # their own (``hostile-zero-width``, ``hostile-homoglyph``). The README and
     # the System Card both print a family count and both had drifted — 32 and
     # 24 against a real 35 — because nothing recomputed it. Now something does.
-    "families": 41,
+    "families": 45,
     # DISTINCT EMPLOYER TOKENS, and this entry was decoration until 2026-08-23.
     # It read 9,180 and `readme_facts.py` published it to the README and the
     # Booklet, but no test recomputed it and it matched NO measure of the
@@ -418,7 +418,7 @@ RECORDED = {
     # there were ZERO such employers out of 8,440, which is why a fix to #641
     # moved no number here and the bug could have been reinstated against a
     # green board.
-    "companies": 8640,
+    "companies": 8880,
     # ── #451 MOVED EVERY NUMBER BELOW THAT CARRIES A "451" NOTE ─────────────
     #
     # Two changes in one commit: the reference pattern
@@ -463,7 +463,7 @@ RECORDED = {
     # which is the property that lets the family grade a regression. A twin
     # that abstained here would be a case with a number on it and nothing to
     # say.
-    "correct": 17250,
+    "correct": 17550,
     # 361 -> 304 (#451).
     # 304 -> 104 (#878): -200, the other side of the note above. The family was
     # never measuring the quote-strip it exists for -- the case was wrong with
@@ -492,7 +492,7 @@ RECORDED = {
     # Pinned per-family and two-sided by
     # `test_the_body_cap_is_measured_rather_than_merely_populated`, with a
     # control that lifts the cap and gets all 160 rejections back.
-    "abstained": 1086,
+    "abstained": 1286,
     # The number that matters more than `wrong`: how many wrong verdicts are
     # stated to the user as fact rather than held for them to settle.
     #
@@ -576,7 +576,7 @@ RECORDED = {
     # are minted by the answering phase. Its 80 autoresponders mint NOTHING
     # — `noise_on_card` stays 0 — although `resolve_employer` names a
     # company off every one of their senders.
-    "cards": 9998,
+    "cards": 10058,
     # Mail about a real application that the product did nothing with. Two
     # numbers because both are unaddressed and only one is invisible; see #447.
     #
@@ -605,10 +605,37 @@ RECORDED = {
     # lifecycle category, so the ATS floor did not reach them and they left
     # through the terminal drop with no card, no queue entry and no counter.
     # `pipeline.references_an_application` now floors them into the review
-    # queue. It must stay 0: a message about a real application reaching
-    # NOTHING is the one outcome indistinguishable from a mailbox that never
-    # received it.
-    "lost": 0,
+    # queue.
+    #
+    # 0 -> 60 (#614), AND IT IS NOT A REGRESSION — IT IS THE INSTRUMENT
+    # WORKING FOR THE FIRST TIME. This counter was pinned at 0 for months
+    # against a corpus in which `dismissed_at` was NULL on every row it could
+    # produce, because `generate.py` contained zero occurrences of `dismiss`.
+    # A zero that cannot be anything else is not coverage, and #614 is the
+    # issue that says so.
+    #
+    # WHAT THE 60 ARE, exactly: one message per group of
+    # `hand-dismissal-swallows-later-mail` — a CONFIDENT lifecycle message
+    # (rejection, interview or assessment, 20 of each) arriving on the thread
+    # of a card the user has already dismissed by hand. It rolls up onto that
+    # card, `upsert_applications_for_user` `continue`s on a user-dismissed row
+    # BEFORE `_persist_message_refs` runs, and the message therefore reaches no
+    # `emails` row at all. No card, no queue, no counter, nothing to restore.
+    #
+    # NOTHING ELSE IN 18,980 MESSAGES IS LOST. The rest of that family — the
+    # confirmation the dismissal was about — is NOT here: it keeps its row on
+    # the dismissed card and `restore_application` brings both back, so it is
+    # counted in `settled_by_a_standing_instruction` below. Folding the two
+    # together would make half this number mail the product filed correctly.
+    #
+    # THE PIN CAN FAIL IN BOTH DIRECTIONS, which is the point of re-recording
+    # it rather than deleting it. Measured: removing the `DISMISSED_BY_USER`
+    # guard from `upsert_applications_for_user` takes it 60 -> 0, because the
+    # mail is then filed onto the revived card. Whether a hand dismissal SHOULD
+    # swallow later mail is a product decision (#597 says it is final on
+    # purpose); this number is what that decision costs, stated rather than
+    # invisible.
+    "lost": 60,
     # 54 -> 0 (#451). The whole `update-from-another-domain` family leaves
     # "counted by the product but on no screen" and enters the queue.
     "dropped": 0,
@@ -631,12 +658,12 @@ RECORDED = {
     # +30 (#521): the twins that clear AUTO_FILE_GATE on their own. The other
     # 50 twins and all 40 queued autoresponders are addressed IN THE QUEUE,
     # which is the counter below, and `lost` and `dropped` stay 0.
-    "addressed_on_a_card": 14077,
+    "addressed_on_a_card": 14137,
     # +50 (#521): the family's twins that do NOT clear AUTO_FILE_GATE. With
     # the +30 on `addressed_on_a_card` that is all 80 twins accounted for,
     # and `lost` and `dropped` stay 0 — nothing the family adds falls out
     # of the product entirely.
-    "addressed_in_the_queue": 2883,
+    "addressed_in_the_queue": 2943,
     # THE ADDITIVE PERSIST'S OWN OUTCOME, and it is zero. `replay` calls
     # `_persist_review_items_additive` since #624, so an arriving item can now
     # be refused a row because the sync already settled its (thread,
@@ -647,12 +674,46 @@ RECORDED = {
     # cannot fire at all during a replay: nothing on the sync path writes that
     # flag, and 0 rows carry it when the replay ends.
     #
-    # So this is a zero that cannot currently be non-zero, said plainly rather
-    # than left to read as coverage (#536). It is pinned because it is what
-    # catches the suppression the day a family produces a queued message
-    # sharing a thread AND an identity with mail already on a card — which is
-    # #614's half of the work, not this one's.
-    "suppressed_as_settled": 0,
+    # 0 -> 140 (#630/#614). That day has come: three families now produce a
+    # queued message sharing a thread AND an identity with mail already
+    # answered for, so the filter bites and the counter is no longer a zero
+    # that cannot be anything else. Before them the replay offered 2,873 refs
+    # and persisted 2,873 — the machinery ran on every batch and never bit,
+    # because every other family's threads are held apart by construction.
+    #
+    # WHAT THE 140 ARE:
+    #   60  `settled-suppresses-an-update` — a role-less acknowledgement files
+    #       a card, and a later role-less message on the same thread derives
+    #       the same `None` sub-key. This is #630's class exactly.
+    #   60  `answered-then-more-mail` — the user ANSWERS a held message
+    #       mid-replay with a category that files nothing, and more mail
+    #       arrives on the thread. This is the `is_reviewed` arm, which no
+    #       replay could reach before: nothing on the sync path writes that
+    #       flag and the harness used to answer the queue once, at the end.
+    #   20  `hand-dismissal-swallows-later-mail` — an uncertain message whose
+    #       role key matches a confirmation filed on a HAND-DISMISSED card. A
+    #       user-dismissed card answers for its mail (#597), so the ref is
+    #       refused.
+    #
+    # AND `another-mailbox-cannot-settle-mine` CONTRIBUTES NOTHING, which is
+    # the assertion rather than an omission: 60 of the owner's messages share a
+    # thread id and an identity with another mailbox's settled mail and are
+    # queued anyway. Measured: dropping `Email.user_id == user_id` from the
+    # settled query takes this to 170, and dropping the `Application.user_id`
+    # clause as well takes it to 200.
+    #
+    # OUTSIDE `total` ON PURPOSE. Whether refusing these is right is a product
+    # decision about what "settled" should mean for an update to a card that
+    # exists, and #630 is explicit that the answer is NOT widening the identity
+    # component. The corpus's job here is to make the class countable.
+    "suppressed_as_settled": 140,
+    # THE USER'S OWN DECISION, in the two shapes it has (#614). 120: 60
+    # confirmations sitting on cards the user dismissed by hand, and 60
+    # messages the user answered mid-replay with a category that files
+    # nothing. Both are on no live card, in no queue and under no floor —
+    # `lost`'s test exactly — and both are the opposite of a message that
+    # vanished, because a person saw them and chose. Outside `total`.
+    "settled_by_a_standing_instruction": 120,
     # The population the five close against. Pinned as well as computed, so a
     # corpus that quietly stopped requiring mail to be addressed is loud.
     # 16640 -> 16820 (#641): every message of the new family is about a
@@ -662,7 +723,7 @@ RECORDED = {
     # the reader nothing for.
     # +80 (#521): the family's twins. Its 80 autoresponders are `nowhere`
     # mail and nothing is required to address them.
-    "must_be_addressed": 16960,
+    "must_be_addressed": 17400,
     # Noise that MINTED A CARD. Went 0 -> 2 on 2026-08-22, when the corpus first
     # contained ATS mail that is not about the user at all (a profile-completion
     # nudge scoring `assessment` at 0.90), and back to 0 once the reference
@@ -729,7 +790,7 @@ RECORDED = {
     # 9148 -> 9728 (#626): the denominator follows `cards` exactly, as ever.
     # 9728 -> 9908 (#641): the denominator follows `cards` exactly, as ever.
     # +60 (#522), tracking `cards` exactly.
-    "titles_graded": 9998,
+    "titles_graded": 10058,
     # Smaller, because a card whose ground truth keys on a requisition id, or
     # whose mail names no job at all, has a title this corpus either cannot
     # settle or must assert BLANK. See ``Case.role_truth``.
@@ -904,7 +965,7 @@ RECORDED = {
     # +10 (#521): the one twin shape whose confirmation names no role at
     # all — "Your application has been received and a member of the team
     # will be in touch shortly".
-    "blank_required": 1186,
+    "blank_required": 1246,
     # The third population: the corpus knows WHICH application the card is, by
     # requisition id, and does not know what the job is called. Not a defect and
     # not an assertion — the term that makes "every card is accounted for"
@@ -1706,14 +1767,51 @@ async def test_the_board_is_clean(cases, verdicts, test_session) -> None:
     # THE TWO CROSS-CHECKS, which are the reason these are worth pinning: they
     # are not restatements, they are two instruments that can disagree. See
     # `RECORDED_SYNC`.
-    assert replayed.synced.created == RECORDED["cards"], (
-        f"{replayed.synced.created} applications were created by the syncs but "
-        f"{RECORDED['cards']} are on the board — a row was dismissed, or the "
-        "per-batch catch-up minted one"
+    # THE GAP IS NOW EXPECTED, AND IT IS EXACTLY THE DISMISSALS (#614). This
+    # asserted equality while its own message named "a row was dismissed" as
+    # the thing that would break it — true for as long as no row ever was.
+    # `hand-dismissal-swallows-later-mail` dismisses 60 by hand, so 60 rows the
+    # syncs created are no longer on the board. Asserted as an identity with
+    # the dismissal count rather than re-pinned as a bare number, so the two
+    # still cross-check: a row dismissed by anything ELSE, or a card minted by
+    # the per-batch catch-up, reds here as it always did.
+    dismissed_by_hand = sum(
+        1 for c in cases if c.standing_instruction == "dismiss" and c.user_slot == 0
     )
-    assert replayed.synced.needs_review == RECORDED_ANSWERS["queued"], (
-        f"{replayed.synced.needs_review} items were surfaced to the queue and "
-        f"{RECORDED_ANSWERS['queued']} were in it when the answering began"
+    assert dismissed_by_hand == 60, (
+        f"{dismissed_by_hand} cases carry a hand-dismissal instruction; the "
+        "arithmetic below is written for 60"
+    )
+    assert replayed.synced.created - dismissed_by_hand == RECORDED["cards"], (
+        f"{replayed.synced.created} applications were created by the syncs, "
+        f"{dismissed_by_hand} were dismissed by hand, and {RECORDED['cards']} "
+        f"are on the board — the remainder is {replayed.synced.created - dismissed_by_hand}. "
+        "A row was dismissed by something other than the standing "
+        "instructions, or the per-batch catch-up minted one."
+    )
+    # A THIRD CAUSE OF DISAGREEMENT EXISTS NOW, and the old comment named only
+    # two (#614). `synced.needs_review` counts what the SYNCS surfaced;
+    # `RECORDED_ANSWERS["queued"]` counts what was still in the queue when the
+    # answering phase began. Those differed only if a later batch's rollup
+    # filed one — until the corpus gained a user who ANSWERS mid-replay. The 60
+    # `answered-then-more-mail` openers are surfaced by a sync and then leave
+    # the queue before the phase starts, because the standing instruction
+    # answers them. Same identity, one named term added.
+    answered_mid_replay = sum(
+        1 for c in cases
+        if c.standing_instruction == "answer_other" and c.user_slot == 0
+    )
+    assert answered_mid_replay == 60, (
+        f"{answered_mid_replay} cases answer mid-replay; the arithmetic below "
+        "is written for 60"
+    )
+    assert (
+        replayed.synced.needs_review - answered_mid_replay
+        == RECORDED_ANSWERS["queued"]
+    ), (
+        f"{replayed.synced.needs_review} items were surfaced to the queue, "
+        f"{answered_mid_replay} were answered before the phase began, and "
+        f"{RECORDED_ANSWERS['queued']} were in it when the answering started"
     )
 
     # ── and now a person answers the queue ───────────────────────────────────
@@ -2676,6 +2774,26 @@ async def test_every_application_mail_is_addressed(
         # instead — extending the character class was the obvious move and the
         # wrong one, because "Software Engineer, C#" already needed a character
         # nobody had anticipated.
+        #
+        # NOT EMPTY SINCE #614, AND THE ENTRY IS THE POINT OF THAT ISSUE. The
+        # dict was pinned empty against a corpus that could not produce a single
+        # entry: `generate.py` held zero occurrences of `dismiss`, so
+        # `dismissed_at` was NULL on every row and the one state that loses mail
+        # was unreachable. An empty dict that cannot gain a key is not a
+        # measurement.
+        #
+        # One message per group of `hand-dismissal-swallows-later-mail`: a
+        # CONFIDENT lifecycle message arriving on the thread of a card the user
+        # dismissed by hand. It rolls up onto that card, and
+        # `upsert_applications_for_user` `continue`s on a user-dismissed row
+        # BEFORE `_persist_message_refs` runs — so it reaches no `emails` row at
+        # all. The confirmation the dismissal was about is NOT here: it keeps
+        # its row and `restore_application` brings it back with the card.
+        #
+        # NAMED BY FAMILY rather than counted, which is what a bare `lost == 60`
+        # would not give: mail going missing anywhere ELSE reds here even if the
+        # total happens to stay at 60.
+        "hand-dismissal-swallows-later-mail": 60,
     }, dict(lost)
 
     # EMPTY SINCE #451, and it held `{"update-from-another-domain": 54}` until
@@ -2754,7 +2872,7 @@ async def test_every_application_mail_is_addressed(
     assert score.dropped == RECORDED["dropped"]
     assert score.unaddressed == RECORDED["lost"] + RECORDED["dropped"]
 
-    # ── AND THE FIVE OUTCOMES CLOSE (#624) ──────────────────────────────────
+    # ── AND THE SIX OUTCOMES CLOSE (#624, #614) ─────────────────────────────
     #
     # Everything above this line asserts that two counters are zero. Two zeroes
     # are worth exactly as much as the denominator behind them, and there was
@@ -2773,7 +2891,14 @@ async def test_every_application_mail_is_addressed(
     # so a real regression would raise here instead of failing the pinned
     # assertion above that names the FAMILIES. Both spellings hold today; this
     # one keeps the diagnosis.
-    must_be_addressed = sum(1 for c in cases if c.must_be_addressed)
+    # THE OWNER'S MAIL ONLY (#614). `score_board` grades the owner's board, so
+    # the denominator has to be the owner's population: the 60 slot-1 cases of
+    # `another-mailbox-cannot-settle-mine` are another mailbox's, they are
+    # never synced here, and counting them would make the closure fail by
+    # exactly the size of a fixture.
+    must_be_addressed = sum(
+        1 for c in cases if c.must_be_addressed and c.user_slot == 0
+    )
     assert must_be_addressed == RECORDED["must_be_addressed"], (
         f"{must_be_addressed} messages must be addressed, recorded "
         f"{RECORDED['must_be_addressed']} — the corpus changed shape"
@@ -2782,6 +2907,7 @@ async def test_every_application_mail_is_addressed(
         score.addressed_on_a_card
         + score.addressed_in_the_queue
         + score.suppressed_as_settled
+        + score.settled_by_a_standing_instruction
         + score.dropped
         + score.lost
         == must_be_addressed
@@ -2789,8 +2915,9 @@ async def test_every_application_mail_is_addressed(
         f"{score.addressed_on_a_card} on a card + "
         f"{score.addressed_in_the_queue} in the queue + "
         f"{score.suppressed_as_settled} suppressed as settled + "
-        f"{score.dropped} dropped + {score.lost} lost = "
-        f"{score.addressed_on_a_card + score.addressed_in_the_queue + score.suppressed_as_settled + score.dropped + score.lost}"
+        f"{score.settled_by_a_standing_instruction} settled by a standing "
+        f"instruction + {score.dropped} dropped + {score.lost} lost = "
+        f"{score.addressed_on_a_card + score.addressed_in_the_queue + score.suppressed_as_settled + score.settled_by_a_standing_instruction + score.dropped + score.lost}"
         f", but {must_be_addressed} messages must be addressed. Some of them "
         "are being graded by nothing."
     )
@@ -2798,10 +2925,117 @@ async def test_every_application_mail_is_addressed(
         "addressed_on_a_card",
         "addressed_in_the_queue",
         "suppressed_as_settled",
+        "settled_by_a_standing_instruction",
     ):
         assert getattr(score, name) == RECORDED[name], (
             f"{name} is {getattr(score, name)}, recorded {RECORDED[name]}"
         )
+
+    # ── THE FOUR FAMILIES #614 AND #630 EXIST FOR ───────────────────────────
+    #
+    # The aggregates above are pinned; these say WHICH mail is in them. An
+    # aggregate that held while the families quietly emptied and something else
+    # took their place would pass every assertion so far.
+    #
+    # REACH IS ASSERTED BEFORE OUTCOME, everywhere below. A message that never
+    # became a review ref and a message that became one and was refused are the
+    # same absence from the outcome's side — so a wording that stopped clearing
+    # `REVIEW_FLOOR` would empty a family and read exactly like a settled
+    # filter that had stopped biting. `replayed.offered` is what the sync
+    # actually handed `_persist_review_items_additive`, kept for this.
+    by_family: dict[str, list] = {}
+    for c in cases:
+        by_family.setdefault(c.family, []).append(c)
+
+    # #630. A role-less acknowledgement files a card; a later role-less message
+    # on the same thread derives the same `None` sub-key and is refused.
+    settled = by_family["settled-suppresses-an-update"]
+    updates = {c.message_id for c in settled if c.joins}
+    assert len(updates) == 60, f"the family has {len(updates)} updates, not 60"
+    assert updates <= replayed.offered, (
+        f"{len(updates - replayed.offered)} of the family's updates never "
+        "reached the additive persist, so nothing below measures its filter"
+    )
+    assert updates <= replayed.suppressed, (
+        f"{len(updates - replayed.suppressed)} of 60 were NOT refused. This is "
+        "#630's class: the settled filter has stopped biting, or the corpus "
+        "has stopped producing a colliding key."
+    )
+
+    # #614. Mail arriving after a HAND dismissal reaches nothing at all.
+    dismissal = by_family["hand-dismissal-swallows-later-mail"]
+    after_dismissal = {
+        c.message_id
+        for c in dismissal
+        if c.joins and c.expected_category != "offer"
+    }
+    assert len(after_dismissal) == 60, (
+        f"{len(after_dismissal)} confident messages arrive after a dismissal, "
+        "not 60"
+    )
+    on_a_card = {m for _label, mids in replayed.groups for m in mids}
+    lost_ids = {
+        c.message_id
+        for c in cases
+        if c.user_slot == 0
+        and c.must_be_addressed
+        and c.message_id not in on_a_card
+        and c.message_id not in replayed.reviewed
+        and c.message_id not in replayed.settled_by_a_standing_instruction
+        and c.message_id not in replayed.suppressed
+        and c.message_id not in replayed.dropped
+    }
+    assert lost_ids == after_dismissal, (
+        "LOST is not exactly the mail that arrived after a hand dismissal. "
+        f"missing={sorted(after_dismissal - lost_ids)[:5]} "
+        f"unexpected={sorted(lost_ids - after_dismissal)[:5]}"
+    )
+    # AND THE CONFIRMATION IS NOT AMONG THEM. It keeps its row on the dismissed
+    # card, so `restore_application` brings it back; the mail above has no row
+    # to restore. Half the number would be wrong without this.
+    openers = {
+        c.message_id for c in dismissal if c.standing_instruction == "dismiss"
+    }
+    assert openers <= replayed.settled_by_a_standing_instruction, (
+        "a confirmation on a hand-dismissed card is being counted as LOST — "
+        "it is on disk and restorable, which is a different outcome"
+    )
+
+    # #614's control family: the `is_reviewed` arm, reachable only because the
+    # user now answers mid-replay.
+    answered = by_family["answered-then-more-mail"]
+    followers = {c.message_id for c in answered if c.joins}
+    assert followers <= replayed.offered, (
+        "the follow-ups never reached the additive persist"
+    )
+    assert followers <= replayed.suppressed, (
+        f"{len(followers - replayed.suppressed)} of 60 follow-ups were not "
+        "refused. This is the arm the #596 spelling disagrees about: "
+        "reinstating `application_id IS NOT NULL` takes "
+        "`suppressed_as_settled` 140 -> 80 and `addressed_in_the_queue` "
+        "2943 -> 3003 (measured)."
+    )
+
+    # #614's second half: another mailbox's settled mail must answer for
+    # NOTHING of the owner's, even sharing a thread id and an identity.
+    cross = by_family["another-mailbox-cannot-settle-mine"]
+    mine = {c.message_id for c in cross if c.user_slot == 0}
+    assert len(mine) == 60
+    assert mine <= replayed.offered, (
+        "the owner's cross-user messages never reached the filter, so this "
+        "asserts nothing about scoping"
+    )
+    assert not (mine & replayed.suppressed), (
+        f"{len(mine & replayed.suppressed)} of the owner's messages were "
+        "settled by ANOTHER mailbox's mail. The settled test is not scoped to "
+        "the user. Measured: dropping `Email.user_id == user_id` suppresses 30 "
+        "(the `is_reviewed` arm, which has no user predicate of its own) and "
+        "dropping `Application.user_id` as well suppresses all 60."
+    )
+    assert mine <= replayed.reviewed, (
+        "the owner's cross-user messages should be in the QUEUE — they are "
+        "uncertain mail about a real application that nothing settles"
+    )
 
 
 # ── the cards that must be blank ─────────────────────────────────────────────
@@ -3014,7 +3248,24 @@ def test_the_readable_window_is_the_product_s_window() -> None:
 # twin shapes — the student-programme rejection — names no role from the
 # pool in its subject or body. Its 10 identities are blank by
 # `_settle_role_reachability` and land in `blank_required` instead.
-RECORDED_ROLE_IDENTITIES = 8844
+# 8844 -> 8904 (#614): the 60 `hand-dismissal-swallows-later-mail` groups
+# each name a real job in their confirmation, so each adds one identity
+# whose title this file grades. The other three families #614/#630 add key
+# on a sentinel and contribute nothing here — they are counted by
+# `RECORDED_BLANK_IDENTITIES` instead.
+RECORDED_ROLE_IDENTITIES = 8904
+
+#: Ground-truth identities whose mail names NO job, so the only correct
+#: card is a blank one.
+#:
+#: NOT `RECORDED["blank_required"]`, and the two parted company with #614.
+#: That one counts CARDS the board shows; this counts IDENTITIES the corpus
+#: asserts about. The dismissal family takes 60 cards off the board and
+#: `another-mailbox-cannot-settle-mine` puts 60 identities in a second
+#: mailbox, so 120 identities here have no card on this board at all.
+#: Reading the card figure here would silently make the assertion it is the
+#: denominator for worth 120 fewer identities than it actually checks.
+RECORDED_BLANK_IDENTITIES = 1366
 
 
 def test_ground_truth_never_asserts_a_title_no_message_spells(cases) -> None:
@@ -3339,7 +3590,7 @@ def test_a_card_required_to_be_blank_names_no_job_anywhere(cases) -> None:
     # THE DENOMINATOR. "No blank-required card names a job" is also true of a
     # corpus with no blank-required cards, and the derivation that produces them
     # is one line away in the same module.
-    assert len(by_identity) == RECORDED["blank_required"], (
+    assert len(by_identity) == RECORDED_BLANK_IDENTITIES, (
         f"{len(by_identity)} identities are required to be blank; the assertion "
         f"above is worth exactly that many"
     )
