@@ -4261,6 +4261,50 @@ def advance_application_status(current: str, incoming: str) -> str:
     return current
 
 
+def would_not_move_the_card(current: str, incoming: str) -> bool:
+    """Is this signal a REMINDER about a stage the card already shows? (#517)
+
+    True when filing ``incoming`` against a card at ``current`` would change
+    nothing — the message reports on a stage the row has already reached or
+    passed. The owner's queue held four such rows at one employer about one
+    assessment ("are you still interested", "assessments expire in 24 hours",
+    "reminder from <Employer>", "your <Employer> application"), each on its own
+    thread from its own sender, so :func:`review_dedup_key` could not collapse
+    them and should not have: they are four conversations. What they are not is
+    four questions.
+
+    ASKED OF :func:`advance_application_status` RATHER THAN RE-DERIVED, and that
+    is the whole design. A second rule about what "moves" means would let the
+    queue and the filing path disagree — the failure #596 is named for — and it
+    would have to restate the rejection carve-out, which is the one downgrade
+    mail is allowed to make. Here it falls out: ``rejected`` is never equal to a
+    live ``current``, so a rejection arriving at any live card is NEWS and this
+    returns False.
+
+    A TERMINAL CARD IS ALWAYS NEWS, and the ``False`` is not a shortcut for
+    "nothing moves". ``advance_application_status`` returns a terminal status
+    unchanged for EVERY incoming signal, because a mail signal may not override
+    a settled row on its own — so the equality below would be true for an offer
+    arriving at a rejected card (#814), which is the most newsworthy message
+    this product can receive. The guard is what keeps "the function declined to
+    move it" from being read as "there was nothing to say".
+
+    NOT A CLAIM ABOUT THE MESSAGE'S CONTENT. It says the SUGGESTED STAGE is
+    already reflected; whatever else the mail carries — a deadline, a
+    requisition id, the wording itself — is the caller's to preserve, and
+    :func:`jobtracker.cloud.applications.attach_reminders_to_their_cards` is
+    where that happens. Suppressing on this predicate alone loses mail: filing
+    and queueing are mutually exclusive in this pipeline
+    (:func:`collect_review_items` skips whatever ``_qualifies_for_hard_row``
+    accepts), so "do not queue it" with nowhere else to put it is the terminal
+    drop this module documents as its one silent failure.
+    """
+
+    if is_terminal_status(current):
+        return False
+    return advance_application_status(current, incoming) == current
+
+
 def _message_ref(item: PipelineItem) -> MessageRef:
     return MessageRef(
         message_id=item.message_id,

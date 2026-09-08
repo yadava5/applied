@@ -3182,6 +3182,187 @@ async def reconcile_orphaned_classifications(session, user_id: uuid.UUID) -> int
     return created
 
 
+def _ids(review) -> frozenset[str]:
+    """The message ids a review batch names."""
+
+    return frozenset(item.message_id for item in review if item.message_id)
+
+
+def _minus_the_reminders(surfaced: int, attached: tuple[int, int]) -> int:
+    """``needs_review`` with the rows this sync surfaced and then FILED removed.
+
+    A row the persist wrote and :func:`attach_reminders_to_their_cards` then
+    linked was never in the queue the user is about to be told the size of. The
+    sync receipt and the queue are two renderers of one number and this repo has
+    the scar from letting them disagree.
+
+    Floored at zero rather than asserted non-negative, and the reachable case is
+    named: the additive persist's settled filter can REFUSE an arriving ref
+    whose sibling is settled, so that ref is not in ``surfaced`` — while an
+    older, still-unlinked row for the SAME message id remains attachable. Rare,
+    and a negative count on a receipt is worse than an approximate one.
+    """
+
+    return max(0, surfaced - attached[1])
+
+
+async def attach_reminders_to_their_cards(
+    session,
+    user_id: uuid.UUID,
+    arrived: frozenset[str] = frozenset(),
+) -> tuple[int, int]:
+    """File a queued message that ASKS NOTHING onto the card it is about (#517).
+
+    The owner's queue held four rows at one employer about one assessment — an
+    "are you still interested", an expiry warning, a bare reminder and an
+    application nudge — on four threads from three senders, beside an
+    ``ASSESSMENT`` card for the same thing. :func:`pipeline.review_dedup_key`
+    keys on (conversation, application) and correctly refused to collapse them:
+    they are four conversations. But the queue's own subtitle promises "your
+    decision files them", and no decision available here changes any card.
+
+    THIS IS AN ATTACH, NOT A SUPPRESSION, and the distinction is the whole
+    issue. Filing and queueing are mutually exclusive upstream —
+    :func:`pipeline.collect_review_items` skips anything
+    ``_qualifies_for_hard_row`` accepts — so a row that is neither filed nor
+    queued is a row that is GONE, which is the one terminal drop that module
+    documents. Declining to ask is only safe when the message still lands
+    somewhere a person can find it. Here it lands where the answer would have
+    put it: linked to the employer's existing application, visible on the card's
+    detail view, out of the queue by the queue's own predicate
+    (:func:`_not_filed_on_an_application_that_answers`).
+
+    WHAT MOVES AND WHAT DOES NOT. The link moves. ``Application.status`` does
+    not, by construction: the predicate only fires when
+    :func:`pipeline.advance_application_status` would leave it where it is, and
+    the row is stored with ``classified_as = NEEDS_REVIEW`` — the typed null —
+    so :func:`_status_from_mail` skips it if the card is ever split. The
+    classifier's proposal stays in ``suggested_category`` where it was; nothing
+    here stamps a verdict a human never confirmed, and nothing sets
+    ``is_reviewed``, because no human reviewed anything.
+
+    WHAT THE MESSAGE CARRIES STILL ARRIVES. The issue's counter-case is a
+    "reminder" that names a requisition id or a job title the card lacks, and
+    :func:`_adopt_mail_identity` is called for exactly that reason — the same
+    call, with the same blind-landing guard, that :func:`classify_review_item`
+    and :func:`reconcile_orphaned_classifications` make. A DEADLINE does not
+    arrive, and did not before: ``Application.due_at`` is written only from a
+    :class:`pipeline.RolledApplication` (so, only at or above ``AUTO_FILE_GATE``)
+    or by the user typing one, and answering the queue row by hand would not
+    have landed it either. Stated rather than fixed; it is a gap in the filing
+    path, not one this pass opens.
+
+    FOUR REFUSALS, and each one leaves the row in the queue to be asked about:
+
+      * no proposal, or one :data:`CATEGORY_TO_STATUS` does not map. ``other``,
+        ``follow_up`` and ``needs_review`` assert no stage at all, so there is
+        nothing to compare and this pass can never reach them. That is what
+        keeps the corpus's 260 ``rescinded-offer`` withdrawals — an offer pulled
+        back, quoting its own history, scored ``other`` at 0.50 and reaching the
+        queue on the ATS floor — exactly where they are.
+      * no employer this pipeline can name, or no application at that employer.
+        A reminder about nothing is not a reminder; this pass NEVER mints.
+      * a blind landing, or a card that is off the board. "Which of your three
+        applications?" is the queue's question, not this pass's to answer, and
+        filing onto a dismissed card is a message that leaves the queue and
+        reaches no screen (#595).
+      * a signal that WOULD move the card. Every rejection at a live row, every
+        offer at a rejected one (#814), every genuine advance.
+
+    A SWEEP OF THE STORED QUEUE, not a filter on the arriving batch, and that is
+    deliberate: an incremental sync resumes from a ``historyId`` cursor and
+    re-reads nothing (#474), so a rule applied only to arriving mail would never
+    reach the four rows this issue is about. Idempotent — an attached row gains
+    a link and stops matching ``application_id IS NULL``.
+
+    ``arrived`` is the message ids this sync's review persist just wrote, and it
+    exists only so the caller can report an honest ``needs_review``: a row
+    surfaced and then attached in one pass was never in the queue the user is
+    being told about. Returns ``(attached, attached_of_arrived)``.
+
+    Rows that already carry a link are OUT OF SCOPE even when the queue shows
+    them (a link to a re-synced-away card — #481). Repairing those is
+    :func:`reconcile_orphaned_classifications`' job and it decides whether to
+    put the card back; a low-confidence reminder is not evidence for that.
+    """
+
+    queued = (
+        await session.exec(
+            select(Email)
+            .where(
+                Email.user_id == user_id,
+                Email.classified_as == EmailCategory.NEEDS_REVIEW,
+                Email.application_id.is_(None),
+                Email.is_reviewed == False,  # noqa: E712 — SQL boolean
+            )
+            .order_by(Email.received_at)
+        )
+    ).all()
+
+    attached = 0
+    attached_of_arrived = 0
+    now = datetime.utcnow()
+    for email in queued:
+        # READ IN PYTHON, NOT IN THE WHERE CLAUSE. ``suggested_category`` is
+        # unindexed on purpose and its column comment asks that no reader start
+        # filtering on it; the queue is tens of rows, so the predicate costs
+        # nothing here and an index nobody measured is not added for it.
+        suggested = email.suggested_category
+        if suggested is None:
+            continue  # no proposal at all — there is nothing to compare
+        # ONE TEST, READ FROM ``CATEGORY_TO_STATUS`` (via
+        # :func:`_lifecycle_to_status`) AND NOT FROM A SECOND LIST. Checking
+        # membership of ``_FILING_CATEGORIES`` first would say the same thing
+        # twice, and a guard whose deletion changes no outcome cannot be shown
+        # to be load-bearing. ``None`` here is the whole of ``other``,
+        # ``follow_up`` and ``needs_review``: categories that assert no stage,
+        # so no stage comparison exists for them and they stay in the queue.
+        incoming = _lifecycle_to_status(suggested)
+        if incoming is None:
+            continue
+        employer = pipeline.resolve_employer(
+            email.sender_email or "", email.subject or "", email.sender_name
+        )
+        if employer is None:
+            continue
+        token, _display = employer
+
+        app, landing = await _resolve_application_for_email(
+            session, user_id, token, email
+        )
+        if app is None or landing == LANDED_BLIND:
+            continue
+        if app.dismissed_at is not None:
+            # Off the board. Linking here answers the question and shows the
+            # user nothing, which is #595's failure exactly.
+            continue
+        if not pipeline.would_not_move_the_card(app.status.value, incoming):
+            continue
+
+        email.application_id = app.id
+        session.add(email)
+        role, req_id = _email_identity_parts(email)
+        if _adopt_mail_identity(app, role, req_id):
+            app.updated_at = now
+            session.add(app)
+        attached += 1
+        if email.message_id in arrived:
+            attached_of_arrived += 1
+
+    if attached:
+        await session.flush()
+        # Counts and ids, never a subject or a snippet — the rule
+        # :func:`_warn_if_capped` sets for this module.
+        logger.info(
+            "Filed %s queued reminder(s) onto the card they are about for "
+            "user_id=%s (#517: the suggested stage is one the card already "
+            "shows, so nobody is asked and nothing is dropped)",
+            attached,
+            user_id,
+        )
+    return attached, attached_of_arrived
+
+
 async def _reset_review_queue(
     session, user_id: uuid.UUID, coverage: ScanCoverage | None = None
 ) -> None:
@@ -3362,6 +3543,11 @@ async def _persist_review_items_additive(session, user_id: uuid.UUID, review) ->
                     # the queue was built with.
                     Email.identity_role,
                     Email.identity_req_id,
+                    # For the CONVERSATION arm below only. A row can settle
+                    # itself and settle nothing for its thread-mates; see the
+                    # comment on ``settled_applications``.
+                    Email.classified_as,
+                    Email.is_reviewed,
                 ).where(
                     Email.user_id == user_id,
                     or_(*scoped),
@@ -3388,6 +3574,31 @@ async def _persist_review_items_additive(session, user_id: uuid.UUID, review) ->
         # are filtered out here on every later sync, so the within-sync fix
         # cannot reach them. Same :func:`pipeline.review_dedup_key` as every
         # other site, computed from the stored subject and snippet.
+        #
+        # A ROW STILL HOLDING THE TYPED NULL SETTLES ONLY ITSELF (#517). This
+        # arm reaches past the message to every ARRIVING sibling on its thread
+        # and identity, and refusing one of those destroys it outright — no row,
+        # no queue entry, no counter (#630). That is a strong enough act to
+        # require a real answer behind it: a COMMITTED verdict
+        # (``classified_as`` is anything but ``NEEDS_REVIEW``, so the mail was
+        # filed as something) or a HUMAN who settled the row. ``NEEDS_REVIEW``
+        # is the typed null of that column — it is the absence of a verdict —
+        # and an absence cannot answer for a conversation.
+        #
+        # Two shapes reach this line holding it, and both must stop suppressing:
+        # a message :func:`attach_reminders_to_their_cards` filed onto a card
+        # WITHOUT asking anyone, and #481's — a row filed above the gate whose
+        # later re-scan rewrote ``classified_as`` down to ``NEEDS_REVIEW`` while
+        # ``_persist_message_refs`` kept the link. Measured before the carve-out
+        # existed: with the sibling linked, an arriving 0.70 rejection on the
+        # same thread and identity got no ``emails`` row at all; with it
+        # unlinked, the same message was stored. One field apart, and the keys
+        # collide either way.
+        #
+        # NOTHING THE FILTER CATCHES TODAY IS LOST. #630's own triggers are
+        # arriving updates whose thread-mate was FILED at or above the auto-file
+        # gate, so those rows carry ``applied``/``offer``/``rejection`` — a real
+        # verdict — and are kept by the first arm.
         settled_applications = {
             pipeline.review_dedup_key(
                 message_id=message_id,
@@ -3404,8 +3615,11 @@ async def _persist_review_items_additive(session, user_id: uuid.UUID, review) ->
                 snippet,
                 identity_role,
                 identity_req_id,
+                classified_as,
+                is_reviewed,
             ) in rows
             if thread_id
+            and (is_reviewed or classified_as != EmailCategory.NEEDS_REVIEW)
         }
         offered = len(refs)
         before = refs
@@ -3523,6 +3737,10 @@ async def sync_gmail_pipeline_additive(
     # Catch up on anything the user classified that never got an application.
     created += await reconcile_orphaned_classifications(session, user_id)
     needs_review = await _persist_review_items_additive(session, user_id, review)
+    needs_review = _minus_the_reminders(
+        needs_review,
+        await attach_reminders_to_their_cards(session, user_id, _ids(review)),
+    )
     await session.commit()
     return MergeResult(
         created=created,
@@ -3641,6 +3859,13 @@ async def purge_and_rebuild_gmail_pipeline(
 
     await _reset_review_queue(session, user_id, coverage)
     needs_review = await _persist_review_items(session, user_id, review)
+    # #517, on BOTH entrypoints. A fix present only on the routine sync would be
+    # undone by the next press of "Re-sync": this path clears and restates the
+    # queue, so the four rows would come straight back.
+    needs_review = _minus_the_reminders(
+        needs_review,
+        await attach_reminders_to_their_cards(session, user_id, _ids(review)),
+    )
 
     await session.commit()
     if removed:
