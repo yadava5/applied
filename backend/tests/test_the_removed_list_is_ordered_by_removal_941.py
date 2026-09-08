@@ -29,38 +29,49 @@ asserts that separation directly rather than trusting it.
 The live board keeps filed order, and that is asserted here too. A change that
 reordered both would satisfy the headline assertion while breaking the board.
 
-WHAT THE MUTATIONS SAID, INCLUDING THE ONE THAT SURVIVED
+WHAT THE MUTATIONS SAID, AND THE CLAIM I HAD TO WITHDRAW
 ---------------------------------------------------------
-Three arms, each run with the file's sha printed before and after so a mutation
+Four arms, each run with the file's sha printed before and after so a mutation
 that silently no-ops cannot read as a surviving gate:
 
 ===============================================  ==========================
-mutation                                          result
+mutation                                          reds
 ===============================================  ==========================
-revert to ``created_at`` for both predicates       3 red (the removed tests)
-``dismissed_at`` for both predicates               **0 red**
-``.asc()`` instead of ``.desc()``                  4 red, board control among
-                                                   them
+``created_at`` for both predicates                 3
+``dismissed_at`` for both predicates               1
+``.asc()`` instead of ``.desc()``                  5
+the board sorted by the bare ``id``                1
 ===============================================  ==========================
 
-The middle arm survived, and it is worth reading why, because "a mutation
-survived" normally means the control is broken. Here it means the mutant is
-**equivalent on that surface**. On the live predicate every row has
-``dismissed_at IS NULL``, so ``ORDER BY dismissed_at DESC, id DESC`` degenerates
-to ``id DESC`` — and ``id`` is a monotonic integer primary key assigned in the
-same order ``created_at`` is stamped, so it reproduces filed order exactly. Not
-argued: the two live-board responses were captured and compared and are
-byte-identical, ``[[5, Elmridge], [4, Dunmore Ltd], [3, Cedar Works],
-[2, Bracken Labs]]`` under both.
+**The second arm survived the first version of this module, and I wrote a
+paragraph here explaining why it was an EQUIVALENT MUTANT.** The argument: on
+the live predicate every row has ``dismissed_at IS NULL``, so the order
+degenerates to ``id DESC``, and ``id`` is a monotonic integer assigned in the
+same order ``created_at`` is stamped. I captured both live-board responses,
+found them byte-identical, and called it proven.
 
-No fixture can separate an equivalent mutant, which is why the third arm is
-here: it establishes that the board control can fail at all, and it is the arm
-that would catch a real reordering of the board.
+**It was not proven, and the mutant was not equivalent.** Every fixture here
+filed its rows one request at a time, so ``created_at`` and the integer key
+advanced together — the two operands were EQUAL, and a capture comparing them
+could not have come out any other way. That is a control that cannot fail
+dressed as a proof, and the byte-identical output was evidence about the
+fixture, not about the code.
+
+:func:`test_the_board_orders_on_created_at_and_not_on_the_row_id` inverts them:
+the rows are filed in one order and their ``created_at`` values rewritten in the
+opposite one, which is what a backfill or an import does. With that single
+fixture the second arm reds, and so does a fourth arm nobody had thought to try
+— sorting the board by the bare key, which had been invisible the whole time.
+
+The lesson is the one already in this repository's ledger and it caught me
+anyway: when two things are equal in every fixture, swapping them is a no-op,
+and no number of captures of that output will say otherwise.
 """
 
 from __future__ import annotations
 
 import time
+from datetime import UTC, datetime, timedelta
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -280,3 +291,55 @@ async def test_a_row_dismissed_last_beats_a_row_filed_last(
 
     rows = await _removed(client)
     assert [r["company"] for r in rows] == ["Alder Systems", "Cedar Works"]
+
+
+async def test_the_board_orders_on_created_at_and_not_on_the_row_id(
+    client: AsyncClient,
+) -> None:
+    """THE CONTROL THAT MAKES THE BOARD ASSERTION MEAN SOMETHING.
+
+    Every other test here files rows in one request each, so `created_at` and
+    the integer primary key advance together and `ORDER BY created_at DESC` is
+    indistinguishable from `ORDER BY id DESC`. A mutant sorting the board by the
+    bare key — or by a uniformly-NULL `dismissed_at`, which degenerates to the
+    same thing — survives all of them. That is the equality-cannot-separate
+    problem: the two operands were equal, so swapping them was a no-op.
+
+    Here the two are deliberately INVERTED. The rows are filed in one order and
+    then their `created_at` values are rewritten in the opposite order, which is
+    what a backfill or an import does, so filed order and key order disagree at
+    every position and only a query reading the right column can answer.
+    """
+
+    from sqlalchemy import update
+
+    from jobtracker.database.connection import get_session
+    from jobtracker.database.models import Application
+
+    ids = await _file_three(client)
+
+    # Oldest-filed row gets the NEWEST timestamp: created_at now runs opposite
+    # to the integer key.
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    stamps = {
+        "Alder Systems": base + timedelta(days=3),
+        "Bracken Labs": base + timedelta(days=2),
+        "Cedar Works": base + timedelta(days=1),
+    }
+    async with get_session() as session:
+        for company, when in stamps.items():
+            await session.exec(
+                update(Application)
+                .where(Application.id == int(ids[company]))
+                .values(created_at=when)
+            )
+        await session.commit()
+
+    resp = await client.get("/applications", headers=_headers())
+    assert resp.status_code == 200, resp.text
+    got = [r["company"] for r in resp.json()["applications"]]
+
+    # created_at DESC  -> Alder, Bracken, Cedar   (the answer)
+    # id DESC          -> Cedar, Bracken, Alder   (what the key would say)
+    assert got == ["Alder Systems", "Bracken Labs", "Cedar Works"], got
+    assert got != list(reversed(got)), "the fixture failed to separate the two orders"
