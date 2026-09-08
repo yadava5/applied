@@ -11,10 +11,10 @@ The background, because it is the whole reason this file exists:
 will not import, it logs a warning and answers from the rules layer, because the
 running API must keep classifying mail when the model is missing. That is correct
 for the application and quietly fatal for the benchmark: on the committed v3 set
-the rules layer and the hybrid cascade both score macro-F1 0.9791 -- see
+the rules layer and the hybrid cascade both score macro-F1 0.9896 -- see
 ``data/evaluation/benchmark_history.md``, and note that ``baseline_rules_v3.json``
 and ``baseline_hybrid_v3.json`` agree to sixteen decimal places and were written
-six seconds apart. So a hybrid run with every model dead produces 0.9791, matches
+nine seconds apart. So a hybrid run with every model dead produces 0.9896, matches
 the committed baseline, prints PASS, and is indistinguishable from a healthy one.
 
 Observed, not hypothesised. Under transformers 5.14.1, setfit 1.1.3 raises
@@ -37,7 +37,7 @@ def _report(layers: dict[str, int], *, profile: str = "full") -> dict:
 
 
 def test_hybrid_full_fails_when_only_deterministic_layers_answered() -> None:
-    """The exact shape of a lite-mode run: no model loaded, still scores 0.9791."""
+    """The exact shape of a lite-mode run: no model loaded, still scores what the rules layer scores."""
     failures = _assert_layers_exercised(
         _report({"content_filter": 5, "fallback": 33, "rules": 58}),
         mode="hybrid",

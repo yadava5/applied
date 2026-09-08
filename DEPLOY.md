@@ -221,8 +221,12 @@ is **rules-only**. `HybridClassifier.classify` short-circuits to the rules layer
 whenever `settings.deployment == "cloud"`, which is every hosted request, so the
 embedding and SetFit layers never load and no hosted path retrains anything.
 That is a deliberate choice with a measured justification — on the committed v3
-set the full cascade scores **0.9582** macro-F1 against the rules layer's
-**0.9791**, so the learned layers make it worse (`docs/ML_PROMOTION_POLICY.md`).
+set the full cascade scored **0.9582** macro-F1 against the rules layer's
+**0.9791** in the same run, so the learned layers make it worse
+(`docs/ML_PROMOTION_POLICY.md`). Those two are one measurement from 2026-08-11
+and are quoted as a pair for that reason; the rules layer alone was re-recorded
+on 2026-09-07 at **0.9896**, and the cascade arm has not been re-run, so the gap
+is at least as wide as it looks.
 
 The trained checkpoint was withdrawn on 2026-08-15 and the Hugging Face Space
 and model repo are private, so neither carries a public demo. The one that does

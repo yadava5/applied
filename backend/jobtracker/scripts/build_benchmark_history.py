@@ -63,7 +63,7 @@ def collect_rows(evaluation_dir: Path) -> list[BenchmarkRow]:
                 # the v3 hybrid baseline is a `deterministic` run, which disables
                 # SetFit and blanks the embedding examples. That is why its row and
                 # the rules row agree to four decimal places. Without this column a
-                # reader concludes the cascade scores 0.9791; what scores 0.9791 is
+                # reader concludes the cascade scores 0.9896; what scores 0.9896 is
                 # the cascade with its models switched off.
                 profile=str(meta.get("hybrid_profile", "n/a")),
                 accuracy=float(overall.get("accuracy", 0.0)),

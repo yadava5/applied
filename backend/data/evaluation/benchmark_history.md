@@ -18,7 +18,7 @@ in this repository, so a GitHub-hosted runner has nothing to load.
 | cascade | v3 | full | `data/evaluation/classifier_eval_v3.jsonl` | 0.9583 | 0.9582 | 0.9582 | 4 |
 | hybrid | v1 | n/a | `data/evaluation/classifier_eval_v1.jsonl` | 1.0000 | 1.0000 | 1.0000 | 0 |
 | hybrid | v2 | n/a | `data/evaluation/classifier_eval_v2.jsonl` | 0.8438 | 0.8598 | 0.8598 | 10 |
-| hybrid | v3 | deterministic | `data/evaluation/classifier_eval_v3.jsonl` | 0.9792 | 0.9791 | 0.9791 | 2 |
+| hybrid | v3 | deterministic | `data/evaluation/classifier_eval_v3.jsonl` | 0.9896 | 0.9896 | 0.9896 | 1 |
 | rules | v1 | n/a | `data/evaluation/classifier_eval_v1.jsonl` | 1.0000 | 1.0000 | 1.0000 | 0 |
 | rules | v2 | n/a | `data/evaluation/classifier_eval_v2.jsonl` | 0.8594 | 0.8738 | 0.8738 | 9 |
-| rules | v3 | n/a | `data/evaluation/classifier_eval_v3.jsonl` | 0.9792 | 0.9791 | 0.9791 | 2 |
+| rules | v3 | n/a | `data/evaluation/classifier_eval_v3.jsonl` | 0.9896 | 0.9896 | 0.9896 | 1 |
