@@ -840,8 +840,9 @@ def test_the_allowlist_parses_from_the_env_var_as_uuid_objects(
 
     ``uuid.UUID`` and not ``str`` is the load-bearing part.
     ``database.connection._apply_transaction_gucs`` binds the RLS identity only
-    for a ``uuid.UUID`` — for a string it takes an early return and sets no
-    claims at all, which RLS answers with zero rows and NO error. A list of
+    for a ``uuid.UUID`` — for a string it takes an early return that binds no
+    subject (it writes the empty-object claims GUC, #634), which RLS answers
+    with zero rows and NO error. A list of
     strings here would therefore produce exactly the silent "syncs nobody"
     this whole change exists to end, so the element type is asserted directly.
 

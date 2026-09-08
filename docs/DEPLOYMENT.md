@@ -277,12 +277,15 @@ at Google. See [Who gets synced](#who-gets-synced) below.
 | `_CRON_RUN_BUDGET_SECONDS` | 45 s | Checked *before* each user starts, under the function's `maxDuration: 60` |
 
 The **run budget is what actually binds**: at 10 s per user it stops the
-batch after ~4–5 users, long before a cap of 100. Candidates are ordered
-never-synced-first, then oldest-sync-first, so users a run could not
-reach sort to the front of the next one rather than starving.
+batch after 5 users, long before a cap of 100 — and 5 is the count only
+when every user runs to its timeout, because the deadline is checked
+before a user STARTS and a faster sync frees its slot for another.
+Candidates are ordered never-synced-first, then oldest-sync-first, so
+users a run could not reach sort to the front of the next one rather
+than starving.
 
 **A first sync may need several cron iterations.** A user with no history
-cursor gets a full scan of up to 750 messages against a 30 s scan budget,
+cursor gets a full scan of up to 297 messages against a 30 s scan budget,
 which can exceed the 10 s per-user timeout; that run is cancelled, writes
 no cursor, and reports `"<user_id>: TimeoutError"` in `errors`. The path
 that reliably completes a first backfill is the user's own "Sync now"
@@ -296,14 +299,57 @@ invoke the same scheduled run more than once".
 
 ### Worst-case cost of one run
 
-Five users start inside the 45 s budget; each hits the full-scan path and
-reads the 750-message target before its 10 s timeout:
+Users start until the 45 s budget is gone; each hits the full-scan path
+and reads up to the 297-message target before its 10 s timeout.
 
-- **Gmail quota** — 750 messages × ~5 units per metadata get ≈ 3,750
-  units per user, plus `messages.list` and `getProfile`; ≈ **19k units
-  per run**, ≈ 1.8M/day at 96 runs. Metadata batches are paced by
-  `gmail_batch_pause_seconds` to stay under the ~250 units/sec per-user
-  quota.
+**How many users that is, is not a fixed number, and the figure this
+section used to open with was one scenario dressed as a bound.** The
+deadline is checked before a user is STARTED, so the count of starters is
+the run budget divided by each user's actual wall time, not by the
+timeout. Five is the answer only when every one of them runs to 10 s and
+is cancelled; a first sync that completes in 8 s frees its slot and lets a
+sixth begin. Per-user cost is the figure worth quoting, and it does not
+move with that count:
+
+- **Gmail quota** — the target is exactly three full pages of 99, and a
+  page costs `UNITS_PER_GET × 99 + UNITS_PER_LIST` units, so a completed
+  full scan spends **at least 5,955 units**, plus one `users.getProfile`
+  to baseline the cursor before the first message is read. That profile
+  call is the only request on this path whose price is not recorded
+  anywhere in this repository, so it is named rather than priced.
+
+  **At least**, because three list calls is the floor and not the shape
+  of every run. `_full_scan` is bounded by MESSAGES, not by pages, and
+  Gmail under-fills a page — 68 / 43 / 45 / 41 at `maxResults=100`,
+  measured live 2026-08-10 — so every short page adds another
+  `UNITS_PER_LIST`. Issue #912 records where that crosses the ceiling.
+
+  The per-user ceiling is **6,000 units per minute**, and it is what
+  makes the target 297: a fourth full page does not fit beside the first
+  three. Users do not share that minute — it is per user. **They do
+  share a project.** `cloud/gmail_client.py` records Gmail's per-project
+  daily threshold as 80,000,000 units, and that is the one pool
+  everything here draws from: both OAuth clients, every user, and local
+  development. It is the denominator any per-day figure has to be read
+  against.
+
+  **Two inputs changed on 2026-05-01 and the paragraph that used to sit
+  here predated both**: `messages.get` rose to **20** units from five,
+  and the per-user ceiling was cut to **6,000** a minute from fifteen
+  thousand. The errors did not cancel; they compounded. Stated in the
+  frame that matters for capacity — how many full scans fit
+  inside one user's minute — the old arithmetic implied four (15,000
+  against 3,750) where one now barely fits (6,000 against 5,955). The
+  three quota constants live in
+  `backend/tests/test_the_page_size_fits_gmails_minute.py`, hard-coded
+  and dated on purpose: an expectation imported from the code it checks
+  compares a config against itself.
+
+  `gmail_batch_pause_seconds` spreads a burst rather than delivering it
+  instantaneously. It does **not** pace against a per-second quota.
+  Gmail publishes no per-second limit at all; the claim that it does was
+  wrong here for the same reason it was wrong in `config.py`, whose
+  `gmail_batch_size` note records the correction.
 - **Vercel** — 96 invocations/day of up to ~55 s ≈ ~1.5 GB-hours/day
   worst case, ~45 GB-hours/month at 1 GB. Cron jobs are "included in all
   plans" and they "invoke Vercel Functions … the same usage and pricing

@@ -637,8 +637,9 @@ class Settings(BaseSettings):
         THE PARSE IS THE POINT, AND IT MUST BE LOUD.
         ``database.connection._apply_transaction_gucs`` binds the RLS identity
         only when the ContextVar holds a ``uuid.UUID``; for a ``str`` it takes
-        the ``isinstance`` early return and sets **no** ``request.jwt.claims``
-        at all. A string that slipped through here would therefore not raise —
+        the ``isinstance`` early return, which since #634 writes
+        ``request.jwt.claims`` as the subject-less ``'{}'`` — no identity, by
+        construction. A string that slipped through here would therefore not raise —
         it would make every query in that user's sync run with ``auth.uid()``
         NULL, which RLS answers with zero rows and no error. "Syncs nobody,
         silently" is precisely the failure this setting exists to end, so a

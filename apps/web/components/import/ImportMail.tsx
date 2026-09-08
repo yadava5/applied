@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { Mail } from "lucide-react";
 
+import { QuietEnvelope } from "@/components/boot/QuietEnvelope";
 import { MailText } from "@/components/mail/MailText";
 import { GATE } from "@/lib/classification/gate";
 import { classifyWithRules } from "@/lib/demo/rulesLayer";
@@ -94,22 +95,148 @@ function pretty(category: string) {
   return category.replace(/_/g, " ");
 }
 
-function classify(messages: ParsedMessage[]): Classified[] {
-  return messages.map((m) => {
-    const v = classifyWithRules(m.subject, m.body, m.senderEmail);
-    const topScores = Object.entries(v.scores)
-      .filter(([, s]) => s > 0)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 3);
-    return {
-      ...m,
-      category: v.category,
-      confidence: v.confidence,
-      answeredByRules: v.confidence >= RULES_ACCEPT && v.category !== "other",
-      clearsGate: v.confidence >= GATE && v.category !== "other",
-      topScores,
+function classifyOne(m: ParsedMessage): Classified {
+  const v = classifyWithRules(m.subject, m.body, m.senderEmail);
+  const topScores = Object.entries(v.scores)
+    .filter(([, s]) => s > 0)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3);
+  return {
+    ...m,
+    category: v.category,
+    confidence: v.confidence,
+    answeredByRules: v.confidence >= RULES_ACCEPT && v.category !== "other",
+    clearsGate: v.confidence >= GATE && v.category !== "other",
+    topScores,
+  };
+}
+
+/**
+ * HOW MANY MESSAGES ONE BATCH CLASSIFIES BEFORE THE PASS HANDS THE MAIN THREAD
+ * BACK — and the measurement the number comes from.
+ *
+ * This pass used to be a single synchronous `messages.map(classifyOne)`. The
+ * tab cannot paint during that, so any indicator drawn over it would have been
+ * a still picture of work in progress: #390 was filed for the indicator and
+ * stayed open because the loop had to yield before one could be honest.
+ *
+ * Measured through the shipped `classifyWithRules` on this machine (Apple
+ * Silicon, node 24.9.0, min of 21 runs) on synthetic mail across six
+ * categories — 84% of it answered by a rule, so this is the matching path and
+ * not the cheap miss path a repeated-character fixture would have measured:
+ *
+ *                        1,000-char bodies    4,000     8,000 = MAX_BODY_CHARS
+ *   per message                  0.157 ms     0.468      0.880 ms
+ *   whole 400-message pass        62.6 ms     187.1      352.1 ms
+ *   chunk 12                       1.86 ms      5.58      10.42 ms  · 34 batches
+ *   chunk 16                       2.47 ms      7.41      13.91 ms  · 25 batches
+ *   chunk 20                       3.08 ms      9.21      17.36 ms  · 20 batches
+ *
+ * 16 is the largest chunk whose batch still fits inside a 60 Hz frame
+ * (16.7 ms) on the WORST input this page can produce — `MAX_BODY_CHARS`
+ * truncates a body before the classifier sees it, so 8,000 characters is a
+ * ceiling and not a guess, and `DEFAULT_MESSAGE_CAP` bounds the count at 400.
+ * Twenty drops a frame per batch on that input; twelve buys nothing, because a
+ * yield costs a task whether it carried 12 messages or 16, and it turns the
+ * field below into 34 marks nobody can count.
+ */
+const CLASSIFY_BATCH = 16;
+
+/**
+ * How long the visitor waits before an indicator is worth drawing at all.
+ *
+ * The threshold itself is not a measurement — it is the ~0.1 s bound below
+ * which an interface reads as instantaneous (Card & Miller; Nielsen, "Response
+ * Times"). What IS measured is which passes cross it, counted in Chrome at the
+ * 400-message cap by how many batches the field was actually drawn for:
+ *
+ *   1,000-char bodies    92.4 ms end to end     0 of 25 batches drawn
+ *   4,000-char bodies   300.2 ms               17 of 25
+ *   8,000-char bodies   557.7 ms               23 of 25
+ *
+ * So the small file never draws anything — a field flashing on for four frames
+ * would be worse than the whisper it replaces — and the file that made someone
+ * wait draws almost the whole pass.
+ *
+ * THE CLOCK STARTS WHEN THE FILE IS HANDED OVER, not when the classify pass
+ * does, because that is when the visitor's wait started: `file.text()` and
+ * `parseMailFile` run first and neither is instant — the mbox split alone is
+ * 538 ms on a 150 MB export, which is #810's subject and not this pass's. So
+ * on any file big enough to have made somebody wait, the field is up from the
+ * first batch.
+ *
+ * It gates the REVEAL and nothing else. What the field then draws is the real
+ * count; no threshold can make it move.
+ */
+const CLASSIFY_REVEAL_MS = 100;
+
+/**
+ * Hand the main thread back so React can commit the batch that just finished
+ * and the browser can paint it.
+ *
+ * A MACROTASK, AND DELIBERATELY NOT `setTimeout`. A microtask (`await
+ * Promise.resolve()`) runs before the next rendering opportunity, so the whole
+ * file would classify without a single paint and the field would jump from
+ * empty to full — the frozen indicator again, one await later.
+ * `requestAnimationFrame` fails the other way: a hidden tab pauses it
+ * outright, so somebody who switches away mid-import comes back to a pass that
+ * never finished. That leaves `setTimeout(0)`, which is a real task but pays
+ * the nesting clamp from the fifth nested timer onward, and a `MessageChannel`
+ * message, which is a task with neither clamp nor visibility throttle and is
+ * what React's own scheduler reaches for.
+ *
+ * Measured in Chrome on the 400-message worst case, both arms through this
+ * component, timing the whole wait from the file being handed over to the rows
+ * rendering — 24 yields per pass:
+ *
+ *   MessageChannel   538.3 / 536.9 ms   yields 54.9–61.7 ms   2.29–2.57 ms each
+ *   setTimeout(0)    583.2 / 587.1 ms   yields 103.1–105.5 ms 4.30–4.40 ms each
+ *
+ * Both per-yield figures include the paint the gap exists to buy; the ~2 ms
+ * between them is the clamp, and it costs about 48 ms of the visitor's wait
+ * per import. An indicator whose machinery adds 9% to the duration it reports
+ * on is measuring itself, so the channel wins.
+ */
+function nextTask(): Promise<void> {
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => {
+      channel.port1.close();
+      resolve();
     };
+    channel.port2.postMessage(null);
   });
+}
+
+/**
+ * Classify every message, a batch at a time, reporting the count that is
+ * actually done after each one.
+ *
+ * `onBatch` fires once per batch that RETURNED, with the real running total —
+ * so a pass that stalls stops the display with it, and a batch that throws
+ * never reports. That is the whole honesty argument for the field this drives:
+ * there is no clock and no estimate anywhere in it.
+ *
+ * `isCurrent` is what a second file interrupting the first looks like from in
+ * here. Nothing else can supersede a pass, and a pass that has been superseded
+ * must stop rather than keep spending the tab's main thread on results no one
+ * will see — it returns null, which is the caller's signal to write nothing.
+ */
+async function classifyPass(
+  messages: ParsedMessage[],
+  { onBatch, isCurrent }: { onBatch: (classified: number) => void; isCurrent: () => boolean },
+): Promise<Classified[] | null> {
+  const items: Classified[] = [];
+  for (let start = 0; start < messages.length; start += CLASSIFY_BATCH) {
+    const end = Math.min(start + CLASSIFY_BATCH, messages.length);
+    for (let i = start; i < end; i += 1) items.push(classifyOne(messages[i]));
+    if (!isCurrent()) return null;
+    onBatch(items.length);
+    // No yield after the last batch: the caller renders the rows in the same
+    // task, so the paint this would buy is one the results replace.
+    if (end < messages.length) await nextTask();
+  }
+  return items;
 }
 
 /**
@@ -244,54 +371,164 @@ export function ImportRow({ item }: { item: Classified }) {
   );
 }
 
+/**
+ * The classify pass, drawn from the count the browser genuinely has.
+ *
+ * ONE ENVELOPE IS ONE BATCH, which is what makes this an indicator rather than
+ * a texture: the field holds `ceil(total / CLASSIFY_BATCH)` envelopes, and an
+ * envelope is lit when its batch has RETURNED. Stall the pass and the field
+ * stalls; throw in a batch and the envelopes past it never light. There is no
+ * percentage and no elapsed clock in here — the rule `lib/gmail/sync-plan.ts`
+ * states for the server sync, where a percentage over one round trip would be
+ * "a timer wearing a costume". What is different here is that the pass runs in
+ * this tab, so the count is a fact rather than a costume, and a fact may be
+ * shown.
+ *
+ * IT IS THE SKELETON'S OWN GLYPH. `app/(app)/import/loading.tsx` puts a
+ * `QuietEnvelope` at the centre of this exact drop zone while the route is
+ * pending; this is that envelope, multiplied by the work, at the moment the
+ * work is real — and standing still between batches, because unlike the
+ * skeleton it has something true to say. `.import-classify` in globals.css
+ * turns the shared wave off and records why.
+ *
+ * Reduced motion therefore needs no branch at all: there is no motion in the
+ * field except envelopes lighting, which is the progress itself. WCAG 2.2.2
+ * exempts a progress indicator in any case, and this one ends when the pass
+ * does.
+ *
+ * `role="progressbar"` rather than a live region on the count line: a status
+ * region would announce all 25 batches inside a third of a second, and a
+ * progress bar is the role assistive technology already paces for the reader.
+ * `aria-label` deliberately does not start with "Loading" — that prefix is half
+ * of BootOverlay's PENDING_SELECTOR and would hold the boot loop on screen.
+ */
+function ClassifyField({ classified, total }: { classified: number; total: number }) {
+  const batches = Math.ceil(total / CLASSIFY_BATCH);
+  const done = Math.ceil(classified / CLASSIFY_BATCH);
+  return (
+    <div
+      // `min-h-8` is the lucide `Mail` this stands in for: at every width that
+      // fits the field on one line the drop zone's height is unchanged, so the
+      // swap costs no reflow. Below that it wraps and the zone grows a row,
+      // which is the honest trade — the alternative is clipping the count.
+      className="import-classify mx-auto flex min-h-8 flex-wrap items-center justify-center gap-1.5"
+      role="progressbar"
+      aria-label="Classifying your mail"
+      aria-valuemin={0}
+      aria-valuemax={total}
+      aria-valuenow={classified}
+    >
+      {Array.from({ length: batches }, (_, i) => (
+        <QuietEnvelope key={i} index={i} lit={i < done} className="h-[14px] w-5" />
+      ))}
+    </div>
+  );
+}
+
 export function ImportMail() {
   const [state, setState] = useState<ImportState | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  /**
+   * The file the tab is working on, or null when it is at rest.
+   *
+   * This was a `busy` boolean, and the name is the whole reason it changed: the
+   * zone has to say WHICH file, not merely that something is happening. Two
+   * exports of the same mailbox differ by their name and by nothing else on
+   * screen, and dropping the second over the first is a supported move.
+   */
+  const [pendingFile, setPendingFile] = useState<string | null>(null);
+  /**
+   * The classify pass's real position, or null when there is nothing true to
+   * draw. Two numbers and no third: `classified` is what has come back from
+   * `classifyPass`, `total` is what `parseMailFile` handed it. Anything else
+   * here — an elapsed time, a rate, a percentage — would be a number the page
+   * invented rather than counted.
+   *
+   * `total` IS `messages.length`, not `totalFound` and not the cap, and it can
+   * therefore read "192 of 393" on a file that lost seven entries to parsing.
+   * That is deliberate and it is the same rule the summary line below already
+   * follows: this counter's denominator is the work there is to do, and an
+   * entry that produced no message is not work this pass will ever reach.
+   */
+  const [progress, setProgress] = useState<{ classified: number; total: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  /**
+   * WHICH FILE THE TAB IS CURRENTLY IMPORTING, as a token every write is
+   * checked against.
+   *
+   * `ingest` used to be synchronous, so a second file could not begin until the
+   * first had finished and no guard was needed. It yields now, and both the
+   * picker and the drop target can start a pass over a running one — at which
+   * point the first pass's `setProgress` advances a count belonging to a file
+   * nobody is looking at any more, against the second file's total. An
+   * indicator that can be made to show one file's progress for another is
+   * exactly the failure this work exists to prevent, so the token is taken
+   * before the first await and every write past one is dropped.
+   */
+  const passRef = useRef(0);
 
-  const ingest = useCallback((fileName: string, text: string) => {
-    setError(null);
-    try {
-      const result = parseMailFile(fileName, text);
-      if (result.messages.length === 0) {
+  const ingest = useCallback(
+    async (fileName: string, text: string, pass: number, startedAt: number) => {
+      const isCurrent = () => passRef.current === pass;
+      setError(null);
+      try {
+        const result = parseMailFile(fileName, text);
+        if (!isCurrent()) return;
+        if (result.messages.length === 0) {
+          setState(null);
+          setError(
+            "No messages found in that file. Expected a Google Takeout .mbox, a single .eml, or a JSON array of { subject, from, body }.",
+          );
+          return;
+        }
+        const items = await classifyPass(result.messages, {
+          onBatch: (classified) => {
+            // The gate is on the visitor's wait, not on the count: past it,
+            // every batch draws. Before it, the pass is short enough that
+            // drawing anything would be a flash. See CLASSIFY_REVEAL_MS.
+            if (performance.now() - startedAt < CLASSIFY_REVEAL_MS) return;
+            setProgress({ classified, total: result.messages.length });
+          },
+          isCurrent,
+        });
+        if (items === null) return;
+        setState({
+          fileName,
+          format: result.format,
+          totalFound: result.totalFound,
+          truncated: result.truncated,
+          unreadable: result.unreadable,
+          malformed: result.malformed,
+          items,
+        });
+      } catch (err) {
+        if (!isCurrent()) return;
         setState(null);
+        /**
+         * A REFUSAL AND A FAILURE NEED DIFFERENT WORDS. "Couldn't parse that
+         * file" is a guess about the format, and telling somebody their valid
+         * message is malformed sends them off to re-export it. `MailTooLargeError`
+         * is a fact about the size, and it carries its own sentence — see
+         * MAX_SINGLE_MESSAGE_CHARS in lib/import/parseMail.
+         */
         setError(
-          "No messages found in that file. Expected a Google Takeout .mbox, a single .eml, or a JSON array of { subject, from, body }.",
+          err instanceof MailTooLargeError
+            ? err.message
+            : "Couldn't parse that file. Make sure it's a valid .mbox, .eml, or JSON export.",
         );
-        return;
       }
-      setState({
-        fileName,
-        format: result.format,
-        totalFound: result.totalFound,
-        truncated: result.truncated,
-        unreadable: result.unreadable,
-        malformed: result.malformed,
-        items: classify(result.messages),
-      });
-    } catch (err) {
-      setState(null);
-      /**
-       * A REFUSAL AND A FAILURE NEED DIFFERENT WORDS. "Couldn't parse that
-       * file" is a guess about the format, and telling somebody their valid
-       * message is malformed sends them off to re-export it. `MailTooLargeError`
-       * is a fact about the size, and it carries its own sentence — see
-       * MAX_SINGLE_MESSAGE_CHARS in lib/import/parseMail.
-       */
-      setError(
-        err instanceof MailTooLargeError
-          ? err.message
-          : "Couldn't parse that file. Make sure it's a valid .mbox, .eml, or JSON export.",
-      );
-    }
-  }, []);
+    },
+    [],
+  );
 
   const onFile = useCallback(
     async (file: File | undefined) => {
       if (!file) return;
-      setBusy(true);
+      const pass = (passRef.current += 1);
+      const startedAt = performance.now();
+      setPendingFile(file.name);
+      setProgress(null);
       try {
         /**
          * DELIBERATELY NO `file.size` GATE BEFORE THIS READ, and the reason is
@@ -308,6 +545,7 @@ export function ImportMail() {
          * `MailTooLargeError` branch of `ingest`.
          */
         const text = await file.text();
+        if (passRef.current !== pass) return;
 
         /**
          * A FILE THE BROWSER COULD NOT HOLD, told apart from an empty one.
@@ -342,18 +580,60 @@ export function ImportMail() {
           return;
         }
 
-        ingest(file.name, text);
+        await ingest(file.name, text, pass, startedAt);
       } catch {
+        if (passRef.current !== pass) return;
         // Clear results too. An error banner sitting over the previous file's
         // rows reads as a verdict on the file that just failed.
         setState(null);
         setError("Couldn't read that file in the browser.");
       } finally {
-        setBusy(false);
+        // Only the pass that still owns the tab may put the drop zone back at
+        // rest; a superseded one would end the newer pass's.
+        //
+        // BOTH HALVES OF "AT REST" GO IN ONE PLACE, so they cannot land in two
+        // React batches. Whatever ended the pass — rows, a refusal, a batch
+        // that threw — the field goes with it, because a field left standing
+        // beside a stopped pass is the exact thing this work exists to
+        // prevent; and clearing the file a batch later would leave one render
+        // in which the results are on screen under "Reading your file…".
+        if (passRef.current === pass) {
+          setPendingFile(null);
+          setProgress(null);
+        }
       }
     },
     [ingest],
   );
+
+  /**
+   * THE DROP ZONE'S LEAD LINE IS THE PAGE'S ONE STATUS SLOT — what it invites,
+   * what it is doing, or where the classify pass has got to.
+   *
+   * It used to be two slots: this line, which said "Drop your mail export
+   * here" throughout, and `{busy && <p>reading…</p>}` under the fine print at
+   * the bottom of the zone. That is the whisper #390 opens with, and it was in
+   * the wrong place twice over — six point type below the least important
+   * sentence in the box, and still saying "reading" while the reading was long
+   * finished. One slot at the zone's own lead size cannot drift out of step
+   * with the state, and because every state fills the same line, none of them
+   * moves the box.
+   *
+   * The numerals are mono because they are counted machine values and the
+   * words around them are not; one step down in size, the way the `.mbox`
+   * spans below already sit inside their sentence.
+   */
+  let lead = <>Drop your mail export here</>;
+  if (progress) {
+    lead = (
+      <>
+        <span className="tabular font-mono text-sm">{progress.classified}</span> of{" "}
+        <span className="tabular font-mono text-sm">{progress.total}</span> classified
+      </>
+    );
+  } else if (pendingFile) {
+    lead = <>Reading your file…</>;
+  }
 
   const stats = useMemo(() => {
     if (!state) return null;
@@ -396,18 +676,38 @@ export function ImportMail() {
           className="sr-only"
           onChange={(e) => void onFile(e.target.files?.[0] ?? undefined)}
         />
-        <Mail
-          aria-hidden="true"
-          strokeWidth={1.5}
-          className={`mx-auto h-8 w-8 transition-colors ${
-            dragging ? "text-viz-rules" : "text-dim"
-          }`}
-        />
-        <p className="mt-4 text-[15px] font-medium text-strong">Drop your mail export here</p>
+        {/* The glyph and the field are the same object at two moments: one
+            envelope inviting a file, then one envelope per batch of the mail
+            inside it, lighting as the classifier answers. `loading.tsx` draws
+            the first of those while the route is pending; this draws the
+            second while the work is real. */}
+        {progress ? (
+          <ClassifyField classified={progress.classified} total={progress.total} />
+        ) : (
+          <Mail
+            aria-hidden="true"
+            strokeWidth={1.5}
+            className={`mx-auto h-8 w-8 transition-colors ${
+              dragging ? "text-viz-rules" : "text-dim"
+            }`}
+          />
+        )}
+        <p className="mt-4 text-[15px] font-medium text-strong">{lead}</p>
+        {/* The second line answers whatever the first one raised: at rest,
+            which formats the zone takes; while a file is in hand, WHICH file —
+            "272 of 400 classified" over a list of accepted extensions read as
+            though the extensions were the thing being counted. The name is a
+            machine value, so it takes the same mono the extensions do. */}
         <p className="mt-1 text-[13px] text-muted">
-          a Google Takeout <span className="font-mono text-xs text-strong">.mbox</span>, a single{" "}
-          <span className="font-mono text-xs text-strong">.eml</span>, or a{" "}
-          <span className="font-mono text-xs text-strong">.json</span> batch
+          {pendingFile ? (
+            <span className="font-mono text-xs text-strong">{pendingFile}</span>
+          ) : (
+            <>
+              a Google Takeout <span className="font-mono text-xs text-strong">.mbox</span>, a
+              single <span className="font-mono text-xs text-strong">.eml</span>, or a{" "}
+              <span className="font-mono text-xs text-strong">.json</span> batch
+            </>
+          )}
         </p>
         <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
           <button
@@ -422,7 +722,6 @@ export function ImportMail() {
           Export from Gmail via <span className="text-muted">Google Takeout → Mail</span>. Up to{" "}
           {DEFAULT_MESSAGE_CAP} messages are classified per file to keep the tab responsive.
         </p>
-        {busy && <p className="mt-2 text-xs text-dim">reading…</p>}
       </div>
 
       {/* The privacy guarantee — the whole point, said once, at the moment of

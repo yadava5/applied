@@ -7,9 +7,11 @@ and optional non-regression checks against a saved baseline report.
 ``--compare-rules`` additionally scores the rules-only classifier over the same
 examples in the same invocation and prints the delta, which is the only
 measurement of whether the learned layers earn their place; every report also
-records the artifacts that answered (``artifacts``) and the SHA-256 of the
-corpus, so a verdict can be traced to the checkpoint and dataset that produced
-it. See ``docs/ML_PROMOTION_POLICY.md``.
+records the artifacts that answered (``artifacts``), the SHA-256 of the corpus,
+the code rev the run was taken at (``meta.code_rev``) and the interpreter and
+package versions it ran under (``meta.environment``), so a verdict can be traced
+to the checkpoint, dataset, tree and stack that produced it. See
+``docs/ML_PROMOTION_POLICY.md``.
 """
 
 from __future__ import annotations
@@ -17,7 +19,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import importlib
 import json
+import platform
+import subprocess
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -107,10 +112,171 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+# The packages whose version can change what a learned layer answers, keyed by
+# the name `requirements.txt` states a floor for and valued by the module the
+# interpreter actually imports.
+#
+# WHY EACH ONE IS HERE, because a list nobody can justify is a list that grows:
+#
+# * `scikit-learn` is the one that has already bitten. The committed SetFit
+#   head was pickled under 1.8.0 and unpickles under 1.9.0 with an
+#   `InconsistentVersionWarning`, and with no environment recorded there is no
+#   way to tell from the artifact alone whether that mattered (#446, item 7).
+# * `setfit` and `transformers` are a PAIR with a silent failure between them:
+#   `requirements.txt` records that setfit 1.1.3 raises under transformers 5.x
+#   and that the constraint solver still permits the combination. Only a
+#   recorded pair can diagnose that after the fact.
+# * `sentence-transformers` is what loads the embedding layer, and `numpy` is
+#   the substrate both it and the sklearn head compute on.
+# * `torch` is recorded although it is NOT in `requirements.txt`:
+#   `backend-ci.yml` says it is installed out-of-band from the CPU index, so it
+#   is the one version in this list that no manifest pins -- which makes
+#   recording it worth more, not less.
+#
+# The rules layer needs NONE of them, so on a `--mode rules` run every entry
+# may legitimately be absent. Absent is recorded as null rather than dropped;
+# see `_package_versions`.
+PROVENANCE_PACKAGES = {
+    "numpy": "numpy",
+    "scikit-learn": "sklearn",
+    "sentence-transformers": "sentence_transformers",
+    "setfit": "setfit",
+    "torch": "torch",
+    "transformers": "transformers",
+}
+
+
 def _string_or_empty(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _git(*args: str) -> str | None:
+    """Stdout of one git command against this checkout, or None if git cannot answer.
+
+    Every failure mode returns None rather than raising -- git absent, this
+    tree not a checkout (the vendored `ml/demo/space/jobtracker` copy is one),
+    a git that errors. Provenance describes a run; it must never be the reason
+    a run fails.
+    """
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(BACKEND_DIR), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception:
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout
+
+
+def _code_rev() -> dict[str, Any]:
+    """The tree the run was taken at: the commit, AND whether it describes the tree.
+
+    A bare `git rev-parse HEAD` is not provenance. A run taken with uncommitted
+    edits is a run that no commit reproduces, and the recorded sha then points
+    a later reader at a tree that never produced the number. So dirtiness is
+    recorded next to the commit, and it means: **the commit is the nearest
+    ancestor, not the tree**.
+
+    WHAT A READER SHOULD DO WHEN `dirty` IS TRUE. Treat the baseline as a
+    measurement without a reproducible source. It is still evidence of what the
+    working copy scored; it is not a floor anything should be judged against,
+    because nothing can be checked out that reproduces it. Re-record from a
+    clean checkout before using it as one.
+
+    UNTRACKED FILES COUNT AS DIRTY. `git status --porcelain` lists them by
+    default and that default is kept deliberately: a file nobody committed can
+    still change what a run answers. `--porcelain` reports paths relative to
+    the REPOSITORY ROOT whatever directory git is invoked from, which is worth
+    knowing before anyone tries to match on one.
+
+    SO DOES AN EARLIER RUN'S OWN OUTPUT, and that is deliberate too.
+    `scripts/generate_eval_baselines.sh` records the rules baseline and then
+    the hybrid one from a single invocation, so the second run sees the first
+    run's file and records `dirty: true`. Nothing here excuses it. The moment
+    `dirty: false` means "nothing differed EXCEPT a list of paths somebody
+    curated", a reader has to go and read the list to know what the flag
+    claims, and the list only ever grows. Re-record the two from separate clean
+    trees if both are to carry a clean flag.
+
+    WHAT `dirty: false` DOES NOT MEAN. `--porcelain` does not list IGNORED
+    paths, and the SetFit checkpoints are ignored by construction -- trained on
+    disk, never committed, rotating (`_collect_artifact_provenance`). So a
+    clean tree says the CODE is the committed code and says nothing about which
+    MODEL answered. The two halves together are the provenance: `meta.code_rev`
+    here, and `artifacts.setfit.checkpoint` with its `trained_at` alongside.
+    """
+    head = _git("rev-parse", "HEAD")
+    if head is None:
+        return {"commit": None, "dirty": None}
+    status = _git("status", "--porcelain")
+    return {
+        "commit": head.strip(),
+        # None, not False. "git could not tell us" is a different fact from
+        # "nothing differs", and recording the second for the first is exactly
+        # the over-claim this block exists to prevent.
+        "dirty": None if status is None else bool(status.strip()),
+    }
+
+
+def _package_versions() -> dict[str, str | None]:
+    """Version of each `PROVENANCE_PACKAGES` entry, read by IMPORTING it.
+
+    IMPORTED rather than read from installed metadata, because the version that
+    matters is the one this interpreter actually loads. `pip list` is empty in
+    this repo's uv-managed venv, and `importlib.metadata` answers about a
+    *distribution* rather than about whichever module wins on `sys.path` -- a
+    directory that shadows an installed package reports the installed version
+    while executing entirely different code. Importing answers the question
+    that was asked.
+
+    COST, measured 2026-09-07 in `backend/.venv311`: 6.8 s for a cold import of
+    all six, and ~0 s once anything else has loaded them. A `--mode rules` run
+    pays that and needs none of them. That is the deliberate price of the
+    stanza having the same shape in every mode, so a rules baseline and a
+    cascade baseline can be compared field by field instead of by absence.
+
+    `Exception`, not `ImportError`: a half-installed torch raises OSError out of
+    a shared library, and collecting provenance must not be able to fail a run.
+    """
+    versions: dict[str, str | None] = {}
+    for name, module_name in PROVENANCE_PACKAGES.items():
+        try:
+            module = importlib.import_module(module_name)
+        except Exception:
+            # null means ABSENT (or unimportable). The key is still written, so
+            # a reader can see the package was looked for -- a missing key
+            # reads as "nobody thought to record it", which is a different and
+            # much weaker statement.
+            versions[name] = None
+            continue
+        version = getattr(module, "__version__", None)
+        # "unknown" is a THIRD state -- present but unversioned -- and must not
+        # collapse into the null above.
+        versions[name] = str(version) if version else "unknown"
+    return versions
+
+
+def _environment() -> dict[str, Any]:
+    """The machine and the stack, to the precision that can change an answer.
+
+    `platform` is `system`-`machine` and deliberately NOT `platform.platform()`:
+    the latter carries the OS point release, which churns a committed baseline
+    on every laptop update while never explaining a metric. Darwin-arm64 vs
+    Linux-x86_64 is a difference that can move a float; 26.6.1 vs 26.6.2 is
+    not. It is also the string the System Card already publishes
+    ("Darwin-arm64, Python 3.11.14"), so this repository states it one way.
+    """
+    return {
+        "python": platform.python_version(),
+        "platform": f"{platform.system()}-{platform.machine()}",
+        "packages": _package_versions(),
+    }
 
 
 def load_dataset(path: Path) -> list[EvaluationExample]:
@@ -895,6 +1061,14 @@ async def run_evaluation(
     # The corpus, by content rather than by filename: a baseline is only a
     # baseline for the dataset it was measured on, and datasets get edited.
     report["meta"]["dataset_sha256"] = _sha256(dataset)
+    # WHERE the run was taken, and ON WHAT. `dataset_sha256` above says which
+    # corpus; these two say which code and which stack -- the other two things
+    # a score depends on, and the two the artifact has never carried (#446,
+    # item 7). Stamped here rather than inside `compute_report` for the same
+    # reason `dataset_sha256` is: they describe the RUN, not the labels, and
+    # `compute_report` is a pure function that unit tests call directly.
+    report["meta"]["code_rev"] = _code_rev()
+    report["meta"]["environment"] = _environment()
     if mode == "hybrid":
         report["meta"]["hybrid_profile"] = hybrid_profile
 
