@@ -756,7 +756,7 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 | Category | Technologies |
 | --- | --- |
 | **Hosting** | Vercel (Next.js + one Python function, `maxDuration` 60), Supabase Postgres, Hugging Face Spaces |
-| **CI** | GitHub Actions — 15 workflows (see [Verify it](#verify-it)) |
+| **CI** | GitHub Actions — 16 workflows (see [Verify it](#verify-it)) |
 
 ### Testing
 
@@ -906,7 +906,7 @@ applied/
 ├── api/index.py             # Vercel Python entry → jobtracker.main_cloud
 ├── requirements.txt         # the CLOUD dependency set; deliberately not backend/requirements.txt
 ├── docs/                    # architecture, API spec, ML strategy + runbooks, RLS audit
-└── .github/workflows/       # 15 workflows
+└── .github/workflows/       # 16 workflows
 ```
 
 </details>
