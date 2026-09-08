@@ -2507,6 +2507,37 @@ FACTS: dict[str, dict] = {
             {"file": "apps/web/README.md", "re": r"(\d+) spec files live under"},
         ],
     },
+    "e2eSpecNames": {
+        # THE COUNT WAS GATED AND THE LIST BESIDE IT WAS NOT (#944). `e2eSpecs`
+        # above checks the digit at SEVEN sites — three bare patterns and four
+        # with a file named — and has been green throughout,
+        # while the enumeration in the same sentence drifted freely: at the
+        # time this was written README.md named 21 of 24 and docs/DEPLOYMENT.md
+        # named 19 of 24, and the two disagreed with each other as well as with
+        # the tree. A number that is checked next to a list that is not is the
+        # estate's "a registration list is unchecked coverage" shape — the
+        # question worth asking is what is in the DIRECTORY but not in the LIST,
+        # and nothing asked it.
+        #
+        # ONE ENUMERATING SITE, deliberately. The second copy is what made the
+        # drift invisible, so DEPLOYMENT.md keeps the count and drops the names.
+        #
+        # `exact` rather than a count: the value is a string, and `same_number`
+        # would raise on it. Sorted, so the fact has one canonical spelling and
+        # `--write` is idempotent.
+        "kind": "static",
+        "describe": "the names of *.spec.ts files under apps/web/tests/e2e/",
+        "compute": lambda: ", ".join(
+            sorted(
+                n[: -len(".spec.ts")]
+                for n in tracked_in_dir("apps/web/tests/e2e")
+                if n.endswith(".spec.ts")
+            )
+        ),
+        "sites": [
+            {"re": r"\d+ spec files — ([a-z0-9,._\- ]+) \|", "exact": True},
+        ],
+    },
     "webComponentDirs": {
         "kind": "static",
         "describe": "directories under apps/web/components/",
