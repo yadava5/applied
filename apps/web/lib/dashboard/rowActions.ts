@@ -125,6 +125,37 @@ export function permanentDeleteRequest(id: number): ProxyRequest {
  */
 export const UNDO_WINDOW_SECONDS = 6;
 
+/**
+ * WHEN THE WINDOW CLOSES, NOT HOW LONG IT IS (#902, and #750 before it).
+ *
+ * The row used to hold `secondsLeft` in state and take one off it inside a
+ * `setTimeout(…, 1000)`. That makes the window's real length a count of
+ * RENDERS rather than a length of time: every step costs a wakeup, so a thread
+ * that is busy when the timer comes due does not shorten the next step, it adds
+ * to the total. Measured on /demo at 1024 on `fd803c79`, with a sampler running
+ * inside the page — 6 steps of ~1.00s, window 6.02s — and again with an
+ * observer taking a snapshot of the page every 500ms, which is what the reading
+ * instrument in #902 was doing: 6 steps of ~2.00s, window 11.5s. Same build,
+ * same fixtures; the only variable was who else wanted the main thread.
+ *
+ * A deadline cannot drift that way. The label is recomputed from it against the
+ * clock ({@link undoSecondsLeft}) and the commit is armed against it, so a
+ * stalled tab, a slow machine or a re-render mid-window costs at most a repaint
+ * of the number — never a second of the window.
+ */
+export function undoWindowEndsAt(now: number): number {
+  return now + UNDO_WINDOW_SECONDS * 1000;
+}
+
+/**
+ * The number the tombstone shows at `now`. Rounded UP, so a window with any
+ * time left in it never reads `0s`, and clamped so an overdue deadline reads
+ * `0s` rather than a negative.
+ */
+export function undoSecondsLeft(endsAt: number, now: number): number {
+  return Math.max(0, Math.ceil((endsAt - now) / 1000));
+}
+
 export const UNDO_LABEL = "Undo";
 
 /**

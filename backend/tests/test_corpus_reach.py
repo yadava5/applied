@@ -1,35 +1,43 @@
 """What the corpus can REACH, as a gate — #530.
 
 ``tests/corpus_independent/reach.py`` is the instrument and explains the three
-metrics; this pins them. Every number below was MEASURED on 2026-08-29 over the
-17,260-case corpus at the default seed, and every one of them carries a
-DIRECTION and a reason, because a bare value is a transcription that gets
-re-baselined the first time somebody breaks it.
+metrics; this pins them. Every number below was MEASURED at the default seed,
+and every one of them carries a DIRECTION and a reason, because a bare value is
+a transcription that gets re-baselined the first time somebody breaks it.
+
+RE-MEASURED 2026-09-07 over the 18,320-case corpus (#522). The table below was
+recorded on 2026-08-29 over 17,260 cases and FOUR of its figures had drifted
+against the constants underneath it, because prose is not a constant and
+nothing recomputed it: it said 159 positive patterns where
+``RECORDED_POSITIVE_PATTERNS`` is 160, 111 never-fired where the ledger sums to
+112, "assessment 15 of 23" where the ledger says 16 of 24, and 104 wordings
+against 372. The constants were right each time. Every figure below is now the
+measured one; when they move again, move them here too.
 
 WHAT THIS GATE IS FOR. ``test_independent_corpus.py`` asks how well the product
 does on this corpus. This asks how much of the product the corpus is able to say
 anything about at all, and the answer today is:
 
-    positive engine patterns                              159
-      exercised by at least one of 17,260 messages         48   (30.2%)
-        of those, fired ONLY by invented families          17
-        fired by at least one ``observed-*`` family        31   (19.5%)
-      never fired by anything                             111   (69.8%)
+    positive engine patterns                              160
+      exercised by at least one of 18,320 messages         52   (32.5%)
+        of those, fired ONLY by invented families          21
+        fired by at least one ``observed-*`` family        31   (19.4%)
+      never fired by anything                             108   (67.5%)
 
-    never fired, by category:  interview 26 of 31 · rejection 20 of 36
-      offer 17 of 20 · assessment 15 of 23 · pending_application 14 of 15
+    never fired, by category:  interview 26 of 31 · rejection 16 of 36
+      offer 17 of 20 · assessment 16 of 24 · pending_application 14 of 15
       applied 11 of 25 · follow_up 8 of 9
 
-    17,260 messages · 104 distinct wordings corpus-wide
+    18,320 messages · 372 distinct wordings corpus-wide
 
-So 111 rules ship to users with nothing in the largest body of evidence this
+So 108 rules ship to users with nothing in the largest body of evidence this
 product has exercising them, and the two worst categories are the two stages a
 user cares most about.
 
-AND 30.2% IS THE GENEROUS READING OF THE 48. For 17 of them "fired" means an
+AND 32.5% IS THE GENEROUS READING OF THE 52. For 21 of them "fired" means an
 invented fixture quotes the pattern's own wording back at it — the author of
 ``rules.py`` wrote both — so the coverage that rests on mail nobody here wrote
-is 31 of 159, **19.5%**. For interview it is 1 of 31 and for offer 1 of 20.
+is 31 of 160, **19.4%**. For interview it is 1 of 31 and for offer 1 of 20.
 ``reach.py`` carries the per-category derivation; quote the two figures
 together, because the difference between them is the whole of #531. This gate does NOT close that gap — closing it is #531,
 it needs human judgement over real mail, and inventing interview and offer
@@ -99,10 +107,10 @@ POSITIVE_CATEGORIES = frozenset(
     }
 )
 
-#: METRIC 1 — PATTERN COVERAGE. The 48 patterns at least one message fires.
+#: METRIC 1 — PATTERN COVERAGE. The 52 patterns at least one message fires.
 #:
-#: DIRECTION: this set may only GROW. Pinned as a SET and not as the count 48,
-#: because ``>= 48`` is satisfied by a DIFFERENT 48 — a rewritten pattern that
+#: DIRECTION: this set may only GROW. Pinned as a SET and not as the count 52,
+#: because ``>= 52`` is satisfied by a DIFFERENT 52 — a rewritten pattern that
 #: stops matching while a new one starts would leave the number still reading
 #: 48 and the rule silently unexercised.
 RECORDED_FIRED: tuple[tuple[str, str, str], ...] = (
@@ -151,7 +159,13 @@ RECORDED_FIRED: tuple[tuple[str, str, str], ...] = (
     ('offer', 'weak', 'joining.{0,20}(our |the )team'),
     # pending_application — 1 of 15
     ('pending_application', 'strong', 'action required.{0,60}(application|submit)'),
-    # rejection — 16 of 36
+    # rejection — 20 of 36. 16 -> 20 (#522): the `eligibility-verification`
+    # family's TWINS are the first mail in this corpus to say "we are unable to
+    # proceed with your application" and "we are unable to offer you a
+    # position", so four rejection rules that had shipped with nothing
+    # exercising them now have a message behind them. It is a coverage GAIN and
+    # is recorded as one; `RECORDED_NEVER_FIRED['rejection']` falls by the same
+    # four.
     ('rejection', 'strong', '(decided|chosen|elected|will be|are)\\b.{0,20}(move|moving) forward with (a |an |the )?(other|another|different) (candidate|applicant)'),
     ('rejection', 'strong', '(move|moved|moving) forward with (a |an |the )?(other|another|different) (candidate|applicant)'),
     ('rejection', 'strong', "(won't|will not|not) (be )?(proceeding|continuing) with"),
@@ -164,13 +178,17 @@ RECORDED_FIRED: tuple[tuple[str, str, str], ...] = (
     ('rejection', 'strong', 'not to (move|proceed|go) forward.{0,30}(application|candidacy)'),
     ('rejection', 'strong', 'not.{0,20}moving forward.{0,20}(application|your candidacy)'),
     ('rejection', 'strong', 'regret to inform'),
+    ('rejection', 'strong', 'unable to (offer|extend) you\\b'),
+    ('rejection', 'strong', 'unable to (offer|extend).{0,25}(position|role|offer|interview|opportunity)'),
+    ('rejection', 'strong', 'unable to (proceed|continue|move forward) with'),
+    ('rejection', 'strong', 'unable to (proceed|continue|move forward) with.{0,25}(application|candidacy|process)'),
     ('rejection', 'strong', "unfortunately.{0,50}(not|won't|will not|unable)"),
     ('rejection', 'strong', 'will not be moving forward.{0,30}(application|candidacy)'),
     ('rejection', 'strong', 'wish you (all |only |nothing but )?(the (very )?best|well|success|luck) in your'),
     ('rejection', 'weak', 'many qualified (candidates|applicants)'),
 )
 
-#: The other half of metric 1 — the 112 rules with NO evidence behind them.
+#: The other half of metric 1 — the 108 rules with NO evidence behind them.
 #:
 #: DIRECTION: these may only FALL. A category that gains an unexercised pattern
 #: reds, which is the pressure this gate exists to apply: a rule shipped with
@@ -178,7 +196,7 @@ RECORDED_FIRED: tuple[tuple[str, str, str], ...] = (
 #: has checked. Falling is #531's job and needs the record updated to say so.
 RECORDED_NEVER_FIRED: dict[str, int] = {
     "interview": 26,          # of 31 — and interview is a stage users care about
-    "rejection": 20,          # of 36
+    "rejection": 16,          # of 36 — 20 before #522; see RECORDED_FIRED
     "offer": 17,              # of 20 — the other one
     "assessment": 16,         # of 24
     "pending_application": 14,  # of 15
@@ -223,7 +241,8 @@ RECORDED_NEVER_FIRED: dict[str, int] = {
 #: exactly the six deltas below (28+72, 54+4, 122+4, 4+16, 71+5, 76+13), so
 #: every message that moved is accounted for and no family that did not move
 #: could have. Nothing else in this file changes: ``total_patterns`` is still
-#: 159, the fired set is still 48 (the entry moved tier, it did not leave),
+#: 159, the fired set is still 48 (the entry moved tier, it did not leave) —
+#: both figures AS THEY STOOD AT #451; they are 160 and 52 today,
 #: every ``never_fired`` count is unchanged, and no ``messages`` or ``wordings``
 #: figure moves at all.
 #:
@@ -235,7 +254,7 @@ RECORDED_NEVER_FIRED: dict[str, int] = {
 #:
 #: EVERY NUMBER IN THIS TABLE IS A NUMBER AT THE DEFAULT SEED (20260822), and
 #: unlike metric 1 these two do not survive a re-seed. Metric 1's fired SET is
-#: identical at seeds 20260822, 12345 and 20260829 — the same 48 patterns, not
+#: identical at seeds 20260822, 12345 and 20260829 — the same patterns, not
 #: merely the same count. Metrics 2 and 3 are draws from a template pool, so
 #: they move: at seed 12345 ``observed-pending`` measures 24 wordings against
 #: the 25 recorded here and ``no_strong`` 65 against 76; at seed 20260829, 24
@@ -260,6 +279,11 @@ RECORDED_FAMILIES: dict[str, tuple[int, int, int]] = {
     "conditional-explainer": (400, 2, 0),
     "confirmation": (1100, 4, 0),
     "double-acknowledgement": (120, 2, 0),
+    # #522. 12 wordings: six refusals and their six twins. `no_strong` is 0 and
+    # that is the family's whole point — every refusal DOES reach a strong
+    # rejection pattern (`unfortunately … unable`), which is why it was scored
+    # a rejection at all.
+    "eligibility-verification": (120, 12, 0),
     "employer-spelling": (450, 1, 0),
     "hostile-bidi-sender": (100, 1, 0),
     "hostile-preheader": (100, 1, 0),
@@ -406,7 +430,7 @@ def _every_pattern_in(table) -> int:
 
 
 def test_the_record_is_arithmetically_whole(measured) -> None:
-    """48 fired plus 111 never fired is 159, AND the engine still holds 159.
+    """52 fired plus 108 never fired is 160, AND the engine still holds 160.
 
     Two separate claims, and only the second one touches the engine.
 
@@ -436,9 +460,9 @@ def test_the_record_is_arithmetically_whole(measured) -> None:
     shortfall = _engine_shortfall(measured)
     assert shortfall is None, shortfall
     assert len(RECORDED_FIRED) / RECORDED_POSITIVE_PATTERNS == pytest.approx(
-        0.300, abs=0.0005
+        0.325, abs=0.0005
     ), (
-        "the 30.2% this gate's docstring publishes. Two constants divided: this "
+        "the 32.5% this gate's docstring publishes. Two constants divided: this "
         "catches a mistyped ledger, never a moved engine."
     )
 
@@ -823,7 +847,15 @@ def test_the_invented_families_still_discover_nothing(measured) -> None:
     # wordings are copies of families already in this set; its evidence is in
     # the ORDER and the DAYS of its three messages, which this metric does not
     # see either.
-    assert len(zeros) == 29, "the recorded set of circular families"
+    # 29 -> 30 (#522). The 30th is `eligibility-verification`, and it belongs
+    # in this set for the reason the docstring gives rather than by exception:
+    # its twelve wordings were written by the author of the filter they grade,
+    # so no sentence in it can be one the engine has never seen. What it
+    # measures is DIRECTIONAL — 60 refusals that must stop being rejections
+    # against 60 twins that must stay them — and that is a different question
+    # from discovery. Said here rather than left to read as evidence about
+    # real mail, which it is not.
+    assert len(zeros) == 30, "the recorded set of circular families"
     moved = {
         family: measured.families[family].no_strong
         for family in sorted(zeros)
@@ -917,7 +949,7 @@ def test_copying_an_engine_pattern_into_an_observed_wording_reds_this_gate(
     Two of the three metrics move, in opposite directions, which is what makes
     them independent measurements rather than one number twice:
 
-    * pattern coverage RISES, 48 -> 49, and ``interview``'s ledger of
+    * pattern coverage RISES, 52 -> 53, and ``interview``'s ledger of
       unexercised rules falls 26 -> 25. Coverage alone would call that an
       improvement, which is exactly why coverage alone is not the gate.
     * ``observed-closure``'s discovery rate COLLAPSES, 52.5% -> 2.5%, and
@@ -961,7 +993,7 @@ def test_copying_an_engine_pattern_into_an_observed_wording_reds_this_gate(
 
     assert _MUTATION in mutated.fired
     assert mutated.fired == measured.fired | {_MUTATION}
-    assert len(mutated.fired) == len(measured.fired) + 1 == 49
+    assert len(mutated.fired) == len(measured.fired) + 1 == 53
     assert mutated.never_fired_by_category["interview"] == 25
 
     closure = mutated.families["observed-closure"]
