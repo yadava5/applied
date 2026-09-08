@@ -510,6 +510,33 @@ def matches_company_token(company_name: str, token: str) -> bool:
     return left.split(" ")[0] == right.split(" ")[0]
 
 
+def company_match_keys(company_name: str) -> tuple[str, str] | None:
+    """The two values :func:`matches_company_token` compares, or ``None``.
+
+    ``matches_company_token(a, b)`` is true exactly when both sides yield keys
+    and those tuples agree in their FIRST or their SECOND element — the full
+    normalized name, or its leading word. Nothing here is a second rule: the
+    normalization and the split are the ones three lines up, read from the same
+    function.
+
+    Exposed because a caller holding MANY names has to index them, not scan
+    them. ``attach_reminders_to_their_cards`` asks "does any live card belong to
+    this employer?" once per queued row, and a linear scan over the board is
+    O(rows x cards) — measured at 5x the corpus replay's wall time, which is
+    slower than the per-row database lookup it was added to avoid. With this the
+    board is indexed once and each row costs two set lookups.
+
+    ``None`` means the name normalizes to nothing, which is what makes
+    ``matches_company_token`` return False for it whatever the other side is; a
+    caller must treat ``None`` as "matches nothing", never as a wildcard.
+    """
+
+    normalized = _normalize_token(company_name or "")
+    if not normalized:
+        return None
+    return normalized, normalized.split(" ")[0]
+
+
 def summarize(items: Iterable[PipelineItem]) -> dict[str, int]:
     """Count messages per canonical category (every bucket present, 0-filled)."""
 

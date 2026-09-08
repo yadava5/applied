@@ -3299,6 +3299,47 @@ async def attach_reminders_to_their_cards(
         )
     ).all()
 
+    # ONE QUERY FOR THE WHOLE PASS, and it is a COST bound rather than a rule.
+    #
+    # Everything below decides with :func:`_resolve_application_for_email`,
+    # which issues two statements per row it is asked about. Measured over the
+    # independent corpus, 40 day-batches: 27,502 rows examined and 137 attached,
+    # 1.77x the replay's wall time. That is ``_persist_message_refs``' own bug
+    # one function over — ~13 ms function-to-pooler, paid sequentially, against
+    # a 10 s per-user cron budget — and "production's queue is small today" is
+    # not a bound.
+    #
+    # So the employer is named FIRST (``resolve_employer`` is pure) and a row
+    # whose employer holds no LIVE card never reaches the resolver at all.
+    # BEHAVIOUR-PRESERVING BY CONSTRUCTION, not by measurement: a token with no
+    # live card either finds no rows (``app is None``) or finds only dismissed
+    # ones, which the off-the-board refusal below rejects. Both arms of
+    # ``_company_rows`` are mirrored — the exact lower-case equality as well as
+    # the token match — so this cannot exclude a row that lookup would return.
+    live_companies = (
+        await session.exec(
+            select(Application.company).where(
+                Application.user_id == user_id,
+                Application.dismissed_at.is_(None),
+            )
+        )
+    ).all()
+    # INDEXED, NOT SCANNED. The first draft of this filter ran
+    # ``any(matches_company_token(name, token) for name in live_companies)`` and
+    # was SLOWER than the lookups it replaced — 5.06x the replay against 1.77x —
+    # because it is O(queued rows x cards) in Python. Two sets and two
+    # constant-time probes instead; :func:`pipeline.company_match_keys` is where
+    # the equivalence to ``matches_company_token`` is stated and it is the same
+    # normalization, not a second one.
+    live_exact = {(name or "").lower() for name in live_companies}
+    live_full: set[str] = set()
+    live_heads: set[str] = set()
+    for name in live_companies:
+        keys = pipeline.company_match_keys(name or "")
+        if keys is not None:
+            live_full.add(keys[0])
+            live_heads.add(keys[1])
+
     attached = 0
     attached_of_arrived = 0
     now = datetime.utcnow()
@@ -3326,6 +3367,12 @@ async def attach_reminders_to_their_cards(
         if employer is None:
             continue
         token, _display = employer
+        keys = pipeline.company_match_keys(token)
+        if token.lower() not in live_exact and (
+            keys is None
+            or (keys[0] not in live_full and keys[1] not in live_heads)
+        ):
+            continue  # no card here to be a reminder about — see the note above
 
         app, landing = await _resolve_application_for_email(
             session, user_id, token, email

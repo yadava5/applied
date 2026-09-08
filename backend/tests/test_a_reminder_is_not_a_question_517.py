@@ -203,6 +203,53 @@ def test_an_offer_at_a_settled_card_is_always_news() -> None:
 
 
 # ---------------------------------------------------------------------------
+# The employer index the sweep is bounded by
+# ---------------------------------------------------------------------------
+
+#: ``(company name, token)`` pairs spanning both arms of the rule and both ways
+#: of failing it. The tails are the shapes ``matches_company_token``'s own
+#: docstring names — a display name against a domain brand, and a leading-word
+#: match — plus names that normalize to nothing.
+_MATCH_PAIRS = [
+    ("Halvern Systems", "halvern"),
+    ("Halvern Systems", "halvern systems"),
+    ("Halvern Systems", "ostrow"),
+    ("Ostrow", "ostrow"),
+    ("Ostrow Labs", "ostrow"),
+    ("Ostrow Labs", "ostrowlabs"),
+    ("Y Combinator", "y-combinator"),
+    ("Together AI", "together"),
+    ("Together AI", "togetherai"),
+    ("", "halvern"),
+    ("Halvern Systems", ""),
+    ("   ", "  "),
+]
+
+
+@pytest.mark.parametrize(("company", "token"), _MATCH_PAIRS)
+def test_the_index_decides_exactly_what_the_matcher_decides(
+    company: str, token: str
+) -> None:
+    """The bound must not become a second rule.
+
+    ``attach_reminders_to_their_cards`` indexes the board with
+    ``company_match_keys`` instead of scanning it with ``matches_company_token``
+    — a linear scan measured SLOWER than the database lookups it replaced. The
+    two answers have to be the same answer, so they are executed side by side.
+    ``None`` keys mean "matches nothing", never a wildcard.
+    """
+
+    left = pipeline.company_match_keys(company)
+    right = pipeline.company_match_keys(token)
+    indexed = (
+        left is not None
+        and right is not None
+        and (left[0] == right[0] or left[1] == right[1])
+    )
+    assert indexed is pipeline.matches_company_token(company, token)
+
+
+# ---------------------------------------------------------------------------
 # The attach, against a database
 # ---------------------------------------------------------------------------
 
