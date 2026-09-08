@@ -16,6 +16,14 @@
     "down, a new file, a cleared file, a same-count SWAP that moves",
     "the digest, or a change to the skipped set. This is a RATCHET,",
     "not a backlog \u2014 moving it is a deliberate act, see docs/TEST_DATA_POLICY.md.",
+    "'ids' is the same ledger for the shape of a Gmail thread or",
+    "message id \u2014 sixteen lowercase hex characters \u2014 counted and",
+    "digested per file and ratcheted identically. An id INVENTED",
+    "for a fixture goes in the reserved band (eight leading zeros)",
+    "and is silent, so a line here is an id-SHAPED token outside",
+    "that band. It is NOT a claim that the token came from a real",
+    "mailbox: no text scan can tell that, and several of these",
+    "files predate the band. A ledger, not an accusation.",
     "Regenerate with: python3 scripts/check_test_data.py --write-baseline"
   ],
   "files": {
@@ -454,6 +462,116 @@
     "vercel-ignore-build.sh": {
       "count": 1,
       "digest": "3de132cd98be7bf2"
+    }
+  },
+  "ids": {
+    "apps/web/lib/api/schema.d.ts": {
+      "count": 1,
+      "digest": "c79874cd1236909a"
+    },
+    "apps/web/tests/unit/og-card.test.mjs": {
+      "count": 1,
+      "digest": "29b3bd49d22a3415"
+    },
+    "apps/web/tests/unit/review-classify.test.mjs": {
+      "count": 4,
+      "digest": "cca24b02f6ecd20b"
+    },
+    "backend/jobtracker/classifier/rules.py": {
+      "count": 5,
+      "digest": "c8c17fceadfe2ece"
+    },
+    "backend/jobtracker/cloud/applications.py": {
+      "count": 1,
+      "digest": "c79874cd1236909a"
+    },
+    "backend/jobtracker/cloud/pipeline.py": {
+      "count": 5,
+      "digest": "c96c7b347ac2ebd6"
+    },
+    "backend/tests/corpus_independent/generate.py": {
+      "count": 4,
+      "digest": "69a4775fd96e92f9"
+    },
+    "backend/tests/corpus_independent/observed.py": {
+      "count": 36,
+      "digest": "2e4fd7abd4158692"
+    },
+    "backend/tests/test_a_reply_speaks_for_itself.py": {
+      "count": 5,
+      "digest": "c8c17fceadfe2ece"
+    },
+    "backend/tests/test_a_resync_keeps_the_humans_decisions.py": {
+      "count": 5,
+      "digest": "426b175614c8d070"
+    },
+    "backend/tests/test_a_second_application_is_a_second_card.py": {
+      "count": 1,
+      "digest": "92ff56094cbce50d"
+    },
+    "backend/tests/test_application_identity.py": {
+      "count": 2,
+      "digest": "549a10f8f7d6ad46"
+    },
+    "backend/tests/test_application_mail_is_capped.py": {
+      "count": 1,
+      "digest": "83e8aaa74ee07b08"
+    },
+    "backend/tests/test_cloud_pipeline.py": {
+      "count": 12,
+      "digest": "9a7150a3f688d29e"
+    },
+    "backend/tests/test_gmail_oauth_cloud.py": {
+      "count": 15,
+      "digest": "9a7150a3f688d29e"
+    },
+    "backend/tests/test_identity_from_lever_confirmations.py": {
+      "count": 2,
+      "digest": "1f854052da508bb9"
+    },
+    "backend/tests/test_identity_from_microsoft_confirmations.py": {
+      "count": 2,
+      "digest": "92ff56094cbce50d"
+    },
+    "backend/tests/test_independent_corpus.py": {
+      "count": 5,
+      "digest": "5436a9ae7ef0abf2"
+    },
+    "backend/tests/test_ingestion_hole_166.py": {
+      "count": 4,
+      "digest": "0677566c7473fdaf"
+    },
+    "backend/tests/test_lifecycle_drop_is_counted.py": {
+      "count": 5,
+      "digest": "bad6fdf6258f9cf8"
+    },
+    "backend/tests/test_resync_splits_the_merged_card.py": {
+      "count": 4,
+      "digest": "e4f0b8ef4ddf6ceb"
+    },
+    "backend/tests/test_rules_classifier_rejection.py": {
+      "count": 4,
+      "digest": "f13caf9e5c6801ba"
+    },
+    "backend/tests/test_sync_request_is_bounded.py": {
+      "count": 3,
+      "digest": "98ebec475297f162"
+    },
+    "backend/tests/test_test_data_gate.py": {
+      "count": 6,
+      "digest": "eb7914efab6c5083"
+    },
+    "backend/tests/test_thread_id_survives_a_metadata_refetch.py": {
+      "count": 7,
+      "digest": "ef69ec661c98bbdd"
+    },
+    "backend/tests/test_unsure_does_not_remove_a_card.py": {
+      "count": 3,
+      "digest": "408b5395a32f6be3"
+    },
+    "ml/demo/space/jobtracker/classifier/rules.py": {
+      "count": 5,
+      "digest": "c8c17fceadfe2ece"
     }
   },
   "skipped": {

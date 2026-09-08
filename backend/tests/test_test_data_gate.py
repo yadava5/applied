@@ -249,7 +249,7 @@ def test_a_same_count_swap_reds(tree: Path) -> None:
     path = tree / "backend" / "tests" / "test_existing.py"
     path.write_text(f'SENDER = "{_routable_2()}"\n', encoding="utf-8")
 
-    findings, skipped = gate.scan(tree)
+    findings, _ids, skipped = gate.scan(tree)
     after = findings["backend/tests/test_existing.py"]
     assert skipped == []
     # The property that makes the swap visible, stated directly: same count,
@@ -401,7 +401,7 @@ def test_a_file_that_is_not_text_is_skipped_and_never_a_zero(tree: Path) -> None
     blob.write_bytes(b"\x89PNG\r\n\x1a\n\xff\xfe\x00\x01 not utf-8 \xc3\x28\n")
     subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
 
-    findings, skipped = gate.scan(tree)
+    findings, _ids, skipped = gate.scan(tree)
     assert [(s.path, s.kind) for s in skipped] == [
         ("backend/tests/logo.png", gate.BINARY)
     ], skipped
@@ -439,7 +439,7 @@ def test_write_baseline_refuses_a_scanned_file_that_stopped_decoding(
     path = tree / "backend" / "tests" / "test_pair.py"
     path.write_bytes(path.read_bytes() + b"\xff\xfe\n")
 
-    findings, skipped = gate.scan(tree)
+    findings, _ids, skipped = gate.scan(tree)
     assert "backend/tests/test_pair.py" not in findings, findings
     assert [(s.path, s.kind) for s in skipped] == [
         ("backend/tests/test_pair.py", gate.BINARY)
@@ -464,7 +464,7 @@ def test_a_tracked_file_that_cannot_be_read_at_all_reds(tree: Path) -> None:
 
     (tree / "backend" / "tests" / "test_existing.py").unlink()
 
-    findings, skipped = gate.scan(tree)
+    findings, _ids, skipped = gate.scan(tree)
     assert [(s.path, s.kind) for s in skipped] == [
         ("backend/tests/test_existing.py", gate.UNREADABLE)
     ], skipped
@@ -598,7 +598,7 @@ def test_a_tree_no_scan_root_ever_covered_is_scanned_now(tree: Path) -> None:
     (unscanned / "rules.py").write_text(f'RELAY = "{_routable()}"\n', encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
 
-    findings, _ = gate.scan(tree)
+    findings, _ids, _ = gate.scan(tree)
     assert findings["docs/space/jobtracker/classifier/rules.py"].count == 1, findings
     assert _check(gate, tree) == 1
 
@@ -620,7 +620,7 @@ def test_the_same_file_on_a_reserved_domain_stays_green(tree: Path) -> None:
     (unscanned / "rules.py").write_text(f'RELAY = "{_reserved()}"\n', encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
 
-    findings, _ = gate.scan(tree)
+    findings, _ids, _ = gate.scan(tree)
     assert "docs/space/jobtracker/classifier/rules.py" not in findings, findings
     assert _check(gate, tree) == 0
 
@@ -818,13 +818,13 @@ def test_each_assembled_form_reds_and_its_reserved_twin_stays_green(
 
     probe.write_text(routable + "\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
-    findings, skipped = gate.scan(tree)
+    findings, _ids, skipped = gate.scan(tree)
     assert skipped == []
     assert findings[PROBE].count == 1, findings
     assert _check(gate, tree) == 1
 
     probe.write_text(reserved + "\n", encoding="utf-8")
-    findings, _ = gate.scan(tree)
+    findings, _ids, _ = gate.scan(tree)
     assert PROBE not in findings, findings
     assert _check(gate, tree) == 0
 
@@ -845,7 +845,7 @@ def test_a_wholly_interpolated_domain_cannot_be_proved_and_counts(tree: Path, so
     probe.write_text(source + "\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
 
-    findings, _ = gate.scan(tree)
+    findings, _ids, _ = gate.scan(tree)
     assert findings[PROBE].count == 1, findings
     assert _check(gate, tree) == 1
 
@@ -968,7 +968,7 @@ def test_swapping_a_templates_literal_suffix_reds(tree: Path) -> None:
     before = _recorded(tree)[PROBE]
 
     probe.write_text('SENDER = f"careers@{domain}.io"\n', encoding="utf-8")
-    findings, _ = gate.scan(tree)
+    findings, _ids, _ = gate.scan(tree)
     assert findings[PROBE].count == before["count"] == 1
     assert findings[PROBE].digest != before["digest"]
     assert _check(gate, tree) == 1
@@ -1075,7 +1075,7 @@ def test_a_bomless_utf16_file_is_read_rather_than_scanned_empty(tree: Path) -> N
     utf16.write_bytes(raw)
     subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
 
-    findings, skipped = gate.scan(tree)
+    findings, _ids, skipped = gate.scan(tree)
     assert "backend/tests/fixture_utf16.py" in findings, findings
     assert findings["backend/tests/fixture_utf16.py"].count == 1
     assert [s.path for s in skipped] == [], skipped
@@ -1116,7 +1116,7 @@ def test_a_bomd_utf16_file_is_read_instead_of_skipped(tree: Path) -> None:
     utf16.write_bytes(raw)
     subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
 
-    findings, skipped = gate.scan(tree)
+    findings, _ids, skipped = gate.scan(tree)
     assert "backend/tests/fixture_utf16_bom.py" in findings, findings
     assert [s.path for s in skipped] == [], skipped
     assert _check(gate, tree) == 1
@@ -1139,7 +1139,7 @@ def test_a_utf16_file_with_only_reserved_addresses_stays_green(tree: Path) -> No
     subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
 
     _write_baseline(gate, tree)
-    findings, skipped = gate.scan(tree)
+    findings, _ids, skipped = gate.scan(tree)
     assert "backend/tests/fixture_utf16_clean.py" not in findings, findings
     assert [s.path for s in skipped] == [], skipped
     assert _check(gate, tree) == 0
@@ -1165,7 +1165,7 @@ def test_a_literal_nul_in_utf8_source_is_still_scanned(tree: Path) -> None:
     )
     subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
 
-    findings, skipped = gate.scan(tree)
+    findings, _ids, skipped = gate.scan(tree)
     assert "backend/tests/fixture_nul.py" in findings, findings
     assert [s.path for s in skipped] == [], skipped
     assert _check(gate, tree) == 1
@@ -1188,7 +1188,7 @@ def test_a_declared_bom_whose_body_is_not_that_encoding_is_a_skip(tree: Path) ->
     broken.write_bytes(b"\xff\xfe" + b"\x61\x00\x62")
     subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
 
-    findings, skipped = gate.scan(tree)
+    findings, _ids, skipped = gate.scan(tree)
     assert "backend/tests/fixture_bad_bom.py" not in findings, findings
     assert [(s.path, s.kind) for s in skipped] == [
         ("backend/tests/fixture_bad_bom.py", gate.BINARY)
@@ -1287,7 +1287,7 @@ def test_a_genuinely_clean_file_still_reports_zero(tree: Path) -> None:
     )
     subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
 
-    findings, skipped = gate.scan(tree)
+    findings, _ids, skipped = gate.scan(tree)
     assert "backend/tests/fixture_all_shapes_clean.py" not in findings, findings
     assert [s.path for s in skipped] == [], skipped
     assert _check(gate, tree) == 0
@@ -1349,3 +1349,445 @@ def test_the_interpolated_local_is_judged_on_its_domain_not_its_template(tree: P
     assert gate.matches_in(_interpolated_local(exact)) == [], (
         "an interpolated local part over an exactly-reserved domain is a finding"
     )
+
+
+# ---------------------------------------------------------------------------
+# #924: the second arm — a Gmail thread or message id
+# ---------------------------------------------------------------------------
+
+#: THE PROBE IDS ARE LITERALS IN THIS FILE, ON PURPOSE, AND THEY ARE INVENTED.
+#:
+#: Both halves matter. INVENTED, because a gate whose own fixtures carry
+#: transcribed material is the failure it exists to prevent, committed by the
+#: prevention — the sentence `check_test_data.py` opens with about denylists.
+#: And LITERAL, because assembling them at run time to keep this module out of
+#: the id baseline would be writing the gate's probes in a construction the gate
+#: cannot see, which is precisely the defect #647 was about. So this module IS
+#: an id finding, it is recorded like any other, and
+#: `test_the_probe_ids_are_outside_the_reserved_band` is what stops that
+#: recording from quietly becoming vacuous.
+_OUT_OF_BAND = "abcdef0123456789"
+#: A SECOND one, for the swap case: one id out, a brand-new one in, count
+#: unchanged. Without the digest that is the #615 hole, reopened in a new arm.
+_OUT_OF_BAND_2 = "fedcba9876543210"
+#: The shape the policy tells an author to write: eight leading zeros.
+_RESERVED_ID = "00000000feedface"
+#: Sixteen DECIMAL digits that are not a float's fraction. This is the single
+#: input separating the shipped rule from the alternative a later reader will
+#: propose — "require at least one a-f, which also drops every float". The two
+#: agree on every other input here and on all 1026 tracked files of the real
+#: tree. Under the letter rule this token is invisible, and about one real id in
+#: 1,800 is exactly this shape.
+_ALL_DECIMAL_ID = "1234567890123456"
+
+
+def _recorded_ids(tree: Path) -> dict:
+    return json.loads(_baseline(tree).read_text(encoding="utf-8"))["ids"]
+
+
+def _add(tree: Path, rel: str, body: str) -> None:
+    """Write a tracked file at `rel` and stage it."""
+
+    path = tree / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)
+
+
+def test_the_probe_ids_are_outside_the_reserved_band() -> None:
+    """The control on every red below. Without it they prove nothing.
+
+    Each red in this section works by putting a probe id into a tree and
+    watching the gate fail. A probe accidentally inside the reserved band would
+    be silent, the red would have to be coming from somewhere else, and the test
+    would be measuring something other than what it claims. So the premise is
+    asserted rather than assumed — and the reserved probe is asserted to be IN
+    the band, for the mirror-image reason.
+    """
+
+    gate = _load()
+    for probe in (_OUT_OF_BAND, _OUT_OF_BAND_2, _ALL_DECIMAL_ID):
+        assert len(probe) == 16, probe
+        assert gate.is_invented_id(probe) is False, probe
+        assert gate.ids_in(f"thread {probe} here") == [probe], probe
+
+    assert gate.is_invented_id(_RESERVED_ID) is True
+    assert gate.ids_in(f"thread {_RESERVED_ID} here") == []
+
+
+def test_a_tree_with_no_ids_records_an_empty_ledger(tree: Path) -> None:
+    """The green baseline every red below is measured against."""
+
+    gate = _load()
+    _write_baseline(gate, tree)
+
+    # An empty map rather than an omitted key: an absent key is what the
+    # pre-#924 baseline had, and it is refused for that reason.
+    assert _recorded_ids(tree) == {}
+    assert _check(gate, tree) == 0
+
+
+def test_an_out_of_band_id_in_a_brand_new_file_reds(tree: Path) -> None:
+    """The first of the two cases #924 names. Nothing to compare against."""
+
+    gate = _load()
+    _write_baseline(gate, tree)
+    assert "backend/tests/test_ids.py" not in _recorded_ids(tree)
+
+    _add(tree, "backend/tests/test_ids.py", f'THREAD = "{_OUT_OF_BAND}"\n')
+    assert _check(gate, tree) == 1
+
+
+def test_an_out_of_band_id_added_to_an_already_listed_file_reds(tree: Path) -> None:
+    """The second, and the one that matters — #924 calls it out by name.
+
+    A baseline of PATHS would be green here: the file is already listed, so a
+    check asking only "is this path known?" would wave through every id added to
+    it afterwards. The COUNT is what makes the difference, and this is the test
+    that catches a regression to a path-level ledger.
+    """
+
+    gate = _load()
+    _add(tree, "backend/tests/test_ids.py", f'A = "{_OUT_OF_BAND}"\n')
+    _write_baseline(gate, tree)
+    assert _recorded_ids(tree)["backend/tests/test_ids.py"]["count"] == 1
+    assert _check(gate, tree) == 0
+
+    _add(
+        tree,
+        "backend/tests/test_ids.py",
+        f'A = "{_OUT_OF_BAND}"\nB = "{_OUT_OF_BAND_2}"\n',
+    )
+    assert _check(gate, tree) == 1
+
+
+def test_a_same_count_id_swap_reds(tree: Path) -> None:
+    """#615's hole in the new arm: one id out, a brand-new one in, count
+    unchanged. Only the digest can see it."""
+
+    gate = _load()
+    _add(tree, "backend/tests/test_ids.py", f'A = "{_OUT_OF_BAND}"\n')
+    _write_baseline(gate, tree)
+    before = _recorded_ids(tree)["backend/tests/test_ids.py"]
+
+    _add(tree, "backend/tests/test_ids.py", f'A = "{_OUT_OF_BAND_2}"\n')
+    found = gate.scan(tree)[1]["backend/tests/test_ids.py"]
+    assert found.count == before["count"], "the count must NOT move"
+    assert found.digest != before["digest"]
+    assert _check(gate, tree) == 1
+
+
+def test_reordering_the_same_ids_stays_green(tree: Path) -> None:
+    """The control on the swap above.
+
+    Without it, the swap red is equally consistent with "the file's bytes
+    changed", which would make the digest a checksum of the file rather than of
+    the set. Same two ids, reordered and with a line added: green.
+    """
+
+    gate = _load()
+    _add(
+        tree,
+        "backend/tests/test_ids.py",
+        f'A = "{_OUT_OF_BAND}"\nB = "{_OUT_OF_BAND_2}"\n',
+    )
+    _write_baseline(gate, tree)
+    before = _recorded_ids(tree)["backend/tests/test_ids.py"]["digest"]
+
+    _add(
+        tree,
+        "backend/tests/test_ids.py",
+        f'B = "{_OUT_OF_BAND_2}"\n# reordered\nA = "{_OUT_OF_BAND}"\n',
+    )
+    assert gate.scan(tree)[1]["backend/tests/test_ids.py"].digest == before
+    assert _check(gate, tree) == 0
+
+
+def test_an_id_count_going_down_and_to_zero_both_red(tree: Path) -> None:
+    """The ratchet turns both ways here too, and these are separate branches."""
+
+    gate = _load()
+    _add(
+        tree,
+        "backend/tests/test_ids.py",
+        f'A = "{_OUT_OF_BAND}"\nB = "{_OUT_OF_BAND_2}"\n',
+    )
+    _write_baseline(gate, tree)
+
+    _add(tree, "backend/tests/test_ids.py", f'A = "{_OUT_OF_BAND}"\n')
+    assert _check(gate, tree) == 1, "2 -> 1 must red"
+
+    _add(tree, "backend/tests/test_ids.py", "A = None\n")
+    assert _check(gate, tree) == 1, "1 -> 0 must red"
+
+
+def test_re_recording_makes_a_deliberate_id_change_green(tree: Path) -> None:
+    """The escape hatch has to work, or the gate is unusable."""
+
+    gate = _load()
+    _add(tree, "backend/tests/test_ids.py", f'A = "{_OUT_OF_BAND}"\n')
+    _write_baseline(gate, tree)
+
+    _add(tree, "backend/tests/test_ids.py", "A = None\n")
+    assert _check(gate, tree) == 1
+    _write_baseline(gate, tree)
+    assert _check(gate, tree) == 0
+    assert _recorded_ids(tree) == {}
+
+
+def test_an_id_in_the_reserved_band_stays_silent(tree: Path) -> None:
+    """The policy's recommended shape must never be what turns the build red.
+
+    The id arm's version of ``test_a_reserved_domain_stays_green``, and it
+    carries the same weight: without a silent way to write an id, every new
+    fixture needing one would red and the baseline would be re-recorded by
+    reflex until nobody read it.
+    """
+
+    gate = _load()
+    _write_baseline(gate, tree)
+
+    _add(
+        tree,
+        "backend/tests/test_invented_ids.py",
+        f'A = "{_RESERVED_ID}"\n'
+        'B = "0000000000000000"\n'
+        'C = "00000000ffffffff"\n'
+        "# thread 000000001a2b3c4d, the example in docs/TEST_DATA_POLICY.md\n",
+    )
+    assert gate.scan(tree)[1] == {}
+    assert _check(gate, tree) == 0
+
+
+def test_the_reserved_band_is_the_only_thing_making_those_silent(tree: Path) -> None:
+    """The discriminating half of the test above: same path, same shape, same
+    number of sixteen-hex tokens, and the only difference is the leading run.
+
+    Without it, the green above is equally the signature of an arm that had
+    stopped matching anything at all.
+    """
+
+    gate = _load()
+    _write_baseline(gate, tree)
+
+    _add(
+        tree,
+        "backend/tests/test_invented_ids.py",
+        f'A = "{_OUT_OF_BAND}"\n'
+        'B = "1000000000000000"\n'
+        'C = "0000000fffffffff"\n'
+        "# thread 100000001a2b3c4d, one character out of the band\n",
+    )
+    assert gate.scan(tree)[1]["backend/tests/test_invented_ids.py"].count == 4
+    assert _check(gate, tree) == 1
+
+
+def test_a_float_fraction_is_not_an_id(tree: Path) -> None:
+    """91 of the 341 tokens a bare sixteen-hex pattern found on the real tree
+    were this: the fractional digits of a float. Every hit under ``mlruns/`` and
+    every hit in ``backend/data/evaluation/`` was one, and NOT ONE was an MLflow
+    run id — a run id is 32 characters and never matched at all."""
+
+    gate = _load()
+    _write_baseline(gate, tree)
+
+    _add(
+        tree,
+        "backend/data/evaluation/baseline_probe.json",
+        '{"accuracy": 0.9166666666666666, "macro_f1": 0.8333333333333334,\n'
+        ' "weighted_f1": 0.9047619047619048}\n',
+    )
+    assert gate.scan(tree)[1] == {}
+    assert _check(gate, tree) == 0
+
+
+def test_an_all_decimal_token_that_is_not_a_fraction_is_still_an_id(
+    tree: Path,
+) -> None:
+    """THE CASE THAT PINS THE RULE, and the reason it is written down.
+
+    The obvious way to drop the floats above is "require at least one a-f".
+    Measured on the real tree the two rules are indistinguishable — both leave
+    250 tokens across 27 files — so a later refactor to the letter rule would
+    pass every other test in this file and every check in CI.
+
+    It would also be wrong. A real id is sixteen draws from sixteen digits, so
+    about one in 1,800 is all-decimal, and under the letter rule that id would
+    be invisible forever while the gate printed green. This input is the only
+    thing standing between the shipped rule and that refactor: it reds here, and
+    is silent under the alternative.
+    """
+
+    gate = _load()
+    assert not any(c in "abcdef" for c in _ALL_DECIMAL_ID), _ALL_DECIMAL_ID
+    _write_baseline(gate, tree)
+
+    assert gate.ids_in(f"# thread {_ALL_DECIMAL_ID}") == [_ALL_DECIMAL_ID]
+    _add(tree, "backend/tests/test_ids.py", f"# thread {_ALL_DECIMAL_ID}\n")
+    assert _check(gate, tree) == 1
+
+
+def test_a_longer_hex_run_is_not_read_as_its_own_sixteen_characters(
+    tree: Path,
+) -> None:
+    """A 32-character MLflow run id, a 40-character git SHA and a 64-character
+    SHA-256 all CONTAIN sixteen hex characters. None of them is an id, and a
+    pattern without the boundary guards would have counted each of them."""
+
+    gate = _load()
+    _write_baseline(gate, tree)
+
+    _add(
+        tree,
+        "backend/tests/test_hashes.py",
+        "# mlflow run 41705c1748d6490f9b8d07e0774a9172\n"
+        "# sha1     da39a3ee5e6b4b0d3255bfef95601890afd80709\n"
+        "# sha256   e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n"
+        "# literal  0x1234567890abcdef\n",
+    )
+    assert gate.scan(tree)[1] == {}
+    assert _check(gate, tree) == 0
+
+
+def test_the_id_arm_reads_a_comment_and_a_docstring_not_just_a_literal(
+    tree: Path,
+) -> None:
+    """Where every id on the real tree actually sits.
+
+    Not one of them is in a fixture body — they are in module docstrings and in
+    a comment block explaining a classifier rule. An arm reading string literals
+    only would have found none of them.
+    """
+
+    gate = _load()
+    _write_baseline(gate, tree)
+
+    _add(
+        tree,
+        "backend/jobtracker/probe.py",
+        f'"""Measured in the mailbox: thread {_OUT_OF_BAND} holds two.\n\n'
+        f'Keyed on the thread alone, see {_OUT_OF_BAND_2}.\n"""\n'
+        f"# and once more in a comment: {_OUT_OF_BAND}\n",
+    )
+    assert gate.scan(tree)[1]["backend/jobtracker/probe.py"].count == 3
+    assert _check(gate, tree) == 1
+
+
+def test_the_baseline_never_records_the_id_itself(tree: Path) -> None:
+    """Paths, counts and digests only — the address arm's rule, and for a
+    sharper reason: with an id, writing it down IS the whole of the leak."""
+
+    gate = _load()
+    _add(
+        tree,
+        "backend/tests/test_ids.py",
+        f'A = "{_OUT_OF_BAND}"\nB = "{_OUT_OF_BAND_2}"\n',
+    )
+    _write_baseline(gate, tree)
+
+    raw = _baseline(tree).read_text(encoding="utf-8")
+    assert _OUT_OF_BAND not in raw
+    assert _OUT_OF_BAND_2 not in raw
+
+
+def test_the_baseline_file_itself_is_not_read_for_ids(tree: Path) -> None:
+    """``ID_EXCLUDED``, and it is a fixed point rather than a preference.
+
+    A digest IS sixteen lowercase hex characters, so recording a count of the
+    baseline's own digests writes another digest and moves the count. Measured
+    on the real tree with the exclusion removed: consecutive writes went 276,
+    then 277, and a check run straight after a write failed.
+
+    The assertion on the LIST is deliberate. It is the one place saying the id
+    arm's exclusions are exactly one path, so adding a second is a line in a
+    diff somebody has to justify — the property `EXCLUDED` was inverted to get
+    in #623. And `EXCLUDED` is asserted empty here too, because putting this
+    path there instead would have silently narrowed the ADDRESS scan.
+    """
+
+    gate = _load()
+    assert [p for p, _reason in gate.ID_EXCLUDED] == ["scripts/test_data_baseline.json"]
+    assert gate.EXCLUDED == (), "the id arm must not narrow the address scan"
+
+    _add(tree, "backend/tests/test_ids.py", f'A = "{_OUT_OF_BAND}"\n')
+    _write_baseline(gate, tree)
+
+    # The baseline now holds a digest per file, every one of them the shape this
+    # arm matches -- and it is still green, and re-recording is still stable.
+    for entry in json.loads(_baseline(tree).read_text(encoding="utf-8"))["files"].values():
+        assert HEX16.match(entry["digest"]), entry
+    assert "scripts/test_data_baseline.json" not in _recorded_ids(tree)
+    assert _check(gate, tree) == 0
+    _write_baseline(gate, tree)
+    assert _check(gate, tree) == 0
+
+
+def test_a_pre_924_baseline_is_refused_not_half_read(tree: Path) -> None:
+    """A baseline with no ``ids`` section is an older format, not a tree with no
+    ids. Reading it as the latter would make every id already in the repository
+    look brand new, red a tree nobody had touched, and train the reader to
+    re-record without looking."""
+
+    gate = _load()
+    _add(tree, "backend/tests/test_ids.py", f'A = "{_OUT_OF_BAND}"\n')
+    _write_baseline(gate, tree)
+
+    data = json.loads(_baseline(tree).read_text(encoding="utf-8"))
+    del data["ids"]
+    _baseline(tree).write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as caught:
+        _check(gate, tree)
+    assert "pre-#924" in str(caught.value)
+
+
+def test_the_two_arms_are_ratcheted_separately(tree: Path) -> None:
+    """An id change alone reds even though no address moved.
+
+    The arms share a walk and a baseline file, which is exactly the arrangement
+    in which one of them can quietly stop being consulted.
+    """
+
+    gate = _load()
+    _write_baseline(gate, tree)
+    addresses_before = json.loads(_baseline(tree).read_text(encoding="utf-8"))["files"]
+
+    _add(tree, "backend/tests/test_ids.py", f'A = "{_OUT_OF_BAND}"\n')
+    findings, id_findings, _ = gate.scan(tree)
+    assert {p: f.count for p, f in findings.items()} == {
+        p: e["count"] for p, e in addresses_before.items()
+    }, "no address moved"
+    assert id_findings, "an id did"
+    assert _check(gate, tree) == 1
+
+
+def test_an_id_red_says_so_rather_than_blaming_an_address(tree: Path, capsys) -> None:
+    """The arms are fixed in opposite ways — an address by moving it to a domain
+    that cannot route, an id by inventing one in the reserved band — so a message
+    naming the wrong arm sends the reader to the wrong remedy."""
+
+    gate = _load()
+    _write_baseline(gate, tree)
+    capsys.readouterr()
+
+    _add(tree, "backend/tests/test_ids.py", f'A = "{_OUT_OF_BAND}"\n')
+    assert _check(gate, tree) == 1
+
+    out = capsys.readouterr().out
+    assert "the recorded set of id-shaped tokens has moved" in out
+    assert "reserved band" in out.lower(), "it must name the id remedy"
+    assert "eight zeros" in out, "and say what the band actually is"
+    assert "non-reserved sender addresses has moved" not in out
+    # And it republishes nothing while explaining itself.
+    assert _OUT_OF_BAND not in out
+
+
+def test_ids_in_counts_occurrences_and_digests_the_set() -> None:
+    """The same split the address arm makes, for the same reason: a second copy
+    of an id moves the count and not the digest; a swap moves the digest and not
+    the count. Either fails."""
+
+    gate = _load()
+    twice = f"{_OUT_OF_BAND} and again {_OUT_OF_BAND}"
+    assert gate.ids_in(twice) == [_OUT_OF_BAND, _OUT_OF_BAND]
+    assert gate.digest_of(gate.ids_in(twice)) == gate.digest_of([_OUT_OF_BAND])
