@@ -1350,6 +1350,29 @@ def transcript_block(text: str) -> tuple[int, int, str, list[str], str] | None:
     return None
 
 
+#: The published transcript's lines, kept OUT of `problems` so the one place
+#: that echoes a command's output is a single isolated sink.
+#:
+#: CodeQL reads the registered command — which greps for the *identifier*
+#: `settings.secret_encryption_key` — as a secret source, and so reads printing
+#: its output as `py/clear-text-logging-sensitive-data`. What is actually
+#: echoed is `grep -n` output over tracked source files: three lines of the
+#: repository's own public code. No secret VALUE is read, and none could be:
+#: the command searches the source tree, not the environment. The finding is
+#: confined here rather than suppressed on the general problem printer, so a
+#: genuine alert on that printer would still be reported.
+TRANSCRIPT_EVIDENCE: list[str] = []
+
+
+def print_transcript_evidence() -> None:
+    """Echo the published block beside what the command actually printed."""
+    if not TRANSCRIPT_EVIDENCE:
+        return
+    print("\n  the transcript, as published and as it now runs:")
+    for line in TRANSCRIPT_EVIDENCE:
+        print(f"      {line}")  # codeql[py/clear-text-logging-sensitive-data]
+
+
 def check_transcripts(files: dict[str, dict], mode: str, problems: list[str]) -> int:
     rewrites = 0
     for spec in TRANSCRIPTS:
@@ -1391,11 +1414,13 @@ def check_transcripts(files: dict[str, dict], mode: str, problems: list[str]) ->
         problems.append(
             f"{spec['doc']}: the published transcript is not what the command "
             f"prints ({spec['why']}).\n"
-            + "".join(f"      document  {x}\n" for x in published)
-            + "".join(f"      actual    {x}\n" for x in actual)
-            + "      The document says this was checked by running it. Re-run "
-            "`--write`."
+            f"      {len(published)} line(s) published, {len(actual)} printed, "
+            f"{len(set(published) ^ set(actual))} differing — echoed below.\n"
+            f"      The document says this was checked by running it. Re-run "
+            f"`{SELF} --write`."
         )
+        TRANSCRIPT_EVIDENCE.extend(f"document  {x}" for x in published)
+        TRANSCRIPT_EVIDENCE.extend(f"actual    {x}" for x in actual)
     return rewrites
 
 
@@ -1553,6 +1578,7 @@ def run(mode: str) -> int:
               f"{len(problems)} problem(s).\n")
         for p in problems:
             print(f"  {p}")
+        print_transcript_evidence()
         print(
             "\nFAIL — the compliance pack disagrees with the tree. These documents "
             "are read by\nassessors who follow the citations; a citation that "
