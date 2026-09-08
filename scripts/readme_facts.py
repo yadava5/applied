@@ -603,6 +603,14 @@ WEB_IMPORT_MAIL = "apps/web/components/import/ImportMail.tsx"
 # which is already a claim site. Corrected in one file and not the other is the
 # exact failure this checker exists to prevent, so the sentence is now a site.
 BROWSER_SITE_README = "ml/browser/site/README.md"
+# The browser demo's PAGE. Registered 2026-09-07 for the same reason its README
+# was, one step worse: it published the macro-F1 in three places -- the
+# `<meta name="description">` a search result shows, the hero paragraph and the
+# facts row -- and it was registered in NOTHING. No fact named it and no
+# workflow path filter mentioned it (`.github/workflows/frontend-ci.yml` names
+# `ml/browser/site/app.js` and only that), so the three figures went six months
+# stale with no gate anywhere able to notice (#446).
+BROWSER_SITE_INDEX = "ml/browser/site/index.html"
 BROWSER_DEMO_JS = "ml/browser/site/app.js"
 BOOKLET_CONTENT = "booklet/src/content.ts"
 
@@ -1416,6 +1424,172 @@ def corpus_recorded(key: str) -> int:
     return int(ast.literal_eval(node)[key])
 
 
+DEPLOYMENT_DOC = "docs/DEPLOYMENT.md"
+# NAMED FOR WHAT IT IS, NOT FOR ITS FILENAME, and that is load-bearing rather
+# than taste. `describe` strings are interpolated into the messages `--check`
+# prints on failure, so a constant that reaches one is on a path CodeQL models
+# as a logging sink. `py/clear-text-logging-sensitive-data` classifies any
+# identifier matching its credential heuristic as sensitive, "auth" included, so
+# a constant called GMAIL_OAUTH holding a file PATH raised two high-severity
+# alerts the moment it appeared in a printed message (PR #913). The value is
+# `backend/jobtracker/cloud/gmail_oauth.py` and always was. Renaming removes the
+# heuristic's grounds rather than suppressing its finding, and it is the more
+# accurate name: what this file is read for here is the sync target, not OAuth.
+# `ROUTE_AUTH_GATE` above is the same shape and does NOT alert, because it never
+# reaches a `describe`. Do not rename this back.
+GMAIL_SYNC_MODULE = "backend/jobtracker/cloud/gmail_oauth.py"
+GMAIL_QUOTA_GATE = "backend/tests/test_the_page_size_fits_gmails_minute.py"
+BACKEND_CONFIG = "backend/jobtracker/config.py"
+
+
+def _field_default(rel: str, name: str) -> ast.expr:
+    """The `default=` of a pydantic ``name: T = Field(default=..., ...)``.
+
+    `_assigned` only walks module level; every setting in `config.py` is an
+    annotated assignment inside the `Settings` class body, so it needs its own
+    reader rather than a loosened one.
+    """
+
+    for node in ast.walk(_module(rel)):
+        if not isinstance(node, ast.AnnAssign):
+            continue
+        if not (isinstance(node.target, ast.Name) and node.target.id == name):
+            continue
+        call = node.value
+        if isinstance(call, ast.Call):
+            for kw in call.keywords:
+                if kw.arg == "default":
+                    return kw.value
+    raise SystemExit(f"  \u2717 {rel}: no `{name}: ... = Field(default=...)`")
+
+
+def gmail_quota(name: str) -> int:
+    """One of the three quota constants the page-size gate hard-codes.
+
+    WHAT THIS COUPLING DOES AND DOES NOT BUY, because the first draft of this
+    docstring claimed a mechanism that does not exist. It said the arrangement
+    means "a change at Google reds a test". It does not, and cannot: nothing in
+    CI observes Google. A reprice reds nothing until a human re-derives the
+    constants — the real detection channel is a production 403, which is how
+    2026-05-01's change was found on 2026-09-04, four months late.
+
+    What it DOES buy: one dated record with two independent readers. The gate
+    compares our CONFIG against it; the facts below derive the DOCUMENTED
+    ARITHMETIC from it. So a change in our own config reds against the record
+    immediately, and when a human does re-derive Google's numbers, every
+    sentence built on them reds at once instead of one at a time.
+
+    That is the opposite of circular: an expectation read from the thing it
+    checks compares a config against itself. This reads from a third place that
+    neither the config nor the doc can edit.
+    """
+
+    return int(ast.literal_eval(_assigned(GMAIL_QUOTA_GATE, name)))
+
+
+CRON = "backend/jobtracker/cloud/cron.py"
+VERCEL_JSON = "vercel.json"
+
+
+def _seconds(rel: str, name: str) -> int:
+    """A `NAME = 45.0` second constant, as a whole number.
+
+    The constants are floats because they are compared against
+    `time.monotonic()`; the prose says "45 s". Rounding here rather than in the
+    site regex keeps the regex able to say what it means.
+    """
+
+    value = float(ast.literal_eval(_assigned(rel, name)))
+    if value != int(value):
+        raise SystemExit(f"  \u2717 {rel}: {name} is {value}, which the prose rounds")
+    return int(value)
+
+
+def cron_full_scan_starters() -> int:
+    """How many users can START inside one cron run when each hits its timeout.
+
+    The deadline is checked BEFORE a user is started (`cron.py`, `if
+    time.monotonic() >= deadline: break`), so a user beginning at exactly the
+    budget is refused and one beginning just under it is not. That makes the
+    count `ceil(budget / timeout)` rather than `floor`.
+
+    It is a bound on the TIMED-OUT case only, and the prose has to say so: a
+    first sync that finishes early frees its slot, so a run of fast users starts
+    MORE than this. The doc used to print "~4-5 users" as though it were a
+    property of the run rather than of one scenario.
+    """
+
+    budget = _seconds(CRON, "_CRON_RUN_BUDGET_SECONDS")
+    timeout = _seconds(CRON, "_CRON_PER_USER_TIMEOUT_SECONDS")
+    return -(-budget // timeout)
+
+
+def _vercel() -> dict:
+    return json.loads((REPO / VERCEL_JSON).read_text(encoding="utf-8"))
+
+
+def cron_runs_per_day() -> int:
+    """Cron invocations a day, from `vercel.json`'s own schedule.
+
+    Only the `*/N * * * *` shape is understood, which is the shape this project
+    uses. Anything else raises rather than guessing — a capacity figure derived
+    from a misread schedule is worse than one nobody registered.
+    """
+
+    schedules = {c["schedule"] for c in _vercel()["crons"]}
+    if len(schedules) != 1:
+        raise SystemExit(f"  \u2717 {VERCEL_JSON}: {len(schedules)} distinct cron schedules")
+    schedule = schedules.pop()
+    head, _, rest = schedule.partition(" ")
+    if not head.startswith("*/") or rest.strip() != "* * * *":
+        raise SystemExit(f"  \u2717 {VERCEL_JSON}: cron schedule {schedule!r} is not `*/N * * * *`")
+    every = int(head[2:])
+    if 1440 % every:
+        raise SystemExit(f"  \u2717 {VERCEL_JSON}: */{every} does not divide the day evenly")
+    return 1440 // every
+
+
+def function_max_duration() -> int:
+    """`maxDuration` for the Python function the cron path runs in."""
+
+    return int(_vercel()["functions"]["api/index.py"]["maxDuration"])
+
+
+def sync_scan_target() -> int:
+    """`_SYNC_DEFAULT_SCAN_TARGET` — how deep one cron/`Sync now` scan reads."""
+
+    return int(ast.literal_eval(_assigned(GMAIL_SYNC_MODULE, "_SYNC_DEFAULT_SCAN_TARGET")))
+
+
+def sync_scan_pages() -> int:
+    """Whole Gmail pages one full scan reads — `ceil(target / page_size)`."""
+
+    target = sync_scan_target()
+    page = gmail_page_size()
+    return -(-target // page)
+
+
+def gmail_page_size() -> int:
+    """`gmail_fetch_page_size` — messages per `messages.list` page."""
+
+    return int(ast.literal_eval(_field_default(BACKEND_CONFIG, "gmail_fetch_page_size")))
+
+
+def sync_scan_units() -> int:
+    """Gmail quota units a COMPLETED full scan spends, derived not quoted.
+
+    A scan reads whole pages: `ceil(target / page_size)` of them, each costing
+    one `messages.list` plus `page_size` `messages.get`. Every input is a
+    constant in the tree, so this reds if the target moves, if the page size
+    moves, or if Google's per-call costs move — which is the whole reason
+    #911 exists. The prior sentence in DEPLOYMENT.md multiplied a stale depth
+    by a stale unit cost and the two errors did not cancel.
+    """
+
+    page = gmail_page_size()
+    return sync_scan_pages() * (gmail_quota("UNITS_PER_GET") * page + gmail_quota("UNITS_PER_LIST"))
+
+
 FACTS: dict[str, dict] = {
     # ── the ten-thousand-message adversarial corpus ──
     "corpusSize": {
@@ -1889,6 +2063,16 @@ FACTS: dict[str, dict] = {
                 "re": r'PROOF: "([\d.]+) macro-F1 \(rules stage\), CI-gated"',
                 "file": BOOKLET_CONTENT,
             },
+            # THE BROWSER DEMO PAGE, three sites (#446). Each span is cut to
+            # hold ONE number: the meta description and the hero sentence both
+            # continue "…, CI-gated at 0.95", and the facts row puts the figure
+            # and the floor on the same line, so a span that ran to the end of
+            # any of them would drag the floor inside it with no capture group
+            # on it — precisely what `uncaptured_numbers()` reports. The floor
+            # is claimed separately, by `macroF1Floor` below.
+            {"re": r"No server\. Rules stage ([\d.]+) macro-F1", "file": BROWSER_SITE_INDEX},
+            {"re": r"rules stage scores ([\d.]+) macro-F1", "file": BROWSER_SITE_INDEX},
+            {"re": r"<dd>([\d.]+) / gate", "file": BROWSER_SITE_INDEX},
         ],
     },
     "rulesAccuracy": {
@@ -1956,6 +2140,13 @@ FACTS: dict[str, dict] = {
             r"--min-macro-f1 ([\d.]+)",
             r"promotion past the ([\d.]+) floor",
             r"The macro-F1 floor is ([\d.]+) against",
+            # The other half of each browser-demo claim. The page states the
+            # score and the floor in the same breath three times over, and the
+            # floor is the half that would have stayed plausible for years:
+            # nothing else on that page reads the workflow it comes from.
+            {"re": r'macro-F1, CI-gated at ([\d.]+)\." />', "file": BROWSER_SITE_INDEX},
+            {"re": r"eval set, CI-gated at ([\d.]+)\.</p>", "file": BROWSER_SITE_INDEX},
+            {"re": r"/ gate ([\d.]+)</dd>", "file": BROWSER_SITE_INDEX},
         ],
     },
     # ── the cascade's thresholds ──
@@ -2667,6 +2858,132 @@ FACTS: dict[str, dict] = {
         "kind": "recorded",
         "describe": "statements in the 0%-coverage jobtracker/scripts/ modules",
         "sites": [r"account for ([\d,]+) statements at 0%"],
+    },
+    # ── the Gmail quota budget in docs/DEPLOYMENT.md (#911) ──
+    #
+    # Registered rather than written down because the sentence that used to sit
+    # there was wrong in BOTH of its inputs at once — 750 messages at ~5 units
+    # per get, against 297 at 20 — and a prose paragraph cannot notice either.
+    # In the frame that matters for capacity, full scans per user-minute, the
+    # old arithmetic implied FOUR fit (15,000 against 3,750) where one now
+    # barely does (6,000 against 5,955). (The issue body said "roughly 8x";
+    # no frame produces 8 — it is 4x on scans and 10x on messages per minute,
+    # and 8 looks like the two input errors multiplied against mismatched
+    # denominators. Corrected here and on the issue.)
+    # These facts make the same paragraph red the day any input moves.
+    "syncScanTarget": {
+        "kind": "static",
+        "describe": f"_SYNC_DEFAULT_SCAN_TARGET in {GMAIL_SYNC_MODULE}",
+        "compute": sync_scan_target,
+        "sites": [
+            {"re": r"full scan of up to (\d+) messages", "file": DEPLOYMENT_DOC},
+            {"re": r"up to the (\d+)-message target", "file": DEPLOYMENT_DOC},
+            {"re": r"makes the target (\d+):", "file": DEPLOYMENT_DOC},
+        ],
+    },
+    "gmailScanUnits": {
+        "kind": "static",
+        "describe": "quota units one completed full scan spends",
+        "compute": sync_scan_units,
+        "sites": [
+            {"re": r"spends \*\*at least ([\d,]+) units\*\*", "file": DEPLOYMENT_DOC},
+        ],
+    },
+    "syncScanPages": {
+        "kind": "static",
+        "describe": "whole Gmail pages one full scan reads",
+        "compute": sync_scan_pages,
+        "sites": [
+            {"re": r"target is exactly (\w+) full pages", "file": DEPLOYMENT_DOC, "word": True},
+        ],
+    },
+    "gmailPageSize": {
+        "kind": "static",
+        "describe": f"gmail_fetch_page_size in {BACKEND_CONFIG}",
+        "compute": gmail_page_size,
+        "sites": [
+            {"re": r"full pages of (\d+)", "file": DEPLOYMENT_DOC},
+            {"re": r"UNITS_PER_GET \u00d7 (\d+) \+ UNITS_PER_LIST", "file": DEPLOYMENT_DOC},
+        ],
+    },
+    "cronPerUserTimeoutSeconds": {
+        "kind": "static",
+        "describe": f"_CRON_PER_USER_TIMEOUT_SECONDS in {CRON}",
+        "compute": lambda: _seconds(CRON, "_CRON_PER_USER_TIMEOUT_SECONDS"),
+        "sites": [
+            {"re": r"`_CRON_PER_USER_TIMEOUT_SECONDS` \| (\d+) s \|", "file": DEPLOYMENT_DOC},
+            {"re": r"at (\d+) s per user it stops", "file": DEPLOYMENT_DOC},
+            {"re": r"exceed the (\d+) s per-user timeout", "file": DEPLOYMENT_DOC},
+            {"re": r"before its (\d+) s timeout", "file": DEPLOYMENT_DOC},
+            {"re": r"runs to (\d+) s and", "file": DEPLOYMENT_DOC},
+        ],
+    },
+    "cronRunBudgetSeconds": {
+        "kind": "static",
+        "describe": f"_CRON_RUN_BUDGET_SECONDS in {CRON}",
+        "compute": lambda: _seconds(CRON, "_CRON_RUN_BUDGET_SECONDS"),
+        "sites": [
+            {"re": r"`_CRON_RUN_BUDGET_SECONDS` \| (\d+) s \|", "file": DEPLOYMENT_DOC},
+            {"re": r"until the (\d+) s budget is gone", "file": DEPLOYMENT_DOC},
+            {"re": r"a (\d+) s budget at", "file": DEPLOYMENT_DOC},
+        ],
+    },
+    "cronFullScanStarters": {
+        "kind": "static",
+        "describe": "users that can start in one cron run when each times out",
+        "compute": cron_full_scan_starters,
+        "sites": [
+            {"re": r"batch after (\d+) users", "file": DEPLOYMENT_DOC},
+            {"re": r"and (\d+) is the count only", "file": DEPLOYMENT_DOC},
+            {"re": r"(\w+) is the answer only when", "file": DEPLOYMENT_DOC, "word": True},
+        ],
+    },
+    "syncTimeBudgetSeconds": {
+        "kind": "static",
+        "describe": f"_SYNC_TIME_BUDGET_SECONDS in {GMAIL_SYNC_MODULE}",
+        "compute": lambda: _seconds(GMAIL_SYNC_MODULE, "_SYNC_TIME_BUDGET_SECONDS"),
+        "sites": [
+            {"re": r"against a (\d+) s scan budget", "file": DEPLOYMENT_DOC},
+        ],
+    },
+    "cronRunsPerDay": {
+        "kind": "static",
+        "describe": f"cron invocations a day, from {VERCEL_JSON}'s schedule",
+        "compute": cron_runs_per_day,
+        "sites": [
+            {"re": r"— (\d+) invocations/day", "file": DEPLOYMENT_DOC},
+        ],
+    },
+    "functionMaxDurationSeconds": {
+        "kind": "static",
+        "describe": f"api/index.py maxDuration in {VERCEL_JSON}",
+        "compute": function_max_duration,
+        "sites": [
+            {"re": r"`maxDuration: (\d+)`", "file": DEPLOYMENT_DOC},
+            {"re": r"the whole (\d+) s function budget", "file": DEPLOYMENT_DOC},
+        ],
+    },
+    "gmailUnitsPerMinute": {
+        "kind": "static",
+        "describe": f"UNITS_PER_MINUTE in {GMAIL_QUOTA_GATE}",
+        "compute": lambda: gmail_quota("UNITS_PER_MINUTE"),
+        "sites": [
+            {"re": r"ceiling is \*\*([\d,]+) units per minute\*\*", "file": DEPLOYMENT_DOC},
+            # The history sentence names the CURRENT price as the destination of
+            # a change. A reader takes it as current whatever the tense, so it is
+            # pinned like any other live figure. The superseded values beside it
+            # are spelled in words on purpose: they are frozen, and a digit there
+            # would be a number no fact can own.
+            {"re": r"cut to \*\*([\d,]+)\*\* a minute", "file": DEPLOYMENT_DOC},
+        ],
+    },
+    "gmailUnitsPerGet": {
+        "kind": "static",
+        "describe": f"UNITS_PER_GET in {GMAIL_QUOTA_GATE}",
+        "compute": lambda: gmail_quota("UNITS_PER_GET"),
+        "sites": [
+            {"re": r"rose to \*\*(\d+)\*\* units", "file": DEPLOYMENT_DOC},
+        ],
     },
 }
 

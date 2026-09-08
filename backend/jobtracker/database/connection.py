@@ -161,34 +161,80 @@ def _apply_transaction_gucs(conn: Any) -> None:
     # state, so its string form is strictly ``[0-9a-fA-F-]`` — safe to embed
     # in the JSON literal. Guard defensively anyway.
     #
-    # WHEN IT IS None (unauthenticated/health paths) the branch below writes
-    # ONLY the search path, and ``auth.uid()`` returns NULL, so RLS fails
-    # closed (denies) rather than exposing rows. No user-scoped query should
-    # run without identity.
+    # WHEN IT IS None (unauthenticated/health paths) the branch below binds no
+    # identity, so ``auth.uid()`` returns NULL and RLS fails closed (denies)
+    # rather than exposing rows. No user-scoped query should run without
+    # identity.
     #
-    # WHAT MAKES THAT TRUE IS THE ``nullif``, NOT AN UNSET GUC, and this
-    # comment used to say the opposite: "request.jwt.claims stays unset".
-    # It does not stay unset on a REUSED connection. ``set_config(..., true)``
-    # is transaction-local, and reverting it at COMMIT leaves the empty string
-    # rather than restoring "never set". Measured on postgres:16, one backend
-    # pid throughout:
+    # IT WRITES ``'{}'`` RATHER THAN LEAVING THE GUC ALONE, and until #634 it
+    # left it alone on the strength of a comment that said
+    # "request.jwt.claims stays unset". It does not stay unset on a REUSED
+    # connection. ``set_config(..., true)`` is transaction-local, and reverting
+    # it at COMMIT leaves the empty string rather than restoring "never set".
+    # Measured on postgres:16, one backend pid throughout:
     #
     #     1. virgin, before anything          current_setting -> None
     #     2. inside an identified transaction current_setting -> '{"sub":...}'
     #     3. next transaction, no identity    current_setting -> ''
     #
-    # So the no-identity branch does not overwrite a stale value, it inherits
-    # ``''`` — and the deployed ``auth.uid()`` survives that only because it
-    # applies ``nullif`` to the RAW setting BEFORE the ``::jsonb`` cast.
-    # ``''::jsonb`` raises ``invalid input syntax for type json``.
+    # So the no-identity branch never faced a clean slate; it inherited
+    # whatever the connection was carrying. That was survivable while the only
+    # thing it could inherit was OUR OWN ``''`` — the deployed ``auth.uid()``
+    # applies ``nullif`` to the RAW setting BEFORE the ``::jsonb`` cast, so
+    # ``''`` becomes NULL. It is not survivable against a value we did not
+    # write. On a shared pooler a FOREIGN client can leave a session-level
+    # ``SET request.jwt.claims`` behind, and inheriting that runs our
+    # identity-less transaction as their user. Measured: with the branch
+    # writing nothing, a poisoned connection reads ``auth.uid()`` as the
+    # foreign subject and an unfiltered read returns their row.
     #
-    # The outcome is safe. The reason it is safe lives in the SQL function,
-    # not here, which matters to anyone reading this before enabling pooling
-    # below. See ``tests/test_rls_postgres.py`` for the shape and
-    # ``test_every_auth_uid_shim_is_the_deployed_one`` for the four copies
-    # that used to disagree with it (#634).
+    # ``'{}'`` is valid JSON naming no subject, so ``->> 'sub'`` is NULL and
+    # ``NULL::uuid`` is NULL: fail-closed BY CONSTRUCTION, not by trusting a
+    # ``nullif`` in a Supabase-managed function this repo neither owns nor
+    # pins. ``''`` would NOT do for THAT one — it is one edit away from the
+    # cast-first shim that raises on it (#847), and it re-bets the property on
+    # that function.
+    #
+    # BOTH GUCs ARE NEUTRALISED, BECAUSE auth.uid() READS BOTH. The deployed
+    # definition is a coalesce and the SINGULAR name comes FIRST:
+    #
+    #     select coalesce(
+    #       nullif(current_setting('request.jwt.claim.sub', true), ''),
+    #       (nullif(current_setting('request.jwt.claims', true), '')::jsonb
+    #          ->> 'sub')
+    #     )::uuid
+    #
+    # so overwriting only the plural one leaves the higher-precedence name in
+    # force. Measured, identity-less transaction on a poisoned connection:
+    #
+    #     branch writes        poisoned claims   poisoned claim.sub
+    #     nothing (pre-#634)   LEAK              LEAK
+    #     plural only          closed            LEAK
+    #     both                 closed            closed
+    #
+    # THE TWO VALUES DIFFER ON PURPOSE — do not "harmonise" them. The singular
+    # setting is wrapped in ``nullif(…, '')`` directly, so ``''`` becomes NULL
+    # and the coalesce falls through. The plural one is CAST before it is read,
+    # which is why it needs ``'{}'`` and not ``''``.
+    #
+    # It stays ONE statement, so it costs no extra round trip on the request's
+    # critical path, and the round-trip count is the term that matters against
+    # a ~13 ms hop to the pooler. The rest is below what the measurement can
+    # resolve: 4000 interleaved samples on a loopback postgres:16 put the
+    # three-call shape +0.02 ms on p50 and MINUS 0.03 ms on the minimum, i.e.
+    # the larger statement won one of the two statistics. Do not quote a
+    # sharper number than that from this bench.
+    # See ``tests/test_rls_postgres.py`` for the deployed shim's shape and
+    # ``test_every_auth_uid_shim_is_the_deployed_one`` for the four copies that
+    # used to disagree with it — five exist; #847 had already corrected one
+    # (#634).
     if not isinstance(user_id, uuid.UUID):
-        conn.exec_driver_sql(f"SELECT {search_path_guc}")
+        # NOT an f-string: the ``{}`` here is a JSON literal, not a field.
+        no_identity_claims = (
+            "set_config('request.jwt.claims', '{}', true), "
+            "set_config('request.jwt.claim.sub', '', true)"
+        )
+        conn.exec_driver_sql(f"SELECT {search_path_guc}, {no_identity_claims}")
         return
 
     claims = json.dumps({"sub": str(user_id)}, separators=(",", ":"))

@@ -1475,29 +1475,44 @@ async def test_the_identity_guc_does_not_survive_a_commit_on_a_reused_connection
        discriminates**, and it is also the production shape — a request commits
        and the pooler takes the connection back.
 
-    Transaction 2 binds NO identity on purpose. That is a real production
-    shape, not a hypothetical: the cron's enrollment enumeration runs with
-    nothing bound (see ``test_cron_enumeration_uses_the_enrollment_table``), and
-    ``_apply_transaction_gucs`` early-returns after the ``search_path`` pin when
-    there is no identity — so it never overwrites a stale claim. A leaked one
-    would simply still be in force, and the enumeration would read as USER_A.
+    WHY THE OBSERVATION IS A RAW DRIVER READ AND NOT A SECOND TRANSACTION
+    (#634). It used to be an ordinary ``conn.execute``, i.e. a transaction 2
+    that binds no identity. That worked only because ``_apply_transaction_gucs``
+    early-returned after the ``search_path`` pin and never overwrote a stale
+    claim, so a leak was still in force and visible.
 
-    WHY TRANSACTION 2 DOES NOT ALSO COUNT ROWS. Measured while writing this: a
-    transaction-local GUC is not left *unset* when its transaction ends, it is
-    left DEFINED as the empty string. ``connection.py``'s comment says that
-    without an identity ``request.jwt.claims`` "stays unset so auth.uid()
-    returns NULL and RLS fails closed" — true on a virgin connection, which is
-    every connection while ``database_pool_size`` is 0, and not true on a reused
-    one. This module's local ``auth.uid()`` shim casts before it nullifs
-    (``current_setting(...)::jsonb ->> 'sub'``), so against ``''`` it RAISES
-    *invalid input syntax for type json* rather than returning NULL. Supabase's
-    own published helpers nullif the SETTING first and so are ``''``-safe, which
-    makes this a shim-fidelity gap rather than a product defect — but the shim
-    has five copies (here, ``pg_support.py``, ``test_migrations_postgres.py``,
-    ``scripts/check_expand_only.py``, ``docs/MIGRATIONS.md``) and fixing one is
-    drift, not a fix. So the row-level half of the property is asserted in
-    transaction 1, where a count of 1 over a two-row table can only have come
-    from ``auth.uid()``; transaction 2 asserts the GUC itself.
+    That branch now WRITES ``set_config('request.jwt.claims', '{}', true)``,
+    because writing nothing let a foreign co-tenant's session-level claim
+    through. Correct for production, and fatal to this test as it stood: the
+    ``'{}'`` masks the leak at exactly the point the probe read it. Measured,
+    both observation points, direction 2 in force:
+
+        is_local => true    old txn-2 probe -> '{}'          raw probe -> ''
+        is_local => false   old txn-2 probe -> '{}'          raw probe -> '{"sub":…}'
+
+    THE TRAP IS THE OBVIOUS REPAIR. The old probe reds on ``'{}' != ''``, so it
+    presents as a stale literal, and updating the literal to ``'{}'`` turns it
+    green — permanently, in BOTH columns, for a test that can then never fail.
+    That is this estate's "an early guard masks the later ones" shape arriving
+    disguised as its "inverted gate" shape. The guard is the newer code and is
+    right, so the OBSERVATION moved rather than the fix or the expectation.
+
+    Reaching the asyncpg connection under the SQLAlchemy one fires no ``begin``
+    listener, so it reports what the pooler would actually hand the next tenant
+    BEFORE anything neutralises it — which is a sharper statement of the leak
+    than the old probe made, not a weaker one. Two controls keep it honest: the
+    raw read must NOT see the pinned ``search_path`` (proving no listener ran on
+    it), and it must read back a claim set through itself (proving it can
+    observe session state at all, so an empty reading is a result).
+
+    WHY THE OBSERVATION DOES NOT ALSO COUNT ROWS. It reads no table on purpose:
+    a raw read runs outside the listener, so ``search_path`` is the role default
+    rather than the pinned ``public``, and a count there would be testing schema
+    resolution as much as identity. The row-level half of the property is
+    asserted in transaction 1, where a count of 1 over a two-row table can only
+    have come from ``auth.uid()``. The row-level half of the NEW branch's
+    property is asserted in
+    ``test_the_no_identity_branch_defeats_a_foreign_session_level_claim``.
     """
 
     from jobtracker.credentials.cloud import save_gmail_credentials
@@ -1543,37 +1558,251 @@ async def test_the_identity_guc_does_not_survive_a_commit_on_a_reused_connection
         # would leave it on the connection for the next tenant.
         await conn.commit()
 
-        # ---- Transaction 2, SAME physical connection, no identity bound.
-        # Its own statement, not ``probe``: nothing here may touch a table, or
-        # the read would go through the auth.uid() shim (see the docstring).
-        second_pid, leaked_claims, leaked_path = (
-            await conn.execute(
-                text(
-                    "SELECT pg_backend_pid(), "
-                    "coalesce(current_setting('request.jwt.claims', true), ''), "
-                    "current_setting('search_path')"
-                )
-            )
-        ).one()
-        await conn.rollback()
+        # ---- The observation: SAME physical connection, no listener. See the
+        # docstring for why this is a raw driver read rather than a second
+        # SQLAlchemy transaction.
+        raw = (await conn.get_raw_connection()).driver_connection
+        observed = await raw.fetchrow(
+            "SELECT pg_backend_pid() AS pid, "
+            "coalesce(current_setting('request.jwt.claims', true), '') AS claims, "
+            "current_setting('search_path') AS search_path"
+        )
+        second_pid = observed["pid"]
+        leaked_claims = observed["claims"]
+        raw_search_path = observed["search_path"]
+
+        # PROVE THE INSTRUMENT CAN RETURN POSITIVE, on the same channel, before
+        # trusting its empty reading. A probe structurally unable to see
+        # session-level GUC state would report '' for ever and pass this test
+        # in both directions.
+        await raw.execute("SET request.jwt.claims = '{\"sub\":\"probe\"}'")
+        instrument_check = await raw.fetchval(
+            "SELECT current_setting('request.jwt.claims', true)"
+        )
+        await raw.execute("RESET request.jwt.claims")
 
     assert second_pid == first_pid, (
-        f"the two transactions ran on backends {first_pid} and {second_pid}; "
-        "this is not one reused connection and it cannot observe a leak"
+        f"the probes ran on backends {first_pid} and {second_pid}; this is not "
+        "one reused connection and it cannot observe a leak"
     )
-    # search_path is pinned by the SAME statement that would carry the claim,
-    # so this proves transaction 2 really began and really ran the listener —
-    # an empty claims GUC on a transaction that never started is not a result.
-    assert leaked_path == "public", (
-        f"transaction 2's search_path was {leaked_path!r}, not the pinned "
-        "'public'; the begin listener did not run, so the empty claims below "
-        "prove nothing"
+    assert raw_search_path != "public", (
+        f"the raw read saw search_path {raw_search_path!r}, the value the begin "
+        "listener pins. The listener therefore DID fire on it, so it is reading "
+        "a fresh transaction's GUCs — including that transaction's own '{}' — "
+        "rather than what the connection carries between transactions."
+    )
+    assert instrument_check == '{"sub":"probe"}', (
+        f"the raw probe read back {instrument_check!r} after setting a claim "
+        "through itself, so it cannot observe session-level GUC state and the "
+        "empty reading below is an artefact rather than a result"
     )
     assert leaked_claims == "", (
         f"request.jwt.claims survived the COMMIT as {leaked_claims!r}. It is "
         "set with is_local => true precisely so it cannot: under Supavisor's "
         "transaction pooling this connection is now poisoned with a previous "
         "user's identity for whoever gets it next."
+    )
+
+
+@pytest.mark.parametrize(
+    "guc",
+    [
+        # BOTH names auth.uid() reads, because neutralising one is not
+        # neutralising the other. The deployed definition is
+        #     coalesce(nullif(current_setting('request.jwt.claim.sub', …), ''),
+        #              nullif(current_setting('request.jwt.claims',    …), '')
+        #                ::jsonb ->> 'sub')
+        # and the SINGULAR name is the FIRST coalesce argument, so it outranks
+        # the plural one. Measured while writing this, identity-less
+        # transaction on a poisoned connection:
+        #
+        #     branch writes        poisoned claims   poisoned claim.sub
+        #     nothing (pre-#634)   LEAK              LEAK
+        #     plural only          closed            LEAK
+        #     both                 closed            closed
+        #
+        # The middle row is why this is parametrized rather than a single case:
+        # the plural-only fix passed a one-vector test while leaving the
+        # higher-precedence vector wide open.
+        "request.jwt.claims",
+        "request.jwt.claim.sub",
+    ],
+)
+async def test_the_no_identity_branch_defeats_a_foreign_session_level_claim(
+    pg_app: AsyncEngine,
+    guc: str,
+) -> None:
+    """The threat nothing defended against, and #634's fix for it, as behaviour.
+
+    Everything above defends against OUR identity outliving OUR transaction.
+    This is the other direction: a claim we did not write, left on a shared
+    pooler connection by a client that does not run our ``begin`` listener, and
+    inherited by one of our identity-less transactions. The health checks, the
+    unauthenticated paths and the cron's enrollment enumeration all run with
+    nothing bound; before #634 the branch taken there wrote ONLY the
+    ``search_path`` pin, so whatever claim the connection was carrying stayed in
+    force and the enumeration would have read as the foreign subject.
+
+    It survived review because the written argument was that
+    ``request.jwt.claims`` "stays unset so auth.uid() returns NULL and RLS fails
+    closed". It does not stay unset — a transaction-local GUC reverts to the
+    EMPTY STRING, not to unset — and "unset" was never the reason the outcome
+    was safe. The reason was a ``nullif`` inside a Supabase-managed function
+    this repo neither owns nor pins, and it only ever covered values we wrote
+    ourselves.
+
+    The branch now neutralises BOTH names ``auth.uid()`` reads. ``'{}'`` for
+    the plural ``request.jwt.claims`` — valid JSON naming no subject, so
+    ``->> 'sub'`` is NULL by construction rather than by a foreign function's
+    good behaviour; ``''`` would not do there, being the one value the
+    cast-first shim raises on (#847). ``''`` for the singular
+    ``request.jwt.claim.sub``, which auth.uid() nullifs directly.
+
+    THE SINGULAR ONE IS NOT AN AFTERTHOUGHT: it is the FIRST argument of the
+    deployed ``coalesce`` and therefore outranks the plural one. The first
+    version of this fix wrote only ``'{}'``, passed a single-vector version of
+    this test, and left the higher-precedence vector wide open. Parametrizing
+    over both is what turned that from an argument into a measurement.
+
+    THREE THINGS MAKE THIS TEST ABLE TO FAIL, and each closes a way the obvious
+    version of it would be vacuous:
+
+    1. **The poison is session-level and it COMMITS.** ``set_config(..., true)``
+       or a rollback would discard it along with the transaction, and the test
+       would pass whether or not the fix is present — the trap #634 names.
+       Written through the raw driver connection, which is also the faithful
+       shape: the foreign client is not us and does not run our listener.
+    2. **A positive control precedes the property.** ``auth.uid()`` must read as
+       USER_B and an unfiltered count over a two-row table must return exactly
+       1 BEFORE the identity-less transaction. If the poisoning did not take,
+       everything after it is an assertion about nothing.
+    3. **The expected value is not the same NULL a broken run produces.**
+       Unfixed, this reads ``auth.uid() = USER_B`` and count 1; fixed, NULL and
+       count 0. The two states are distinguishable in both the GUC and the
+       rows, so the count is asserted and not just the GUC.
+
+    Verified by mutation, one term at a time, which is what proves each is
+    load-bearing rather than decoration: dropping the plural ``set_config``
+    reds only the ``request.jwt.claims`` case, dropping the singular one reds
+    only the ``request.jwt.claim.sub`` case, and each reds on the GUC, on
+    ``auth.uid()`` and on the row count together. Restoring greens both.
+    """
+
+    from jobtracker.credentials.cloud import save_gmail_credentials
+    from jobtracker.database import user_id_scope
+    from jobtracker.database.connection import get_current_user_id, get_engine
+
+    # Two rows, so a count of 0 means "RLS denied" rather than "empty table".
+    for user_id, address in ((USER_A, "a@example.com"), (USER_B, "b@example.com")):
+        with user_id_scope(user_id):
+            assert await save_gmail_credentials(user_id, _gmail_creds(address)) is True
+
+    # Nothing bound. This is the state the branch under test is taken in, and
+    # asserting it here stops a stray outer scope from making the run green for
+    # the wrong reason.
+    assert get_current_user_id() is None
+
+    # The poison is shaped for the GUC under test: the plural name carries the
+    # whole claims JSON, the singular one carries the bare subject.
+    poison = f'{{"sub":"{USER_B}"}}' if guc == "request.jwt.claims" else str(USER_B)
+    # ...and so is the value the branch must overwrite it with. THEY DIFFER ON
+    # PURPOSE: auth.uid() casts the plural setting to jsonb, so it needs valid
+    # JSON naming no subject; it nullifs the singular setting directly, so ''
+    # is what makes that coalesce arm fall through.
+    neutralised = "{}" if guc == "request.jwt.claims" else ""
+
+    # A sentinel, not '', as the coalesce default. For the singular vector ''
+    # IS the expected neutralised value, so defaulting to '' would make "we
+    # wrote ''" and "it was never set" the same reading, and the assertion
+    # could not tell them apart.
+    unset = "<<unset>>"
+
+    async with get_engine().connect() as conn:
+        raw = (await conn.get_raw_connection()).driver_connection
+
+        # ---- 1. The foreign client. A session-level SET, autocommitted by the
+        # driver, exactly what a co-tenant leaves on a pooled connection.
+        await raw.execute(f"SET {guc} = '{poison}'")
+
+        # ---- 2. THE POSITIVE CONTROL, before the property under test.
+        control = await raw.fetchrow(
+            "SELECT pg_backend_pid() AS pid, "
+            "coalesce(auth.uid()::text, '') AS uid, "
+            "(SELECT count(*) FROM public.user_credentials) AS n"
+        )
+
+        # ---- 3. Our identity-less transaction, on that same connection,
+        # through the real begin listener.
+        observed = (
+            await conn.execute(
+                text(
+                    "SELECT pg_backend_pid(), "
+                    f"coalesce(current_setting('{guc}', true), '{unset}'), "
+                    "current_setting('search_path'), "
+                    "coalesce(auth.uid()::text, ''), "
+                    "(SELECT count(*) FROM user_credentials)"
+                )
+            )
+        ).one()
+        await conn.rollback()
+
+        # ---- 4. The poison is still on the connection afterwards. Our write
+        # is transaction-local, so it protects the transaction without
+        # cleaning the session — and if this had changed, the fix would be a
+        # session-level write, i.e. the very thing every test above forbids.
+        raw = (await conn.get_raw_connection()).driver_connection
+        still_poisoned = await raw.fetchval(
+            f"SELECT current_setting('{guc}', true)"
+        )
+        await raw.execute(f"RESET {guc}")
+
+    txn_pid, claims, search_path, uid, count = observed
+
+    assert control["uid"] == str(USER_B), (
+        f"the foreign session-level claim did not take: auth.uid() read "
+        f"{control['uid']!r}, not USER_B. Nothing below is a test of anything."
+    )
+    assert control["n"] == 1, (
+        f"the poisoned connection counted {control['n']} credential rows on an "
+        "unfiltered read of a two-row table. Expected exactly USER_B's 1 — "
+        "anything else means RLS is not being enforced on this run and a count "
+        "of 0 below would prove nothing."
+    )
+    assert txn_pid == control["pid"], (
+        f"the poisoning ran on backend {control['pid']} and the transaction on "
+        f"{txn_pid}; this is not one connection and it cannot inherit anything"
+    )
+    assert search_path == "public", (
+        f"the transaction's search_path was {search_path!r}, not the pinned "
+        "'public'. The begin listener did not run, so the claims below are not "
+        "this branch's doing."
+    )
+    # ONE assertion over all three, deliberately. Asserted separately, the GUC
+    # check fires first under the mutation and the row-level check is never
+    # evaluated — so a run that reds proves only the cheapest of them. As a
+    # tuple, a single mutation run reports all three actual values and shows
+    # each of them discriminating. Equality, not membership: the failure being
+    # closed here is a GUC holding the WRONG subject, which every substring
+    # test of the GUC's name passes.
+    assert (claims, uid, count) == (neutralised, "", 0), (
+        f"the identity-less transaction inherited the foreign {guc}.\n"
+        f"  {guc:<22}: {claims!r}\t(want {neutralised!r})\n"
+        f"  {'auth.uid()':<22}: {uid!r}\t(want '', i.e. NULL)\n"
+        f"  {'unfiltered rows':<22}: {count}\t(want 0)\n"
+        f"The branch must overwrite {guc} rather than leave it: leaving it "
+        "inherits a foreign co-tenant's subject, every RLS policy on the "
+        "transaction then evaluates as that user, and the row count is the "
+        "bite a GUC assertion alone cannot see.\n"
+        "If this is the SINGULAR name, note it is the FIRST coalesce argument "
+        "in the deployed auth.uid() and therefore outranks the plural one — "
+        "neutralising only request.jwt.claims leaves this vector open, which "
+        "is what the first version of this fix did."
+    )
+    assert still_poisoned == poison, (
+        f"after the transaction the connection carried {still_poisoned!r} for "
+        f"{guc}. The neutralising write must be transaction-local: a "
+        "session-level one would outlive the transaction into the next tenant, "
+        "which is the leak this module exists to prevent."
     )
 
 

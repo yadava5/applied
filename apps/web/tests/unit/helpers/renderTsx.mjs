@@ -75,6 +75,58 @@ function bareSpecifier(spec) {
   return pathToFileURL(hit).href;
 }
 
+/**
+ * A `.tsx` reached FROM the entry has to be transpiled too, and this is the
+ * only reason this function is not one line.
+ *
+ * Node cannot load `.tsx` at all — `ERR_UNKNOWN_FILE_EXTENSION` — so pointing a
+ * rewritten specifier at one is the same as not resolving it. That was
+ * invisible while every entry imported only `.ts` modules and plain elements.
+ * It stopped being invisible the moment a component imported another component
+ * (#390: `ImportMail.tsx` -> `components/boot/QuietEnvelope.tsx`), and the
+ * failure surfaced as one named unit test dying inside `node --test` with a
+ * message about a file the test never mentions.
+ *
+ * So the entry's docstring claim — "every other specifier resolves to the real
+ * file, so the module graph under the entry is untouched" — was a property this
+ * helper could not keep for a graph containing components. It keeps it now.
+ *
+ * `.ts` IS DELIBERATELY LEFT ON NODE'S OWN PATH. Node type-strips `.ts`
+ * natively, every existing test in this directory already depends on that, and
+ * routing them through `transpileModule` would change how dozens of modules
+ * load in order to fix a defect none of them have. The hole that leaves is
+ * narrow and worth naming rather than hiding: a `.ts` module that RE-EXPORTS a
+ * `.tsx` one is still unreachable, because the recursion never sees inside it.
+ * If that ever bites, the error will again name a `.tsx` the test does not
+ * mention, and this paragraph is the answer.
+ *
+ * Cycles throw instead of hanging. A data: URL cannot be registered before its
+ * own body is built, so a component cycle has no fixed point here; saying so is
+ * better than a test run that never returns.
+ */
+const TRANSPILED = new Map();
+const TRANSPILING = new Set();
+
+function transpiledUrl(absolute, stubs) {
+  const cached = TRANSPILED.get(absolute);
+  if (cached !== undefined) return cached;
+  if (TRANSPILING.has(absolute)) {
+    throw new Error(
+      `renderTsx: import cycle through ${absolute}. A data: URL cannot be ` +
+        `registered before its body exists, so this helper cannot model a ` +
+        `component cycle. Break the cycle, or stub one side of it.`,
+    );
+  }
+  TRANSPILING.add(absolute);
+  try {
+    const url = compile(absolute, stubs);
+    TRANSPILED.set(absolute, url);
+    return url;
+  } finally {
+    TRANSPILING.delete(absolute);
+  }
+}
+
 function absoluteSpecifier(spec, fromDir, stubs) {
   if (stubs !== undefined && Object.hasOwn(stubs, spec)) return stubs[spec];
   const base = spec.startsWith("@/")
@@ -85,6 +137,7 @@ function absoluteSpecifier(spec, fromDir, stubs) {
   if (base === null) return bareSpecifier(spec); // bare: react, lucide-react…
   const hit = probe(base);
   if (hit === null) throw new Error(`renderTsx: cannot resolve "${spec}" from ${fromDir}`);
+  if (hit.endsWith(".tsx")) return transpiledUrl(hit, stubs);
   return pathToFileURL(hit).href;
 }
 
@@ -125,13 +178,17 @@ export function stubModule(exportsObject) {
 /**
  * Import a `.ts`/`.tsx` module by path relative to `apps/web`.
  *
- * `stubs` maps an import specifier of THIS module — `"react"`,
- * `"@/lib/api/server"` — to a module URL, typically from `stubModule`. Every
- * other specifier resolves to the real file, so the module graph under the
- * entry is untouched.
+ * `stubs` maps an import specifier — `"react"`, `"@/lib/api/server"` — to a
+ * module URL, typically from `stubModule`. Every other specifier resolves to
+ * the real file, so the module graph under the entry is untouched.
+ *
+ * A stub applies AT EVERY DEPTH, not only to the entry's own imports, and that
+ * is deliberate: once the entry can pull in other components, "an import
+ * specifier of THIS module" stops naming anything a caller can reason about.
+ * A stub for `"@/lib/demo/rulesLayer"` means that module is stubbed wherever
+ * the graph under test reaches it.
  */
-export async function importTsx(relativePath, { stubs } = {}) {
-  const absolute = resolvePath(WEB_ROOT, relativePath);
+function compile(absolute, stubs) {
   const { outputText } = ts.transpileModule(readFileSync(absolute, "utf8"), {
     compilerOptions: {
       jsx: ts.JsxEmit.ReactJSX,
@@ -144,8 +201,11 @@ export async function importTsx(relativePath, { stubs } = {}) {
     /(\bfrom\s*|\bimport\s*\(\s*)["']([^"']+)["']/g,
     (_match, head, spec) => `${head}"${absoluteSpecifier(spec, dirname(absolute), stubs)}"`,
   );
-  const encoded = Buffer.from(rewritten).toString("base64");
-  return import(`data:text/javascript;base64,${encoded}`);
+  return `data:text/javascript;base64,${Buffer.from(rewritten).toString("base64")}`;
+}
+
+export async function importTsx(relativePath, { stubs } = {}) {
+  return import(compile(resolvePath(WEB_ROOT, relativePath), stubs));
 }
 
 /** The component's markup for these props — `""` when it renders nothing. */
