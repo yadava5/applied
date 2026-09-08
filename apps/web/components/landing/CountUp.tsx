@@ -4,8 +4,16 @@ import { useEffect, useRef, useState } from "react";
 
 /**
  * A number that rolls up from zero the first time it scrolls into view. Used for
- * the load-bearing stats — 0.9791 macro-F1 (the rules stage), 288 tests,
+ * the load-bearing stats — 0.9896 macro-F1 (the rules stage), 288 tests,
  * 22.8 MB, 9 classes.
+ *
+ * NOTHING GATES THE NUMBERS IN THIS COMMENT. `scripts/readme_facts.py` has no
+ * claim site in this file, and the component has no importer anywhere in
+ * `apps/web` — the landing was swept of self-graded figures in #394 and this
+ * was left behind. The macro-F1 was corrected by hand on 2026-09-07 with the
+ * baseline re-record (#446); the test count beside it is stale by an order of
+ * magnitude and is left alone, because correcting an ungated number in dead
+ * code is not the same as making it checkable.
  *
  * The final, formatted value is what renders on the server and on first paint,
  * so no-JS, crawlers, and reduced-motion all read the true number with zero

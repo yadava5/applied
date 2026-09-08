@@ -4,7 +4,7 @@ import { COLORS, FONTS, TYPE, SECTION_INK } from "../theme";
 import { PROOF } from "../content";
 import { SourceNote } from "../primitives/SourceNote";
 
-/** Page 19 — 0.979 macro-F1, CI-gated. */
+/** Page 19 — 0.9896 macro-F1, CI-gated. */
 export const ProofF1Page: React.FC<{
   parity: "recto" | "verso";
   pageNumber: number;
@@ -74,7 +74,7 @@ export const ProofF1Page: React.FC<{
             DETAIL · 0.90–1.00
           </text>
           <rect x={0} y={16} width={640} height={7} rx={3.5} fill={COLORS.SURFACE} />
-          <rect x={0} y={16} width={0.9791 * 640} height={7} rx={3.5} fill={COLORS.SETFIT_GREEN} opacity={0.85} />
+          <rect x={0} y={16} width={0.9896 * 640} height={7} rx={3.5} fill={COLORS.SETFIT_GREEN} opacity={0.85} />
           {/* the magnified window, bracketed on the full scale */}
           <rect x={0.9 * 640} y={13} width={0.1 * 640} height={13} rx={2} fill="none" stroke={COLORS.INK} strokeWidth={1} />
           {/* window → detail guides */}
@@ -84,12 +84,12 @@ export const ProofF1Page: React.FC<{
           {/* detail track: 0.90–1.00 */}
           <rect x={0} y={52} width={640} height={26} rx={5} fill={COLORS.SURFACE} />
           <g clipPath="url(#f1-detail-track)">
-            <rect x={0} y={52} width={((0.9791 - 0.9) / 0.1) * 640} height={26} fill={COLORS.SETFIT_GREEN} opacity={0.85} />
+            <rect x={0} y={52} width={((0.9896 - 0.9) / 0.1) * 640} height={26} fill={COLORS.SETFIT_GREEN} opacity={0.85} />
           </g>
           {/* the score, marked where the fill ends */}
-          <line x1={((0.9791 - 0.9) / 0.1) * 640} y1={46} x2={((0.9791 - 0.9) / 0.1) * 640} y2={78} stroke={COLORS.SETFIT_DEEP} strokeWidth={2} />
-          <text x={((0.9791 - 0.9) / 0.1) * 640} y={42} textAnchor="middle" fontFamily={FONTS.MONO} fontSize={10} fontWeight={700} fill={COLORS.SETFIT_DEEP} style={{ fontVariantNumeric: "tabular-nums" }}>
-            0.979
+          <line x1={((0.9896 - 0.9) / 0.1) * 640} y1={46} x2={((0.9896 - 0.9) / 0.1) * 640} y2={78} stroke={COLORS.SETFIT_DEEP} strokeWidth={2} />
+          <text x={((0.9896 - 0.9) / 0.1) * 640} y={42} textAnchor="middle" fontFamily={FONTS.MONO} fontSize={10} fontWeight={700} fill={COLORS.SETFIT_DEEP} style={{ fontVariantNumeric: "tabular-nums" }}>
+            0.9896
           </text>
           {/* floor at 0.95 — pointer + overshoot live on the paper, not the fill */}
           <polygon points="315.5,45 324.5,45 320,51.5" fill={COLORS.DANGER} />

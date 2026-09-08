@@ -13,7 +13,7 @@ name: Learning Gate
 #
 # The alternative was worse and is what this repository keeps catching itself
 # doing: run `--mode hybrid` anyway, watch it degrade to the rules layer,
-# score 0.9791, print PASS, and report the regex engine as the cascade. The
+# score 0.9896, print PASS, and report the regex engine as the cascade. The
 # harness refuses to do that (see _assert_layers_exercised), and so does this.
 #
 # It is therefore NOT scheduled. A weekly red build is a build people mute.
