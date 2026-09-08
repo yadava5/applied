@@ -341,6 +341,96 @@ Supabase Postgres (asyncpg, transaction-mode pooler)
   - user_credentials rows decrypted with Fernet for Gmail/iCloud access.
 ```
 
+## Where a request's time goes (measured 2026-08-22, issue #449)
+
+The flow above says what a request touches. This says what each leg of it
+costs, so the next person does not re-measure it.
+
+`GET /api/applications/{id}` — the detail round trip, and the slowest read
+a reader waits on — measured on production, signed in, on a real account.
+The instrument is the browser's own `PerformanceResourceTiming` reading the
+`Server-Timing` header that `main_cloud._ServerTimingMiddleware` emits and
+`lib/api/serverTiming.ts` carries through the same-origin proxy. **Not**
+wall-clock deltas around a driven click: measured that way, an earlier
+session was reading Chrome's background-tab `setTimeout` clamp and had to
+retract every number.
+
+Warm, median of 6: **371 ms**, and it attributes with no unexplained
+remainder.
+
+| segment | ms | how it was measured |
+|---|---:|---|
+| browser ↔ edge ↔ the Next app, handler doing nothing | 81 | `/api/applications/abc`, rejected by `badId()` before any fetch (n=10) |
+| `supabase.auth.getUser()` in `proxy.ts` | ~47 | paired same-transport probe, `credentials: 'include'` vs `'omit'` (n=10 each, interleaved). An **upper bound**, not a clean figure: `omit` also drops the whole chunked Supabase cookie jar, not just the round trip it triggers |
+| cross-function hop to the FastAPI project, plus platform routing | ~48 | the residual, 371 − 128 − 195 — **not** measured directly |
+| `pool_pre_ping`'s `BEGIN` / `";"` / `ROLLBACK` | ~40 | read off the SQLAlchemy asyncpg dialect, **not** measured — the instrument cannot see it, below |
+| the rest of the FastAPI handler | ~32 | `app;dur` 195 − `db_query` 123 − the ~40 above |
+| four serial statements against the pooler | 123 | `db_query;dur=123;desc="n=4"` |
+| connection establishment | **0** | `db_connect;dur=0;desc="n=0"` |
+
+Three things a reader should take from that, because each one contradicts a
+claim that is still easy to reach for.
+
+**Connection reuse is already on in production, and this repository cannot
+see it.** `JOBTRACKER_DATABASE_POOL_SIZE=2` is set on the `jobtracker-api`
+Vercel project. It appears nowhere in this tree — the repository's own
+default is `0` (`backend/jobtracker/config.py`, `database_pool_size`),
+which selects `NullPool`, so the code alone says a fresh TCP+TLS+auth
+connection is paid per request and every production sample says otherwise:
+warm, cold and first-after-idle all report `db_connect;desc="n=0"`. A fresh
+*backend* instance does still pay one connect, observed once at `n=1`,
+105 ms. **So the ~216 ms NullPool tax is not in the detail fetch**, and a
+brief that says "about 216 ms of the detail fetch is the NullPool
+connection" is quoting a number the deploy already paid off. Where ~216 ms
+still appears in this repository it is about the cron's session-per-user
+cost — a different question, and correct there.
+
+The default stays `0` deliberately and is not to be changed to match
+production: `backend/tests/test_request_cost_phases.py` pins it, and
+`backend/tests/test_rls_postgres.py` builds an isolation argument on it.
+Pooling is an operator opt-in that a deployment either takes or does not,
+and this one has taken it.
+
+**`pool_pre_ping` sits in the instrument's blind spot.** The phase counters
+hook `before_cursor_execute` and `after_cursor_execute`
+(`backend/jobtracker/database/connection.py`). The asyncpg dialect's
+`do_ping` calls the DBAPI connection's `ping()` directly, and under
+transaction-mode pooling that is `BEGIN`, `fetchrow(";")`, `ROLLBACK` —
+three round trips per pool checkout, through none of those events. They
+land inside `app;dur` and inside neither `db_connect` nor `db_query`, and
+read as unexplained handler time. `Server-Timing`'s claim to attribute
+every millisecond therefore holds only up to this gap; a `db_ping` phase
+would close it. That is an argument for naming the phase, not for removing
+pre-ping, which is what turns a pooler-killed idle connection into one
+cheap round trip instead of a user-visible 500.
+
+**The first request after an idle period costs ~1.4 s, and the backend is
+not why.** One clean sample after a five-minute idle, then the same request
+repeatedly:
+
+| request | browser total | `app;dur` | connects |
+|---|---:|---:|---:|
+| first after idle | **1390 ms** | 284 ms | n=0 |
+| 2nd | 818 ms | 213 ms | n=0 |
+| 3rd | 547 ms | 229 ms | n=0 |
+| 4th–6th | ~400 ms | ~215 ms | n=0 |
+
+`app;dur` barely moves and connects stay at zero, so the ~1 s is the
+Next.js function and its outbound connections warming — not FastAPI, not
+Postgres, and not a pool. It is an **idle** cold start, which is why the
+earlier finding that "cold starts fire on concurrency, not idleness" does
+not contradict it: that came from a concurrency ladder, which tests
+scale-out and cannot see this.
+
+Nothing is proposed for the cold start here. Provisioned or minimum
+instances bill money, and a keep-warm cron on the web project would fire
+~96×/day forever to help the one request per idle period.
+
+What was done instead was to take the same request earlier rather than make
+it faster — `apps/web/lib/dashboard/neighbourWarm.ts`, whose 400 ms delay
+is chosen against the 371 ms median above. That docstring is the only other
+place these figures are load-bearing; this section is their record.
+
 ## Out of scope (v1 migration)
 
 - WebSocket on cloud (Vercel Python doesn't support it; polling only).

@@ -350,6 +350,10 @@ export function VerdictRow({
             // it has no link to speak of. `[]` above already means no question
             // is put; this says why there would be nothing to outrank one.
             linkedApplicationId={null}
+            // The verdict the mine produced, which is what an undo sends back
+            // (#511). This view holds it in client state, so the correction's
+            // acknowledgement can carry a real way out of a misclick.
+            previousCategory={v.category}
             message={payload}
             classify={classify}
             onCorrected={(category) => onCorrected(v.message_id, category)}

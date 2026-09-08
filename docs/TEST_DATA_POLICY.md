@@ -57,6 +57,43 @@ A domain that merely *looks* invented is not in the set. `acme.com`,
 `northwind.com` and `initech.com` are real registrations owned by somebody else,
 and a fixture that mails one of them is describing a real destination.
 
+### A real domain, only where the code keys on that exact domain
+
+**Decided, and deliberately narrow — DEC-008.** One carve-out from the table
+above. A fixture may carry a real, routable sender domain only when **both** of
+these hold:
+
+- the test exercises code that **keys on that exact domain** — a lookup, a
+  table, a match anchored to it — so a reserved substitute would assert
+  nothing; and
+- it **names the `file:line` it is keying on**, in the fixture or the docstring
+  over it, so a reader can check the claim in a minute instead of taking it on
+  trust.
+
+Anything else uses a reserved domain. "It is a corporate robot, not a person"
+is **not** the test and never was — that is an argument about harm, and this
+one is about whether the test can still fail. A real address no test keys on is
+a real address in a public repository buying nothing.
+
+The live instance is worth reading, because it does **not** meet that bar. The
+ATS relay in the Microsoft modules sits on a domain that is genuinely
+load-bearing in production: `backend/jobtracker/tracking/extractor.py:85` maps
+its registrable domain to a public employer name in the direct-company-domain
+table, matched as a proper subdomain by `rules.domain_matches`. But measured on
+this tree, **no module carrying that address reaches that table.**
+`DOMAIN_TO_COMPANY` is read only inside `extractor.py`; the one module
+exercising it is `backend/tests/test_tracking_sender_checks.py`, which does not
+carry the address; and the Gmail pipeline derives the employer from the subject
+and the sender's display name, never from the domain.
+
+So the address is kept under [The baseline is a
+ratchet](#the-baseline-is-a-ratchet-not-a-backlog) — nothing already published
+is deleted — and **not** under this carve-out, which licenses nothing already
+in the tree. It stays because it is a corporate no-reply robot that identifies
+a company rather than a person, and the module names say which company already.
+Written down so the next fixture on a routable domain is a decision and not a
+copy of this one.
+
 ### The shape to copy
 
 `backend/tests/test_dismissed_card_does_not_settle_its_mail.py`. Three invented

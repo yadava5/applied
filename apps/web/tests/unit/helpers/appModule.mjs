@@ -6,9 +6,12 @@
  * Two shapes are not:
  *
  *   - `lib/demo/rulesLayer.ts` does `import rulesRaw from "./rules.json"`.
- *     Plain Node refuses it with `ERR_IMPORT_ATTRIBUTE_MISSING`, which is why
- *     `tests/e2e/import.spec.ts` says the rules layer "cannot be loaded by a
- *     unit test" and asserts its behaviour through a browser instead.
+ *     Plain Node refuses it with `ERR_IMPORT_ATTRIBUTE_MISSING`. That refusal
+ *     is what `tests/e2e/import.spec.ts` used to cite for asserting the rules
+ *     layer's behaviour through a browser instead — a claim this helper
+ *     superseded and which has now been corrected there. Keep the two in step:
+ *     if these hooks stop resolving `rules.json`, that spec's reasoning
+ *     becomes true again and should say so.
  *   - `lib/demo/sampleInbox.ts` reaches `@/lib/dashboard/age` transitively
  *     through `lib/demo/demoData.ts`, and Node cannot resolve the alias.
  *

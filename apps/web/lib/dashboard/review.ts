@@ -240,6 +240,85 @@ export function classifyRequestBody(
  * test per member, plus the two controls that must ask NOTHING — without which
  * "always ask" satisfies the whole loop.
  */
+/**
+ * The categories a correction may send, and the word the reader picks for
+ * each. It lives here rather than in `ReclassifyControl` because it now
+ * answers two questions, and they must not be allowed to disagree: which
+ * options the select offers, and — since #511 — which PRIOR verdicts an undo
+ * is allowed to send back.
+ *
+ * The list starts at a placeholder in the control on purpose; a preselected
+ * value is how absent-minded clicks become verdicts.
+ *
+ * The labels are the CATEGORY's vocabulary, not the stage's.
+ * `EmailCategory.INTERVIEW` is "interview" (models.py:131);
+ * `ApplicationStatus.INTERVIEWING` is "interviewing" (:109). Two vocabularies
+ * on purpose — one names what a MESSAGE is, the other names where a CARD sits
+ * — and this list asks the first question, so it answers in the first
+ * vocabulary. #425.
+ */
+export const CORRECTION_CHOICES: readonly { value: string; label: string }[] = [
+  { value: "applied", label: "applied" },
+  { value: "interview", label: "interview" },
+  { value: "assessment", label: "assessment" },
+  { value: "offer", label: "offer" },
+  { value: "rejection", label: "rejection" },
+  { value: "other", label: "not job related" },
+];
+
+const CORRECTABLE = new Map(CORRECTION_CHOICES.map((c) => [c.value, c.label]));
+
+/** The reader's word for a category; the raw value for anything the backend
+ *  grew that this list has not caught up with. */
+export function categoryLabel(value: string): string {
+  return CORRECTABLE.get(value) ?? value.replaceAll("_", " ");
+}
+
+/**
+ * The verdict an undo may send back, or `null` when there is none.
+ *
+ * A correction is reversed by re-sending the message's PREVIOUS category
+ * through the same endpoint, so an undo is only real when that category is one
+ * this control could have sent in the first place. `needs_review` is the case
+ * that matters: it is a genuine stored verdict, it is not on the list above,
+ * and offering an Undo that would 422 is exactly the decorative affordance
+ * `notifyUndo` forbids. Those corrections are acknowledged and not undoable,
+ * which is the truth.
+ */
+export function undoableVerdict(previous: string | null | undefined): string | null {
+  const value = typeof previous === "string" ? previous.trim() : "";
+  return CORRECTABLE.has(value) ? value : null;
+}
+
+/**
+ * What the correction surfaces say once the row has left the list.
+ *
+ * The action keeps its name through the flow: the ledger's control is
+ * "reclassify", so its outcome is "Reclassified"; the queue's button is
+ * "classify", so its outcome is "Classified".
+ *
+ * THEY TAKE THE READER'S WORD, NOT THE ENUM, and the caller resolves it from
+ * the list IT rendered. That is not indirection for its own sake: the queue
+ * still labels `interview` as "interviewing" — the stage's vocabulary, which
+ * #425 corrected on the ledger's control and never reached here — so a toast
+ * that resolved the label itself would name a word the reader did not choose.
+ * Echoing the control is the rule that matters; unifying the two lists is a
+ * copy change to a rendered option and belongs in its own commit.
+ */
+export function reclassifiedMessage(label: string): string {
+  return `Reclassified as ${label}`;
+}
+
+export function classifiedMessage(label: string): string {
+  return `Classified as ${label}`;
+}
+
+/** A failed undo. Names the verdict the message is actually left at, so the
+ *  reader is never guessing which of the two it now holds. */
+export function undoClassifyFailedMessage(label: string): string {
+  return `Couldn't change it back — it is still ${label}.`;
+}
+
 export const LIFECYCLE_ANSWERS: ReadonlySet<string> = new Set([
   "interview",
   "assessment",

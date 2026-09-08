@@ -110,6 +110,29 @@ test("the notice describes no particular account", () => {
   }
 });
 
+test("the notice stays true when the cap ate the message", () => {
+  // #292: the built-in mail provider is capped at two messages an hour
+  // PROJECT-WIDE, so a third request inside that hour sends nothing while this
+  // sentence is still shown. The copy has to be true in that case too, which
+  // means naming a wait and offering a way out — otherwise the reader is sent
+  // to search their inbox for mail that does not exist.
+  //
+  // Asserted as two separate properties rather than against the sentence,
+  // because a string equality here would be the copy compared to itself and
+  // would pass for any rewrite that kept the words in some order.
+  assert.match(
+    RESET_EMAIL_SENT_NOTICE,
+    /\bhour\b/i,
+    "the notice no longer names how long delivery can take, so a reader who " +
+      "gets nothing has no idea whether to wait or retry",
+  );
+  assert.match(
+    RESET_EMAIL_SENT_NOTICE,
+    /try again/i,
+    "the notice no longer tells the reader what to do when nothing arrives",
+  );
+});
+
 test("the address reaches the sender trimmed, exactly once", async () => {
   const seen = [];
   await requestPasswordReset("  padded@example.invalid  ", async (address) => {

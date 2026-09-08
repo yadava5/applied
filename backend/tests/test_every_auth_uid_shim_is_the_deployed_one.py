@@ -84,7 +84,18 @@ def _shims() -> list[tuple[str, str]]:
     for path in ROOT.rglob("*"):
         if not path.is_file() or path.suffix not in {".py", ".md", ".sql", ".yml", ".yaml"}:
             continue
-        if SKIP & set(path.parts):
+        # RELATIVE TO ROOT, NOT THE ABSOLUTE PATH. `path.parts` carries every
+        # directory above the repository too, so a checkout living under a
+        # skipped NAME matched itself: inside `<repo>/.claude/worktrees/<agent>`
+        # every file's absolute path contains both `.claude` and `worktrees`,
+        # the scan returned nothing, and the control below — which refuses to
+        # grade an empty scan — went red for reasons that had nothing to do with
+        # any shim. The gate could not run at all where most of the work happens.
+        #
+        # It is the mirror of the defect this file exists to prevent: not a check
+        # that cannot fail, but one that cannot pass. Both are the same mistake
+        # about what the instrument is measuring.
+        if SKIP & set(path.relative_to(ROOT).parts):
             continue
         try:
             text = path.read_text(encoding="utf-8")

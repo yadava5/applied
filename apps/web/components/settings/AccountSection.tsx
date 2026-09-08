@@ -5,6 +5,7 @@ import { useState } from "react";
 import { LogOut } from "lucide-react";
 
 import { SettingsSection, TransientStatus, useLinger } from "./SettingsSection";
+import { notifyError } from "@/components/feedback/notify";
 import { Dialog } from "@/components/ui/Dialog";
 import { dangerBtnClass, inputClass, secondaryBtnClass } from "@/components/ui/formStyles";
 import { settingsTransport, type SettingsMode } from "@/lib/settings/transport";
@@ -63,7 +64,20 @@ export function AccountSection({
   async function signOut() {
     setSigningOut(true);
     setSignOutNote(null);
-    await transport.signOut();
+    try {
+      await transport.signOut();
+    } catch {
+      // The only branch with no surface at all: a rejected sign-out left
+      // `signingOut` latched, so the button read "Signing out…" for the life
+      // of the page and the session was still open (#511). The toast holds
+      // until dismissed and carries the retry, because the control that would
+      // have offered one is the disabled button behind it.
+      setSigningOut(false);
+      notifyError("account.signout", "Couldn’t sign out — your session is still open.", {
+        run: signOut,
+      });
+      return;
+    }
     if (transport.mode === "demo") {
       // No session exists here to end — the twin says so instead of bouncing
       // an anonymous visitor to the login wall.
@@ -84,7 +98,21 @@ export function AccountSection({
       setDeleting(false);
       return;
     }
-    await transport.signOut();
+    // The account is gone by here: `runAccountDeletion` has run both
+    // privileged effects. Everything below is the LEAVING, and it is the step
+    // that had no surface — a sign-out that rejected left `deleting` latched,
+    // so the dialog read "Deleting…" forever over an account that no longer
+    // existed. The working path is untouched: it still signs out and replaces.
+    try {
+      await transport.signOut();
+    } catch {
+      setDeleting(false);
+      notifyError(
+        "account.delete",
+        "Your account is deleted. Signing out didn’t finish — reload the page to clear this session.",
+      );
+      return;
+    }
     router.replace("/");
   }
 
@@ -154,6 +182,18 @@ export function AccountSection({
           {error ? (
             <p role="alert" className="text-xs text-reject-ink">
               {error}
+            </p>
+          ) : null}
+
+          {/* The steps, while they run. A label changing to "Deleting…" says
+              something is happening and not WHAT — and this is the one action
+              in the app whose effects reach outside it (Google). The order and
+              the words are the standing caption's, so the sentence the reader
+              agreed to and the one they watch execute are the same sentence. */}
+          {deleting ? (
+            <p role="status" className="text-xs text-dim">
+              Removing your applications, revoking Gmail access at Google, then closing your
+              account…
             </p>
           ) : null}
 

@@ -277,6 +277,7 @@ export function ApplicationDetail({
   position = null,
   onTraverse,
   transport = liveBoardTransport,
+  onRevealStage,
   focusOnOpen = true,
   focusScrollOnOpen = true,
 }: {
@@ -301,6 +302,12 @@ export function ApplicationDetail({
   onTraverse?: (delta: -1 | 1) => void;
   /** How reads/mutations reach data — the live proxy by default, fixtures on /demo. */
   transport?: BoardTransport;
+  /** Tell the board a stage change is being made here, so the destination
+   *  employer set behind the pane is open before the row arrives in it (#873;
+   *  `PipelineBoard`'s `revealStage` carries the reasoning). Nothing in this
+   *  component memoizes on it, so it carries no stability contract of its own
+   *  — the board passes the same stable callback the row gets. */
+  onRevealStage?: (status: string, company: string) => void;
   /**
    * Whether opening the docked pane moves focus into it. True for every open
    * a person performed — the standing contract, so the traversal keys answer
@@ -525,6 +532,11 @@ export function ApplicationDetail({
     setStageError(null);
     setOptimistic(next);
     setStageBusy(true);
+    // The third door onto the same defect (#873): a correction made here also
+    // regroups the row behind the pane, and it folds away into a collapsed
+    // employer set exactly as a drop or a row select would. Before the await
+    // and with the same failure trade — see the row's copy of this call.
+    onRevealStage?.(next, active.company);
     const result = await transport.changeStatus(active.id, next);
     setStageBusy(false);
     if (!result.ok) {
