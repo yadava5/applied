@@ -113,29 +113,34 @@ are no other developers on this project.
    ```
    $ grep -rn 'settings\.secret_encryption_key' backend/jobtracker/ \
        | grep -v __pycache__ | grep -v '``'
-   backend/jobtracker/cloud/gmail_oauth.py:693:    return jwt.encode(payload, settings.secret_encryption_key, algorithm="HS256")
-   backend/jobtracker/cloud/gmail_oauth.py:721:            settings.secret_encryption_key,
+   backend/jobtracker/cloud/gmail_oauth.py:762:    return jwt.encode(payload, settings.secret_encryption_key, algorithm="HS256")
+   backend/jobtracker/cloud/gmail_oauth.py:790:            settings.secret_encryption_key,
    backend/jobtracker/credentials/cloud.py:116:    key = settings.secret_encryption_key
    ```
 
-   That transcript is what the command prints on this tree, checked by running
-   it. The final filter drops two docstring mentions — `gmail_oauth.py:644` and
+   That transcript is what the command prints on this tree, and it is not
+   maintained by hand: `scripts/check_citations.py` re-runs that exact command
+   on every push and fails the build if the output differs by a single line.
+   (It had drifted before that check existed — the line numbers read 693 and
+   721 while the reads had moved to 762 and 790, which a reader could falsify
+   in one keystroke.) The final filter drops two docstring mentions —
+   `gmail_oauth.py:713` and
    `credentials/cloud.py:108` — which name the setting in reST prose rather
    than reading it.
 
    Two of the three are the OAuth `state` HMAC — signed in `_sign_state`
-   (`gmail_oauth.py:693`), verified in `_verify_state` (`:721`) — which reuses
+   (`gmail_oauth.py:762`), verified in `_verify_state` (`:790`) — which reuses
    this key for a second purpose. That dual use is disclosed in
    [`CRYPTOGRAPHY.md`](CRYPTOGRAPHY.md) §3.4.
 
    **The fourth read is in a third module, and the grep above structurally
    cannot see it.** `backend/jobtracker/config.py` carries
    `"secret_encryption_key"` as a *string* in `_GMAIL_OAUTH_REQUIRED_FIELDS`
-   (`:608-613`, the entry itself at `:612`) and dereferences it reflectively in
-   `gmail_oauth_missing_fields` — `getattr(self, name)` at `:629` — which backs
-   the `gmail_oauth_configured` computed field (`:632-644`). Several request
-   paths reach it: `_require_configured()` (`gmail_oauth.py:990`), the status
-   endpoint (`:1196`) and the OAuth callback (`:1339`). A grep for the literal
+   (`config.py:578-583`, the entry itself at `:582`) and dereferences it reflectively in
+   `gmail_oauth_missing_fields` — `getattr(self, name)` at `:599` — which backs
+   the `gmail_oauth_configured` computed field (`:604-614`). Several request
+   paths reach it: `_require_configured()` (`gmail_oauth.py:1059`), the status
+   endpoint (`:1265`) and the OAuth callback (`:1408`). A grep for the literal
    `settings.secret_encryption_key` cannot match a `getattr` by name, so
    "these are all the readers" is **not** falsifiable by the command this
    document publishes. It is falsifiable by reading that tuple, which is why
@@ -144,7 +149,7 @@ are no other developers on this project.
    **The fourth read never touches the value.** `getattr(self, name)` is
    evaluated for truthiness alone; nothing is returned, logged or surfaced.
    `gmail_oauth_missing_fields` yields field *names*, and says so in its own
-   docstring (`config.py:621-623`) precisely so that the 503 it feeds is safe
+   docstring (`config.py:591-593`) precisely so that the 503 it feeds is safe
    to emit. So the surface that handles the key *material* is still the three
    lines in the transcript.
 
@@ -157,7 +162,7 @@ are no other developers on this project.
    never leaves the request that decrypted it. Tokens are excluded from all API
    responses.
 3. Configuration errors name the **variable**, never the value.
-   `CronSyncUserIdsError` (`backend/jobtracker/config.py:34-59`) exists solely
+   `CronSyncUserIdsError` (`backend/jobtracker/config.py:43-66`) exists solely
    for this: pydantic re-raises `ValueError` from a validator with
    `input_value=<the raw env var>` appended, so a validator that promised not
    to echo the value was echoing it a line later. Raising a non-`ValueError`
@@ -347,9 +352,9 @@ dependency this project has decided against.
    is built, so every credential encrypt and decrypt passes through one
    function. The key *variable* is read at four lines in three modules —
    `credentials/cloud.py:116`; for the OAuth `state` HMAC,
-   `cloud/gmail_oauth.py:693` and `:721`; and, as a truthiness check that never
+   `cloud/gmail_oauth.py:762` and `:790`; and, as a truthiness check that never
    touches the value, `getattr(self, name)` in `gmail_oauth_missing_fields`
-   (`backend/jobtracker/config.py:629`), driven by
+   (`backend/jobtracker/config.py:599`), driven by
    `_GMAIL_OAUTH_REQUIRED_FIELDS` (§2.3 rule 1). The fourth site cannot be
    found by a literal grep for `settings.secret_encryption_key`; that
    limitation of the search is stated in §2.3 rather than left for a reviewer
@@ -425,15 +430,15 @@ dependency this project has decided against.
    than a workflow's reads of them. So the CI limb of this control has no
    platform log behind it. What constrains it instead is scope: `DIRECT_URL` is
    injected only into the `migrate` job, which is pinned to the `production`
-   environment (`.github/workflows/db-migrate.yml:170-172`). Inside that job it
+   environment (`.github/workflows/db-migrate.yml:190-192`). Inside that job it
    is read **six** times, once in each step that uses it: *Check the
-   credential is present* (`:187`), *Confirm the database is reachable*
-   (`:207`), *Record the revision before* (`:279`), *alembic upgrade head*
-   (`:286`), *Verify the database reached the revision the code expects*
-   (`:292`) and *Verify row-level security survived the migration* (`:327`).
+   credential is present* (`:207`), *Confirm the database is reachable*
+   (`:228`), *Record the revision before* (`:301`), *alembic upgrade head*
+   (`:309`), *Verify the database reached the revision the code expects*
+   (`:316`) and *Verify row-level security survived the migration* (`:352`).
    `grep -n 'secrets\.DIRECT_URL' .github/workflows/db-migrate.yml` returns
    exactly those six lines and nothing else, and all six sit inside the
-   `migrate` job, which begins at `:166`. The scope is what the compensating
+   `migrate` job, which begins at `:176`. The scope is what the compensating
    argument rests on and it holds; the earlier "reads the secret at one place"
    did not, and the count is corrected here rather than the sentence dropped.
 5. **Use of the key is logged even though reads of it are not** (§3.1). Every
@@ -479,3 +484,12 @@ named along with the limitation of the grep that cannot see it, the published
 transcript reproduced from a real run of the command, and the `DIRECT_URL` read
 count corrected. No secret value is reproduced. Where a secret is
 referenced it is named by environment variable only.*
+
+*Both of those pieces of evidence had rotted again by 2026-09-08 — the
+transcript's line numbers and all six `DIRECT_URL` line numbers had moved,
+while the counts (three reads, six reads) stayed right. They are no longer
+hand-maintained. `scripts/check_citations.py` re-runs the published command and
+diffs its output, re-derives the six `DIRECT_URL` lines from the workflow, and
+re-resolves every `file:line` in this document against the source; CI runs it on
+every push as "Compliance pack citations resolve". The counts are gated too: the
+checker fails if the workflow stops having exactly six.*

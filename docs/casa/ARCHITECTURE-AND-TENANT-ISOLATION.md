@@ -62,7 +62,7 @@ anywhere. That is a structural property of the code, not a promise:
   field**. Bodies travel beside it in a separate `dict[message_id, str]` on
   `MessagePage`, are passed to `classifier.classify(...)` as its `body`
   argument, and fall out of scope at the end of the request.
-  (`backend/jobtracker/cloud/gmail_client.py:36-53`)
+  (`backend/jobtracker/cloud/gmail_client.py:36-52`)
 - `backend/tests/test_body_is_never_persisted.py` drives a real scan whose
   message bodies carry a sentinel string, then asserts the sentinel reaches no
   column of any table in the schema, no log record, and no response of any
@@ -94,7 +94,7 @@ FROM emails;
 **`training_data.body_text` is a badly named column, and the name is the whole
 risk of misreading this system.** It does not hold a body. It holds the same
 snippet, copied from `emails.body_snippet` by `_add_training_example`
-(`backend/jobtracker/cloud/applications.py:3476`, the copy itself at `:3495`).
+(`backend/jobtracker/cloud/applications.py:3692`, the copy itself at `:3711`).
 Two independent facts establish it:
 
 1. The longest value in that column across all 11 rows is **201 characters** —
@@ -112,7 +112,7 @@ Two disclosures an assessor should have without asking:
 
 - **`training_data` has no foreign key to `emails`.** `training_data.email_id`
   is a bare indexed integer, documented as such in `_orphan_training_examples`
-  (`backend/jobtracker/cloud/applications.py:3453`). One of the 7 populated rows
+  (`backend/jobtracker/cloud/applications.py:3664`). One of the 7 populated rows
   today points at an `emails` row that no longer exists — its snippet copy
   (199 characters) outlived its source. This is deliberate: a `training_data`
   row is a *human's correction*, retained as the record of a decision rather
@@ -158,7 +158,7 @@ written on 2026-08-15; it no longer does, and **the SQL that removed it is
 recorded nowhere in this repository** — `docs/harden-2026-08-03.sql` is the
 only hand-run SQL the repository holds, and it predates the table. Exactly one
 Alembic revision issues any `GRANT` or `REVOKE` at all
-(`backend/alembic/versions/e2b6f0a4d517_gmail_sync_enrollment.py:192`, which
+(`backend/alembic/versions/e2b6f0a4d517_gmail_sync_enrollment.py:204`, which
 grants to `jobtracker_app` only); no revision revokes from `anon` anywhere. So
 apart from that one `GRANT`, the entire grant configuration production runs on
 sits outside the migration chain. Alembic does run on merge to `main`
@@ -232,9 +232,9 @@ WHERE schemaname = 'public' AND tablename = 'emails';
 **Role scoping is narrower than the predicate, and this document states which
 is doing the work.** Only the **3** `gmail_sync_enrollment` policies carry a
 `TO` clause (`TO jobtracker_app`, created that way at
-`backend/alembic/versions/e2b6f0a4d517_gmail_sync_enrollment.py:177,183,187`).
+`backend/alembic/versions/e2b6f0a4d517_gmail_sync_enrollment.py:187,193,197`).
 The other **32** are created with no `TO` — which in Postgres means `TO PUBLIC`
-— by `a8d4ec5fba26_enable_rls_policies_postgres_only.py:110-136` and
+— by `a8d4ec5fba26_enable_rls_policies_postgres_only.py:110-132` and
 `c4_user_credentials_rls.py:34-45`; `c6_rls_initplan_hoist.py` rewrites their
 predicates only and never their roles. The `roles` column in the §4.1 dumps
 below shows this directly: the `emails` dump carries none, the
@@ -270,13 +270,13 @@ WHERE schemaname='public' AND tablename='gmail_sync_enrollment';
 
 This is deliberate and the reasoning is recorded in `GmailSyncEnrollment`'s
 docstring, under the heading "THE DELIBERATE EXPOSURE"
-(`backend/jobtracker/database/models.py:1082-1089`). Two features need a
+(`backend/jobtracker/database/models.py:1130-1137`). Two features need a
 deployment-wide answer rather than a per-user one: the scheduled sync must
 enumerate candidate users — `list_enrolled_user_ids`,
-`backend/jobtracker/cloud/cron.py:370` — and the Gmail connection cap must
+`backend/jobtracker/cloud/cron.py:342` — and the Gmail connection cap must
 count total enrolled mailboxes against Google's limit —
-`gmail_connection_census`, `backend/jobtracker/cloud/gmail_oauth.py:1014`, with
-the count itself at `:1079` and its docstring at `:1019-1042` setting out why
+`gmail_connection_census`, `backend/jobtracker/cloud/gmail_oauth.py:1083`, with
+the count itself at `:1148` and its docstring at `:1088-1111` setting out why
 that count cannot come from `user_credentials`. Neither can be answered from a
 user-scoped read — a cap that always counts 1 admits everybody forever.
 
@@ -354,7 +354,7 @@ measures is what the migration chain produces.
 reading taken on **2026-08-31**; they cannot be reproduced from this repository
 and should be re-run rather than trusted. That no revision revokes from `anon`,
 that `docs/harden-2026-08-03.sql` is the only hand-run SQL the repository
-holds, and that `e2b6f0a4d517_gmail_sync_enrollment.py:192` is the only `GRANT`
+holds, and that `e2b6f0a4d517_gmail_sync_enrollment.py:204` is the only `GRANT`
 in the chain are **repo-verifiable**, and were checked against this tree.
 
 ### 4.2 Layer 2 — the connecting role cannot bypass RLS
@@ -378,7 +378,7 @@ safe under Supabase's shared PgBouncer in transaction-pooling mode:
   handler, so it is scoped to the current transaction and discarded at
   COMMIT/ROLLBACK. A physical connection handed to the next tenant by PgBouncer
   cannot carry a stale identity.
-  (`backend/jobtracker/database/connection.py:60-90`, `:157-181`)
+  (`backend/jobtracker/database/connection.py:62-91`, `:157-243`)
 - `search_path` is pinned to `public` on every transaction in the same call.
   This is not decoration: the shared pooler previously suffered a co-tenant
   `search_path` poisoning incident on a sibling project.
@@ -397,11 +397,11 @@ safe under Supabase's shared PgBouncer in transaction-pooling mode:
 `backend/tests/test_rls_postgres.py` exercises this against a **real Postgres**,
 not SQLite — SQLite has no row-level security, so a test that ran there would
 prove nothing. It runs in CI in the `rls-postgres` job, against a Postgres
-service container (`.github/workflows/backend-ci.yml:208-210`), and the
+service container (`.github/workflows/backend-ci.yml:277-291`), and the
 workflow explicitly guards against the skip-is-green failure mode: if
 `JOBTRACKER_TEST_PG_ADMIN_URL` were unset the tests would skip silently and the
 job would still pass, so the *Assert the RLS suite actually ran* step parses the
-JUnit XML and fails when the suite reports zero tests or any skip (`:257-277`).
+JUnit XML and fails when the suite reports zero tests or any skip (`:340-360`).
 
 ### 4.3 Layer 3 — explicit `user_id` scoping in the application
 
@@ -419,18 +419,18 @@ states the blanket version; it is imprecise):
 
 - **`gmail_oauth.py`** carries no router-level dependency. Its user-facing
   endpoints take `Depends(current_user)` one endpoint at a time — as a
-  parameter on `gmail_status` (`:1182`), `gmail_authorize` (`:1237`),
-  `gmail_disconnect` (`:1432`), `gmail_inbox` (`:1603`) and `gmail_sync`
-  (`:2306`), and in the route decorator's own `dependencies=[…]` for
-  `gmail_pipeline` (`:1777`). Six endpoints, six declarations, none shared.
+  parameter on `gmail_status` (`gmail_oauth.py:1251`), `gmail_authorize` (`:1306`),
+  `gmail_disconnect` (`:1501`), `gmail_inbox` (`:1712`) and `gmail_sync`
+  (`:2584`), and in the route decorator's own `dependencies=[…]` for
+  `gmail_pipeline` (`:1928`). Six endpoints, six declarations, none shared.
   The **OAuth callback** deliberately has none — the request arrives from
   Google's redirect and cannot carry the user's JWT, so identity comes from
   the HS256-signed `state` parameter instead, which
   `gmail_callback` puts through `_verify_state` before binding the RLS identity
-  (`:1349`).
+  (`:1418`).
 - **`cron.py`** is not user-authenticated at all. It is invoked by Vercel's
   scheduler and authenticates with the shared `JOBTRACKER_VERCEL_CRON_SECRET`
-  bearer token (`:265`, `:286`). It then binds each user's identity
+  bearer token (`cron.py:265`, `:286`). It then binds each user's identity
   individually for that user's own sync, so the per-user RLS context still
   applies to every query it makes.
 
