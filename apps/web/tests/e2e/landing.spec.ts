@@ -103,6 +103,18 @@ const DESKTOP_1512 = { width: 1512, height: 949 };
  *  step. 1512 is where the owner works AND where the ramp tops out; widths
  *  past 1512 read the same, the composition capping at its 85rem gutter. */
 const DESKTOP_1512_600 = { width: 1512, height: 600 };
+/** WIDE AND MEDIUM-SHORT, and it exists for ONE gate: the camera's forced
+ *  pan (#656). The take authors a 126.5px pan and `camTargetFor` clamps it
+ *  to however far the stage overhangs its frame, so a viewport only counts
+ *  as evidence that the camera pans if that overhang comfortably EXCEEDS
+ *  the authored pan. At 949 the overhang is 24-33px depending on the
+ *  platform's rendered text height, so the clamp binds and the reading is
+ *  the overhang; at 850 it is 132px against a 126.5px demand, 5.5px of
+ *  slack; at 600 it is 373px but the frame falls to 41.2% on screen against
+ *  `OnerStage`'s 0.35 run threshold. 768 reads 214px of overhang with the
+ *  frame 57.9% on screen — the only walked height where both margins are
+ *  wide. Full derivation on the camera test's docblock. */
+const DESKTOP_1512_768 = { width: 1512, height: 768 };
 /** TALL, and the reason the pin is measured above 949 — permanently. The
  *  walked set has now been chosen after the measurement THREE times, and each
  *  time the blind spot sat one corner past the set: dc1bdee walked 768 alone
@@ -1026,41 +1038,174 @@ test.describe("landing (/)", () => {
    * gone. They were kept for one commit on the reasoning that a
    * scale-locked camera sits 100% under them, which was true and useless:
    * canonical measurement reads scale displacement of exactly 0.0000 at
-   * both viewports, so a ceiling of 0.18 would have let a returning zoom
+   * every viewport, so a ceiling of 0.18 would have let a returning zoom
    * of up to 0.18 per frame through in silence. The docblock claimed "any
    * reading above 0.0 at all now means a zoom came back" while the
    * assertion said otherwise; the assertion was wrong, and this is what
    * that sentence always meant. `data-cam-scale` is the constant 1.000 by
    * contract, so the honest assertion is equality.
    *
-   * THE PAN BOUND IS NOW TWO ASSERTIONS, because a single ceiling went
-   * vacuous at one corner. At 1024x1120 the whole board fits the frame and
-   * the minimal-move camera correctly never stirs: canonical reads
-   * maxPanStep of exactly 0.0 over 1970 frames, so `<= 100` was comparing
-   * zero against a hundred — a check that cannot fail, introduced by the
-   * recut itself. That corner now asserts the property it actually has
-   * (the camera does not move at all), and 1512x949, where the camera
-   * demonstrably does pan, asserts BOTH that it moved and that it never
-   * jumped. `pans` in the tuple is which contract the shot is under.
-   * Canonical pan at 1512x949 is 1.8px, dead stable across six repeats,
-   * not the 1.9-to-4.1 spread an earlier draft of this block recorded:
-   * the 4.1 came from a run carrying a press mutation that changes the
-   * take, and comparing it against a clean run was a measurement error.
+   * ---------------------------------------------------------------------
+   * THE PAN CLAUSE WAS REBUILT 2026-09-07 (#656), AND THE IDENTITY THAT
+   * FORCED IT IS  travel = min(authored demand, headroom).
+   * ---------------------------------------------------------------------
    *
-   * MUTATION EVIDENCE, all three watched red 2026-08-21 on their own
-   * production builds, each verified by reading the shipped `applyCam` in
-   * the chunk rather than by hashing `.next/static` (BUILD_ID sits in that
-   * path, so the aggregate hash changes on byte-identical sources and
-   * discriminates nothing):
+   * `camTargetFor` clamps the pan to the stage's overhang —
+   * `y = sh > f.height ? clamp(y, f.height - sh, 0) : 0` (`director.ts`) —
+   * and `x` is structurally 0, because the stage fills the frame's width at
+   * scale 1 and that function's own comment says so. So every pixel this
+   * test can read comes from `y`, and `y` is whichever is SMALLER: the pan
+   * the script authors, or the room the stage overhangs its frame by.
+   *
+   * Measured at HEAD on a production build (macOS, `next start`, the
+   * rendered camera rect, ~2,020 samples per take, dead stable across
+   * repeats):
+   *
+   *   viewport    frame  stage  headroom  travel  maxPanStep
+   *   1024x1120    944    846      -98      0.0     0.00
+   *   1512x768     592    806     +214    126.5     7.2-7.5
+   *   1512x850     674    806     +132    126.5    10.9
+   *   1512x949     773    806      +33     33.0     4.1-4.3
+   *
+   * and the same three taken in `mcr.microsoft.com/playwright:v1.62.1-noble`
+   * against THE SAME `next start` server, so the only variable between the
+   * two tables is the platform's text rendering:
+   *
+   *   1024x1120    944    862      -82      0.0     0.00
+   *   1512x768     592    806     +214    126.5    15.6
+   *   1512x949     773    806      +33     33.0     5.0
+   *
+   * THE 1024x1120 ROW IS THE CONTROL FOR THE WHOLE ARGUMENT. Same server,
+   * same build, same viewport: the stage measures 846 on macOS and 862 in
+   * the container. Rendered text height is a live ~16px platform variable on
+   * this composition, demonstrated in that pair rather than inferred. Where
+   * the clamp binds, that variance IS what the gate reads. At 1512x768 it
+   * does not bind, both platforms read the same 214px of headroom and the
+   * same 126.5px of travel, and the gate reads the camera.
+   *
+   * The authored demand is a CONSTANT 126.5px at every 1512 height: the
+   * `worklist-pane` beat is `align: "top"`, so its seat is `PAN_PAD - ty`
+   * and does not care how tall the frame is. What moves between those rows
+   * is the HEADROOM. At 1512x949 the headroom (33) is a quarter of the
+   * demand, so the clamp binds and the number this test reads is the
+   * stage's OVERHANG rather than the camera's behaviour.
+   *
+   * That overhang is about 9px of rendered text height wide across
+   * platforms: #656 measured stage 797 (headroom 24, pan 0, RED) on one
+   * macOS tree against stage 806 (headroom 33, pan 3.5, GREEN) in
+   * `mcr.microsoft.com/playwright:v1.62.1-noble` on the same server, and
+   * this tree reads 806 on macOS — green 3/3 — with no camera change
+   * between them. A gate whose reading is a text-metric residue is a
+   * lottery in whichever direction it lands, and it had already landed
+   * both ways.
+   *
+   * At 1512x768 the headroom (214) exceeds the demand (126.5) by 87.5px,
+   * so the clamp never enters the measurement and `travel` IS the authored
+   * pan. That is the whole difference, and it is why the forced-pan
+   * contract moved to this viewport.
+   *
+   * WHY 768 AND NOT SHORTER OR TALLER — both candidates rejected by
+   * measurement, not by taste:
+   *   · 1512x850 gives headroom 132 against a 126.5px demand: 5.5px of
+   *     slack, which rebuilds #656's defect one viewport along.
+   *   · 1512x600 gives the widest headroom on offer (373) but the frame is
+   *     `calc(100dvh - 11rem)` and rests at y=425.5 on this page, so only
+   *     174.5 of its 424px are on screen: 41.2% against `OnerStage`'s
+   *     `RUN_THRESHOLD` of 0.35. The take would start with six points to
+   *     spare and a hero that grew 25px would stop it starting at all —
+   *     the same class of thin margin this rework exists to remove. At 768
+   *     the frame is 57.9% on screen.
+   *
+   * THE THREE CONTRACTS, and 0 pan is a CORRECT answer under two of them:
+   *   · `seated` (1024x1120) — the whole board fits the frame (headroom
+   *     -98) and the minimal-move camera must not stir. Asserting the
+   *     property it has beats a ceiling it sits infinitely far under.
+   *   · `pans` (1512x768) — the premise is asserted FIRST (headroom clears
+   *     the authored pan, so the clamp cannot bind), then the camera is
+   *     required to have used it, then the move is required to have been a
+   *     move rather than a cut.
+   *   · `free` (1512x949) — seeded, scale-locked, reported honestly and
+   *     never jumped, and NOTHING about pan magnitude.
+   *
+   * THE `> 0` AT 1512x949 IS DELETED ON PURPOSE AND MUST NOT COME BACK.
+   * At that viewport the clamp binds, so asking `maxPanStep` to be greater
+   * than 0 asserts that this platform's rendered text happens to overhang
+   * this frame. That is not a camera property, both answers are correct,
+   * and the assertion has now been observed red 21/21 on one macOS tree and
+   * green 3/3 on another with the camera untouched. Its job — "the pan
+   * bound below has something to measure" — is done by the `pans` contract
+   * at 1512x768, where it is 87.5px away from the knife edge instead of
+   * 9px. If you want a pan asserted at 949, the honest way is to make the
+   * composition overflow that frame by more than it authors, not to assert
+   * that it already does.
+   *
+   * THE PREMISE IS ASSERTED, NOT DERIVED, which is what stops the `pans`
+   * contract going vacuous. `headroom` is read off the page, but the floor
+   * it is held to is read off the composition: ten rows of board inside a
+   * 592px frame overflow it structurally. If a change makes the board stop
+   * overflowing, headroom collapses toward 0 and this test reds on the
+   * PREMISE — "the stage no longer overflows its frame" — instead of
+   * quietly sliding into a branch where a still camera is acceptable. That
+   * is #392's shape — a board that has become exactly its window, so a
+   * camera that pans over a board taller than its frame has nothing to pan
+   * over. It is measured red below, and read the fourth mutation bullet
+   * with it: the mutation `OnerStage`'s `min-h-full` docblock records for
+   * that regression no longer reproduces anything at all.
+   *
+   * THE READING IS THE RENDERED RECT, NOT `data-cam-y`. `applyCam` writes
+   * the transform AND the dataset from one `this.cam`, so the dataset is
+   * the code's own report of what it MEANT to do. A mutation pinning only
+   * the `camera.style.transform` line leaves the dataset moving, and a
+   * dataset-only watcher then calls a frozen camera continuous — measured,
+   * see the mutation table below. What is sampled instead is
+   * `camera.getBoundingClientRect().top - frame.getBoundingClientRect().top`,
+   * which is what the compositor actually put on screen. This is NOT the
+   * parse-your-own-`style.transform` trap `adoptCam` forbids: that was
+   * re-serialization of a string this code had written, this is a rect the
+   * browser resolved. The dataset is still sampled, for exactly one
+   * assertion — that the two agree to 0.2px — and that clause's whole
+   * reach is "`applyCam` wrote two numbers that disagree": the measured gap
+   * on a clean tree is 0.05 at every viewport, precisely half the
+   * `toFixed(1)` quantum.
+   *
+   * MUTATION EVIDENCE. SCALE and STIR were watched red 2026-08-21 on their
+   * own production builds, each verified by reading the shipped `applyCam`
+   * in the chunk rather than by hashing `.next/static` (BUILD_ID sits in
+   * that path, so the aggregate hash changes on byte-identical sources and
+   * discriminates nothing). The three pan arms were re-taken 2026-09-07
+   * against this rebuilt clause, each on its own `next start` build:
    *   · SCALE: a returning zoom of 0.002 amplitude reds both viewports at
    *     0.0040 — 45x below the retired 0.18 ceiling, which is exactly the
    *     regression the old bound admitted in silence.
    *   · STIR: a 0.5px sine on the camera reds 1024x1120 alone at 0.9px,
    *     and would have sailed under the old `<= 100`.
-   *   · FREEZE: pinning the transform reds 1512x949 alone on the "never
-   *     panned" line.
-   * The last two red in exactly one viewport each, which is the evidence
-   * that the per-viewport split does real work rather than being decor.
+   *   · FREEZE, whole camera (`applyCam` reading a pinned `{x: 0, y: 0}`):
+   *     RED at 1512x768 — "the camera travelled 0.0px over the whole take
+   *     with 214px of stage to travel across", expected >= 48. The
+   *     pre-#656 gate reds under this arm too, at 1512x949.
+   *   · FREEZE, the `camera.style.transform` line ONLY, dataset left live:
+   *     the pre-#656 gate is GREEN 2/2 while the camera on screen never
+   *     moves — it was reading `data-cam-*`, which still travels its full
+   *     126.5px. This gate is RED at BOTH 1512 viewports on the report
+   *     clause, by 126.50px and 33.00px. That arm is the entire reason the
+   *     reading is a rect and not the dataset.
+   *   · NO OVERFLOW (`h-full` on the camera wrapper AND `h-full
+   *     overflow-hidden` on the stage, so the stage is exactly its frame at
+   *     every viewport): RED at 1512x768 on the PREMISE — "the stage
+   *     overhangs its frame by only 0px here" — before the travel clause is
+   *     reached. The pre-#656 gate reds too, at 1512x949, but as "the
+   *     camera never panned", which names the symptom instead of the
+   *     composition that caused it.
+   *   · NO OVERFLOW AS #392 RECORDED IT (`min-h-full` -> `h-full` on the
+   *     camera wrapper ALONE) NO LONGER REPRODUCES, and that is worth
+   *     writing down rather than quietly not running. Measured on its own
+   *     production build: stage height, headroom and travel are identical
+   *     to a clean tree at all three viewports and BOTH gates are green.
+   *     `h-full` gives the camera a definite height, but the stage inside
+   *     it is `p-4 lg:p-5` with no height of its own, so the board's
+   *     `h-full` still resolves against an indefinite parent and still lays
+   *     out at its content height. Pinning BOTH wrappers is what reproduces
+   *     the regression now, which is the bullet above.
    *
    * AND THE WATCHER HAS A POSITIVE CONTROL AT LAST. Mutating its
    * camera-finding predicate so it could never locate the element was
@@ -1072,14 +1217,37 @@ test.describe("landing (/)", () => {
    * a bare frame count floors the runner's frame rate, which has nothing
    * to do with the defect.
    *
-   * TWO VIEWPORTS, unchanged reasoning: every camera number is a function
-   * of the frame's dimensions, and the fluid composition widens the frame
-   * by up to ~208px above 1280 — 1512x949 measures the camera on a width
-   * where 1024 contributes nothing.
+   * THREE VIEWPORTS, and the reasoning is unchanged except for the third:
+   * every camera number is a function of the frame's dimensions, and the
+   * fluid composition widens the frame by up to ~208px above 1280 — the
+   * 1512 pair measures the camera on a width where 1024 contributes
+   * nothing. 1512x949 stays walked because it is where the owner works and
+   * because seeding, scale-lock and the jump bound are all platform-stable
+   * there; what it no longer does is carry the pan premise.
    */
-  for (const [label, viewport, pans] of [
-    ["1024x1120", DESKTOP_1024_TALL, false],
-    ["1512x949", DESKTOP_1512, true],
+
+  /** The stage must overhang its frame by more than the take AUTHORS
+   *  (126.5px, measured — see the docblock) or the clamp truncates the pan
+   *  and this test measures the overhang instead of the camera. 150 clears
+   *  that with 23.5px to spare and sits 64px under the 214 this viewport
+   *  actually reads. */
+  const CAM_HEADROOM_FLOOR = 150;
+  /** Twice `PAN_PAD` (`director.ts`), so the smallest correction the
+   *  composition can author — seating one target's edge a single breath
+   *  inside the frame — cannot satisfy "the camera travelled". Canonical
+   *  travel at the `pans` viewport is 126.5px, 2.6x this. */
+  const CAM_MIN_TRAVEL = 48;
+  /** A move, not a cut. The defect was 447px between two frames 8ms apart;
+   *  canonical per-frame steps run 4-11px. */
+  const CAM_JUMP_CEILING = 100;
+  /** `applyCam` writes the dataset through `toFixed(1)`, so the rounding
+   *  alone is worth 0.05px against the rendered rect. */
+  const CAM_REPORT_TOLERANCE = 0.2;
+
+  for (const [label, viewport, contract] of [
+    ["1024x1120", DESKTOP_1024_TALL, "seated"],
+    ["1512x768", DESKTOP_1512_768, "pans"],
+    ["1512x949", DESKTOP_1512, "free"],
   ] as const) {
     test(`the camera is seeded and continuous at ${label}`, async ({ page }) => {
       await page.setViewportSize(viewport);
@@ -1090,8 +1258,16 @@ test.describe("landing (/)", () => {
           t: number;
           unseeded: boolean;
           s: number | null;
-          x: number | null;
-          y: number | null;
+          /** The camera as RENDERED — the offset of its box from the frame's,
+           *  which is the translate the compositor applied. Everything the
+           *  pan clauses assert is derived from this pair and not from
+           *  `data-cam-*`; see the docblock. */
+          rx: number | null;
+          ry: number | null;
+          /** What `applyCam` SAID it did. Sampled only so the two can be
+           *  held to agreeing. */
+          dx: number | null;
+          dy: number | null;
           sh: number | null;
           fh: number | null;
         }
@@ -1115,14 +1291,18 @@ test.describe("landing (/)", () => {
             }
           }
           const frame = camera?.parentElement ?? null;
+          const cr = camera?.getBoundingClientRect() ?? null;
+          const fr = frame?.getBoundingClientRect() ?? null;
           samples.push({
             t: performance.now(),
             unseeded: !!camera && !camera.style.transform,
             s: frame?.dataset.camScale ? Number(frame.dataset.camScale) : null,
-            x: frame?.dataset.camX ? Number(frame.dataset.camX) : null,
-            y: frame?.dataset.camY ? Number(frame.dataset.camY) : null,
+            rx: cr && fr ? cr.left - fr.left : null,
+            ry: cr && fr ? cr.top - fr.top : null,
+            dx: frame?.dataset.camX ? Number(frame.dataset.camX) : null,
+            dy: frame?.dataset.camY ? Number(frame.dataset.camY) : null,
             sh: camera?.firstElementChild instanceof HTMLElement ? camera.firstElementChild.offsetHeight : null,
-            fh: frame ? frame.getBoundingClientRect().height : null,
+            fh: fr ? fr.height : null,
           });
           requestAnimationFrame(tick);
         };
@@ -1135,7 +1315,21 @@ test.describe("landing (/)", () => {
       await page.waitForTimeout(16_000);
       const samples = await page.evaluate(
         () =>
-          (window as unknown as { __cam: { t: number; unseeded: boolean; s: number | null; x: number | null; y: number | null; sh: number | null; fh: number | null }[] }).__cam,
+          (
+            window as unknown as {
+              __cam: {
+                t: number;
+                unseeded: boolean;
+                s: number | null;
+                rx: number | null;
+                ry: number | null;
+                dx: number | null;
+                dy: number | null;
+                sh: number | null;
+                fh: number | null;
+              }[];
+            }
+          ).__cam,
       );
 
       // 1 — SEEDED: no frame ever renders the camera untransformed.
@@ -1153,43 +1347,82 @@ test.describe("landing (/)", () => {
         `${unseeded} frame(s) rendered with the camera untransformed — the establishing shot is being cut to, not seeded (Director's constructor seed)`,
       ).toBe(0);
 
-      // 2 — CONTINUOUS: how far the rendered camera moves between two
-      // adjacent frames. Displacement, not a rate — see the docblock for
-      // why dividing by dt was the defect and not the measurement.
+      // 2 — CONTINUOUS: how far the RENDERED camera moves between two
+      // adjacent frames, plus how far it travelled over the whole take, plus
+      // how far the stage overhung the frame it could travel within.
+      // Displacement, not a rate — see the docblock for why dividing by dt
+      // was the defect and not the measurement.
       let maxScaleStep = 0;
       let maxPanStep = 0;
-      for (let i = 1; i < samples.length; i++) {
-        const a = samples[i - 1]!;
+      let maxReportGap = 0;
+      let headroom = Number.NEGATIVE_INFINITY;
+      let minY = Number.POSITIVE_INFINITY;
+      let maxY = Number.NEGATIVE_INFINITY;
+      let minX = Number.POSITIVE_INFINITY;
+      let maxX = Number.NEGATIVE_INFINITY;
+      for (let i = 0; i < samples.length; i++) {
         const b = samples[i]!;
+        if (b.sh !== null && b.fh !== null) headroom = Math.max(headroom, b.sh - b.fh);
+        if (b.rx === null || b.ry === null) continue;
+        minX = Math.min(minX, b.rx);
+        maxX = Math.max(maxX, b.rx);
+        minY = Math.min(minY, b.ry);
+        maxY = Math.max(maxY, b.ry);
+        if (b.dx !== null && b.dy !== null)
+          maxReportGap = Math.max(maxReportGap, Math.abs(b.dx - b.rx), Math.abs(b.dy - b.ry));
+        if (i === 0) continue;
+        const a = samples[i - 1]!;
         if (a.s === null || b.s === null || Number.isNaN(a.s) || Number.isNaN(b.s)) continue;
         if (b.t <= a.t) continue;
         maxScaleStep = Math.max(maxScaleStep, Math.abs(b.s - a.s));
-        maxPanStep = Math.max(maxPanStep, Math.abs(b.x! - a.x!), Math.abs(b.y! - a.y!));
+        if (a.rx === null || a.ry === null) continue;
+        maxPanStep = Math.max(maxPanStep, Math.abs(b.rx - a.rx), Math.abs(b.ry - a.ry));
       }
+      /** How far the camera actually went over the take, on its widest axis
+       *  — not a per-frame step. An eased 126.5px pan moves ~7px per frame,
+       *  so the step is a poor reading of "did it move at all" and the
+       *  range is a good one. */
+      const travel = Math.max(maxY - minY, maxX - minX);
+
       expect(
         maxScaleStep,
         `the camera's scale moved ${maxScaleStep.toFixed(4)} — the oner is scale-locked at 1.000, so any movement at all is a zoom coming back`,
       ).toBe(0);
-      if (pans) {
-        // The camera demonstrably travels here, so both halves are real: it
-        // moved, and it never jumped. Canonical readings run 1.9 to 4.1px.
-        expect(
-          maxPanStep,
-          `the camera never panned at this viewport — the pan bound below has nothing to measure, so its pass is not evidence`,
-        ).toBeGreaterThan(0);
-        expect(
-          maxPanStep,
-          `the camera jumped ${maxPanStep.toFixed(0)}px between two frames — a cut, not a move (reframe's absorb)`,
-        ).toBeLessThanOrEqual(100);
-      } else {
+
+      // The code's own report of the camera against the camera. This is the
+      // ONLY thing `data-cam-*` is trusted for here.
+      expect(
+        maxReportGap,
+        `\`data-cam-*\` and the rendered transform disagree by ${maxReportGap.toFixed(2)}px — \`applyCam\` writes both from one \`this.cam\`, so one of the two writes is no longer the camera on screen`,
+      ).toBeLessThanOrEqual(CAM_REPORT_TOLERANCE);
+
+      expect(
+        maxPanStep,
+        `the camera jumped ${maxPanStep.toFixed(0)}px between two frames — a cut, not a move (reframe's absorb)`,
+      ).toBeLessThanOrEqual(CAM_JUMP_CEILING);
+
+      if (contract === "seated") {
         // The board fits the frame here, so the minimal-move camera should
         // never stir. Asserting the property it HAS beats a ceiling it sits
         // infinitely far under.
         expect(
-          maxPanStep,
-          `the camera panned ${maxPanStep.toFixed(1)}px at a viewport where the whole board fits the frame — minimal-move means it should not have stirred`,
+          travel,
+          `the camera travelled ${travel.toFixed(1)}px at a viewport where the whole board fits the frame (stage overhangs by ${headroom.toFixed(0)}px) — minimal-move means it should not have stirred`,
         ).toBe(0);
+      } else if (contract === "pans") {
+        // THE PREMISE, FIRST. Without this the clause below can be satisfied
+        // by a composition that has nothing to pan over, which is exactly
+        // how #392 shipped and how #656's assertion became a coin flip.
+        expect(
+          headroom,
+          `the stage overhangs its frame by only ${headroom.toFixed(0)}px here — the take authors a 126.5px pan, so below ${CAM_HEADROOM_FLOOR}px the clamp truncates it and the travel bound below would be measuring the overhang instead of the camera`,
+        ).toBeGreaterThanOrEqual(CAM_HEADROOM_FLOOR);
+        expect(
+          travel,
+          `the camera travelled ${travel.toFixed(1)}px over the whole take with ${headroom.toFixed(0)}px of stage to travel across — the take pans to three targets that are out of this frame and the rendered camera did not follow`,
+        ).toBeGreaterThanOrEqual(CAM_MIN_TRAVEL);
       }
+      // `free`: nothing about pan magnitude, deliberately. See the docblock.
     });
   }
 
