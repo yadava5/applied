@@ -536,3 +536,67 @@ Valid while: the browser demo is a static site with no build step. If it ever
   import outside its own directory — the copy loses its justification and
   alternative (1) becomes available; re-read this entry then.
 Markers: ml/browser/site/preprocess.js, scripts/cross_engine_differential.py, backend/tests/test_the_rules_tables_cannot_drift.py
+
+## DEC-012 — a thread spanning a hand-dismissed card splits, and each answer mints its own card
+
+Status: active (2026-09-08)
+Claim: when a message linked to a card the user dismissed BY HAND is
+  reclassified from `/inbox`, the answer mints a new card and the message's
+  unreviewed thread siblings stay where they are. Answering a second sibling
+  mints a second card. n per-message answers yield n cards, and that is the
+  chosen behaviour rather than a defect awaiting a fix.
+Why: the two principles that look like they collide have disjoint
+  jurisdictions. "One decision settles the whole conversation" is the QUEUE's
+  contract and derives from the queue's own mechanism — it shows one entry per
+  conversation, so answering that entry has to settle everything behind it.
+  Here the queue never offered the conversation at all: both messages are
+  answered-for by the hand-dismissed card under #597, and the review queue is
+  empty before any answer. Where the queue never asked, its settlement contract
+  owes nothing. What the user actually exercised is `/inbox`'s per-MESSAGE
+  reclassify control, and one card per per-message command is that surface
+  answering literally. The live-card mirror confirms it is not a special case:
+  an unreviewed sibling on a LIVE card is excluded from every settle by the
+  same predicate and sits at NEEDS_REVIEW indefinitely, and nobody calls that
+  a defect, because the card answers for it.
+Moved away from: three alternatives, and two of them are actively dangerous.
+  (1) "Carry the thread to the mint" — relink the answered message's unreviewed
+  siblings to the minted row. It breaks the settle's real invariant, which is
+  that it converts open questions into filings and never re-homes mail that is
+  already settled.
+  (2) "Land on an existing open card at the employer instead of minting." This
+  is byte-for-byte the mutation the refusal branch in
+  `_resolve_application_for_email` exists to forbid, and its 35-line comment is
+  addressed to exactly this idea: at an employer holding the dismissed row and
+  a live one, the cascade hands the message to the live row by rule 3 or rule 4
+  (`rows[0]`, live-first), `_adopt_mail_identity` then stamps the dismissed
+  application's `req_id` and `role_token` onto a row it was never about, and
+  rule 1 routes all future mail there. Two applications wearing one identity,
+  undone only by `POST /{id}/split`. Rejections are anonymous in the common
+  case — DEC-009 records that an ATS rejection spends its whole snippet on
+  preamble — so role-Y mail landing on a role-X card is the EXPECTED outcome
+  of employer matching, not a corner. The repository's cost model, stated three
+  times in the code this would amend: a spurious card is one dismiss click,
+  where a silent merge is not reversible from any screen.
+  (3) "Reuse the mint within the request." The endpoint is per-message, so two
+  sequential answers still yield two cards; its own acceptance test would
+  demonstrate a non-fix.
+  If the n-mint behaviour ever must die, the sound shape is neither of the
+  above: before minting after a refusal, ask whether another message of this
+  user's with the SAME `review_dedup_key` is already reviewed and sitting on
+  exactly one live card, and land there. That consumes only the key the product
+  already trusts as "same application", can never select the anonymous live
+  sibling, and needs no provenance column — the mint writes none.
+Enforced by: backend/tests/test_a_split_thread_is_the_decision_622.py, which
+  asserts the row count reaches 3 at the employer after both answers rather
+  than treating it as a defect, and carries the `dismissed_reason='resync'`
+  arm as its control — same probe, one column different, one row and a settled
+  sibling. Its fixture also asserts both messages share a `review_dedup_key`
+  and that the queue is empty before any answer; without those the test passes
+  while proving nothing.
+Valid while: `/inbox`'s reclassify stays a per-MESSAGE control and the queue
+  keeps offering one entry per conversation. If reclassify ever becomes a
+  per-conversation action, the jurisdiction argument above dissolves and this
+  entry must be re-read. Note also that the shape has never occurred in
+  production: `dismissed_reason` is null for all 76 rows, so no card has ever
+  been hand-dismissed there and the frequency is UNMEASURED rather than zero.
+Markers: backend/tests/test_a_split_thread_is_the_decision_622.py
