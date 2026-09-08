@@ -610,6 +610,40 @@ class Email(TimestampMixin, table=True):
         ),
     )
 
+    # WHY THIS ROW IS IN THE REVIEW QUEUE, when that is not something the read
+    # path can work out for itself (#800).
+    #
+    # ``cloud.pipeline.hold_reason`` derives eight of the nine reasons at read
+    # time, from the same functions the sync used to hold the row, and that is
+    # the right design for all of them: their operands are the message, which
+    # does not change. ``contradicts_filed`` is the exception. Its operands are
+    # the message AND A CARD ON THE BOARD, and the card moves — an offer can be
+    # accepted, dismissed or advanced between the sync that admitted the message
+    # and the read that describes it. Re-deriving would then explain a row
+    # admitted because something was certain as "the classifier was unsure",
+    # which is #507's defect (a plausible sentence in place of a true one) one
+    # layer down.
+    #
+    # NULL MEANS "NO ADMISSION-TIME REASON WAS RECORDED" — every row that exists
+    # when this column is added, and every row admitted by one of the other
+    # eight routes, which have nothing to record. Readers fall back to deriving
+    # a reason only for NULL, so nothing needs backfilling and no existing queue
+    # row changes its sentence. Same ratchet as ``identity_role`` above: a
+    # writer only ever raises NULL to a value and never blanks one back down.
+    #
+    # NOT MAIL CONTENT. It holds one of a closed set of ASCII tokens defined in
+    # ``pipeline.HOLD_REASONS``; no subject, snippet or employer name reaches it,
+    # and ``tests/test_body_is_never_persisted.py``'s sentinel would fail if one
+    # did.
+    hold_reason: Optional[str] = Field(
+        default=None,
+        max_length=32,
+        description=(
+            "Why the queue holds this message, recorded when it was admitted. "
+            "One of pipeline.HOLD_REASONS. NULL = derive it at read time."
+        ),
+    )
+
     # Classification
     classified_as: Optional[EmailCategory] = Field(
         default=None,

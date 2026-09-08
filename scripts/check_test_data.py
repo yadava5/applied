@@ -120,6 +120,87 @@ Named here so the next reader inherits a decision rather than another blind spot
   constant, a template read from a file. A text scan ends where dataflow begins,
   and resolving constants is not something this file is going to start doing.
 
+A SECOND SHAPE: A GMAIL THREAD OR MESSAGE ID (#924)
+
+`docs/TEST_DATA_POLICY.md` names the categories that must be invented, and until
+#924 an id was not among them. A Gmail thread id and a Gmail message id are both
+sixteen lowercase hex characters; they were nowhere in the table, and nothing
+looked for them. The ones on this tree were found because a reviewer opened
+`cloud/pipeline.py` for an unrelated reason, which is the tell.
+
+An id is gateable for precisely the reason an address is, and the argument is
+stronger here: the check is on SHAPE, so it needs no denylist and republishes
+nothing — and with an id, writing one down IS the whole of the leak. There is
+nothing else about it to protect.
+
+WHAT IS NOT AN ID, AND WHY THE PATTERN SAYS SO
+
+`[0-9a-f]{16}` alone is the wrong rule, and the measurement is what says so.
+On a pristine tree it matched 341 tokens, and 91 of them — every hit under
+`mlruns/`, every hit in `backend/data/evaluation/`, and one in
+`scripts/readme_facts.py` — were THE FRACTIONAL DIGITS OF A FLOAT. Sixteen
+decimal digits after `0.` are sixteen hex digits. So `ID_TOKEN` demands two
+things beyond the sixteen characters:
+
+* no hex character immediately before or after, which is what stops a
+  32-character MLflow run id or a 64-character SHA-256 being read as its own
+  first sixteen characters — measured: not one `mlruns/` RUN ID ever matched,
+  only the floats inside the artifacts; and
+* no `<digit>.` immediately before, which is what a float's fraction always
+  has and an id never does.
+
+THE DISCARDED ALTERNATIVE IS NAMED BECAUSE A LATER READER WILL PROPOSE IT:
+require at least one `a`-`f`, which also drops every float. Measured here the
+two rules are INDISTINGUISHABLE — both leave 250 tokens across 27 files,
+because this tree happens to hold no all-decimal token that is not a fraction.
+They are not the same rule. A real id is sixteen draws from sixteen digits, so
+about one id in 1,800 is all-decimal, and the letter rule would be blind to
+that id forever while printing green. `test_test_data_gate.py` carries the
+input that separates the two, so this choice is pinned rather than incidental.
+
+Two false positives are accepted rather than patched, because the remedy is
+cheaper than the rule: an abbreviated git SHA cut to exactly sixteen characters
+matches (use 7 or the full 40), any other deliberately-truncated hash written at
+exactly this width matches, and so does a MICROSECOND-PRECISION UNIX TIMESTAMP,
+which is exactly sixteen digits. That last one is the price of keeping
+all-decimal tokens visible, and it is the price the letter rule would not have
+paid — named here so the trade is on the record in both directions. Write the
+value some other width, or record the line on purpose.
+
+THE RESERVED BAND: HOW TO WRITE AN ID THAT STAYS SILENT
+
+An address has `.test`. A fixture author who needs a sender has somewhere to put
+one that no gate objects to, and without that this arm would be unusable: every
+new test needing a thread id would red, the baseline would be re-recorded
+reflexively, and a ratchet nobody trusts is a ratchet nobody reads.
+
+So sixteen hex characters beginning with EIGHT ZEROS are reserved for invented
+ids, and they are silent.
+
+Be exact about what kind of claim that is, because it is NOT the kind
+`RESERVED_TLDS` makes. `.test` is un-routable because IANA says so and this
+repository could not change it if it wanted to. The band is trustworthy for a
+different reason: THIS GATE REDS ON EVERY ID-SHAPED TOKEN OUTSIDE IT, so once the
+ratchet is recorded a token in the band can only have been written by an author
+inventing one. The convention enforces itself, which is the property that
+matters. The empirical half, measured across all 26 files in the id ledger: of
+the 62 distinct id-shaped tokens already in this tree, not one begins with even
+a single zero.
+
+BE PRECISE ABOUT WHAT THE LEDGER IS, because the wrong word here would be an
+accusation the instrument cannot support. This arm counts sixteen-hex tokens
+outside the band. It CANNOT tell one copied out of a mailbox from one a fixture
+author invented before the band existed, and several of the recorded files are
+certainly the latter. So a line in the ledger means "an id-shaped token that is
+not in the reserved band", exactly as the address arm's is "a ledger of
+address-shaped runs, not an accusation". The ratchet works either way: what it
+guarantees is that the set cannot move without a commit saying so.
+
+The limit, stated rather than assumed: a real id could land in the band about
+once in four billion, and this gate would stay silent on it. That is a much
+smaller hole than the one the band closes, and it is the same trade the digest
+section of the policy document already makes explicitly.
+
 HOW IT FAILS
 
 Per-file COUNT plus per-file DIGEST, compared against
@@ -147,6 +228,13 @@ The baseline records paths, counts and digests. It never records the matched
 strings, for the same reason there is no denylist — and see "Why a digest is
 allowed where a literal is not" in the policy document for why a truncated hash
 does not reintroduce the problem.
+
+The id arm is recorded exactly the same way, in its own `ids` section, and every
+sentence above applies to it unchanged. The digest argument is if anything
+easier to make there: an id carries about 64 bits of entropy and a digest over a
+set of them is a confirmation oracle for a reader who already holds a candidate,
+which is strictly weaker than the publication being avoided. The policy document
+settles this once; it is not re-litigated here.
 """
 
 from __future__ import annotations
@@ -203,6 +291,35 @@ from typing import NamedTuple
 #: written by `ml/demo/package_space.py`, so repackaging the Space moves the
 #: baseline. That is correct behaviour, and the policy document says so.)
 EXCLUDED: tuple[tuple[str, str], ...] = ()
+
+#: Paths the ID arm does not read. A SEPARATE LIST FROM `EXCLUDED` ON PURPOSE,
+#: and the separation is the point: `EXCLUDED` filters the file list and so
+#: governs both arms at once, and putting an entry there to quiet the id arm
+#: would silently narrow the ADDRESS scan as well — and would falsify the three
+#: places, this comment among them, that say `EXCLUDED` is empty. This list is
+#: applied to the id arm alone, inside `scan`.
+#:
+#: ONE ENTRY, AND IT IS A FIXED POINT RATHER THAN A JUDGEMENT CALL.
+#: `scripts/test_data_baseline.json` is this gate's own output, and a digest is
+#: sixteen lowercase hex characters BY CONSTRUCTION — `DIGEST_CHARS` says so, and
+#: the address arm has already written 108 of them into that file. Scanning it
+#: would mean recording a count of its own digests, which writes another digest,
+#: which moves the count: the write path would never converge. It would also
+#: couple the two arms, so that every address re-record moved the id ledger.
+#:
+#: The hole that leaves is real and it is small: an id hand-written into a
+#: generated digest file would not be seen. Nothing else is exempt. Product
+#: source, the tests, the docs and this script itself are all read for ids, and
+#: the reserved band below — not an exemption — is how a fixture writes one.
+ID_EXCLUDED: tuple[tuple[str, str], ...] = (
+    (
+        "scripts/test_data_baseline.json",
+        (
+            "this gate's own output: its digests ARE the shape, so scanning it "
+            "does not converge"
+        ),
+    ),
+)
 
 #: RFC 2606 §2 reserves the `.test`, `.example`, `.invalid` and `.localhost`
 #: top-level domains, and §3 reserves `example.com`, `example.net` and
@@ -317,6 +434,31 @@ CONCAT_ELEMENT = re.compile(
     r")"
 )
 
+#: A Gmail thread id and a Gmail message id are the same shape: sixteen
+#: lowercase hex characters. Both guards are load-bearing and both were measured
+#: rather than guessed — see "WHAT IS NOT AN ID" in the module docstring.
+#:
+#: `(?<![0-9A-Za-z])` / `(?![0-9A-Za-z])` keep a longer hex run from being read
+#: as its own first or last sixteen characters: a 32-character MLflow run id, a
+#: 40-character git SHA, a 64-character SHA-256. Alphanumeric rather than hex on
+#: purpose, so `0x1234567890abcdef` is a literal and not an id.
+#:
+#: `(?<![0-9]\.)` is the float guard, and it is the one that carried the count.
+#: `0.9166666666666666` ends in sixteen digits and digits are hex; 91 of the 341
+#: tokens a bare pattern found on this tree were exactly that.
+ID_TOKEN = re.compile(r"(?<![0-9A-Za-z])(?<![0-9]\.)[0-9a-f]{16}(?![0-9A-Za-z])")
+
+#: The leading run that marks an id as INVENTED, and so silent. Eight zeros.
+#:
+#: This is not `RESERVED_TLDS` and must not be read as it. That allowlist is
+#: citable — IANA reserves those names and nothing here can change it. This band
+#: is trustworthy because the gate around it reds on every id-shaped token
+#: outside it, so a token in the band can only be one somebody invented. It is a
+#: convention that enforces itself, and the measurement behind the choice is that
+#: not one of the 62 id-shaped tokens already in this tree begins with even a
+#: single zero.
+RESERVED_ID_PREFIX = "0" * 8
+
 #: Hex characters of SHA-256 kept per file. Sixteen is 64 bits — far past any
 #: accidental collision across a baseline of fewer than a hundred files, and
 #: short enough that the baseline stays readable in a diff.
@@ -331,6 +473,20 @@ class Finding(NamedTuple):
 
     count: int
     digest: str
+
+
+class FileScan(NamedTuple):
+    """What one file contributes to each arm: addresses, and ids.
+
+    Two shapes and two ledgers, but ONE read of the file. Keeping them in one
+    pass is not only speed: the text/binary decision and the `OSError` are
+    properties of the file rather than of a shape, so a second independent walk
+    could disagree with the first about whether a file was read at all — and
+    "read by nothing" is the one state this gate exists to keep visible.
+    """
+
+    addresses: Finding
+    ids: Finding
 
 
 class Match(NamedTuple):
@@ -557,6 +713,32 @@ def matches_in(text: str) -> list[Match]:
     return found
 
 
+def is_invented_id(token: str) -> bool:
+    """True when this id sits in the reserved band, so it cannot be a real one.
+
+    The whole of the rule, deliberately. There is no second condition and no
+    per-path exception: an id is either written in the band a fixture author is
+    told to use, or it is recorded.
+    """
+
+    return token.startswith(RESERVED_ID_PREFIX)
+
+
+def ids_in(text: str) -> list[str]:
+    """Every sixteen-hex id in `text` that is not in the reserved band.
+
+    Whole-file exactly as `matches_in` is, and for a sharper version of the same
+    reason: every id this arm was written for is in a DOCSTRING or a COMMENT
+    rather than in a fixture body. A reader who scanned string literals only
+    would have found none of them.
+
+    By occurrence, not by set — `scan_file` needs both numbers for the same
+    reason the address arm does.
+    """
+
+    return [t for t in ID_TOKEN.findall(text) if not is_invented_id(t)]
+
+
 def digest_of(addresses: Iterable[str]) -> str:
     """Truncated SHA-256 over the sorted, lower-cased, de-duplicated set.
 
@@ -707,8 +889,8 @@ def decode_text(raw: bytes) -> str | None:
     return None
 
 
-def scan_file(path: Path) -> Finding | None:
-    """Non-reserved addresses in one file, or None when the file is not text.
+def scan_file(path: Path) -> FileScan | None:
+    """Both arms for one file, or None when the file is not text.
 
     The whole file, not just its string literals: the most recent leak came
     through a module DOCSTRING sitting above fixtures that had been correctly
@@ -736,37 +918,55 @@ def scan_file(path: Path) -> Finding | None:
     if text is None:
         return None
     matched = matches_in(text)
-    return Finding(len(matched), digest_of(match.text for match in matched))
+    found_ids = ids_in(text)
+    return FileScan(
+        addresses=Finding(len(matched), digest_of(match.text for match in matched)),
+        ids=Finding(len(found_ids), digest_of(found_ids)),
+    )
 
 
-def scan(repo_root: Path) -> tuple[dict[str, Finding], list[Skipped]]:
-    """Findings for every scanned file with at least one hit, plus the skips.
+def scan(
+    repo_root: Path,
+) -> tuple[dict[str, Finding], dict[str, Finding], list[Skipped]]:
+    """Address findings, id findings, and the skips. One walk, one read each.
 
     A file with no findings and a file that was never read are both absent from
-    the first return value, which is exactly why the second one exists and is
-    baselined alongside it.
+    the first two return values, which is exactly why the third one exists and
+    is baselined alongside them.
+
+    `ID_EXCLUDED` is applied HERE rather than in `tracked_files`, and that is the
+    whole reason it is a second list: filtering the file list would drop the path
+    from the address arm too. See the comment on the constant.
     """
 
     findings: dict[str, Finding] = {}
+    id_findings: dict[str, Finding] = {}
     skipped: list[Skipped] = []
+    id_subtrees = tuple(p for p, _reason in ID_EXCLUDED if p.endswith("/"))
+    id_exact = frozenset(p for p, _reason in ID_EXCLUDED if not p.endswith("/"))
     for rel in tracked_files(repo_root):
         try:
-            finding = scan_file(repo_root / rel)
+            scanned = scan_file(repo_root / rel)
         except OSError as exc:
             skipped.append(Skipped(rel, UNREADABLE, f"{type(exc).__name__}: {exc}"))
             continue
-        if finding is None:
+        if scanned is None:
             skipped.append(Skipped(rel, BINARY, "not UTF-8"))
             continue
-        if finding.count:
-            findings[rel] = finding
-    return findings, skipped
+        if scanned.addresses.count:
+            findings[rel] = scanned.addresses
+        if scanned.ids.count and not (
+            rel in id_exact or (id_subtrees and rel.startswith(id_subtrees))
+        ):
+            id_findings[rel] = scanned.ids
+    return findings, id_findings, skipped
 
 
 class Baseline(NamedTuple):
-    """What was recorded on purpose: the findings, and the files nobody read."""
+    """What was recorded on purpose: both ledgers, and the files nobody read."""
 
     files: dict[str, Finding]
+    ids: dict[str, Finding]
     skipped: dict[str, str]
 
 
@@ -792,10 +992,28 @@ def load_baseline(path: Path) -> Baseline:
             "    python3 scripts/check_test_data.py --write-baseline\n"
             f"and say in the commit body why the numbers moved. See {POLICY_DOC}."
         )
+    #: Checked AFTER both of the above, so a baseline in an older format is
+    #: still named as the older format it is. Degrading to "no opinion" on a
+    #: missing `ids` map would be worse than the pre-#623 hole it mirrors: every
+    #: id already in the tree would read as brand new on one branch and as
+    #: nothing at all on another, so the arm would red on a tree nobody had
+    #: touched and the reflex would be to re-record without reading it.
+    if "ids" not in data:
+        raise SystemExit(
+            f"FAIL — {path} is in the pre-#924 format (no record of the Gmail\n"
+            "thread and message ids already in this tree). Reading it would make\n"
+            "every existing id look new. Regenerate it:\n"
+            "    python3 scripts/check_test_data.py --write-baseline\n"
+            f"and say in the commit body why the numbers moved. See {POLICY_DOC}."
+        )
     return Baseline(
         files={
             str(path_): Finding(int(entry["count"]), str(entry["digest"]))
             for path_, entry in data["files"].items()
+        },
+        ids={
+            str(path_): Finding(int(entry["count"]), str(entry["digest"]))
+            for path_, entry in data["ids"].items()
         },
         skipped={str(path_): str(kind) for path_, kind in data["skipped"].items()},
     )
@@ -814,11 +1032,21 @@ def previously_scanned(path: Path) -> dict[str, int]:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
-    return {str(p): int(e["count"]) for p, e in data.get("files", {}).items()}
+    #: BOTH ledgers, summed. A file recorded for ids only is still a file that
+    #: was scanned, and reading `files` alone would let it be laundered into a
+    #: skip through exactly the door this function exists to hold shut.
+    counts: dict[str, int] = {}
+    for section in ("files", "ids"):
+        for p, e in data.get(section, {}).items():
+            counts[str(p)] = counts.get(str(p), 0) + int(e["count"])
+    return counts
 
 
 def write_baseline(
-    path: Path, findings: dict[str, Finding], skipped: list[Skipped]
+    path: Path,
+    findings: dict[str, Finding],
+    id_findings: dict[str, Finding],
+    skipped: list[Skipped],
 ) -> None:
     path.write_text(
         json.dumps(
@@ -840,11 +1068,23 @@ def write_baseline(
                     "down, a new file, a cleared file, a same-count SWAP that moves",
                     "the digest, or a change to the skipped set. This is a RATCHET,",
                     f"not a backlog — moving it is a deliberate act, see {POLICY_DOC}.",
+                    "'ids' is the same ledger for the shape of a Gmail thread or",
+                    "message id — sixteen lowercase hex characters — counted and",
+                    "digested per file and ratcheted identically. An id INVENTED",
+                    "for a fixture goes in the reserved band (eight leading zeros)",
+                    "and is silent, so a line here is an id-SHAPED token outside",
+                    "that band. It is NOT a claim that the token came from a real",
+                    "mailbox: no text scan can tell that, and several of these",
+                    "files predate the band. A ledger, not an accusation.",
                     "Regenerate with: python3 scripts/check_test_data.py --write-baseline",
                 ],
                 "files": {
                     path_: {"count": finding.count, "digest": finding.digest}
                     for path_, finding in sorted(findings.items())
+                },
+                "ids": {
+                    path_: {"count": finding.count, "digest": finding.digest}
+                    for path_, finding in sorted(id_findings.items())
                 },
                 "skipped": {skip.path: skip.kind for skip in sorted(skipped)},
             },
@@ -866,31 +1106,134 @@ def _print_unreadable(skipped: list[Skipped]) -> None:
     )
 
 
+class Divergence(NamedTuple):
+    """How one ledger differs from what was recorded. Empty means agreement."""
+
+    new_files: list[str]
+    cleared: list[str]
+    grown: list[str]
+    shrunk: list[str]
+    swapped: list[str]
+
+    def __bool__(self) -> bool:
+        return bool(
+            self.new_files or self.cleared or self.grown or self.shrunk or self.swapped
+        )
+
+
+def diverged(findings: dict[str, Finding], recorded: dict[str, Finding]) -> Divergence:
+    """Compare one ledger against its baseline. Shared by both arms.
+
+    Written once rather than twice on purpose. Two copies of a ratchet drift,
+    and the half that drifts is the half nobody is looking at — which for a new
+    arm is always the new one.
+    """
+
+    return Divergence(
+        new_files=sorted(set(findings) - set(recorded)),
+        cleared=sorted(p for p in recorded if p not in findings),
+        grown=sorted(
+            p
+            for p in findings
+            if p in recorded and findings[p].count > recorded[p].count
+        ),
+        shrunk=sorted(
+            p
+            for p in findings
+            if p in recorded and findings[p].count < recorded[p].count
+        ),
+        #: Same count, different set. The #615 hole: one published value replaced
+        #: by a brand-new one, total unchanged, previously green.
+        swapped=sorted(
+            p
+            for p in findings
+            if p in recorded
+            and findings[p].count == recorded[p].count
+            and findings[p].digest != recorded[p].digest
+        ),
+    )
+
+
+def _report_ids(
+    findings: dict[str, Finding],
+    recorded: dict[str, Finding],
+    moved: Divergence,
+) -> None:
+    """The id arm's half of a failure. Its own wording, for its own remedy.
+
+    Deliberately NOT folded into the address message. The two arms are caught by
+    the same ratchet but they are fixed in opposite ways: an address is corrected
+    by moving it to a domain that cannot route, and an id is corrected by
+    inventing one in the reserved band — there is no "make this id un-routable".
+    A shared message would have to say both things and would teach neither.
+    """
+
+    print("FAIL — the recorded set of id-shaped tokens has moved.\n")
+    if moved.new_files and moved.cleared:
+        print(
+            "  (A `new file` beside a `cleared` below with the same count is a\n"
+            "   RENAME, not an addition. Re-record the baseline and say so.)\n"
+        )
+    for path in moved.new_files:
+        print(f"  new file: {path} ({findings[path].count})")
+    for path in moved.grown:
+        print(f"  count up: {path} {recorded[path].count} -> {findings[path].count}")
+    for path in moved.swapped:
+        print(
+            f"  SWAPPED:  {path} — count unchanged at {findings[path].count}, "
+            "but the set of ids is different"
+        )
+    for path in moved.shrunk:
+        print(f"  count down: {path} {recorded[path].count} -> {findings[path].count}")
+    for path in moved.cleared:
+        print(f"  cleared: {path} {recorded[path].count} -> 0")
+
+    print(
+        f"""
+A Gmail thread id and a Gmail message id are sixteen lowercase hex characters.
+This arm reads every tracked file whole — docstrings and comments included,
+which is where every id on this tree actually sits — and it holds no list of
+ids, for the same reason the address arm holds no list of addresses.
+
+If you ADDED an id, the fix is not to shorten it or to change a digit. Write an
+id in the RESERVED BAND: sixteen hex characters beginning with eight zeros, for
+example `00000000` followed by eight more of your choosing. The band is silent
+here, it is what {POLICY_DOC} tells you to use, and it needs no baseline line.
+Distinct ids in one fixture just vary the tail.
+
+If the id is REAL — transcribed from a mailbox — then it does not go in a public
+repository at all, and re-recording the baseline is not the answer to that. Keep
+the ARGUMENT and invent the PARTICULARS, exactly as the policy already requires
+of a fixture whose wording is the evidence, then say in the docstring which is
+which so the provenance claim stays true.
+
+If you REMOVED or REWROTE one, read {POLICY_DOC} first: a forward delete removes
+nothing from git history or from GitHub's index, and several of these comments
+are load-bearing evidence for the issues they cite. Removal is not forbidden; it
+is not routine, and it does not get to be silent.
+
+Once the change is the one you mean, record it on purpose:
+
+    python3 scripts/check_test_data.py --write-baseline
+
+and state in the commit body which files moved and why."""
+    )
+
+
 def report(
     findings: dict[str, Finding],
+    id_findings: dict[str, Finding],
     baseline: Baseline,
     skipped: list[Skipped],
 ) -> int:
     """Print the verdict. Returns a process exit code."""
 
     recorded = baseline.files
-    new_files = sorted(set(findings) - set(recorded))
-    cleared = sorted(p for p in recorded if p not in findings)
-    grown = sorted(
-        p for p in findings if p in recorded and findings[p].count > recorded[p].count
-    )
-    shrunk = sorted(
-        p for p in findings if p in recorded and findings[p].count < recorded[p].count
-    )
-    #: Same count, different set. The #615 hole: one published address replaced
-    #: by a brand-new one, total unchanged, previously green.
-    swapped = sorted(
-        p
-        for p in findings
-        if p in recorded
-        and findings[p].count == recorded[p].count
-        and findings[p].digest != recorded[p].digest
-    )
+    address_moved = diverged(findings, recorded)
+    new_files, cleared, grown, shrunk, swapped = address_moved
+
+    id_recorded = baseline.ids
+    id_moved = diverged(id_findings, id_recorded)
 
     unreadable = [skip for skip in skipped if skip.kind == UNREADABLE]
     binary = {skip.path for skip in skipped if skip.kind == BINARY}
@@ -915,18 +1258,25 @@ def report(
         f"{len(binary)} tracked files skipped as not-UTF-8 and read by nothing "
         f"(baseline {len(baseline.skipped)})."
     )
+    print(
+        f"test-data gate: {sum(f.count for f in id_findings.values())} id-shaped "
+        f"tokens outside the reserved band across {len(id_findings)} tracked files "
+        f"(baseline "
+        f"{sum(f.count for f in id_recorded.values())} across {len(id_recorded)})."
+    )
 
-    addresses_moved = bool(new_files or cleared or grown or shrunk or swapped)
+    addresses_moved = bool(address_moved)
+    ids_moved = bool(id_moved)
     skips_moved = bool(newly_skipped or no_longer_skipped)
 
-    if not (addresses_moved or skips_moved or unreadable):
+    if not (addresses_moved or ids_moved or skips_moved or unreadable):
         print("OK")
         return 0
 
     if unreadable:
         print("\nFAIL — a tracked file could not be scanned.\n")
         _print_unreadable(unreadable)
-        if not (addresses_moved or skips_moved):
+        if not (addresses_moved or ids_moved or skips_moved):
             return 1
         print()
 
@@ -953,6 +1303,12 @@ The one thing that will not work is re-recording a file that used to be scanned:
 that would launder its findings into a skip, and the write path refuses it. See
 {POLICY_DOC}."""
         )
+        if not (addresses_moved or ids_moved):
+            return 1
+        print()
+
+    if ids_moved:
+        _report_ids(id_findings, id_recorded, id_moved)
         if not addresses_moved:
             return 1
         print()
@@ -1047,7 +1403,7 @@ def main(argv: list[str] | None = None) -> int:
     repo_root = (args.repo_root or Path(__file__).resolve().parents[1]).resolve()
     baseline_path = args.baseline or repo_root / DEFAULT_BASELINE
 
-    findings, skipped = scan(repo_root)
+    findings, id_findings, skipped = scan(repo_root)
 
     if args.write_baseline:
         # A file that could not be READ is refused HERE too. Omitting it would
@@ -1082,12 +1438,15 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
 
-        write_baseline(baseline_path, findings, skipped)
+        write_baseline(baseline_path, findings, id_findings, skipped)
         binary = [skip for skip in skipped if skip.kind == BINARY]
         print(
             f"Wrote {baseline_path}: "
             f"{sum(f.count for f in findings.values())} addresses across "
-            f"{len(findings)} files, and {len(binary)} files skipped as not-UTF-8."
+            f"{len(findings)} files, "
+            f"{sum(f.count for f in id_findings.values())} id-shaped tokens across "
+            f"{len(id_findings)} files, "
+            f"and {len(binary)} files skipped as not-UTF-8."
         )
         return 0
 
@@ -1098,7 +1457,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    return report(findings, load_baseline(baseline_path), skipped)
+    return report(findings, id_findings, load_baseline(baseline_path), skipped)
 
 
 if __name__ == "__main__":

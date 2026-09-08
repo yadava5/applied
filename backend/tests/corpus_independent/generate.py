@@ -292,6 +292,48 @@ class Case:
     #: already documents. Passing it is refused below rather than trusted.
     names_no_role: bool = False
 
+    #: WHICH MAILBOX this message arrives in. ``0`` is the corpus's owner and is
+    #: every case's answer except ``another-mailbox-cannot-settle-mine``'s.
+    #:
+    #: The generator built ONE user until #614, and a one-user corpus cannot
+    #: fail a ``user_id``-scoped predicate: every such clause is satisfied by
+    #: construction, so removing one moves no number and the scoping is
+    #: asserted by nothing. That is the check-that-cannot-fail shape one
+    #: dimension over from the dismissal hole in the same issue.
+    #:
+    #: A slot rather than a UUID because this file must not import the
+    #: harness's users — it states WHICH mailbox, and the harness owns what a
+    #: mailbox is. Cases in slot 1 are FIXTURE: they exist to give the owner's
+    #: board something it must not be confused by, and they are scored on
+    #: their own board rather than folded into the owner's.
+    user_slot: int = 0
+
+    #: WHAT THE USER DOES once this message's day-batch has been synced.
+    #:
+    #: The corpus had no vocabulary for a user ACTION until #614, and that is
+    #: the reason it could not grade dismissal: `dismissed_at` is written by
+    #: `dismiss_application` and by a re-sync, and a replay that only ever
+    #: delivers mail reaches neither. So no generated application was ever
+    #: dismissed, `_filed_on_a_live_application` was equivalent by construction
+    #: to the `application_id IS NOT NULL` it replaced, and the control #614
+    #: names produced two identical runs.
+    #:
+    #: A message is where an instruction hangs because the instruction has to
+    #: happen at a TIME — between two syncs — and a message is the only thing
+    #: here that carries one. The harness executes it through the product's own
+    #: function (`dismiss_application`, `classify_review_item`); this field
+    #: names the act, never the state it leaves. Writing `dismissed_reason`
+    #: into a row by hand would be the harness approximating a production input
+    #: instead of calling one, which is a shape this corpus has already paid
+    #: for three times.
+    #:
+    #:   ``"dismiss"``      — the user says "not an application" about the card
+    #:                        THIS message opened, after its batch.
+    #:   ``"answer_other"`` — the user answers THIS message in the review queue
+    #:                        with a category that files nothing, leaving
+    #:                        ``is_reviewed`` set and ``application_id`` NULL.
+    standing_instruction: str | None = None
+
     def __post_init__(self) -> None:
         # A message that names an application IS about an application, and one
         # that must go to the queue is about one too — it is only unplaceable,
@@ -448,6 +490,8 @@ class _Builder:
         joins: str | None = None,
         card_status: str | None = None,
         note: str = "",
+        user_slot: int = 0,
+        standing_instruction: str | None = None,
     ) -> Case:
         self._n += 1
         mid = f"c{self._n:05d}"
@@ -473,6 +517,8 @@ class _Builder:
             card_status=card_status,
             # `must_be_addressed` is derived in Case.__post_init__.
             note=note,
+            user_slot=user_slot,
+            standing_instruction=standing_instruction,
         )
         self.cases.append(case)
         return case
@@ -3259,6 +3305,478 @@ def _outreach_autoresponders(b: _Builder, n: int) -> None:
         )
 
 
+# ── the four families the corpus could not express (#614, #630) ─────────────
+#
+# WHAT THEY HAVE IN COMMON, and why they are written together. Every one of them
+# turns on a message that names NO JOB AT ALL. `application_sub_key` is
+# `req_id or role_token or None`, and None is a VALUE: two messages that both
+# name nothing are the SAME application by the product's own rule, which is what
+# keeps one employer's two identical acknowledgements a single decision (#454).
+# So a role-less acknowledgement and a later role-less update on one thread share
+# a `review_dedup_key` exactly, and that collision is the precondition every one
+# of these families needs.
+#
+# It is also the ordinary shape rather than a contrived one. "Crusoe |
+# Application Received" names no role; so does most of what an ATS sends before
+# a human is involved.
+#
+# EACH FAMILY VARIES SOMETHING, ON PURPOSE. A family written one way round
+# cannot catch its own defect — every case would reach the product through one
+# route, and a change that closed that route would empty the family while every
+# number stayed put and read as coverage. What varies is stated per family.
+
+#: Role-less acknowledgements that clear ``AUTO_FILE_GATE`` and file themselves.
+#:
+#: MEASURED, not assumed, and the check is the point: all three score `applied`
+#: at 0.95 and `role_from_message` returns nothing for any of them, so each
+#: files a card AND keys to ``(thread, None)``. A wording that named a job
+#: would key differently from its own follow-up and the family would quietly
+#: measure nothing. `test_the_settled_families_reach_the_filter` re-derives
+#: this from the corpus rather than trusting this comment.
+_ROLELESS_ACKS: tuple[tuple[str, str], ...] = (
+    ("{e} | Application Received",
+     "Hi Ayush, Thank you for applying to {e}. We have received your "
+     "submission and our team will review it shortly."),
+    ("Your application has been received!",
+     "Hi Ayush, Thanks for applying to {e}. Our team will review your "
+     "application shortly."),
+    ("Thanks for applying to {e}!",
+     "Hi Ayush, Thank you for your interest in joining {e}. Your submission "
+     "has been received and is being reviewed."),
+)
+
+#: Role-less messages the product is NOT confident about, by BOTH routes into
+#: the review queue. The pair is the variation that matters, because the two
+#: reach the filter for unrelated reasons and a change that closes one leaves
+#: the other:
+#:
+#:   * ``below_gate`` — an `offer` at 0.75. In ``[REVIEW_FLOOR, AUTO_FILE_GATE)``:
+#:     a real proposal the product will not file alone. This is #448's mechanism
+#:     and it scores in ``update_held_on_its_own_confidence``.
+#:   * ``ats_floor`` — `other` at 0.50, UNDER the review floor, floored into the
+#:     queue by ``references_an_application`` because a known ATS relayed it
+#:     (#166/#417). It scores in ``update_held_on_a_non_offer_verdict``.
+#:
+#: Both are verified to become review refs, and both derive no role, so both
+#: key to ``(thread, None)``.
+#:
+#: THE THIRD ENTRY IS THE CATEGORY A PERSON WOULD GIVE, which is not the
+#: classifier's and must not be. `expected_category` is what the MAIL carries to
+#: someone reading the whole thing in Gmail, and `answer_the_queue` models a
+#: perfect answerer by replying with it. An `ats_floor` message says plainly
+#: that an application exists and that nothing has been decided — which is
+#: `pending_application`, a FILING category. Labelling it `other` would have the
+#: perfect answerer file it nowhere, so the corpus would assert that the right
+#: answer to "we have an update about your application" is "this is not job
+#: mail", and every one of these cases would leave the queue for nothing.
+_UNCERTAIN_ROLELESS: tuple[tuple[str, str, str, str], ...] = (
+    ("below_gate", "An offer from {e}",
+     "Hi Ayush, We are delighted to extend you an offer to join us. The "
+     "written terms are attached for your review.", "offer"),
+    ("ats_floor", "Your {e} application",
+     "Hi Ayush, We have an update to share about your application. Please "
+     "look out for a further message from the hiring team.", "pending_application"),
+    ("ats_floor", "A note about your application",
+     "Hello Ayush, We wanted to let you know where things stand with your "
+     "application. Someone will write again once the panel has met.",
+     "pending_application"),
+    ("ats_floor", "Regarding your candidacy",
+     "Hi Ayush, Thank you for your patience while we work through this. Your "
+     "candidacy is still under discussion and we will be in touch.",
+     "pending_application"),
+)
+
+
+def _settled_suppresses_an_update(b: _Builder, n: int) -> None:
+    """#630. An uncertain update on a thread the board already answers for.
+
+    THE CLASS THE CORPUS COULD NOT EXPRESS. ``_persist_review_items_additive``
+    refuses an arriving review ref whose ``review_dedup_key`` matches a stored
+    message that is filed on an application that answers — and a refused ref is
+    dropped BEFORE ``_persist_message_refs``, so it gets no row, no queue entry
+    and no counter. Measured over a full replay before this family existed:
+    2,873 refs offered, 2,873 persisted, **0 dropped**. The machinery ran on
+    every batch and never bit, because every other family's threads are held
+    apart by the identity component and no arriving key could collide.
+
+    So the population was empty by construction, and #630's counter was a zero
+    that could not be anything else. This family makes it non-empty: an
+    acknowledgement that names no job files a card, and a later message on the
+    SAME thread that also names no job derives the same ``None`` sub-key.
+
+    WHAT VARIES, and each of the three is load-bearing:
+
+      * WHICH ACKNOWLEDGEMENT (3 wordings). One wording per shape grades
+        nothing — a defect that fires on a single phrasing would be pinned to
+        exactly n/3 and read as a property of the product.
+      * WHICH ROUTE INTO THE QUEUE (``below_gate`` and ``ats_floor``, see
+        ``_UNCERTAIN_ROLELESS``). The two are unrelated mechanisms. A family
+        built only on the confidence band would empty itself the day the gate
+        moved, silently.
+      * THE GAP IN DAYS, **including zero**. A gap of 0 puts both messages in
+        ONE day-batch, and the refusal then happens inside a single sync:
+        ``upsert_applications_for_user`` files the acknowledgement before
+        ``_persist_review_items_additive`` runs, and the prefetch is not
+        shielded from autoflush. That is not a cross-sync artefact and a family
+        that only ever spanned syncs would not contain it.
+
+    THIS FAMILY ASSERTS NO FIX. Whether refusing these is right is a product
+    decision about what "settled" should mean for an update to a card that
+    exists, and #630 is explicit that it is not a predicate tweak. The corpus's
+    job is to make the class countable; ``suppressed_as_settled`` is reported
+    OUTSIDE ``total`` for exactly that reason.
+    """
+
+    gaps = (0, 1, 3, 9)
+    for i in range(n):
+        display, token = b.employer()
+        thread = f"settled-{token}"
+        subject, body = b.pick(_ROLELESS_ACKS)
+        route, up_subject, up_body, up_truth = b.pick(_UNCERTAIN_ROLELESS)
+        day = i % 200
+        ack = b.add(
+            family="settled-suppresses-an-update",
+            subject=subject.format(e=display),
+            sender=b.ats(i),
+            sender_name=f"{display} Recruiting",
+            body=body.format(e=display),
+            expected_category="applied",
+            identity=f"{token}|__settled__",
+            employer=token,
+            thread=thread,
+            day=day,
+            note="names no job, so its dedup key is (thread, None)",
+        )
+        b.add(
+            family="settled-suppresses-an-update",
+            subject=up_subject.format(e=display),
+            sender=b.ats(i),
+            sender_name=f"{display} Recruiting",
+            body=up_body.format(e=display),
+            expected_category=up_truth,
+            identity=f"{token}|__settled__",
+            employer=token,
+            thread=thread,
+            day=day + gaps[i % len(gaps)],
+            joins=ack.message_id,
+            note=(
+                f"uncertain, reaches the queue by {route}, same (thread, None) "
+                f"key as the acknowledgement above — the settled filter refuses it"
+            ),
+        )
+
+
+def _hand_dismissal_swallows_later_mail(b: _Builder, n: int) -> None:
+    """#614. The user removes a card; mail keeps arriving on its thread.
+
+    THE STATE THE REPLAY NEVER CONSTRUCTED. ``generate.py`` contained zero
+    occurrences of `dismiss` before this family, so `dismissed_at` was NULL over
+    every row the corpus produced. That made ``_filed_on_a_live_application``
+    equivalent BY CONSTRUCTION to the ``application_id IS NOT NULL`` it
+    replaced, and #614's own control — reinstate the #596 predicate, confirm
+    the figure moves — returned two byte-identical runs across all 24 counters.
+
+    WHAT HAPPENS, verified by execution rather than read off the source:
+
+      * the confirmation files a card;
+      * the user hand-dismisses it (``dismiss_application``, the real endpoint's
+        function, tagging ``dismissed_reason = 'user'``);
+      * a later CONFIDENT lifecycle message on the same thread rolls up to that
+        card, and ``upsert_applications_for_user`` ``continue``s on a
+        user-dismissed row before ``_persist_message_refs`` is ever reached.
+
+    The last message therefore gets NO ``emails`` row at all. Not on a card, not
+    in the queue, not under the floor with a counter naming it — nothing. That
+    is ``LOST``'s definition word for word: "indistinguishable from a quiet
+    mailbox".
+
+    THE CONFIRMATION IS NOT LOST AND MUST NOT BE COUNTED AS ONE. It keeps its
+    row on the dismissed card, so ``restore_application`` brings it back intact.
+    The later message has no row to restore. That difference is the whole
+    distinction, and it is why the harness scores the confirmation in
+    ``filed_on_a_card_the_user_removed`` instead: a family whose headline number
+    were half mail the product filed correctly could not say which half was the
+    finding.
+
+    WHETHER THE LOSS IS A DEFECT IS NOT THIS FAMILY'S CALL. A hand dismissal is
+    final on purpose (#597): the user's "no" answers for that card's mail, and
+    re-filing it every sync is how a row the user just cleared keeps coming
+    back. What the corpus can say is that the mail reaches nothing and nothing
+    counts it, which was true before and unmeasurable.
+
+    WHAT VARIES: which lifecycle verdict arrives after the dismissal
+    (rejection / interview / assessment — three different rollup paths, not one
+    wording three times), and whether an UNCERTAIN message follows as well.
+    That last is the second outcome the dismissal produces: an uncertain message
+    is offered to the persist, finds the confirmation settled — a hand-dismissed
+    card ANSWERS for its mail — and is refused, which lands in
+    ``suppressed_as_settled`` rather than in ``lost``. One user action, two
+    different disappearances, and a family carrying only one of them would
+    report half the behaviour.
+    """
+
+    afters = (
+        ("rejection", "Update on your application to {e}",
+         "Hi Ayush, After careful consideration we have decided not to move "
+         "forward with your application. We appreciate your interest.",
+         "rejected"),
+        ("interview", "Next steps with {e}",
+         "Hi Ayush, We would like to invite you to interview. Please choose a "
+         "time from the scheduling link below.",
+         "interviewing"),
+        ("assessment", "Your {e} take-home",
+         "Hi Ayush, Please complete the take-home exercise linked below within "
+         "five days to move to the next stage.",
+         "assessment"),
+    )
+    for i in range(n):
+        display, token = b.employer()
+        role = b.role(i)
+        thread = f"dismissed-{token}"
+        day = i % 200
+        opener = b.add(
+            family="hand-dismissal-swallows-later-mail",
+            subject=f"Thank you for applying to {display}",
+            sender=b.ats(i),
+            sender_name=f"{display} Recruiting",
+            body=_confirmation_body(display, role),
+            expected_category="applied",
+            identity=f"{token}|{role}",
+            employer=token,
+            thread=thread,
+            day=day,
+            standing_instruction="dismiss",
+            note="opens the card the user then removes by hand",
+        )
+        category, subject, body, _stage = afters[i % len(afters)]
+        b.add(
+            family="hand-dismissal-swallows-later-mail",
+            subject=subject.format(e=display),
+            sender=b.ats(i),
+            sender_name=f"{display} Recruiting",
+            body=body.format(e=display),
+            expected_category=category,
+            identity=f"{token}|{role}",
+            employer=token,
+            thread=thread,
+            day=day + 4,
+            joins=opener.message_id,
+            note="confident, arrives AFTER the dismissal, reaches nothing at all",
+        )
+        # Every third group also gets an uncertain follow-up, so the family
+        # carries both disappearances rather than only the loud one.
+        #
+        # IT NAMES THE ROLE, and that is the whole reason it works. The opener
+        # names one, so its stored key is ``(thread, role_token)``; a role-LESS
+        # follow-up would key to ``(thread, None)``, collide with nothing, and
+        # reach the queue — which is correct behaviour and not what this half of
+        # the family is for. Measured: `offer` at 0.75, a review ref, role
+        # derived. See `_UNCERTAIN_ROLELESS` for the two routes and why the band
+        # is checked rather than assumed.
+        if i % 3 == 0:
+            b.add(
+                family="hand-dismissal-swallows-later-mail",
+                subject=f"An offer from {display}",
+                sender=b.ats(i),
+                sender_name=f"{display} Recruiting",
+                body=(
+                    f"Hi Ayush, We are delighted to extend you an offer for the "
+                    f"{role} position. The written terms are attached for your "
+                    f"review."
+                ),
+                expected_category="offer",
+                identity=f"{token}|{role}",
+                employer=token,
+                thread=thread,
+                day=day + 8,
+                joins=opener.message_id,
+                note="uncertain, same role key: refused because a hand-dismissed card ANSWERS",
+            )
+
+
+def _answered_then_more_mail(b: _Builder, n: int) -> None:
+    """#614's control, and the ``is_reviewed`` arm nothing could reach.
+
+    WHY THIS FAMILY IS THE ONE THAT MAKES THE CONTROL RUNNABLE. #614 asks for
+    the #596 predicate to be reinstated and the figure to MOVE. The two
+    spellings differ on exactly two populations:
+
+      (i)  a row linked to a RESYNC-dismissed card — settled under
+           ``application_id IS NOT NULL``, not settled under the shared
+           predicate; and
+      (ii) a row the user ANSWERED with a category that files nothing —
+           ``is_reviewed`` set, ``application_id`` still NULL — which is settled
+           under the shared predicate and NOT settled under ``IS NOT NULL``.
+
+    Population (i) is unreachable here and says so with a number:
+    ``RECORDED_SYNC["purged"]`` is 0, so no batch has ever left a row without
+    mail and nothing in a replay resync-dismisses anything. Population (ii) was
+    equally unreachable, for a different reason: ``is_reviewed`` is written by
+    ``classify_review_item`` and ``_settle_thread_siblings`` and by nothing on
+    the sync path, and the harness answered the queue ONCE, after the last day —
+    so zero rows carried the flag while any batch was still arriving, and the
+    ``is_reviewed`` arm of the settled filter could not fire at all.
+
+    Production interleaves; the corpus did not. This family makes it: the user
+    answers a held message mid-replay, through the product's own
+    ``classify_review_item``, and more mail then arrives on the same thread.
+
+    So the answered row settles the conversation, the later message keys to it,
+    and reinstating #596 stops it being settled. THE DIRECTION, stated before
+    the control was run rather than after: the reinstatement makes
+    ``suppressed_as_settled`` FALL and ``addressed_in_the_queue`` RISE, because
+    this is arm (ii). It is the opposite of the rise arm (i) would produce, and
+    a correct control read backwards looks exactly like a failed one.
+
+    WHAT VARIES: which uncertain wording opens the conversation, which one
+    follows it, and the gap between them — never the same pair twice in a row.
+    """
+
+    for i in range(n):
+        display, token = b.employer()
+        thread = f"answered-{token}"
+        day = i % 200
+        first = _UNCERTAIN_ROLELESS[i % len(_UNCERTAIN_ROLELESS)]
+        second = _UNCERTAIN_ROLELESS[(i + 1) % len(_UNCERTAIN_ROLELESS)]
+        opener = b.add(
+            family="answered-then-more-mail",
+            subject=first[1].format(e=display),
+            sender=b.ats(i),
+            sender_name=f"{display} Recruiting",
+            body=first[2].format(e=display),
+            expected_category=first[3],
+            identity=f"{token}|__answered__",
+            employer=token,
+            thread=thread,
+            day=day,
+            standing_instruction="answer_other",
+            note="held in the queue, then answered 'not a lifecycle thing'",
+        )
+        b.add(
+            family="answered-then-more-mail",
+            subject=second[1].format(e=display),
+            sender=b.ats(i),
+            sender_name=f"{display} Recruiting",
+            body=second[2].format(e=display),
+            expected_category=second[3],
+            identity=f"{token}|__answered__",
+            employer=token,
+            thread=thread,
+            day=day + 5 + (i % 4),
+            joins=opener.message_id,
+            note="same (thread, None) key as a row the user has already answered",
+        )
+
+
+def _another_mailbox_cannot_settle_mine(b: _Builder, n: int) -> None:
+    """#614's second half: a corpus with one user cannot fail a user predicate.
+
+    THE HOLE. Every query in the harness and every settled test in the product
+    is scoped by ``user_id``. With one generated user those clauses are
+    satisfied by construction: deleting one moves no number, so nothing in
+    18,480 messages asserted that a stranger's board cannot answer for your
+    mail. That is the same shape as the dismissal hole in the same issue — a
+    predicate whose failure mode no fixture can construct.
+
+    THE COLLISION IS THE POINT, and it is the part that is easy to get wrong.
+    Giving the other mailbox its own thread ids would leave the control inert:
+    the settled query would find nothing to match whether or not it was scoped,
+    and a green run would prove only that two unrelated sets do not overlap.
+    So both mailboxes use the SAME thread id and the same role-less shape, and
+    therefore the same ``review_dedup_key``. The only thing keeping the other
+    mailbox's settled row from answering for the owner's arriving ref is the
+    ``Email.user_id == user_id`` clause — which is now the one thing under test.
+
+    The other mailbox's message is FIXTURE. It is not the owner's mail, it is
+    not scored on the owner's board, and it must never appear there: a case in
+    slot 1 that reached the owner's cards would be a tenant-isolation failure,
+    which is a far larger finding than anything this family is about.
+
+    TWO ARMS, HALF THE GROUPS EACH, because the settled test's cross-user
+    defence is not one clause and a control that moved only one of them would
+    leave the other asserted by nothing:
+
+      * ``Email.user_id == user_id`` on the settled-row query itself. This is
+        the ONLY thing scoping the ``is_reviewed`` arm — that arm is a bare
+        ``Email.is_reviewed == True`` and carries no user predicate of its own.
+        Groups with an EVEN index exercise it: the other mailbox's message is
+        uncertain and its owner answers it, leaving a reviewed row.
+      * ``Application.user_id == user_id`` inside
+        :func:`_filed_on_an_application_that_answers`. Groups with an ODD index
+        exercise it: the other mailbox's acknowledgement files a card, so the
+        row is settled by being ON something rather than by being answered.
+
+    So dropping the first clause alone leaks the even half, and dropping both
+    leaks all of it. Two mutations with two different magnitudes, which is what
+    tells the arms apart — a single number moving would not say which clause
+    was carrying the isolation.
+
+    WHAT ELSE VARIES: which acknowledgement the other mailbox sends and which
+    uncertain route the owner's message takes, so the collision is not one
+    wording pair repeated n times.
+    """
+
+    for i in range(n):
+        display, token = b.employer()
+        # ONE thread id, TWO mailboxes. See the docstring: without this the
+        # control cannot fire.
+        thread = f"xuser-{token}"
+        day = i % 200
+        if i % 2 == 0:
+            # The other mailbox holds an ANSWERED row — the `is_reviewed` arm.
+            route, x_subject, x_body, x_truth = _UNCERTAIN_ROLELESS[
+                i % len(_UNCERTAIN_ROLELESS)
+            ]
+            b.add(
+                family="another-mailbox-cannot-settle-mine",
+                subject=x_subject.format(e=display),
+                sender=b.ats(i),
+                sender_name=f"{display} Recruiting",
+                body=x_body.format(e=display),
+                expected_category=x_truth,
+                identity=f"{token}|__crossuser__",
+                employer=token,
+                thread=thread,
+                day=day,
+                user_slot=1,
+                standing_instruction="answer_other",
+                note="ANOTHER mailbox's REVIEWED row: the arm with no user predicate of its own",
+            )
+        else:
+            # The other mailbox holds a FILED row — the `answers` arm.
+            subject, body = _ROLELESS_ACKS[i % len(_ROLELESS_ACKS)]
+            b.add(
+                family="another-mailbox-cannot-settle-mine",
+                subject=subject.format(e=display),
+                sender=b.ats(i),
+                sender_name=f"{display} Recruiting",
+                body=body.format(e=display),
+                expected_category="applied",
+                identity=f"{token}|__crossuser__",
+                employer=token,
+                thread=thread,
+                day=day,
+                user_slot=1,
+                note="ANOTHER mailbox's FILED row, on the same thread id",
+            )
+        route, up_subject, up_body, up_truth = _UNCERTAIN_ROLELESS[
+            i % len(_UNCERTAIN_ROLELESS)
+        ]
+        b.add(
+            family="another-mailbox-cannot-settle-mine",
+            subject=up_subject.format(e=display),
+            sender=b.ats(i),
+            sender_name=f"{display} Recruiting",
+            body=up_body.format(e=display),
+            expected_category=up_truth,
+            identity=f"{token}|__crossuser__",
+            employer=token,
+            thread=thread,
+            day=day + 6,
+            note="the OWNER's uncertain mail: must reach the queue, not be settled by a stranger",
+        )
+
+
 _FAMILIES: tuple[tuple[str, object, int], ...] = (
     ("confirmation", _confirmations, 1100),
     ("rejection-plain", _rejections_plain, 550),
@@ -3328,6 +3846,21 @@ _FAMILIES: tuple[tuple[str, object, int], ...] = (
     # and its twin share a sender, a subject and an employer, which is what
     # makes it a control rather than two unrelated samples.
     ("outreach-autoresponder", _outreach_autoresponders, 160),
+    # #614 and #630. Appended last for the reason every entry above states —
+    # the builder shares one seeded RNG, so a family anywhere else re-draws
+    # every employer, role and wording after it and the whole recorded run
+    # moves at once. At the end, the delta is these four families and nothing
+    # else, which is what made re-recording this file tractable.
+    #
+    # THEY ARE THE FIRST FAMILIES HERE THAT ARE NOT ONLY MAIL. Three of them
+    # carry a user ACTION (`standing_instruction`) and one carries a second
+    # MAILBOX (`user_slot`), because the states #614 and #630 are about cannot
+    # be reached by delivering messages alone — which is precisely why the
+    # corpus could not express either defect class.
+    ("settled-suppresses-an-update", _settled_suppresses_an_update, 60),
+    ("hand-dismissal-swallows-later-mail", _hand_dismissal_swallows_later_mail, 60),
+    ("answered-then-more-mail", _answered_then_more_mail, 60),
+    ("another-mailbox-cannot-settle-mine", _another_mailbox_cannot_settle_mine, 60),
 )
 
 
@@ -3541,6 +4074,14 @@ def digest(cases: list[Case]) -> str:
                     c.card_status or "",
                     c.role_truth or "",
                     str(c.names_no_role),
+                    # WHICH MAILBOX and WHAT THE USER DID are part of the
+                    # corpus, not decoration on it: a case that moved to the
+                    # other mailbox, or lost its dismissal, is different mail
+                    # asserting a different thing. Outside this hash they could
+                    # both be rewritten with the determinism gate green — the
+                    # hole #533 closed for `joins` and `card_status`.
+                    str(c.user_slot),
+                    c.standing_instruction or "",
                 )
             ).encode()
         )
