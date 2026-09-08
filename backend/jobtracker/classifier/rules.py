@@ -579,7 +579,45 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"we received your (job )?application",
             r"application (is|has been) (under|in) review",
             r"reviewing (applications|candidates)",
-            r"be in touch (soon|shortly|if)",
+            # THE THIRD ARM IS GONE AND ITS ABSENCE IS THE RULE — #928.
+            #
+            # This shipped as `be in touch (soon|shortly|if)` and the `if` arm
+            # could never fire. Every pattern in this dict is searched against
+            # :func:`asserted_text`, which masks from a conditional marker to
+            # the END of its sentence, and `if` is the first marker in
+            # :data:`_CONDITIONAL`. Measured: "We will be in touch if there is
+            # a fit." arrives at the alternation as "We will be in touch " —
+            # the token the arm needed is removed before any pattern sees it.
+            # Through ``classify`` that phrasing scores `other` 0.50 on no
+            # matches at all, and it did so with the arm present.
+            #
+            # IT MUST NOT COME BACK AGAINST THE UNMASKED BODY. The mask is not
+            # in this rule's way; it IS the rule. "We will be in touch if there
+            # is a fit" is a conditional promise about a message the sender may
+            # never send, and it asserts nothing about an application EXISTING,
+            # which is the only claim `applied.strong` is allowed to make. An
+            # arm reading the raw body would score every "if there is a fit"
+            # autoresponder as a confirmation — the exact shape `asserted_text`
+            # was written to refuse.
+            #
+            # AND THE REACH CENSUS DISAGREES, correctly, which is worth knowing
+            # before anyone reads it as a contradiction.
+            # ``tests/corpus_independent/reach.py`` scans the RAW delivered
+            # text, because a pattern's reach is a question about the mail and
+            # not about the scorer. Measured over the 18,480-case independent
+            # corpus, as three counts and not as one apportioned: the three-arm
+            # pattern matched 547 cases, the two-arm pattern matches 20, and
+            # 527 matched ONLY through `if`. Not one of those 527 was ever
+            # evidence that this arm did anything — reach is counted before the
+            # mask and scoring happens after it — and the pattern stays
+            # recorded as fired on the 20.
+            #
+            # Deleting the arm is a no-op at the classifier boundary and is
+            # meant to be. ``tests/test_a_conditional_promise_is_not_a_confirmation_928.py``
+            # is the control: the two surviving arms still score `applied` 0.70
+            # on this pattern, and the conditional phrasing still reaches
+            # nothing.
+            r"be in touch (soon|shortly)",
             r"next steps.{0,30}hear from us",
             # ANCHORED IN THE SECOND PERSON, and the contiguity is the fix.
             #
