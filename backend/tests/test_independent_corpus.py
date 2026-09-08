@@ -1142,6 +1142,45 @@ def test_the_known_defects_are_exactly_this_big(verdicts, family, wrong, why) ->
     assert score.by_family[family]["wrong"] == wrong, why
 
 
+def test_hostile_preheader_grades_the_classifier_and_not_the_extractor(
+    verdicts,
+) -> None:
+    """100/100, and the number is the RESIDUAL rather than evidence about #766.
+
+    The name invites the opposite conclusion and #766 records two people
+    reaching for it as acceptance evidence. This family's bodies are PLAIN
+    TEXT — a contradicting sentence arriving first, with no hiding mechanism
+    anywhere: ``generate.py`` authors it as ``"Congratulations on your offer!
+    …\\n\\n Hi …, After careful consideration we will not be moving forward
+    …"``, and the whole of ``corpus_independent`` contains no HTML at all. The
+    harness classifies ``normalise_body_text(case.body)`` and never
+    ``extract_body_text``, so no change to extraction can move a case here.
+
+    So what it grades is real and worth keeping — whether a contradicting
+    OPENER loses to the mail's own words, which the classifier gets right — and
+    it is not a gate on #766. The gate for that is
+    ``tests/test_a_hidden_preheader_decides_the_verdict_766.py``, which drives
+    ``extract_body_text`` on markup.
+
+    TWO-SIDED, for the reason the ``quoted-history`` pin below spells out: a
+    bare ``wrong == 0`` is green for a family that stopped generating cases, and
+    this one is 100 cases of a single wording. The denominator sits beside the
+    count.
+    """
+
+    fam = score_classifier(verdicts).by_family["hostile-preheader"]
+    assert fam["wrong"] == 0, (
+        f"hostile-preheader has {fam['wrong']} wrong. It is 0 at every seed "
+        "tried; a move means the tie-break that lets the mail's own words "
+        "outrank a contradicting opener regressed."
+    )
+    assert fam["correct"] == 100, (
+        f"hostile-preheader graded {fam['correct']} cases, not 100 — the "
+        "family shrank, and the zero above would then mean nothing."
+    )
+    assert fam["abstained"] == 0
+
+
 #: Two more seeds. See :func:`test_the_defects_are_not_a_seed_artefact`.
 OTHER_SEEDS = (7, 991773)
 
