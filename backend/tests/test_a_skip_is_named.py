@@ -98,11 +98,22 @@ def test_a_real_run_with_no_docker_names_the_rls_suite() -> None:
     # skipped. A bare `"skipped" in out` passes a run where one test skipped and
     # the rest errored, which is the failure this file exists to make visible.
     #
-    # 22 -> 24 with the two tests #847 added. Re-recorded deliberately: the
-    # registered `rlsTests` fact moved itself when `readme_facts.py --write`
-    # ran, and this literal did not, so it surfaced only in CI. An unregistered
-    # copy of a number is a copy nothing maintains.
-    assert "24 skipped" in out
+    # 22 -> 24 with the two tests #847 added, -> 26 with the one #634 added.
+    # Re-recorded deliberately each time: the registered `rlsTests` fact moves
+    # itself when `readme_facts.py --write` runs, and this literal does not, so
+    # it surfaces only in CI. An unregistered copy of a number is a copy nothing
+    # maintains.
+    #
+    # 26 AND NOT 25, AND THE README IS NOT WRONG. #634 added ONE test function,
+    # `test_the_no_identity_branch_defeats_a_foreign_session_level_claim`,
+    # parametrized over the two GUCs `auth.uid()` reads. The two counters stop
+    # agreeing here and both are right: `rlsTests` in readme_facts.py is a
+    # STATIC AST count of `test_*` functions and stays 25, while this one reads
+    # a real run's skip line, which counts COLLECTED CASES and so counts a
+    # parametrized function once per case. Do not "fix" either to match the
+    # other — they measure different things, and the next parametrize will move
+    # this literal without moving the README's.
+    assert "26 skipped" in out
     assert "UNVERIFIED" in out, "the module's own reason should reach the reader"
 
 
