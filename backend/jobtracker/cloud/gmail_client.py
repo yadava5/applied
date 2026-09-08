@@ -106,7 +106,35 @@ MailScope = Literal["inbox", "anywhere"]
 
 @dataclass
 class CloudGmailMessage:
-    """A single Gmail message reduced to the fields classification needs."""
+    """A single Gmail message reduced to the fields classification needs.
+
+    THE HEADER-DERIVED FIELDS ARE BOUNDED HERE, IN ``__post_init__``, and #427
+    is why. The body was capped at ``_MAX_BODY_CHARS`` from the beginning and
+    the subject was capped nowhere on either engine, so ``classify`` took
+    whatever the header held — measured linear, 2.33 s of rules matching for a
+    1 MB subject, on the path the hosted product runs.
+
+    On the type rather than at the call site, deliberately. There is exactly one
+    construction site today (``_parse_metadata_message``), and "exactly one" is
+    the class of fact that rots the moment somebody adds a second reader. Here
+    an unbounded subject is unrepresentable, for every present and future
+    constructor, and the test is one direct construction with no payload
+    plumbing.
+
+    THE NUMBERS ARE NOT NEW AND NOT CHOSEN HERE. They are ``PipelineItemIn``'s,
+    the contract the client-relay path has always enforced
+    (``gmail_oauth.py:302-304``). Mail admissible by relay must classify from
+    identical text however it arrives; an independent bound of 998 or 4096 would
+    invent a band where the same message resolves two ways depending on which
+    path carried it. That is the #484 argument — one value, read the same on
+    both sides of a decision — extended across paths instead of across layers.
+
+    ONE QUANTITY, TWO ENFORCEMENT SEMANTICS, and the difference is deliberate:
+    the relay REFUSES an over-long subject with a 422, because a client that
+    sends one is misbehaving. This path TRUNCATES, because a fetch cannot refuse
+    what the mailbox already holds. Same ceiling, different answer to crossing
+    it.
+    """
 
     message_id: str
     thread_id: str
@@ -115,6 +143,13 @@ class CloudGmailMessage:
     sender_email: str
     snippet: str
     received_at: Optional[datetime]
+
+    def __post_init__(self) -> None:
+        self.subject = self.subject[:_MAX_SUBJECT_CHARS]
+        self.sender_email = self.sender_email[:_MAX_SENDER_CHARS]
+        if self.sender_name is not None:
+            self.sender_name = self.sender_name[:_MAX_SENDER_CHARS]
+        self.snippet = self.snippet[:_MAX_SNIPPET_CHARS]
 
 
 @dataclass
@@ -169,6 +204,40 @@ class HistoryPage:
 # paragraph or two, well inside it, while a newsletter's 80 KB of markup is
 # truncated to something the rules layer can scan quickly.
 _MAX_BODY_CHARS = 4000
+
+# The header-derived bounds, mirrored from `PipelineItemIn` — see
+# `CloudGmailMessage.__post_init__` for why these are that contract's numbers
+# and not new ones. #427.
+_MAX_SUBJECT_CHARS = 2000
+_MAX_SENDER_CHARS = 512
+_MAX_SNIPPET_CHARS = 2000
+
+# How much text may be DECODED AND SCANNED to produce those 4,000 characters.
+#
+# `_MAX_BODY_CHARS` bounds the OUTPUT. Until #427 nothing bounded the input, on
+# the `text/plain` branch: every part was base64-decoded in full, joined, and
+# run through three whole-string regex passes before the slice threw almost all
+# of it away. Measured on the shipped function, min of three:
+#
+#     text/plain  5,000,000 chars -> 221.30 ms   (returns 4000)
+#     text/html   5,000,000 chars ->  15.92 ms   (returns 4000)
+#
+# The same bytes, 13.9x apart, because `_cap_html` already bounds the HTML
+# branch at `_MAX_HTML_CHARS` and nothing bounded this one. That control is what
+# makes it a defect rather than a cost: the repository had already decided this
+# work must be bounded and had applied the decision to one of the two branches.
+#
+# 256,000 is TypeScript's `MAX_RAW_BODY_CHARS` (`lib/import/parseMail.ts:135`),
+# added there for this exact reason — "BOUND BEFORE THE WORK, NOT AFTER IT".
+# The port applies it to RAW pre-decode characters and this applies it to
+# decoded ones, so it is the same constant and not quite the same quantity; the
+# early exit below is what makes the two behave alike in practice.
+#
+# It is 64x the output budget, so reaching the cap and still starving the 4,000
+# characters needs a body that is >98.4% collapsible whitespace for its first
+# quarter-megabyte AND whose verdict differs between the two windows. If that
+# ever shows up in real mail the remedy is this one number.
+_MAX_RAW_BODY_CHARS = 256_000
 
 # `format="full"` payloads are one to two orders of magnitude larger than
 # metadata ones, so the batch that was right for headers is not right here.
@@ -949,12 +1018,44 @@ def normalise_body_text(text: str) -> str:
     return _BLANK_LINE_RUN.sub("\n\n", text)[:_MAX_BODY_CHARS]
 
 
-def _decode_part(part: dict) -> str:
-    """Decode one MIME part's base64url body to text, or "" if undecodable."""
+def _decode_part(part: dict, budget: int = _MAX_RAW_BODY_CHARS) -> str:
+    """Decode one MIME part's base64url body to text, or "" if undecodable.
 
+    ``budget`` is how many decoded CHARACTERS the caller can still use. The
+    base64 payload is cut to a clean prefix that is guaranteed to yield at least
+    that many BEFORE it is decoded — bounding the work rather than its result,
+    which is the whole point of #427's second half. ``errors="replace"`` absorbs
+    a multibyte sequence split by the cut, and the cut can only ever shorten the
+    result, never change the characters before it.
+
+    THE ARITHMETIC COUNTS BYTES, NOT CHARACTERS, and the first version of it did
+    not. ``4 * ceil(budget / 3)`` reads as "3 bytes in, 4 base64 characters out"
+    and then silently treats one byte as one character, which is true only for
+    ASCII. Probed against the shipped function with a budget of 1,000::
+
+        "A" x 50,000   -> 1002 characters      (1 byte each, fine)
+        CJK            ->  334                 (3 bytes each)
+        U+1D11E        ->  251                 (4 bytes each)
+
+    A third of the budget for Japanese mail and a quarter for anything in a
+    supplementary plane. At the shipped constants that could not starve the
+    4,000-character output — 256,000/4 is still 64,000 — so it was not a live
+    defect, but it becomes one the moment either constant moves, which is
+    exactly the kind of latent arithmetic nobody re-derives later. A character
+    is at most four UTF-8 bytes, so the budget in bytes is ``4 * budget``.
+    """
+
+    if budget <= 0:
+        return ""
     data = (part.get("body") or {}).get("data")
     if not data:
         return ""
+    # 3 bytes -> 4 base64 characters. `-(-x // y)` is ceil without importing
+    # math. Cutting on a multiple of four keeps the prefix a valid base64
+    # stream, so no quantum is dropped before the one the cut lands on.
+    limit = 4 * -(-(4 * budget) // 3)
+    if len(data) > limit:
+        data = data[:limit]
     try:
         return base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
     except (ValueError, TypeError):
@@ -986,6 +1087,12 @@ def extract_body_text(payload: dict | None) -> str:
 
     plain: list[str] = []
     html: list[str] = []
+    # Running totals so a part is never DECODED once its branch is already full.
+    # Capping the join instead would still pay the base64 decode for every part:
+    # measured before this change, 20 x 1 MB `text/plain` parts cost 907 ms to
+    # return the same 4,000 characters one part returns.
+    plain_len = 0
+    html_len = 0
     stack = [payload]
     while stack:
         part = stack.pop()
@@ -996,13 +1103,42 @@ def extract_body_text(payload: dict | None) -> str:
             stack.extend(reversed(part.get("parts") or []))
             continue
         if mime == "text/plain":
-            plain.append(_decode_part(part))
+            if plain_len < _MAX_RAW_BODY_CHARS:
+                chunk = _decode_part(part, _MAX_RAW_BODY_CHARS - plain_len)
+                plain.append(chunk)
+                plain_len += len(chunk)
         elif mime == "text/html":
-            html.append(_decode_part(part))
+            if html_len < _MAX_HTML_CHARS:
+                chunk = _decode_part(part, _MAX_HTML_CHARS - html_len)
+                html.append(chunk)
+                html_len += len(chunk)
         elif part.get("parts"):
             stack.extend(reversed(part["parts"]))
 
-    text = " ".join(t for t in plain if t).strip()
+    # Both joins are about to be cut — plain by `normalise_body_text`'s
+    # `[:_MAX_BODY_CHARS]` after passes bounded above, html by `_cap_html` — so
+    # the prefix the loop kept is already the whole of what could survive, and
+    # the parts it declined to decode could not have contributed a character.
+    # The walk still VISITS every part: the tree is what says which branch wins,
+    # and skipping a `text/plain` part because the budget is spent must not turn
+    # a plain-bodied message into an HTML-bodied one.
+    #
+    # ONE BEHAVIOUR CHANGE, RECORDED RATHER THAN DISCOVERED LATER. A message
+    # whose first 256,000 `text/plain` characters are ENTIRELY whitespace now
+    # yields an empty `text` and falls through to the HTML branch, where before
+    # `strip()` would have reached content sitting past the bound. That input is
+    # pathological, the fallback reads the same message by another route, and
+    # the alternative — an unbounded search for the first non-space — is the
+    # cost this whole function is here to avoid.
+    # CUT BEFORE STRIP, and the order is load-bearing. `_decode_part`'s
+    # pre-decode bound must over-approximate — it counts bytes and a character
+    # is up to four of them — so an ASCII part can come back several times the
+    # budget and this slice is what actually pins it. Stripping first would
+    # apply the bound to POST-STRIP offsets: a body whose first quarter-megabyte
+    # is whitespace has all of it removed by `strip()`, and text that sat past
+    # the bound slides inside it. Found by the sentinel test going red when the
+    # byte arithmetic was corrected, which is the test earning its place.
+    text = " ".join(t for t in plain if t)[:_MAX_RAW_BODY_CHARS].strip()
     if not text:
         text = _html_to_text(" ".join(t for t in html if t)).strip()
     return normalise_body_text(text)
