@@ -114,8 +114,34 @@ classifier edit and get switched off. So the copy legitimately lags between
 repackagings.
 
 It is worth knowing anyway, because it is the honest scale of this section's
-subject: **the drift a port accumulates is not visible from the port's source,
-and no gate in this repository reports it.** `6919e63` regenerated all of
+subject: **the drift a port accumulates is not visible from the port's source.**
+
+One gate reports it now, for one pair. `scripts/cross_engine_differential.py`
+(#427 item 2) runs `rules.py` and `rulesLayer.ts` over the same 135 cases and
+reds on a category or a confidence divergence; `e2e-ci.yml` is the only job with
+both toolchains, so that is where it runs. It found drift on its first run — the
+port has no `reflow_paragraphs`, so a hard-wrapped body scores a bounded gap
+differently in the two engines, costing 0.05 of confidence on one fixture and
+changing the CATEGORY on another. Both are recorded in the harness, pinned to
+their measured values, and still open.
+
+Read its limits with it: it compares two of the five surfaces and it compares
+BEHAVIOUR, not pattern lists, so a pattern that drifted without changing any
+verdict in the corpus is still invisible. And `e2e-ci.yml` is path-filtered, so
+per #864 it cannot be a required check.
+
+**The port it cannot reach is the one already known to diverge**, which is worth
+stating next to the good news rather than under it. `ml/browser/site/app.js` is
+unloadable outside a browser — a top-level `https:` import (`:16`), no `export`
+statements at all, and `document` at `:22` — so covering it means Playwright or
+a fourth copy of the scorer. And identical data does not make identical
+behaviour: `app.js:60` matches every strong and weak pattern against the RAW
+body, with no `asserted_text` mask, no quoted-history strip and no reflow, where
+both engines the harness DOES compare mask first. `be in touch (soon|shortly|if)`
+is the confirmed instance — the `if` arm is dead in Python and TypeScript and
+live in the browser port. That belongs to #928.
+
+`6919e63` regenerated all of
 them and proved the generator faithful first, "by reproducing the committed
 rules.json byte-for-byte from the unmodified rules.py". `9e013ff` deliberately
 did **not** port its change to `rulesLayer.ts` and said so in the commit,
@@ -175,9 +201,17 @@ gate is a signal in the run log, not a wall.
 
 And the specific failure mode this document exists for — a rule edit that is
 narrow but benchmark-neutral — is **neither detected nor stopped by anything**.
-No check in any of the workflows compares the four `PATTERNS` ports, asserts
-that a new pattern is narrower than an existing one, or requires a named
-near-miss control. Every rule in the section above is enforced by a reader.
+No check in any of the workflows asserts that a new pattern is narrower than an
+existing one, or requires a named near-miss control. Every rule in the section
+above except port parity is enforced by a reader.
+
+Port parity is now enforced for ONE pair and only behaviourally:
+`scripts/cross_engine_differential.py` compares `rules.py` against
+`rulesLayer.ts` on 135 cases. It does not compare the four `PATTERNS` ports'
+pattern lists, it does not reach the Space copy or `ml/browser/site/app.js`, and
+being path-filtered it is not a required check. So it narrows this gap rather
+than closing it — but "no check compares the ports" is no longer accurate, and
+the difference matters to anyone deciding what to build next.
 
 That is the accurate state, and it is written here rather than left implied so
 that nobody cites this document as protection it does not provide. Issue #10
