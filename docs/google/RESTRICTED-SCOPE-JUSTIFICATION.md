@@ -382,7 +382,7 @@ prominent, user-facing feature the data serves; there is no other use.
        Omission and the literal `"all"` therefore mean the same thing on this
        endpoint: no bound.
      - The dashboard's scan dialog renders `SCAN_RANGE_OPTIONS`, the same five
-       choices (`sync-plan.ts:89-95`, rendered at `SyncBar.tsx:1246-1251`), and
+       choices (`sync-plan.ts:89-95`, rendered at `SyncBar.tsx:1293-1298`), and
        `scanRequestBody` sends `range` literally, `"all"` included
        (`sync-plan.ts:168-176`).
 
