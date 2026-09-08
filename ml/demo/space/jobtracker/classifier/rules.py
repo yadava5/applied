@@ -312,6 +312,57 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"\b(discount|promo(?:tion)?|coupon|sale|limited time offer)\b",
             r"\b(order|purchase|shipment|tracking number)\b",
             r"\b(security alert|verification code|otp|one[- ]time (passcode|password|code)|sign[- ]in|login)\b",
+            # A NEGATIVE DETERMINATION ABOUT A PERSON IS NOT A REJECTION (#522).
+            #
+            # "Unfortunately we were unable to confirm your student status.
+            # During the review process …" is a discount-eligibility refusal.
+            # It is not job mail, and it scored `rejection` 0.70 — the review
+            # queue, under a suggestion for a company the reader never applied
+            # to (`resolve_employer` names one from the sender domain, so at
+            # AUTO_FILE_GATE it would have minted a card).
+            #
+            # It matched exactly ONE pattern:
+            # `unfortunately.{0,50}(not|won't|will not|unable)` above, +3 from
+            # the body against 0 everywhere else. That pattern is genre-NEUTRAL
+            # — "unfortunately … unable", "review process", "declined", "was
+            # unsuccessful" describe ANY refusal — and nothing here asked what
+            # KIND of determination it was. This is the sibling of `your
+            # course` and the OTP set: it names the genre, not the category.
+            #
+            # NOT IN `_NOISE_NEGATIVES`, AND THAT IS MEASURED RATHER THAN
+            # PREFERRED. Membership there is what lets a strong BODY match
+            # outrank a genre filter — and the strong body match here IS the
+            # `unfortunately …` pattern, so `has_strong_body` is True for
+            # `rejection` on exactly the mail this is for. Both arms were run:
+            #
+            #   in `_NOISE_NEGATIVES`   [NEGATIVE-OUTRANKED], rejection 0.70
+            #   out of it               [NEGATIVE], other 0.50
+            #
+            # That is #521's finding one category over — a genre filter parked
+            # behind `has_strong_body` is inert in the case it was written for
+            # — and it is why this one is a full-weight negative. The cost of
+            # the full weight is bounded and pinned: a rejection that carries
+            # BOTH this vocabulary and a real verdict ("we have completed
+            # identity verification … we have decided not to move forward with
+            # your application") goes 0.95 -> 0.90 and still auto-files.
+            #
+            # WHY THESE NOUNS AND NOT THE OBVIOUS WIDER ONES. Every phrase
+            # below names a PERSONAL ATTRIBUTE being checked for an account, so
+            # job mail has no use for it. Four words that belong to this genre
+            # in ordinary speech are deliberately absent, because genuine job
+            # mail says them and a rejection that does must keep its verdict:
+            #
+            #   eligibility          "eligibility to work in the US" — I-9
+            #   background check     an offer-stage step
+            #   employment verification / references
+            #                        what a real reference check is called
+            #
+            # Bare `verification` and bare `verify` are absent for the same
+            # reason, one level up. The corpus family `eligibility-
+            # verification` is built both ways round over exactly this split:
+            # 60 refusals that must stop being rejections and 60 twins one noun
+            # away that must stay them.
+            r"\b(?:kyc|know your customer|proof of (?:address|identity|age)|(?:identity|address|student) verification|verify your (?:identity|address|student status)|student status|account recovery|recover your account)\b",
         ],
     ),
     EmailCategory.INTERVIEW: CategoryPatterns(

@@ -46,8 +46,8 @@ from tests.corpus_independent.harness import (
 #: c4b1e3b6c5a4b3b9 since #626: the corpus gained a family, so it gained mail.
 #: 12ac85f9e15c0769 since #641, for the same reason — `anonymous-third-application`
 #: is 180 more messages and 60 more employers.
-CORPUS_DIGEST = "912b033b6461d1ec"
-CORPUS_SIZE = 18200
+CORPUS_DIGEST = "6753126bb7f4c48b"
+CORPUS_SIZE = 18320
 
 #: THE RECORDED RUN, in one place, because the README quotes it.
 #:
@@ -89,7 +89,10 @@ RECORDED_AFTER_ANSWERING = {
     # the queue is answered. Answering mints none of it — `minted_a_card`
     # is unmoved at 421 — because none of the family's mail is ever held:
     # it produces no updates and nothing uncertain.
-    "cards": 10329,
+    # +60 (#522), the `eligibility-verification` twins, the same move the
+    # sync phase reports. Answering the queue adds nothing for this family:
+    # its twins auto-file and its refusals never reach the queue at all.
+    "cards": 10389,
     "update_opened_a_card": 19,
     "noise_on_card": 0,
     # 62 BEFORE, 75 AFTER — and the interesting number is the one that is not
@@ -136,10 +139,12 @@ RECORDED_AFTER_ANSWERING = {
     # move lands in `roles_graded` and neither of the other two populations moves.
     # +120 / +60 / +180 (#641), the same three moves as before answering, so
     # the populations still close after the phase: 8744 + 1166 + 400 == 10310.
-    "roles_graded": 8744,
-    "blank_required": 1166,
+    # +50 / +10 / 0 (#522), again the same three moves as before answering, and
+    # the populations still close: 8794 + 1176 + 400 == 10370.
+    "roles_graded": 8794,
+    "blank_required": 1176,
     "role_unsettleable": 400,
-    "titles_graded": 10310,
+    "titles_graded": 10370,
     # `score_board`'s `wrong_review`, READ UNDER A NAME THAT IS TRUE HERE. That
     # counter means "the product guessed instead of asking". After the phase the
     # product DID ask and was answered, so 150 is not 150 failures — it is 150
@@ -283,7 +288,14 @@ RECORDED_SYNC = {
     # `updated` does NOT move. The third confirmation used to be an UPDATE
     # to a row that already existed and is now a CREATION; if a later change
     # ever trades one for the other, these two counters say so together.
-    "created": 9908,
+    # created 9908 -> 9968 (#522): +60, the `eligibility-verification` twins,
+    # matching the board's `cards` exactly. `updated` does not move — every
+    # twin opens its own card — and NEITHER DOES `needs_review`, which is the
+    # counter #522 is actually about: the family's other 60 messages are the
+    # refusals, and at `other` 0.50 they are under `REVIEW_FLOOR`, so they
+    # reach neither the board nor the queue. Before the filter they were
+    # `rejection` 0.70 and this number would have read 3093.
+    "created": 9968,
     "updated": 4019,
     "purged": 0,
     "needs_review": 3033,
@@ -321,8 +333,15 @@ RECORDED_EMPLOYER_SPELLINGS = {
     # assertion that says so. All 43 sit in the corpus's `nowhere` bucket
     # (`must_be_addressed=False`), which is why the board counters do not move
     # at all: cards 9908 before and after, company_drift 0, splits 0, merges 0.
-    "tokens": 9113,
-    "distinct_displays": 9353,
+    # +66 on both (#522), and the 66 is worth reading. 60 are the new
+    # family's TWINS, one employer apiece; the other 6 are the REFUSALS'
+    # sender domains. `resolve_employer` names a company off
+    # `verify@verifyfast.example` and its five siblings, which is why #522
+    # is dangerous rather than untidy — the classifier is the only thing
+    # between those senders and a card. `cards` moves by exactly the 60
+    # twins and `noise_on_card` stays 0, which is what says it held.
+    "tokens": 9179,
+    "distinct_displays": 9419,
     # UNMOVED, and that is the assertion. 150 is documented above as entirely the
     # `employer-spelling` family; a family that added one would be #532 returning.
     "tokens_with_several_spellings": 150,
@@ -338,13 +357,13 @@ RECORDED = {
 #: segment, 320 sibling confirmations that give those refusals somewhere to be
 #: ambiguous, 160 role-less updates the reader declines, and 40 messages of the
 #: both-placements pair. See the family's docstring in `generate.py`.
-    "size": 18200,
+    "size": 18320,
     # DISTINCT FAMILY LABELS in the generated corpus, which is 37 and not the
     # 35 generators in ``_FAMILIES``: two generators emit a second label of
     # their own (``hostile-zero-width``, ``hostile-homoglyph``). The README and
     # the System Card both print a family count and both had drifted — 32 and
     # 24 against a real 35 — because nothing recomputed it. Now something does.
-    "families": 39,
+    "families": 40,
     # DISTINCT EMPLOYER TOKENS, and this entry was decoration until 2026-08-23.
     # It read 9,180 and `readme_facts.py` published it to the README and the
     # Booklet, but no test recomputed it and it matched NO measure of the
@@ -356,7 +375,7 @@ RECORDED = {
     # there were ZERO such employers out of 8,440, which is why a fix to #641
     # moved no number here and the bug could have been reinstated against a
     # green board.
-    "companies": 8500,
+    "companies": 8560,
     # ── #451 MOVED EVERY NUMBER BELOW THAT CARRIES A "451" NOTE ─────────────
     #
     # Two changes in one commit: the reference pattern
@@ -394,7 +413,7 @@ RECORDED = {
     # COLLECTED, MEASURED) `like to` appears 63 times and `love to` ZERO.
     # `abstained` and `auto_filed_wrong` do not move at all, so nothing was
     # traded for it.
-    "correct": 17010,
+    "correct": 17130,
     # 361 -> 304 (#451).
     # 304 -> 104 (#878): -200, the other side of the note above. The family was
     # never measuring the quote-strip it exists for -- the case was wrong with
@@ -482,7 +501,11 @@ RECORDED = {
     # applications and the anonymous third one that used to fold onto the
     # older of them. Before the fix this read 9728 WITH the family present,
     # which is the measurement the family exists to make.
-    "cards": 9908,
+    # 9908 -> 9968 (#522): +60, the `eligibility-verification` twins and
+    # nothing else. The family's other 60 messages are the refusals it
+    # exists for, and they must reach no card at all — `noise_on_card`
+    # holding at 0 is what says they did not.
+    "cards": 9968,
     # Mail about a real application that the product did nothing with. Two
     # numbers because both are unaddressed and only one is invisible; see #447.
     #
@@ -531,7 +554,10 @@ RECORDED = {
     # in the queue, with `lost` and `dropped` still 0.
     # 13807 -> 13987 (#641): +180. All three of each group land on a card,
     # so the queue side is unmoved and the closure below still holds.
-    "addressed_on_a_card": 13987,
+    # +60 (#522). Every twin is a rejection over `AUTO_FILE_GATE`, so it is
+    # addressed by the card it settles and `addressed_in_the_queue` below
+    # does not move at all.
+    "addressed_on_a_card": 14047,
     "addressed_in_the_queue": 2833,
     # THE ADDITIVE PERSIST'S OWN OUTCOME, and it is zero. `replay` calls
     # `_persist_review_items_additive` since #624, so an arriving item can now
@@ -553,7 +579,10 @@ RECORDED = {
     # corpus that quietly stopped requiring mail to be addressed is loud.
     # 16640 -> 16820 (#641): every message of the new family is about a
     # real application, so all 180 must reach a card or the queue.
-    "must_be_addressed": 16820,
+    # +60 (#522), the twins. The family's other 60 messages are its
+    # refusals, which are `must_be_addressed=False`: mail the product owes
+    # the reader nothing for.
+    "must_be_addressed": 16880,
     # Noise that MINTED A CARD. Went 0 -> 2 on 2026-08-22, when the corpus first
     # contained ATS mail that is not about the user at all (a profile-completion
     # nudge scoring `assessment` at 0.90), and back to 0 once the reference
@@ -619,7 +648,8 @@ RECORDED = {
     # 9252 -> 9148 (#451): the denominator follows `cards` exactly.
     # 9148 -> 9728 (#626): the denominator follows `cards` exactly, as ever.
     # 9728 -> 9908 (#641): the denominator follows `cards` exactly, as ever.
-    "titles_graded": 9908,
+    # +60 (#522), tracking `cards` exactly.
+    "titles_graded": 9968,
     # Smaller, because a card whose ground truth keys on a requisition id, or
     # whose mail names no job at all, has a title this corpus either cannot
     # settle or must assert BLANK. See ``Case.role_truth``.
@@ -634,7 +664,9 @@ RECORDED = {
     # 8222 -> 8342 (#641): +120, the family's two NAMED applications per
     # group. Its anonymous third lands in `blank_required` below, so the
     # three populations still close: 8342 + 1166 + 400 == 9908.
-    "roles_graded": 8342,
+    # +50 (#522). The 60 twins less the 10 that name no role; see
+    # `blank_required` below.
+    "roles_graded": 8392,
     # The card names an employer nobody applied to. This is what a user would
     # call hallucinating, and the live filing path can do it: while fixing #512
     # the subject "Senior Software Engineer Interview | <name>" resolved to a
@@ -781,11 +813,16 @@ RECORDED = {
     # 1106 -> 1166 (#641): the new family's 60 anonymous acknowledgements. Each
     # must produce a BLANK card, and `role_invented` holding at 0 is what says
     # the cards the fix now mints did not acquire a title from anywhere.
-    "blank_required": 1166,
+    # 1166 -> 1176 (#522): +10. One of the six `eligibility-verification`
+    # twin shapes — the student-programme rejection — names no role from
+    # ROLES anywhere, so its 10 cards are required to be blank. The other
+    # 50 twins carry a title and land in `roles_graded`.
+    "blank_required": 1176,
     # The third population: the corpus knows WHICH application the card is, by
     # requisition id, and does not know what the job is called. Not a defect and
     # not an assertion — the term that makes "every card is accounted for"
     # sayable. `req-id-same-title`, 400 cards.
+    # UNMOVED (#522): the new family adds no unsettleable title.
     "role_unsettleable": 400,
     # …and none of them is wrong today. A zero here is only worth its
     # denominator above, which is why the denominator is asserted first — and
@@ -2834,7 +2871,12 @@ def test_the_readable_window_is_the_product_s_window() -> None:
 # 8604 -> 8724 (#641): +120, the new family's two NAMED applications per
 # employer. Its third is the sentinel sub-key and carries no title to grade,
 # which is the whole point of it.
-RECORDED_ROLE_IDENTITIES = 8724
+# 8724 -> 8774 (#522): +50 and not +60, which is the derivation working.
+# The `eligibility-verification` twins are 60 cards, and one of its six
+# twin shapes — the student-programme rejection — names no role from the
+# pool in its subject or body. Its 10 identities are blank by
+# `_settle_role_reachability` and land in `blank_required` instead.
+RECORDED_ROLE_IDENTITIES = 8774
 
 
 def test_ground_truth_never_asserts_a_title_no_message_spells(cases) -> None:
