@@ -259,3 +259,137 @@ def test_a_gap_in_the_ids_is_a_problem(tmp_path: Path) -> None:
     gapped = "# Decision record\n\n" + _entry(ID, "one", "none") + "\n" + _entry("DEC-" + "003", "three", "none")
     problems = mod.check(gapped, tracked, tree)
     assert any("no gaps" in p and ID2 in p for p in problems), problems
+
+
+# --------------------------------------------------------------------------
+# #958 — a wrapped field value keeps its continuation lines.
+#
+# `parse` read `line.startswith(f + ":")` and nothing else, so a `Markers:`
+# list that wrapped lost every path after the first physical line. The forward
+# check then skipped those paths silently and the REVERSE completeness check
+# reported that the entry "does not list" a file a reader can see listed. The
+# half that spoke was the half that was wrong, which is worse than a check that
+# fails to notice.
+# --------------------------------------------------------------------------
+
+#: The same two paths, spelled on one line and across two. Every assertion
+#: below compares the two readings of THESE, so neither spelling can drift.
+ONE_LINE = "Markers: src/one.py, src/two.py\n"
+WRAPPED = "Markers: src/one.py,\n  src/two.py\n"
+
+
+def _carrying(marker: str) -> dict[str, str]:
+    return {"src/one.py": f"# {marker}\n", "src/two.py": f"# {marker}\n"}
+
+
+def test_a_wrapped_markers_list_reads_as_the_same_paths(tmp_path: Path) -> None:
+    """The control the issue asks for by name.
+
+    Asserting only that the wrapped form is CLEAN would pass against a parser
+    that dropped the continuation line entirely — the dropped path would simply
+    never be checked. So the two spellings are compared to each other, and the
+    comparison is run twice: once where both must be clean, and once where both
+    must report the SAME problem. A parser that loses the line fails the second
+    immediately, because losing a path is how you get an empty problem list.
+    """
+    tracked, tree = _tree(tmp_path, _carrying(ID))
+
+    flat = mod.check(GOOD.replace("Markers: none\n", ONE_LINE), tracked, tree)
+    wrapped = mod.check(GOOD.replace("Markers: none\n", WRAPPED), tracked, tree)
+    assert flat == [] and wrapped == [], (
+        f"a clean pair should report nothing; one line -> {flat}, wrapped -> {wrapped}"
+    )
+
+    # ...and now the same pair where the SECOND path is untracked, so both
+    # spellings owe exactly one problem naming `src/two.py`. This is the arm
+    # that the pre-#958 parser fails: it never saw the path, so it reported
+    # nothing and the two lists disagreed.
+    partial = {"src/one.py": f"# {ID}\n"}
+    tracked, tree = _tree(tmp_path / "partial", partial)
+    flat = mod.check(GOOD.replace("Markers: none\n", ONE_LINE), tracked, tree)
+    wrapped = mod.check(GOOD.replace("Markers: none\n", WRAPPED), tracked, tree)
+    assert flat, "the one-line spelling reported nothing; the fixture is wrong"
+    assert flat == wrapped, (
+        "the two spellings of one list read differently:\n"
+        f"  one line -> {flat}\n  wrapped  -> {wrapped}"
+    )
+    assert any("src/two.py" in p for p in wrapped), (
+        f"the continuation line's path was never checked: {wrapped}"
+    )
+
+
+def test_the_reverse_check_sees_a_path_on_a_continuation_line(tmp_path: Path) -> None:
+    """The exact false red #958 reports, asserted as absent.
+
+    `src/two.py` carries the id and IS listed, on the second line. Before the
+    fix the completeness check said it was not listed, about a path visible
+    directly above in the same document.
+    """
+    tracked, tree = _tree(tmp_path, _carrying(ID))
+    problems = mod.check(GOOD.replace("Markers: none\n", WRAPPED), tracked, tree)
+    assert not [p for p in problems if "does not list it" in p], (
+        f"the gate reported a listed file as unlisted: {problems}"
+    )
+
+
+def test_a_continuation_stops_at_a_blank_line_and_at_column_zero(tmp_path: Path) -> None:
+    """The value ends where the entry says it ends, both ways.
+
+    Without this the parser would absorb the next field, or trailing prose, into
+    whichever value came last — and `Markers:` is PATH-scanned, so absorbed
+    prose naming any `foo/bar.py` would demand that file exist. Two separate
+    terminators, asserted separately: a line at column zero, and a blank line.
+    """
+    tracked, tree = _tree(tmp_path, {"src/one.py": f"# {ID}\n"})
+
+    # A blank line, then indented prose that names a path nothing tracks. If
+    # the blank line did not terminate the value, this would red.
+    text = GOOD.replace(
+        "Markers: none\n",
+        "Markers: src/one.py\n\n  See also src/nowhere.py for the shape.\n",
+    )
+    assert mod.check(text, tracked, tree) == [], (
+        "a blank line did not end the field value"
+    )
+
+    # And the column-zero terminator, which needs prose rather than a field to
+    # grade it: a line beginning `Valid while:` is recognised as a NEW field
+    # before the continuation branch is ever consulted, so using one here tests
+    # the field scanner and not the indentation rule. A first draft did exactly
+    # that and a mutation deleting `line[:1].isspace()` survived it untouched.
+    #
+    # Unindented prose naming an untracked path is what separates them: absorbed
+    # into `Markers:` it demands `src/nowhere.py` exist, and terminated it is
+    # invisible.
+    trailing = GOOD.replace(
+        "Markers: none\n",
+        "Markers: src/one.py\nSee also src/nowhere.py for the shape.\n",
+    )
+    assert mod.check(trailing, tracked, tree) == [], (
+        "prose at column zero was absorbed into the field above it"
+    )
+
+
+def test_a_four_digit_id_is_visible_to_every_pattern(tmp_path: Path) -> None:
+    """`\\b` does not match between two digits, so `\\d{3}` hid a four-digit id whole.
+
+    Not a hypothetical about arithmetic: with the old pattern the ENTRY scanner
+    found no entries at all in a document whose only entry was four digits, and
+    `check` then reported "contains no DEC entries" rather than anything about
+    the entry. The marker scanner missed it in the tree at the same time, so an
+    orphaned four-digit marker was invisible in BOTH directions at once.
+
+    Asserted through the reverse check, which is the direction that would have
+    stayed silent: a tracked file carrying a four-digit id with no entry for it
+    must be reported. The id itself is assembled rather than written, for the
+    reason the header gives: a literal here is an orphan in the real tree.
+    """
+    four = "DEC-" + "1000"
+    tracked, tree = _tree(tmp_path, {"src/one.py": f"# {four}\n"})
+    problems = mod.check(GOOD, tracked, tree)
+    assert any(four in p and "no entry" in p for p in problems), (
+        f"a four-digit marker was invisible to the gate: {problems}"
+    )
+    assert mod.MARKER.findall(f"# {four}\n") == [four], (
+        "the marker pattern still cannot see a four-digit id"
+    )
