@@ -1111,22 +1111,51 @@ test.describe("a scan correction keeps the reader's place", () => {
   });
 });
 
-test.describe("a correction into a COLLAPSED employer set (#425)", () => {
-  test("the reader lands on the set that now holds their row, not on <body>", async ({
+test.describe("a correction into a COLLAPSED employer set (#425, #873)", () => {
+  /**
+   * THE RESIDUAL #425 RECORDED, CLOSED FROM THE OTHER END.
+   *
+   * #425's own words: "a row that lands inside a COLLAPSED employer set has no
+   * `#status-<id>` to return to, so the lookup fails and the reader is left
+   * where today's code leaves them" — at `<body>`. The answer it shipped was
+   * to park focus on the SET HEADER, and this file's earlier case asserted
+   * exactly that, including the premise that the corrected row HAD folded away.
+   *
+   * #873 chose the other answer, and the two are mutually exclusive on this
+   * path: every stage control now REVEALS the destination set, so the row does
+   * not fold away at all. Parking focus only made the disappearance
+   * keyboard-navigable — the reader had just changed a card's stage, watched
+   * the card vanish, and was handed a header that is not the thing they were
+   * manipulating. Revealing keeps the row on the page, and the anchor the
+   * restore wants exists again in its new group.
+   *
+   * So the premise assertion is gone because it is false BY DESIGN, and what
+   * replaces it is the thing #425 cares about: where the reader ends up. The
+   * old case's claim that they must not be dropped at `<body>` is not relaxed,
+   * it is made stricter — `expectFocusLandsOn` reads every sample past the
+   * unmount, and one of the assertions below refuses the set header too, so
+   * the pre-#873 behaviour reds here rather than passing.
+   *
+   * MEASURED on /demo in Chromium at 1024x768, pane closed, with the sampler
+   * in this file: the set opens on the change and the row's old node detaches
+   * 316ms later, when the demo transport's 300ms write returns; focus reads
+   * `status-1` in all 246 samples and `<body>` in none of them. Before the
+   * wiring the same probe saw the set stay collapsed and focus land on the
+   * header.
+   */
+  test("the reader stays on the row's own control, in the set that opened to take it", async ({
     page,
   }) => {
-    // THE RESIDUAL #425 RECORDED AND LEFT OPEN, in its own words: "a row that
-    // lands inside a COLLAPSED employer set has no `#status-<id>` to return
-    // to, so the lookup fails and the reader is left where today's code
-    // leaves them" — at `<body>`, with every subsequent Tab restarting from
-    // the top of the document.
-    //
-    // The demo has exactly the shape: Northstar Systems holds one row in
-    // `interviewing` and three in `applied`, and three rows render as a
-    // COLLAPSED set whose members have no stage select at all. Correcting the
-    // interviewing row to `applied` moves it into that set.
+    // The owner's width and the pane CLOSED, like the other unmount cases:
+    // with the pane docked at 1024 the row folds its select away
+    // (ApplicationRow's fold note), and a control that is not rendered cannot
+    // be the one under test.
+    await page.setViewportSize(OWNER_VIEWPORT);
     await page.goto("/demo");
 
+    // The demo has exactly the shape: Northstar Systems holds one row in
+    // `interviewing` and three in `applied`, and three rows render as a
+    // collapsed set. Correcting the interviewing row to `applied` moves it in.
     const setHeader = page.locator('[data-set-toggle="applied:Northstar Systems"]');
     await expect(
       setHeader,
@@ -1134,7 +1163,7 @@ test.describe("a correction into a COLLAPSED employer set (#425)", () => {
     ).toHaveCount(1);
     await expect(
       setHeader,
-      "the set must be COLLAPSED, or the row keeps a select and this is the other branch",
+      "the set must be COLLAPSED before the correction, or the reveal has nothing to do and this is the other branch",
     ).toHaveAttribute("aria-expanded", "false");
 
     const select = page.getByLabel("Change stage for Northstar Systems");
@@ -1142,6 +1171,7 @@ test.describe("a correction into a COLLAPSED employer set (#425)", () => {
       select,
       "while the applied set is collapsed, the interviewing row is the only Northstar stage control on the page",
     ).toHaveCount(1);
+    await expect(select).toHaveValue("interviewing");
     const selectId = (await select.getAttribute("id"))!;
 
     await select.focus();
@@ -1150,29 +1180,99 @@ test.describe("a correction into a COLLAPSED employer set (#425)", () => {
       "the reader is standing on the control before they correct it",
     ).toBe(selectId);
 
+    await armFocusProbe(page, selectId);
     await select.selectOption("applied");
+    const trace = await page.evaluate(() => window.__focusProbe!.done);
 
-    // The row is gone from the page — folded into the collapsed set — so the
-    // control it was corrected with is genuinely unmounted. That is the
-    // precondition; without it the fixed branch is never reached.
+    // --- THE CARD DOES NOT DISAPPEAR (#873) -------------------------------
+    await expect(
+      setHeader,
+      "the set the row landed in has to be OPEN — a card that folds away loses its open button, its drag and its select at the moment the reader was moving it",
+    ).toHaveAttribute("aria-expanded", "true");
     await expect(
       page.getByLabel("Change stage for Northstar Systems"),
-      "the corrected row must have folded into the set, or the fallback is not the path under test",
-    ).toHaveCount(0);
+      "all four Northstar rows are on the page with their own stage control, the corrected one included",
+    ).toHaveCount(4);
+    await expect(page.locator(`#${selectId}`)).toHaveValue("applied");
 
-    // --- The defect -------------------------------------------------------
-    const landed = await page.evaluate(
-      () => (document.activeElement as HTMLElement | null)?.dataset?.setToggle ?? null,
-    );
+    // --- AND THE READER IS STILL ON IT (#425) -----------------------------
+    // The same id, a DIFFERENT node: the row was torn out of `interviewing`
+    // and rebuilt inside the opened set, and `#status-<id>` is the anchor
+    // PipelineBoard renders from `app.id`. The probe still watches the OLD
+    // node, so `inDocument` is what separates the two.
+    expectUsableUnmountTrace(trace, "the row's stage select (into a revealed set)");
+    expectFocusLandsOn(trace, selectId);
     expect(
-      landed,
-      "focus was dropped instead of being handed to the set the row moved into",
-    ).toBe("applied:Northstar Systems");
-    await expect(setHeader).toBeFocused();
+      await activeElementId(page),
+      "and the reader is still standing there once the board settles",
+    ).toBe(selectId);
+    await expect(page.locator(`#${selectId}`)).toBeFocused();
+    // The rejected answer, refused explicitly: parking focus on the set header
+    // was #425's mitigation, and it is what this path does when the reveal is
+    // not wired. Without this assertion the pre-#873 behaviour passes here.
+    expect(
+      await page.evaluate(
+        () => (document.activeElement as HTMLElement | null)?.dataset?.setToggle ?? null,
+      ),
+      "the reader belongs on the control they were manipulating, not parked on the set's header",
+    ).toBeNull();
 
-    // …and it is a real way back: the header opens the set the row is in.
-    await setHeader.press("Enter");
-    await expect(setHeader).toHaveAttribute("aria-expanded", "true");
-    await expect(page.getByLabel("Change stage for Northstar Systems")).toHaveCount(4);
+    // --- AND THE WRITE LANDED ---------------------------------------------
+    // Without this, a "fix" that kept focus by never moving the row would pass
+    // every assertion above.
+    await expect(setHeader).toHaveAttribute("aria-label", "Northstar Systems — 4 applications");
+  });
+
+  test("the pane's stage control opens the set its row lands in, and keeps the reader", async ({
+    page,
+  }) => {
+    // THE THIRD DOOR (#873). The detail pane's select had no spec at all, and
+    // it reaches the same defect: a correction made here regroups the row
+    // behind the pane and folds it into the collapsed set exactly as a drop or
+    // a row select would.
+    //
+    // Left at the project's 1440 default rather than the owner's 1024, and the
+    // pane's own control is the only focus claim made: with the pane docked
+    // every row's select is subject to the worklist's fold, so asserting on
+    // the ROW's control here would be asserting a width. The pane outlives the
+    // regroup — `rowSelectId` deliberately does not match `detail-status-<id>`
+    // — so the reader never leaves the control they are on, which is why this
+    // case needs no sampled trace: there is no unmount to catch.
+    await page.goto("/demo");
+
+    const setHeader = page.locator('[data-set-toggle="applied:Northstar Systems"]');
+    await expect(
+      setHeader,
+      "the set must be COLLAPSED before the correction, or the reveal has nothing to do",
+    ).toHaveAttribute("aria-expanded", "false");
+
+    await page.getByRole("button", { name: /Open Northstar Systems — ML Engineer$/ }).click();
+    const pane = page.getByTestId("application-detail");
+    await expect(pane).toBeVisible();
+
+    const select = page.locator("select[id^='detail-status-']");
+    await expect(select).toHaveValue("interviewing");
+    const selectId = (await select.getAttribute("id"))!;
+
+    await select.focus();
+    expect(
+      await activeElementId(page),
+      "the reader is standing on the pane's control before they correct it",
+    ).toBe(selectId);
+
+    await select.selectOption("applied");
+
+    await expect(
+      setHeader,
+      "a correction made in the pane has to reveal the set its row lands in, the same as the other two doors",
+    ).toHaveAttribute("aria-expanded", "true");
+    // The write landed: the set the row moved into now counts it.
+    await expect(setHeader).toHaveAttribute("aria-label", "Northstar Systems — 4 applications");
+
+    expect(
+      await activeElementId(page),
+      "the pane outlives the regroup, so the reader is still on its control",
+    ).toBe(selectId);
+    await expect(select).toBeFocused();
   });
 });

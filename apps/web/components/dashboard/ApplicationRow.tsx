@@ -292,6 +292,7 @@ export function ApplicationRow({
   folded = false,
   detailOpen = false,
   revealOnOpen = true,
+  onRevealStage,
   transport = liveBoardTransport,
 }: {
   app: Application;
@@ -345,6 +346,17 @@ export function ApplicationRow({
    *  an open the reader asked for; false for one the PAGE seeded (see the
    *  effect below — `nearest` reaches the document, not just the worklist). */
   revealOnOpen?: boolean;
+  /**
+   * Tell the board a stage change is being made here, so the destination
+   * employer set is open before the row arrives in it (#873, and see
+   * `PipelineBoard`'s `revealStage` for why revealing is the answer).
+   *
+   * MUST BE REFERENTIALLY STABLE. It is a dependency of `onStatusChange`,
+   * which is `StageSelect`'s memo contract (the note above that component):
+   * a fresh function per render would re-render the control on every board
+   * change, which is the thing that overwrites a choice in flight.
+   */
+  onRevealStage?: (status: string, company: string) => void;
   /** How mutations reach data — the live proxy by default, fixtures on /demo. */
   transport?: BoardTransport;
 }) {
@@ -418,6 +430,18 @@ export function ApplicationRow({
       setError(null);
       setOptimistic({ from: app.status, to: next });
       setBusy("status");
+      // SHOW WHERE THIS ROW IS ABOUT TO LAND (#873). A row arriving at a stage
+      // where its employer already has rows folds into a collapsed
+      // `EmployerSetRow`, which renders its members only while open — so the
+      // card the reader was in the middle of moving leaves the DOM with no
+      // open button, no `draggable` and no select. This is the same call the
+      // drop path makes, so both doors behave alike.
+      //
+      // Before the await, for `moveTo`'s reason: the board regroups when the
+      // write returns, and a set revealed after that shows an already-folded
+      // card. The trade `revealStage` states holds here too — a failed write
+      // leaves the destination set open while the row stays put.
+      onRevealStage?.(next, app.company);
       const result = await transport.changeStatus(app.id, next);
       // Cleared on success AND on failure: the old code left `busy` latched on
       // success, so a change that did not move the row to another group (it
@@ -443,7 +467,7 @@ export function ApplicationRow({
       });
       router.refresh();
     },
-    [app.company, app.id, app.status, optimisticTo, router, transport],
+    [app.company, app.id, app.status, onRevealStage, optimisticTo, router, transport],
   );
 
   /**
