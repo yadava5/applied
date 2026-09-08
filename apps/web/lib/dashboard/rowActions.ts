@@ -216,6 +216,14 @@ export function removalPendingTail(secondsLeft: number): string {
  */
 const OFF_THE_BOARD = " removed from the board";
 
+/**
+ * UNCHANGED BY #921, and deliberately. "not deleted" was always true and was
+ * never the problem — the problem was that it named no place. The place is now
+ * a BUTTON beside this sentence (`ApplicationRow`'s committed tombstone), not
+ * a third segment inside it: a string cannot be pressed, and a tombstone whose
+ * text claimed a destination the reader could not reach from it would be the
+ * same defect this issue is about, one clause shorter.
+ */
 export const REMOVED_TAIL = `${OFF_THE_BOARD} · not deleted`;
 
 export const DELETED_TAIL = " deleted permanently";
@@ -239,15 +247,38 @@ export const REMOVE_LABEL = "Not an application";
  * "undoable" is gone from these hints: on a removal action it reads equally as
  * "can be undone" and "cannot be done". The window is stated in seconds, and
  * derived from the constant so the copy can never drift from the timer.
+ *
+ * AND IT SAYS WHAT HAPPENS AFTER THE SECONDS RUN OUT (#921). It used to end at
+ * the number, which left the one thing the reader needs unstated — and the
+ * honest completion of that sentence, before this issue, was "and then it is
+ * gone for good", because no surface in the product listed a removed row. The
+ * surface exists now, so the hint names it, at the only moment the naming is
+ * cheap: before the act, in the menu the act is chosen from. Same two words as
+ * the panel's title and the board menu's item; a reader who reads this and
+ * then goes looking is looking for a string that exists.
+ *
+ * The third segment is a PLACE, not a second reassurance. "you can undo this"
+ * said twice is not twice as recoverable; "then it waits in Removed rows" is
+ * the fact the ten seconds do not cover.
  */
-export const REMOVE_HINT = `takes it off the board · ${UNDO_WINDOW_SECONDS} s to undo`;
+export const REMOVE_HINT = `takes it off the board · ${UNDO_WINDOW_SECONDS} s to undo · then it waits in Removed rows`;
 /**
  * The synced-row variant. It used to end "· trains the model", which was false
  * twice over: no deployed path trains on anything, and this action does not even
  * record a training example. The sync stickiness it names instead is the one thing
  * that genuinely differs for a Gmail row — see {@link removeFromBoardRequest}.
+ *
+ * REWORDED, because the old tail now reads as a contradiction of the segment
+ * before it: "a later sync won't bring it back" beside "it waits in Removed
+ * rows" asks the reader to decide which of the two is true. Both are — the
+ * distinction is the ACTOR, and that is what this says instead. A sync will
+ * never re-file this row (`dismissed_reason = "user"`, honoured at
+ * `applications.py:1521`); the reader can, by hand, from the panel the
+ * previous segment named. That is precisely the asymmetry #921 asked to be
+ * decided out loud: a hand dismissal stays final against the machine and stops
+ * being final against the person who made it.
  */
-export const REMOVE_STICKY_HINT = `takes it off the board · ${UNDO_WINDOW_SECONDS} s to undo · a later sync won't bring it back`;
+export const REMOVE_STICKY_HINT = `${REMOVE_HINT} · no sync re-files it`;
 export const DELETE_LABEL = "Delete permanently";
 export const DELETE_HINT = "erases the row and its emails";
 export const DELETE_CONFIRM_QUESTION =

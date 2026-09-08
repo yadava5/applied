@@ -9,6 +9,8 @@ import { notifySuccess } from "@/components/feedback/notify";
 import { MailText } from "@/components/mail/MailText";
 import { RowActionsMenu, type RowMenuItem } from "@/components/dashboard/RowActionsMenu";
 import { safeText } from "@/lib/security/hostileText";
+import { REMOVED_TITLE } from "@/lib/applications/removed";
+import { requestRemoved } from "@/lib/dashboard/removed-bus";
 import { cardQualifier } from "@/lib/dashboard/board";
 import { todayISO } from "@/lib/dashboard/age";
 import { filedAt } from "@/lib/dashboard/dates";
@@ -655,13 +657,36 @@ export function ApplicationRow({
   // WHICH of the two happened — one is still on disk, the other is gone. -----
   if (removed) {
     return (
-      <div className="rounded-lg border border-dashed border-line-soft bg-surface-2/40 px-3 py-2">
-        <p role="status" className="text-xs text-dim">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-dashed border-line-soft bg-surface-2/40 px-3 py-2">
+        <p role="status" className="min-w-0 flex-1 text-xs text-dim">
           <RowOutcome
             company={app.company}
             tail={removed === "deleted" ? DELETED_TAIL : REMOVED_TAIL}
           />
         </p>
+        {/* WHERE IT WENT, said at the one moment the reader is certain to be
+            looking at it (#921). "not deleted" was already true and already
+            here, and it still left the reader with nowhere to go — the window
+            has closed, the in-cell Undo is gone, and until now nothing in the
+            product named a place. This is the transient door of the four; it
+            lives as long as the tombstone does (the refresh that drops the row
+            takes it with it), which is why it is a pointer and not the
+            recovery itself. A link, not a button-shaped control: the act is
+            over, and the two seconds this occupies must not read as another
+            decision waiting to be made.
+
+            The deleted branch gets nothing. There is no row to reach. */}
+        {removed === "dismissed" ? (
+          <button
+            type="button"
+            onClick={() => {
+              requestRemoved();
+            }}
+            className="shrink-0 text-xs text-muted underline-offset-2 transition-colors hover:text-strong hover:underline"
+          >
+            {REMOVED_TITLE}
+          </button>
+        ) : null}
       </div>
     );
   }

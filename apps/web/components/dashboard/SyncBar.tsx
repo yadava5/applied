@@ -14,7 +14,15 @@ import { Dialog } from "@/components/ui/Dialog";
 import { Segmented } from "@/components/ui/Segmented";
 import { selectClass } from "@/components/ui/formStyles";
 import { onScanRequest, requestScan } from "@/lib/dashboard/scan-bus";
-import { liveSyncTransport, type SyncTransport } from "@/lib/dashboard/transport";
+import {
+  liveBoardTransport,
+  liveSyncTransport,
+  type BoardTransport,
+  type SyncTransport,
+} from "@/lib/dashboard/transport";
+import { RemovedRows } from "@/components/dashboard/RemovedRows";
+import { REMOVED_TITLE } from "@/lib/applications/removed";
+import { requestRemoved } from "@/lib/dashboard/removed-bus";
 import { publishAmbientPulse } from "@/lib/shell/ambient-bus";
 import { proxySyncDetail } from "@/lib/gmail/sync-detail";
 import {
@@ -280,6 +288,7 @@ export function SyncBar({
   signedIn = false,
   children,
   transport = liveSyncTransport,
+  boardTransport = liveBoardTransport,
 }: {
   /** The page's one honest line of state — `214 filed · 32 open · 1 offer`.
    *
@@ -338,6 +347,21 @@ export function SyncBar({
   /** How sync requests reach data — Gmail via the proxy by default; the demo
    *  passes a simulated transport so this same state machine runs on fixtures. */
   transport?: SyncTransport;
+  /**
+   * How the Removed rows panel reaches data (#921). Live proxy by default; the
+   * demo passes its in-memory board transport, which is what lets a browser
+   * test drive "remove a row, let the window close, put it back" end to end.
+   *
+   * THE PANEL IS MOUNTED HERE, and the placement is a correctness decision
+   * rather than a convenience. `PipelineBoard` looks like the natural owner —
+   * it holds the transport — but it is not rendered on the dashboard's EMPTY
+   * branch, and "I removed my only application" is the sharpest form of the
+   * bug this closes: a board with nothing on it is exactly when the removed
+   * row is the only row there is. Every branch of the page renders this row,
+   * so mounting the one panel here means there is no board state from which
+   * the recovery surface is missing.
+   */
+  boardTransport?: BoardTransport;
 }) {
   const router = useRouter();
   const { signOut } = useSignOut();
@@ -1093,6 +1117,23 @@ export function SyncBar({
                       },
                     ]
                   : []),
+                // The PERMANENT door to the recovery surface (#921), and
+                // deliberately outside the `connected` branch beside it: a
+                // removed row is a board fact, not a Gmail one — rows filed by
+                // hand are removed the same way and recovered the same way,
+                // and a menu that offered this only to connected mailboxes
+                // would hide the surface from exactly the accounts whose rows
+                // no sync can ever bring back. It sits between the sync items
+                // and sign-out because that is its weight: something you reach
+                // for occasionally, not the end of the session.
+                {
+                  key: "removed",
+                  label: `${REMOVED_TITLE}…`,
+                  hint: "put back anything taken off the board",
+                  onSelect: () => {
+                    requestRemoved();
+                  },
+                },
                 ...(signedIn
                   ? [
                       {
@@ -1228,6 +1269,12 @@ export function SyncBar({
           />
         </div>
       ) : null}
+
+      {/* The recovery surface (#921) — one mount per board, opened from the
+          `⋯` item above, from the board's nothing-matched line and from a
+          row's own tombstone, all through `removed-bus`. It renders nothing
+          until it is asked for and fetches nothing until it opens. */}
+      <RemovedRows transport={boardTransport} />
 
       {/* The windowed-scan dialog. Three questions in the order a person asks
           them — how far back, how deep, and what happens to what it misses —
