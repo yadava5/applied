@@ -398,3 +398,76 @@ Valid while: production classifies band messages from the stored snippet rather
   better model. The rule is about what a doubted field may be used for, not
   about how often it is wrong.
 Markers: apps/web/lib/dashboard/review.ts, apps/web/components/dashboard/ReviewQueue.tsx
+
+## DEC-010 — an offer withdrawal is ADMITTED to the queue, not lifted into it
+
+Status: active (2026-09-08)
+Claim: a message that scores `other` under `pipeline.REVIEW_FLOOR`, whose own
+  asserted text retracts something about the reader's process, and whose named
+  employer holds a live `OFFERED` card, is admitted to the human review queue
+  by a fourth arm of `collect_review_items`. Its stored confidence STAYS 0.50.
+  Nothing about the classifier's score, its category vocabulary, or
+  `rules.py` changes, and no new wording is authored anywhere.
+Why: the mechanism has to survive the sentence people will use to describe it.
+  #800 and #814 both ask for the score to be "lifted into `[0.70, 0.85)`", and
+  that wording is wrong twice over. A lift asserts a confidence the classifier
+  does not have — 0.50 is the honest answer for a message it has no withdrawal
+  class for — and it puts the fix in the scorer, where it would move every
+  message the patterns can reach rather than the one the board contradicts.
+  What is actually wrong is not the score but WHO GETS ASKED. The precedent is
+  pinned: #166's rescue queues a 0.42 untouched, and
+  `backend/tests/test_dropped_verdict_is_logged.py` records "Note what does NOT
+  change: confidence".
+  The predicate consumes NO classifier verdict to decide "contradicts". Its
+  operands are the message's own text and a settled card's stage — written at or
+  above `AUTO_FILE_GATE`, or by a human. Reading `item.category` through
+  `CATEGORY_TO_STATUS` and comparing it to the card would ask the verdict we
+  distrust to arbitrate its own doubt.
+Moved away from: three alternatives, and the first two are cheap to rebuild.
+  (1) A `rescind|withdraw` keyword pattern in `rules.py`. This is the shape
+  `docs/CLASSIFIER_RULES_GOVERNANCE.md` refuses, and it has been refused for
+  this exact vocabulary twice — `9e013ff` ("#10 forbids inventing one from three
+  wordings written by the author of the rules") and `91838a6`, which declined to
+  add the withdrawal patterns its own measurement had just shown were missing.
+  Per #531 the grading corpus holds no rescission wordings at all, so a pattern
+  fitted here would be graded only by fixtures its own author wrote. The
+  admission arm sidesteps this by composing two families that already shipped
+  and already have controls — `rules._RETRACTION` (#417) and
+  `references_an_application` (#447) — and authoring nothing.
+  (2) Lowering `REVIEW_FLOOR`, or a score lift. Both move every message in the
+  band, and the second is what the two issues literally ask for. See above.
+  (3) Keying the withdrawal apart in `review_dedup_key` so the settled filter
+  misses it, rather than exempting it. That key is read at four sites and is the
+  shared definition of "one decision per conversation per application"; a
+  withdrawal names the same application ON PURPOSE, and giving it a different
+  identity to dodge a filter would put #454's and #630's guarantees inside this
+  change's blast radius to solve a problem that is not about identity.
+  Also decided, and pinned either way rather than left to discovery: a
+  candidate-authored "I am withdrawing my application" is DROPPED — #447's
+  phrase set describes the reader's process as a correspondent speaks of it, and
+  the user does not need to be asked to confirm their own decision. A NEGATED
+  retraction ("we will not be withdrawing the offer") is ADMITTED, which is a
+  known false positive: there is no negation facility in `rules.py` to reuse, so
+  excluding it means authoring the wording this entry just refused to author.
+  The cost is one review-queue row; nothing files and no status moves.
+Enforced by: backend/tests/test_a_withdrawal_reaches_the_queue.py. The gate of
+  record is `test_r2_a_withdrawal_reaches_the_queue_through_the_sync`, which
+  replays through the sync entrypoint and was red on this branch for BOTH of the
+  two drop sites before the fix. `test_r1_the_arm_admits_without_touching_the_score`
+  pins the confidence at 0.50, so a later rewrite into the score lift reds rather
+  than ships. `test_n1_the_same_text_with_no_live_card_is_still_dropped` is the
+  control that separates this from a keyword in a floor costume. All three were
+  demonstrated to fail by mutation.
+  What is NOT enforced: that a future arm keeps consuming no verdict. Nothing
+  can see a `CATEGORY_TO_STATUS` lookup appearing inside the predicate — for
+  that half, prose only.
+Valid while: `withdrawn` remains unreachable from mail. It is in
+  `_TERMINAL_STATUSES` and has no `EmailCategory` to come from and no
+  `_STATUS_RANK` entry to advance into (#814), so this change deliberately
+  leaves the card reading `offered` with a queue row beside it rather than
+  moving a stage it cannot legitimately set. If #814 ships a `WITHDRAWAL`
+  category and a status-transition arm, re-read this entry: the admission arm
+  becomes the second decision about the same message and one of them should go.
+  Also revisit if `contested` is ever widened past `OFFERED` — the scope is
+  argued in `applications.employers_with_a_live_offer`, not here.
+Markers: backend/jobtracker/cloud/pipeline.py, backend/jobtracker/cloud/applications.py, backend/tests/test_a_withdrawal_reaches_the_queue.py, docs/CLASSIFIER_RULES_GOVERNANCE.md

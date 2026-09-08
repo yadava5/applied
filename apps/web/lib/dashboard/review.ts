@@ -644,6 +644,7 @@ export const HOLD_REASONS = [
   "not_fileable",
   "which_application",
   "gated_other",
+  "contradicts_filed",
 ] as const;
 
 export type HoldReason = (typeof HOLD_REASONS)[number];
@@ -718,6 +719,20 @@ export function holdReasonSentence(
     // than borrow a plausible sentence from a case it does not belong to.
     case "gated_other":
       return "cleared the gate · held, and we can't say why";
+    // Under the floor, and kept because its own text takes back an offer this
+    // board is still showing (#800). The sentence has to carry BOTH halves: the
+    // score is genuinely low, so "below the gate" is true and the user should
+    // not be told the classifier was confident — and the reason it is in front
+    // of them anyway is the card, not the score. Saying only the first would be
+    // `below_gate`'s sentence on a row that is here for a different reason,
+    // which is the #507 mistake this whole vocabulary exists to prevent.
+    //
+    // It names no employer and no stage. The row already shows the message and
+    // its company, and the marker that ties it to the specific card it argues
+    // with is #814's half of this — deliberately not anticipated here with a
+    // sentence that would have to change when it lands.
+    case "contradicts_filed":
+      return "under the floor · this looks like it cancels an offer you have";
     default:
       return null;
   }

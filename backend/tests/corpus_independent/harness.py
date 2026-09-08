@@ -102,6 +102,7 @@ from jobtracker.cloud.applications import (
     Email,
     _not_filed_on_an_application_that_answers,
     classify_review_item,
+    employers_with_a_live_offer,
     employers_with_several_applications,
     reconcile_orphaned_classifications,
     sync_gmail_pipeline_additive,
@@ -522,10 +523,18 @@ async def replay(session, verdicts: list[Verdict]) -> Replay:
         batch = [_item(v) for v in by_day[day]]
         known_multi = await employers_with_several_applications(session, _USER)
         known_threads = await threads_naming_one_application(session, _USER)
+        # THE THIRD BOARD-DERIVED SET, READ RATHER THAN APPROXIMATED (#800).
+        # Production reads all three on consecutive lines of ``gmail_oauth``;
+        # a harness that queried two and passed a literal for the third would
+        # be measuring a function production does not call. Seeding it is the
+        # board's job — an offer that auto-files puts its employer in here by
+        # itself, which is what lets a replay exercise the contradiction arm
+        # without any fixture reaching past the entrypoint.
+        contested = await employers_with_a_live_offer(session, _USER)
         rolled = pipeline.roll_up_applications(batch, known_multi, known_threads)
         fell_out: list[pipeline.DroppedVerdict] = []
         review = pipeline.collect_review_items(
-            batch, fell_out, known_multi, known_threads
+            batch, fell_out, known_multi, known_threads, contested
         )
         dropped.update(d.message_id for d in fell_out)
         # UNCONDITIONALLY, including on a day whose mail rolls up to nothing and
