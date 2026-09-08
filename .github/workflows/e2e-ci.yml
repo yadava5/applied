@@ -9,6 +9,10 @@ on:
       # The schema drift gate's generator. A change to it that is not also a
       # change under apps/web or backend would otherwise never be exercised.
       - "scripts/generate_api_schema.sh"
+      # The cross-engine differential's driver (#427). Same reasoning as the
+      # line above: it lives outside both engine trees, so a change to the
+      # harness alone would otherwise never run the harness.
+      - "scripts/cross_engine_differential.py"
       - ".github/workflows/e2e-ci.yml"
       # The browser-install action these jobs depend on. Without this, an edit
       # to it alone would ship untested by the only jobs that run it.
@@ -24,6 +28,10 @@ on:
       # The schema drift gate's generator. A change to it that is not also a
       # change under apps/web or backend would otherwise never be exercised.
       - "scripts/generate_api_schema.sh"
+      # The cross-engine differential's driver (#427). Same reasoning as the
+      # line above: it lives outside both engine trees, so a change to the
+      # harness alone would otherwise never run the harness.
+      - "scripts/cross_engine_differential.py"
       - ".github/workflows/e2e-ci.yml"
       # The browser-install action these jobs depend on. Without this, an edit
       # to it alone would ship untested by the only jobs that run it.
@@ -139,6 +147,50 @@ jobs:
             echo "::error file=apps/web/lib/api/schema.d.ts::The committed OpenAPI bindings no longer match jobtracker.main_cloud. Run 'pnpm -C apps/web api:gen' and commit the result."
             exit 1
           fi
+
+      # -----------------------------------------------------------------------
+      # CROSS-ENGINE DIFFERENTIAL (#427 item 2)
+      #
+      # The layer-1 rules classifier is written twice — `rules.py` in Python,
+      # which is what the hosted product runs, and `lib/demo/rulesLayer.ts`,
+      # which runs in the visitor's tab on `/demo/inbox` and `/import`. Until
+      # this step nothing compared them. #427 filed two parity defects and
+      # blamed `test_confidence_gate_lockstep.py` for missing them; that file is
+      # an AST census of `0.85` literals and never invokes either engine, so the
+      # gap was never a weak comparison, it was the absence of one.
+      #
+      # IT IS HERE BECAUSE THIS IS THE ONLY JOB WITH BOTH TOOLCHAINS. Surveyed
+      # at HEAD across all 16 workflows: `backend-ci.yml` sets up Python and no
+      # node, `frontend-ci.yml` node and no Python, and this job is the sole
+      # file containing both `setup-python` and `setup-node`. So the harness
+      # costs no new setup step — Python 3.11 and `requirements-dev.txt` are
+      # installed above, and `pnpm install` has already run. Before the
+      # Playwright browser download, for the same reason the schema gate is:
+      # it costs seconds and should fail fast.
+      #
+      # IT IS NOT A TEST IN EITHER SUITE, DELIBERATELY. Under `pytest` there is
+      # no node and under `pnpm test:unit` there is no Python, and in both the
+      # only two available shapes are defects: fail hard for a reason that is
+      # not a divergence, or detect the missing toolchain and SKIP — and a
+      # skipped test is collected, reported and green. Hence a standalone
+      # script that neither runner collects.
+      #
+      # IT CANNOT BE A REQUIRED STATUS CHECK, and must not be counted as one.
+      # This workflow is path-filtered, and per #864 a path-filtered workflow
+      # cannot be made a required context — a required context that never
+      # reports wedges the PR. So this runs on every change that touches either
+      # engine (`apps/web/**` and `backend/**` are both in the filter above)
+      # and is still not required. That is #864's gap, named here so nobody
+      # reads a green run as a gate that had to be green.
+      #
+      # No flag is passed. The script's `--corpus` switch is a diagnostic for
+      # answering "would the labelled set alone have caught this?" by running
+      # it; measured, the answer is no for the #417 defect class, which is why
+      # the committed bait corpus exists. CI always grades the whole population.
+      # -----------------------------------------------------------------------
+      - name: Both rules engines agree on category and confidence
+        timeout-minutes: 5
+        run: python3 scripts/cross_engine_differential.py
 
       # Browsers come from the ~/.cache/ms-playwright cache, keyed on the
       # version `apps/web/pnpm-lock.yaml` resolves; nothing here runs apt-get.
