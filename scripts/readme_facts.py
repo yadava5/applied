@@ -1904,8 +1904,8 @@ FACTS: dict[str, dict] = {
             # any of them would drag the floor inside it with no capture group
             # on it — precisely what `uncaptured_numbers()` reports. The floor
             # is claimed separately, by `macroF1Floor` below.
-            {"re": r"No server\. ([\d.]+) macro-F1", "file": BROWSER_SITE_INDEX},
-            {"re": r"Python pipeline; ([\d.]+) macro-F1", "file": BROWSER_SITE_INDEX},
+            {"re": r"No server\. Rules stage ([\d.]+) macro-F1", "file": BROWSER_SITE_INDEX},
+            {"re": r"rules stage scores ([\d.]+) macro-F1", "file": BROWSER_SITE_INDEX},
             {"re": r"<dd>([\d.]+) / gate", "file": BROWSER_SITE_INDEX},
         ],
     },
