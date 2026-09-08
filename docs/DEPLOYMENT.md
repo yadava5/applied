@@ -142,12 +142,15 @@ Any non-zero exit fails the job. `--frozen-lockfile` ensures
    `/login` up to 90 s so Next.js has time to Turbopack-compile the
    first route.
 5. Runs `pnpm exec playwright test --project=chromium`. The suite is
-   **24 spec files** under `apps/web/tests/e2e/` — auth, beta, boot,
-   connect, dashboard, demo, file-application, import, inbox-geometry,
-   landing, navigation, production, review-groups, sample-inbox, scan-correct,
-   session-edge, settings, shell, smoke. `smoke.spec.ts` is one of them,
-   not the whole suite; that sentence was true when the file was the only
-   spec and has not been true for a long time.
+   **24 spec files** under `apps/web/tests/e2e/`. THE NAMES ARE NOT REPEATED
+   HERE, and #944 is why: this list held nineteen of them under a claim of
+   twenty-four while README.md held twenty-one, so the two copies disagreed
+   with the tree and with each other. `readme_facts.py` gates the count at
+   every site and now gates the ENUMERATION at the one site that carries it,
+   which is README.md's stack table. A second copy is the drift engine — the
+   rule `docs/DECISIONS.md` states for decisions, applied to a list.
+   `smoke.spec.ts` is one of them, not the whole suite; that sentence was true
+   when the file was the only spec and has not been true for a long time.
 6. On both success and failure, uploads:
    - `apps/web/playwright-report` — the HTML report.
    - `apps/web/test-results` — per-test folders with `.webm` videos,
