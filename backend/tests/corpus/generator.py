@@ -1152,6 +1152,243 @@ def _axis_repeat_anonymous_applications(b: _Builder) -> None:
     )
 
 
+# ── the employer-name length bound (#737) ────────────────────────────────────
+#
+# WHY THIS AXIS EXISTS. ``pipeline._MAX_COMPANY_LEN`` refuses an employer
+# display name over 300 characters on four separate paths (#581), and the
+# acceptance evidence offered for "300 does not refuse real mail" was a
+# per-message diff of every corpus against the same run with the bound lifted
+# to 1e9: zero movers. Measured on THIS corpus before this axis existed:
+#
+#     cases                                          202
+#     longest sender_name                             36
+#     longest subject                                 67
+#     longest display `resolve_employer` produced     19
+#     movers with the bound lifted to 1e9              0
+#
+# Nothing came within 264 characters of the bound, so that zero was arithmetic
+# and not evidence — a control whose expected value is what the failure mode
+# also returns. The corpus could not have said "300 is too tight" however
+# wrong 300 was. These cases are what make the diff able to move.
+#
+# EVERYTHING HERE IS ADVERSARIAL, NOT REALISTIC, and the distinction is the
+# point rather than an apology. No employer registers a 300-character name; a
+# DNS label is capped at 63 characters by DNS itself, so door 3's fixture is
+# unreachable by real mail twice over. What these cases buy is REACH: the
+# corpus now holds a message on each side of the threshold, so raising or
+# lowering the constant changes a measured number instead of changing nothing.
+#
+# DOOR 1 IS NOT REACHABLE FROM HERE, and no case below pretends otherwise. Its
+# carrier is ``ReviewClassifyRequest.company`` — a JSON body a user types at
+# ``POST /applications/review/{id}/classify`` — and this corpus mints
+# ``PipelineItem`` mail. It stays covered synthetically, on-boundary, by
+# ``tests/test_an_employer_name_is_bounded.py``.
+
+#: The bound this corpus was BUILT against, recorded as a literal on purpose.
+#: ``tests/test_the_corpus_reaches_the_employer_bound.py`` asserts it still
+#: equals ``pipeline._MAX_COMPANY_LEN``, so moving the constant reds loudly and
+#: says these fixtures need re-measuring, rather than sliding along with it and
+#: reaching whatever the new number happens to be. Provenance for the value
+#: itself is the comment above ``_MAX_COMPANY_LEN`` in ``cloud/pipeline.py``:
+#: 300 characters is at most 1,200 UTF-8 bytes against the 2,704-byte btree
+#: index-row ceiling that ``ix_applications_company`` enforces.
+BOUND_AT = 300
+PAST_BOUND = BOUND_AT + 1
+
+BOUND_AXIS = "employer-name-length"
+
+#: Invented syllables, cycled to build a long name. VARIED rather than one
+#: character repeated, deliberately: Postgres compresses a varlena datum before
+#: measuring it against 2,704 bytes, so ``"a" * 3000`` inserts fine at any
+#: length and a fixture built that way would assert against a failure the
+#: database does not have. ``tests/test_company_index_postgres.py`` is where
+#: that was measured.
+_LONG_STEMS = (
+    "quor", "vex", "thal", "brenn", "mordis", "aleph", "yund", "criss",
+    "talvo", "umbric", "shen", "paldra", "virek", "onsett", "zarn",
+    "kellow", "drivast", "marrowen", "glaive", "ossian",
+)
+
+
+def _long_word(lead: str, length: int, offset: int) -> str:
+    """One invented Capitalised word of EXACTLY ``length`` characters.
+
+    NO RNG. ``test_corpus_is_deterministic`` compares two ``generate()`` calls,
+    so the ``secrets``-built ``noise()`` that
+    ``tests/test_an_employer_name_is_bounded.py`` uses for the same job would
+    red the corpus's own gate. The length is asserted rather than intended: a
+    fixture that reports what it meant to be instead of what it is, is how a
+    boundary case ends up not sitting on the boundary.
+    """
+
+    out = lead
+    index = offset
+    while len(out) < length:
+        out += _LONG_STEMS[index % len(_LONG_STEMS)]
+        index += 1
+    word = out[:length]
+    word = word[0].upper() + word[1:]
+    if len(word) != length:
+        raise RuntimeError(f"_long_word built {len(word)} characters, not {length}")
+    return word
+
+
+def _long_name(lead: str, length: int, words: int = 1) -> str:
+    """``words`` invented words totalling EXACTLY ``length`` characters."""
+
+    body = length - (words - 1)
+    sizes = [body // words] * words
+    for extra in range(body % words):
+        sizes[extra] += 1
+    name = " ".join(
+        _long_word(lead if i == 0 else _LONG_STEMS[(i * 5) % len(_LONG_STEMS)], size, i * 7 + 2)
+        for i, size in enumerate(sizes)
+    )
+    if len(name) != length:
+        raise RuntimeError(f"_long_name built {len(name)} characters, not {length}")
+    return name
+
+
+_RELAY = "no-reply@greenhouse-mail.io"
+_RECEIVED = "Your application has been received"
+_ACK = "We have received your application and will review it shortly."
+
+
+@dataclass(frozen=True)
+class BoundCase:
+    """One side of the bound, on one door, as mail.
+
+    Exported so the gate can name WHICH door moved instead of counting
+    anonymous movers, and so the "a case on each side of each reachable door"
+    claim is checkable against this tuple rather than taken on trust — an
+    unregistered case is invisible to the check that counts them.
+    """
+
+    door: str
+    #: ``"on"`` sits exactly ON the bound and must resolve; ``"past"`` is one
+    #: character over and must be refused. A threshold needs both.
+    side: str
+    length: int
+    sender: str
+    sender_name: str | None
+    subject: str
+    #: The employer token ``resolve_employer`` must produce, or None when the
+    #: name is refused for length and the message must name nobody.
+    token: str | None
+
+
+def _bound_cases() -> tuple[BoundCase, ...]:
+    """The eight fixtures, built once so the axis and the gate share them."""
+
+    out: list[BoundCase] = []
+    for side, length in (("on", BOUND_AT), ("past", PAST_BOUND)):
+        refused = side == "past"
+
+        # Door 2 — the sender display name, `resolve_employer` step 3, bounded
+        # by `_clean_sender_display_name`. The role tail is what earns the
+        # #733 corporate-evidence test; the name itself is three words because
+        # a one-word display would pass that test for a different reason and
+        # this door is not the place to measure that.
+        name = _long_name("Quorvex", length, words=3)
+        out.append(BoundCase(
+            door="2 sender display name",
+            side=side,
+            length=length,
+            sender=_RELAY,
+            sender_name=f"{name} Hiring Team",
+            subject=_RECEIVED,
+            token=None if refused else name.split(" ")[0].lower(),
+        ))
+
+        # Door 3 — the sender's own domain label reaching `_brand_display`,
+        # bounded by nothing but the `corporate` gate's length conjunct. No
+        # cleaner runs on this path at all.
+        label = _long_name("Brimwold", length).lower()
+        out.append(BoundCase(
+            door="3 domain brand fallback",
+            side=side,
+            length=length,
+            sender=f"careers@{label}.example",
+            sender_name=None,
+            subject=_RECEIVED,
+            token=None if refused else label,
+        ))
+
+        # Door 4, first of its two sub-paths — the employer named by an
+        # ANCHORED subject ("... application at <Company>"), step 2.
+        anchored = _long_name("Hesperon", length)
+        out.append(BoundCase(
+            door="4 subject, anchored",
+            side=side,
+            length=length,
+            sender=_RELAY,
+            sender_name=None,
+            subject=f"Your application at {anchored}",
+            token=None if refused else anchored.lower(),
+        ))
+
+        # Door 4, second sub-path — the subject's LEADING SEGMENT before a
+        # ``|``, step 4. Both sub-paths are covered by `_clean_company_display`
+        # and both are listed because they are reached by different code:
+        # `_employer_from_subject` and `_employer_from_subject_segment`.
+        segment = _long_name("Zalquint", length)
+        out.append(BoundCase(
+            door="4 subject, leading segment",
+            side=side,
+            length=length,
+            sender=_RELAY,
+            sender_name=None,
+            subject=f"{segment} | Alex",
+            token=None if refused else segment.lower(),
+        ))
+    return tuple(out)
+
+
+BOUND_CASES: tuple[BoundCase, ...] = _bound_cases()
+
+# The invented leads must not collide with the pool's leading words:
+# `matches_company_token` accepts a LEADING-WORD match, so a shared first word
+# would make two ground-truth applications one application by the product's own
+# rule and manufacture a MERGE that is correct behaviour. The `_FIRST_WORDS`
+# check above covers `_POOL` only, so these are checked here rather than
+# assumed.
+if {c.token for c in BOUND_CASES if c.token} & {w.lower() for w in _FIRST_WORDS}:
+    raise RuntimeError("a bound fixture shares a leading word with the employer pool")
+
+
+def _axis_employer_name_length(b: _Builder) -> None:
+    """A message on each side of the bound, on every door this corpus reaches.
+
+    The ``past`` cases carry ``identity=None`` — the same ground truth
+    ``_axis_no_employer`` gives relay-only mail — because a name the bound
+    refuses names nobody, and the message must mint no card at all. That is not
+    an approximation of the product's behaviour: ``_MAX_COMPANY_LEN`` is
+    applied as a REFUSAL rather than a truncation precisely so the message goes
+    to the review queue instead of minting a card titled with 300 characters of
+    somebody's garbage.
+    """
+
+    for case in BOUND_CASES:
+        on_bound = case.side == "on"
+        b.add(
+            axis=BOUND_AXIS,
+            category="applied",
+            sender=case.sender,
+            sender_name=case.sender_name,
+            subject=case.subject,
+            snippet=_ACK,
+            identity=f"{case.token}|__bound__" if on_bound else None,
+            employer=case.token,
+            role=None,
+            note=(
+                f"door {case.door}, {case.length} characters: "
+                + ("exactly ON the bound — must resolve"
+                   if on_bound
+                   else "one character over — must name nobody")
+            ),
+        )
+
+
 _AXES = (
     _axis_employer_name_in_role,
     _axis_multiple_keyword_occurrences,
@@ -1168,6 +1405,10 @@ _AXES = (
     _axis_lifecycle_noun_subjects,
     _axis_req_id_identity,
     _axis_repeat_anonymous_applications,
+    # LAST, and it has to stay last: the builder numbers message ids
+    # monotonically across this tuple, so inserting an axis anywhere earlier
+    # renumbers every case after it and every id recorded elsewhere.
+    _axis_employer_name_length,
 )
 
 
