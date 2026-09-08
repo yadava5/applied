@@ -3300,6 +3300,31 @@ async def _persist_review_items(session, user_id: uuid.UUID, review) -> int:
 _REFUSED_IDS_LOGGED = 20
 
 
+#: The columns :func:`pipeline.review_dedup_key` reads, written ONCE.
+#:
+#: Two selects need exactly these six and nothing else — the ``needs_review``
+#: tile (:func:`_review_queue_rows_statement`) and the additive persist's
+#: settled-lookup below — and they differ only in their predicate. Spelled out
+#: twice they were a projection copy inside a single file, which is the drift
+#: shape #454 already demonstrated with the key itself: four of five sites
+#: computed it one way and the fifth another, and the screen still showed a
+#: number. #827 is where the copy was noticed.
+#:
+#: ``identity_role``/``identity_req_id`` are READ, not re-derived. A row whose
+#: title was printed past Gmail's ~200 characters carries the identity the
+#: reader extracted from the body; recomputing it from the stored snippet at a
+#: reading site would give that site a different answer to the one the queue was
+#: built with. :func:`pipeline.identity_parts` owns when to trust them.
+_REVIEW_KEY_COLUMNS = (
+    Email.message_id,
+    Email.thread_id,
+    Email.subject,
+    Email.body_snippet,
+    Email.identity_role,
+    Email.identity_req_id,
+)
+
+
 async def _persist_review_items_additive(session, user_id: uuid.UUID, review) -> int:
     """Additively surface uncertain verdicts to the needs-review queue.
 
@@ -3350,19 +3375,7 @@ async def _persist_review_items_additive(session, user_id: uuid.UUID, review) ->
     if scoped:
         rows = (
             await session.exec(
-                select(
-                    Email.message_id,
-                    Email.thread_id,
-                    Email.subject,
-                    Email.body_snippet,
-                    # Read, not re-derived. A row whose title was printed past
-                    # Gmail's ~200 characters carries the identity the reader
-                    # extracted from the body; recomputing it from the snippet
-                    # here would give this site a different answer to the one
-                    # the queue was built with.
-                    Email.identity_role,
-                    Email.identity_req_id,
-                ).where(
+                select(*_REVIEW_KEY_COLUMNS).where(
                     Email.user_id == user_id,
                     or_(*scoped),
                     # SETTLED IS THE QUEUE'S OWN PREDICATE, INVERTED (#596), and
@@ -5230,6 +5243,129 @@ def _not_filed_on_an_application_that_answers(user_id: uuid.UUID):
     return ~_filed_on_an_application_that_answers(user_id)
 
 
+def _review_queue_rows_statement(user_id: uuid.UUID):
+    """The ``needs_review`` tile's rows — SIX COLUMNS OF EVERY MATCHING ROW.
+
+    A tile that renders one number reads the whole set to produce it, and until
+    #827 nothing at the call site said so. No ``LIMIT`` and no ``ORDER BY``: the
+    number is a ``len(set(...))`` over :func:`pipeline.review_dedup_key`, so
+    every row has to arrive before the count exists.
+
+    WHY IT IS NOT ``count(DISTINCT …)``
+    -----------------------------------
+    It was, until #454, and it cannot go back. The key is ``(thread_id,
+    identity_or_derive(...))``, and when both stored identity columns are
+    ``None`` — which every queued row is, because both persist paths build their
+    ``MessageRef`` without them — :func:`pipeline.identity_parts` re-derives from
+    the subject and snippet. That derivation is
+    :func:`pipeline.role_from_message` plus :func:`pipeline.extract_req_id`: a
+    pattern list, then ``_clean_role``, whose refusals include a Title-Case
+    requirement, an unbalanced-double-quote count, a legal-notice stem set and a
+    leftmost-match preposition cut. No SQL expression reproduces those. A
+    ``count(DISTINCT …)`` here would not be the same number computed faster; it
+    would be a different number.
+
+    WHAT IT COSTS, MEASURED
+    -----------------------
+    #827, 2026-09-08, ``postgres:16`` in Docker on the owner's laptop, min of 5,
+    ``applications`` HELD at 2,000 rows so only the mail count moves — the plan
+    module's fixture sweeps both off one ``SEED_ROWS``, which attributes nothing.
+    Seed is that fixture's otherwise, so the rows carry a NULL ``body_snippet``.
+    "SQL" is ``EXPLAIN ANALYZE`` execution time, "trip" is the client's wall
+    clock around execute-and-fetch, "dedupe" is the Python loop::
+
+      emails     matching rows   buffers      SQL     trip    dedupe     total
+      200                    6        33   0.32ms   0.93ms    0.02ms    0.95ms
+      1,000                 30        42   0.32ms   0.95ms    0.09ms    1.04ms
+      5,000                150        89   0.38ms   1.91ms    1.89ms    3.80ms
+      25,000               750       320   0.71ms   2.66ms    5.73ms    8.38ms
+      100,000            3,000     1,191   2.15ms   4.13ms   10.87ms   15.00ms
+      200,000            6,000     2,341   4.07ms   9.16ms   20.41ms   29.57ms
+      1,000,000         30,000    11,538  21.04ms  36.10ms  104.47ms  140.57ms
+
+    The endpoint's other two statements, timed THE SAME TWO WAYS at every one of
+    those sizes, cost 0.51-0.55 ms server-side and 1.4-3.0 ms round trip, and do
+    not move with the mail count. Timing them the same way is not a formality:
+    comparing this statement's round trip against their execution time made the
+    tile look like the dominant half at six rows, which it is not.
+
+    THE CROSSOVER. Server-side, where the other two vary only between 0.51 and
+    0.55 ms across every size measured, this statement passes them between 240
+    and 360 matching rows — 0.42 ms against 0.53 ms at 240, 0.58 ms against
+    0.55 ms at 360. On whole cost (trip plus
+    dedupe against their trips) it passes between 150 and 360 on this seed, and
+    at 60 matching rows on ATS-shaped text, where it is already 1.35x. So on
+    realistic mail the answer to "at what size does this become comparable to the
+    rest of the request" is ROUGHLY FIFTY MATCHING ROWS — six times the live
+    queue's 8, and reachable.
+
+    Comparable is not expensive, and that is what decides the rewrite. At those
+    same 60 ATS-shaped rows the whole tile is 2.96 ms against the other two's
+    2.19 ms. Being the larger half of a 5 ms budget is not a reason to rewrite
+    anything, which is why the crossover is reported rather than acted on.
+
+    THE STATEMENT IS NOT THE EXPENSIVE HALF. At 30,000 matching rows the tile's
+    140.57 ms is 21 ms of server-side SQL and 104 ms of ``review_dedup_key``.
+    And the seed understates that loop: ``body_snippet`` is NULL there, so
+    ``role_from_message`` searches an empty string and ``_clean_role`` never
+    runs. Re-seeded with ATS-shaped text at 3,000 matching rows the dedupe is
+    69.62 ms rather than 10.87 ms — 6.4x, ~23 µs a row — because every row then
+    derives an identity (3,000 of 3,000 did). Optimising the query alone would
+    move the smaller half.
+
+    #827's 2,316 buffers reproduce EXACTLY, on the fixture's own lockstep seed
+    and with the plan shape it describes. Its 61.6 ms does not reproduce WARM:
+    6.9 ms on the first execution after ``VACUUM ANALYZE``, 5.7 ms as a min-of-5.
+    Every buffer in every run here was a cache HIT — ``Shared Read Blocks`` was 0
+    in all nineteen sizes whose split was recorded — so nothing here rules out
+    61.6 ms being a COLD read of the same 2,316 blocks (18 MB), which is the
+    likeliest reading and is not testable on a container the harness had just
+    seeded. The buffer
+    count is the durable half of that measurement either way.
+
+    WHY IT IS STILL UNBOUNDED
+    -------------------------
+    The live queue is 8 rows deep, where the whole tile is ~1 ms. It stays cheap
+    in absolute terms far past its crossover: ~80 ms at 3,000 matching rows of
+    ATS-shaped mail, which is 375x the live depth, against the 700-1150 ms of
+    origin time #827 itself records for a click. So the shape is worth writing
+    down and the rewrite is not worth buying yet; #827 stays open on it rather
+    than being answered with one.
+
+    IF A BOUND IS EVER TAKEN, ITS NUMBER COMES FROM THE QUEUE
+    ---------------------------------------------------------
+    ``review_queue_cloud`` reads at most ``limit`` rows (default 100) and
+    collapses THOSE, so the screen this number links to can never present more
+    entries than 100 rows' worth. On the same corpus the two part company the
+    moment the matching rows pass that limit — and they already do, today:
+
+    =============  ==  ==  ===  ===  =====
+    matching rows   6  30  150  750  6,000
+    =============  ==  ==  ===  ===  =====
+    this tile       4  17   84  417  3,334
+    queue shows     4  17   56   56     56
+    =============  ==  ==  ===  ===  =====
+
+    So the honest bound is ``review_queue_cloud``'s own ``limit``, read plus
+    one, rendering "56+" when the extra row comes back — never a cap displayed
+    as if it were a count. A tile that silently rendered its own ``LIMIT`` would
+    agree with itself at every mailbox size, which is not a measurement.
+
+    EXPOSED RATHER THAN INLINE because ``test_read_path_indexes_postgres`` has
+    to EXPLAIN what this endpoint actually issues. While the ``select()`` lived
+    inside the handler there was no statement to import and the test retyped the
+    six columns — a copy that cannot see the original change, which is the defect
+    #590 names and the acceptance criterion #827 carries.
+    """
+
+    return select(*_REVIEW_KEY_COLUMNS).where(
+        Email.user_id == user_id,
+        Email.classified_as == EmailCategory.NEEDS_REVIEW,
+        _not_filed_on_an_application_that_answers(user_id),
+        Email.is_reviewed == False,  # noqa: E712
+    )
+
+
 @router.get("/summary", response_model=ApplicationSummaryResponse)
 async def application_summary_cloud(
     user_id: uuid.UUID = Depends(current_user),
@@ -5250,8 +5386,9 @@ async def application_summary_cloud(
     """Return counts-only pipeline summary for the authenticated user.
 
     Powers the dashboard stat tiles + funnel without transferring a single
-    application row. Two aggregate queries run against the composite
-    ``(user_id, status)`` index:
+    application row. THREE statements, not the two this used to name (#827).
+    Two of them are aggregates against the composite ``(user_id, status)``
+    index:
 
     - ``GROUP BY status`` → per-status counts (≤7 rows regardless of how many
       applications the user has). ``total`` is their sum.
@@ -5259,9 +5396,21 @@ async def application_summary_cloud(
       calendar week's Monday (see :func:`_week_start`). Not "created", which is
       when our sync inserted the row, and not a trailing seven days.
 
-    Both are O(1) in transfer and index-assisted in the DB, so this endpoint
-    stays flat as an account scales from 10 to 10,000 applications — the whole
-    reason it exists instead of counting client-side over the full list.
+    Those two are O(1) in transfer and index-assisted in the DB, so they stay
+    flat as an account scales from 10 to 10,000 applications — the whole reason
+    this endpoint exists instead of counting client-side over the full list.
+
+    THE THIRD IS NOT FLAT, and until #827 this docstring was written as though
+    the whole endpoint were. ``needs_review`` fetches six columns of every
+    un-reviewed ``NEEDS_REVIEW`` row that no application of the user's answers
+    for and counts them in Python, so it is linear in their queue depth while
+    the other two are linear in nothing the mail count moves.
+    :func:`_review_queue_rows_statement` carries the measured curve, the reason
+    the key cannot be computed in SQL, and what a bounded read would have to
+    render if one is ever taken. Measured on one basis: the two aggregates cost
+    0.51-0.55 ms server-side at every mail count, while the tile goes from
+    0.95 ms at 6 matching rows to 140 ms at 30,000 and passes them at roughly
+    fifty.
 
     WHOSE MONDAY (#518). Counts alone cannot carry a zone, so this used to be
     the UTC Monday and nothing else, while the momentum caption on the same
@@ -5369,28 +5518,12 @@ async def application_summary_cloud(
         # :func:`_not_filed_on_an_application_that_answers`, which ``GET
         # /applications/review`` reads too so the tile and the queue it links to
         # cannot count different sets. Four columns of each.
-        pending = (
-            await session.exec(
-                select(
-                    Email.message_id,
-                    Email.thread_id,
-                    Email.subject,
-                    Email.body_snippet,
-                    # Read, not re-derived. A row whose title was printed past
-                    # Gmail's ~200 characters carries the identity the reader
-                    # extracted from the body; recomputing it from the snippet
-                    # here would give this site a different answer to the one
-                    # the queue was built with.
-                    Email.identity_role,
-                    Email.identity_req_id,
-                ).where(
-                    Email.user_id == user_id,
-                    Email.classified_as == EmailCategory.NEEDS_REVIEW,
-                    _not_filed_on_an_application_that_answers(user_id),
-                    Email.is_reviewed == False,  # noqa: E712
-                )
-            )
-        ).all()
+        # SIX COLUMNS OF EVERY MATCHING ROW, and the statement says why it has
+        # to be (#827): no LIMIT, no ORDER BY, the count is the Python
+        # `len(set(...))` below. `_review_queue_rows_statement` carries the
+        # measured curve, the reason SQL cannot compute this key, and what a
+        # bound would have to render if one is ever taken.
+        pending = (await session.exec(_review_queue_rows_statement(user_id))).all()
         needs_review = len(
             {
                 pipeline.review_dedup_key(
