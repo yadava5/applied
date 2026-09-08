@@ -217,23 +217,37 @@ test.describe("a row leaving the board", () => {
           return box.width > 0 || box.height > 0;
         });
         const index = (el: Element | null) => (el === null ? -1 : list.indexOf(el as HTMLElement));
-        const cell = (el: Element | null) =>
-          el?.closest("[data-row-id]")?.getAttribute("data-row-id") ?? null;
+        const cellNode = (el: Element | null) => el?.closest("[data-row-id]") ?? null;
+        const cell = (el: Element | null) => cellNode(el)?.getAttribute("data-row-id") ?? null;
+        // How many focusables the row's OWN cell holds. Counted inside the same
+        // snapshot as everything else it is compared against — see the comment
+        // at the assertion for why a difference of two snapshots' indices was
+        // the wrong instrument.
+        const held = (el: Element | null) => {
+          const node = cellNode(el);
+          return node === null ? -1 : list.filter((f) => f.closest("[data-row-id]") === node).length;
+        };
         const undo = list.find((el) => (el.textContent ?? "").trim() === "Undo") ?? null;
         const trigger = document.querySelector(`button[aria-label^="Row actions for ${company}"]`);
         return {
           total: list.length,
           undo: index(undo),
           undoCell: cell(undo),
+          undoHeld: held(undo),
           toast: index(document.querySelector("[data-sonner-toast]")),
           trigger: index(trigger),
           triggerCell: cell(trigger),
+          triggerHeld: held(trigger),
         };
       }, company);
 
-    const { trigger: triggerIndex, triggerCell } = await focusables(TARGET);
+    const { trigger: triggerIndex, triggerCell, triggerHeld } = await focusables(TARGET);
     expect(triggerIndex).toBeGreaterThan(0);
     expect(triggerCell).not.toBeNull();
+    // The other half of the pair below: before the removal the cell holds
+    // SEVERAL controls, so "exactly one afterwards" is a change this test
+    // watched happen rather than a property the row always had.
+    expect(triggerHeld, "the row's cell holds more than one control before the removal").toBeGreaterThan(1);
 
     await dismiss(page, TARGET);
 
@@ -244,17 +258,26 @@ test.describe("a row leaving the board", () => {
     const open = await focusables(TARGET);
     expect(open.undo, "the Undo is not in the tab order at all").toBeGreaterThanOrEqual(0);
     expect(open.undoCell, "the Undo is not in the cell the removal came from").toBe(triggerCell);
-    // Then what the reader pays in keystrokes. The bound is the number of
-    // focusable controls one row cell can hold — open, Gmail link, stage
-    // select, `···` — because the tombstone replaces all of them with one
-    // button, so nothing inside a cell can be further than that from anything
-    // else in it. Measured at 2 on /demo at 1024, against 29 for the toast
-    // this replaced (its Undo at index 1, the trigger at 30).
+    // Then what the reader pays in keystrokes, AND THIS USED TO BE MEASURED
+    // WRONG. The first version asserted `|open.undo - triggerIndex| <= 4`,
+    // subtracting an index taken BEFORE the removal from one taken AFTER it.
+    // The tombstone replaces the cell's four controls with one button, so
+    // every focusable past this row shifts by three and the difference carries
+    // that shift as well as the distance it claims to measure. It read 2 on
+    // /demo locally and 5 on CI's dev-server run — the same board, a different
+    // arrangement — while `playwright (production build)` passed, which is the
+    // signature of a bound that is not a property of the thing under test.
+    //
+    // The property actually claimed is structural and holds in ONE snapshot:
+    // the tombstone leaves the cell holding exactly one focusable, so nothing
+    // inside it can be any distance at all from anything else in it. Sourced
+    // from what constrains it — the cell's own contents — rather than from a
+    // number that happened to fit one machine.
     expect(
-      Math.abs(open.undo - triggerIndex),
-      `the Undo is ${Math.abs(open.undo - triggerIndex)} stops from the control that ` +
-        `opened the menu (index ${open.undo} of ${open.total}, trigger was ${triggerIndex})`,
-    ).toBeLessThanOrEqual(4);
+      open.undoHeld,
+      `the row's cell holds ${open.undoHeld} focusable control(s) during the undo window; ` +
+        `the tombstone is supposed to be the only one (Undo at index ${open.undo} of ${open.total})`,
+    ).toBe(1);
     expect(open.toast, "a toast is up while the row's own window is still open").toBe(-1);
 
     // AND THE CORNER STAYS EMPTY THROUGH THE COMMIT — the assertion that is
