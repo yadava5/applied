@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { createServerApiClient } from "@/lib/api/server";
+import { withServerTiming } from "@/lib/api/serverTiming";
 import { errorDetail } from "@/lib/applications/export";
 import { clampPage, removedPageQuery } from "@/lib/applications/removed";
 
@@ -43,14 +44,28 @@ export async function GET(request: NextRequest) {
       params: { query: removedPageQuery(page) },
     });
     if (error || !data) {
-      return NextResponse.json(
-        { detail: errorDetail(error, "Couldn't read your removed rows") },
-        { status: response.status || 502 },
+      return withServerTiming(
+        response,
+        NextResponse.json(
+          { detail: errorDetail(error, "Couldn't read your removed rows") },
+          { status: response.status || 502 },
+        ),
       );
     }
-    return NextResponse.json(
-      { applications: data.applications, total: data.total, page },
-      { status: 200 },
+    // REBUILT RESPONSE, SO THE BACKEND'S TIMING HAS TO BE CARRIED ACROSS BY
+    // HAND. This handler does not return the upstream `Response`; it builds a
+    // new one around three fields, and a new response starts with no headers.
+    // `server-timing-passthrough.test.mjs` enumerates every read-path proxy and
+    // reds on exactly this omission — it caught this route on its first CI run.
+    // The one handler allowed to skip it is the sibling export route, which
+    // fans out into a backend call per page and cannot be described by one
+    // header.
+    return withServerTiming(
+      response,
+      NextResponse.json(
+        { applications: data.applications, total: data.total, page },
+        { status: 200 },
+      ),
     );
   } catch {
     return NextResponse.json({ detail: "Backend unreachable" }, { status: 502 });
