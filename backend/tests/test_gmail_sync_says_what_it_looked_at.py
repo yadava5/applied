@@ -100,11 +100,40 @@ from tests.test_gmail_oauth_cloud import (  # noqa: F401 — fixtures by name
     cloud_app,
 )
 
-HEADERS = {"Authorization": f"Bearer {_token_for(USER_A)}"}
-# A SECOND mailbox, for the one test that has to run the same two messages twice
-# in two orders: replaying them for USER_A would answer the second half against
-# a board the first half already built.
-HEADERS_B = {"Authorization": f"Bearer {_token_for(USER_B)}"}
+
+def _headers(user_id: str = USER_A) -> dict[str, str]:
+    """Authorization header minted NOW, at the call site (#942).
+
+    This was a module-level ``HEADERS`` constant, and that is a stopwatch on the
+    whole suite: ``_token_for`` mints a **300-second** token, pytest imports
+    every test module during *collection*, and so the clock started before the
+    first test in the run — not before the first test in this file. The module
+    passed only for as long as the run stayed fast enough to reach it.
+
+    Measured on clean ``main`` by putting an eleven-minute module in front:
+
+        $ pytest tests/test_independent_corpus.py \
+                 tests/test_gmail_sync_says_what_it_looked_at.py -q
+        9 failed, 53 passed in 713.03s (0:11:53)
+
+    Nine of twenty-one, all ``{"detail":"Token expired"}`` / 401, beginning at
+    the wall-clock point where the token died. That is the signature: a code
+    defect does not care what time it is.
+
+    The 300 seconds in ``_token_for`` is deliberately left alone. Widening it
+    buys a bigger stopwatch, not no stopwatch, and the expiry branch is asserted
+    on purpose elsewhere with an explicitly past ``exp`` —
+    ``test_auth_supabase_jwt.py::test_expired_token_raises_401`` (``now - 600``)
+    and ``test_auth_supabase_jwt_es256.py::test_an_expired_es256_token_is_rejected``
+    (``now - 60``). Neither of those depends on how long this suite takes.
+
+    A plain function rather than a fixture because that is what the other
+    twenty-five modules defining ``_token_for`` already do — they build the
+    header inside the test body — and because a fixture would have to be
+    threaded through every signature here in two variants.
+    """
+
+    return {"Authorization": f"Bearer {_token_for(user_id)}"}
 
 
 # =============================================================================
@@ -260,7 +289,7 @@ async def test_a_message_scored_other_writes_no_row_anywhere(
     from jobtracker.database import get_session
 
     resp = await client.post(
-        "/gmail/sync", json={"items": [_as_dict(_noise())]}, headers=HEADERS
+        "/gmail/sync", json={"items": [_as_dict(_noise())]}, headers=_headers()
     )
     assert resp.status_code == 200, resp.text
 
@@ -300,9 +329,9 @@ async def test_a_discarded_message_and_a_quiet_mailbox_now_read_differently(
     """
 
     discarded = await client.post(
-        "/gmail/sync", json={"items": [_as_dict(_noise())]}, headers=HEADERS
+        "/gmail/sync", json={"items": [_as_dict(_noise())]}, headers=_headers()
     )
-    quiet = await client.post("/gmail/sync", json={"items": []}, headers=HEADERS)
+    quiet = await client.post("/gmail/sync", json={"items": []}, headers=_headers())
     assert discarded.status_code == quiet.status_code == 200
 
     a, b = discarded.json(), quiet.json()
@@ -466,7 +495,7 @@ async def test_one_message_id_relayed_twice_still_closes(
                     _as_dict(_same_message(_queued(1), first)),
                 ]
             },
-            headers=HEADERS,
+            headers=_headers(),
         )
     ).json()
 
@@ -512,19 +541,22 @@ async def test_the_first_copy_of_a_repeated_id_is_the_one_routed(
         await client.post(
             "/gmail/sync",
             json={"items": [_as_dict(filed_shape), _as_dict(noise_shape)]},
-            headers=HEADERS,
+            headers=_headers(),
         )
     ).json()
     assert (filed_first["filed"], filed_first["reached_nothing"]) == (1, 0), (
         "the filed copy arrived first, so the message is filed", filed_first
     )
 
+    # A SECOND mailbox, because this is the one test that runs the same two
+    # messages twice in two orders: replaying them for USER_A would answer the
+    # second half against a board the first half already built.
     await _connect_gmail(USER_B)
     noise_first = (
         await client.post(
             "/gmail/sync",
             json={"items": [_as_dict(noise_shape), _as_dict(filed_shape)]},
-            headers=HEADERS_B,
+            headers=_headers(USER_B),
         )
     ).json()
     assert (noise_first["filed"], noise_first["reached_nothing"]) == (0, 1), (
@@ -659,7 +691,7 @@ async def test_a_server_scan_stores_the_scans_count_and_the_pipelines_apart(
     )
     await _connect_gmail(USER_A)
 
-    body = (await client.post("/gmail/sync", json={}, headers=HEADERS)).json()
+    body = (await client.post("/gmail/sync", json={}, headers=_headers())).json()
     assert body["scanned"] == 2, body
     assert body["classified"] == 1, (
         "the owner's own message was read and never routed; counting it as "
@@ -682,7 +714,7 @@ async def test_a_server_scan_stores_the_scans_count_and_the_pipelines_apart(
     # (or the reverse) passed all 138 tests in the modules that exercise this
     # endpoint. A server scan is the only shape where the swap is visible, and
     # this is the only server scan that reaches the status endpoint.
-    status = (await client.get("/auth/gmail/status", headers=HEADERS)).json()
+    status = (await client.get("/auth/gmail/status", headers=_headers())).json()
     assert status["last_scanned"] == 2, (
         "GET /auth/gmail/status must serve the SCAN's count; two messages were "
         f"read from Gmail. Got {status['last_scanned']}"
@@ -717,7 +749,7 @@ async def test_the_ledger_survives_the_response_in_sync_state(
     resp = await client.post(
         "/gmail/sync",
         json={"items": [_as_dict(i) for i in (_filed(), _queued(), _dropped(), _noise())]},
-        headers=HEADERS,
+        headers=_headers(),
     )
     assert resp.status_code == 200, resp.text
 
@@ -761,7 +793,7 @@ async def test_the_stored_row_and_the_response_cannot_disagree(
                     )
                 ]
             },
-            headers=HEADERS,
+            headers=_headers(),
         )
     ).json()
 
@@ -839,14 +871,14 @@ async def test_status_says_null_before_a_sync_and_zero_after_a_quiet_one(
 
     await _connect_gmail(USER_A)
 
-    before = (await client.get("/auth/gmail/status", headers=HEADERS)).json()
+    before = (await client.get("/auth/gmail/status", headers=_headers())).json()
     assert before["connected"] is True
     assert before["last_scanned"] is None
     assert before["last_reached_nothing"] is None
 
-    await client.post("/gmail/sync", json={"items": []}, headers=HEADERS)
+    await client.post("/gmail/sync", json={"items": []}, headers=_headers())
 
-    after = (await client.get("/auth/gmail/status", headers=HEADERS)).json()
+    after = (await client.get("/auth/gmail/status", headers=_headers())).json()
     assert after["last_scanned"] == 0
     assert after["last_classified"] == 0
     assert after["last_reached_nothing"] == 0
@@ -890,10 +922,10 @@ async def test_status_reports_what_the_last_sync_looked_at(
                 )
             ]
         },
-        headers=HEADERS,
+        headers=_headers(),
     )
 
-    status = (await client.get("/auth/gmail/status", headers=HEADERS)).json()
+    status = (await client.get("/auth/gmail/status", headers=_headers())).json()
     assert (
         status["last_classified"],
         status["last_filed"],
@@ -931,3 +963,96 @@ async def test_the_ledger_is_counts_and_never_message_metadata() -> None:
         assert annotation in (int, type(None)) or "int" in str(annotation), (
             f"sync_state.{name} is {annotation}; the ledger stores counts only"
         )
+
+
+# =============================================================================
+# The clock (#942)
+# =============================================================================
+
+
+async def test_a_request_made_long_after_collection_still_authenticates(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A request made long after collection still authenticates (#942).
+
+    THE DEFECT THIS PINS. ``HEADERS`` used to be a module-level constant holding
+    a 300-second token. pytest imports every test module during *collection*, so
+    that clock started before the first test in the whole run — and the module
+    passed only for as long as the run stayed fast enough to reach it. On clean
+    ``main``, putting the eleven-minute corpus module in front:
+
+        $ pytest tests/test_independent_corpus.py \\
+                 tests/test_gmail_sync_says_what_it_looked_at.py -q
+        9 failed, 53 passed in 713.03s (0:11:53)
+
+    Nine of twenty-one, every one ``{"detail":"Token expired"}`` / 401, starting
+    at the wall-clock point where the token died rather than at any particular
+    assertion. A code defect does not care what time it is.
+
+    WHAT THIS IS NOT. It is not a check that ``_headers`` exists, and it is not
+    a wider ``exp``. The 300 seconds is untouched on purpose — widening it buys
+    a bigger stopwatch, not no stopwatch, and it would come back the next time a
+    slow module lands earlier in the alphabet. The expiry branch stays asserted
+    where it belongs, explicitly and locally, in
+    ``test_auth_supabase_jwt.py::test_expired_token_raises_401`` (``exp`` at
+    ``now - 600``) and its ES256 twin (``now - 60``); neither of those depends
+    on how long this suite takes to run.
+    """
+
+    import time
+
+    import jwt as pyjwt
+
+    from tests.test_gmail_oauth_cloud import JWT_SECRET
+
+    real_time = time.time
+
+    # Reproduce COLLECTION: the header this module would have built ten minutes
+    # before the request that uses it. ``_token_for`` mints off ``time.time()``
+    # and PyJWT validates ``exp`` off ``datetime.now()`` — two separate clocks —
+    # so winding back only the MINTER's puts a genuinely dead token in front of
+    # a live verifier, in microseconds instead of in five real minutes. A test
+    # that had to wait out the expiry to prove this would be the defect.
+    with monkeypatch.context() as m:
+        m.setattr(time, "time", lambda: real_time() - 600)
+        at_collection = _headers()
+
+    at_request = _headers()
+
+    # THE PROPERTY. A module-level constant hands back the same header both
+    # times; a helper called at the request mints a new one.
+    assert at_collection != at_request, (
+        "this module's Authorization header is fixed at import time, so every "
+        "request it makes carries a 300-second token whose clock started during "
+        "pytest's COLLECTION — before the first test in the RUN, not before the "
+        "first test in this file (#942)"
+    )
+
+    # PROVE THE WIND-BACK LANDED. Without this the 401 below would still pass on
+    # a patch that silently failed to apply: a malformed header, a wrong secret
+    # and an expired token are the same status code, and the assertion would
+    # read as a surviving gate while measuring nothing.
+    stale = pyjwt.decode(
+        at_collection["Authorization"].removeprefix("Bearer "),
+        JWT_SECRET,
+        algorithms=["HS256"],
+        audience="authenticated",
+        options={"verify_exp": False},
+    )
+    assert stale["exp"] < real_time(), (
+        f"the wound-back clock never reached ``_token_for`` — exp {stale['exp']} "
+        f"is not in the past. This test is not measuring what it claims to."
+    )
+
+    # DIRECTIONAL CONTROL: the collection-time header really is refused, so the
+    # 200 that follows is evidence about freshness and not about a verifier that
+    # would have accepted anything.
+    dead = await client.get("/auth/gmail/status", headers=at_collection)
+    assert dead.status_code == 401, dead.text
+    assert "expired" in dead.text.lower(), (
+        f"the stale header was refused for some reason OTHER than expiry, so "
+        f"this pair does not isolate the clock: {dead.text}"
+    )
+
+    alive = await client.get("/auth/gmail/status", headers=at_request)
+    assert alive.status_code == 200, alive.text
