@@ -5606,7 +5606,7 @@ def collect_review_items(
         #                                                   '[NEGATIVE] offer']
         #
         # ADMISSION, NOT A CONFIDENCE LIFT, and the distinction is the design.
-        # DEC-009 records this choice and what it was chosen against.
+        # DEC-010 records this choice and what it was chosen against.
         # Both #800 and #814 propose lifting the score into ``[0.70, 0.85)``.
         # That wording is wrong and is deliberately not built: the stored
         # confidence STAYS 0.50, because 0.50 is what the classifier honestly

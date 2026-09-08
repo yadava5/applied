@@ -24,7 +24,7 @@ the sharp statement is that no counter can tell this apart from noise.
 What the fix is, and what it deliberately is not
 ------------------------------------------------
 
-ADMISSION, NOT A CONFIDENCE LIFT (DEC-009). Both #800 and #814 propose lifting
+ADMISSION, NOT A CONFIDENCE LIFT (DEC-010). Both #800 and #814 propose lifting
 into ``[0.70, 0.85)``. That is not what is built and the difference is the whole
 design: the stored confidence STAYS 0.50, because 0.50 is what the classifier
 honestly believes about a message it has no withdrawal class for. What changes

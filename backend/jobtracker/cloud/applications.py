@@ -3422,7 +3422,7 @@ def _contradicts_what_settled_it(ref) -> bool:
     board still reads ``offered``. Shipping without this would have been green on
     every unit assertion and silent on the case #800 was filed about.
 
-    EXEMPTED RATHER THAN KEYED APART, deliberately (DEC-009).
+    EXEMPTED RATHER THAN KEYED APART, deliberately (DEC-010).
     :func:`pipeline.review_dedup_key` is read at four sites and is the shared
     definition of "one decision per conversation per application"; giving a
     withdrawal a different key would drag #454's and #630's guarantees into this

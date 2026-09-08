@@ -326,7 +326,7 @@ Valid while: the employer map keys on bare registrable domains and is matched
   substitute asserts nothing is that the key is a real registration.
 Markers: docs/TEST_DATA_POLICY.md
 
-## DEC-009 — an offer withdrawal is ADMITTED to the queue, not lifted into it
+## DEC-010 — an offer withdrawal is ADMITTED to the queue, not lifted into it
 
 Status: active (2026-09-08)
 Claim: a message that scores `other` under `pipeline.REVIEW_FLOOR`, whose own

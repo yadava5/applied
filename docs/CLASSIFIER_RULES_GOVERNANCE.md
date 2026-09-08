@@ -141,7 +141,7 @@ The distinction is what the change READS, never which file it sits in. An
 admission arm that composes patterns which already shipped is a disposition
 change; one that introduces a new phrase family is a rule change and owes this
 document its narrower-than, its named near-miss and its corpus replay — even
-when it is written in `pipeline.py` and called a "floor exemption". DEC-009 is
+when it is written in `pipeline.py` and called a "floor exemption". DEC-010 is
 the worked example: #800's withdrawal reaches the queue by composing
 `_RETRACTION` (#417) and `references_an_application` (#447), authors no wording,
 and records in `DECISIONS.md` that the keyword patch was the rejected
