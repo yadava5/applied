@@ -374,8 +374,23 @@ Artifacts:
   - `backend/data/evaluation/benchmark_history.md`
 
 Verification on v3:
-- rules: `accuracy=0.9792`, `macro_f1=0.9791`, `misclassified=2`
+- rules: `accuracy=0.9896`, `macro_f1=0.9896`, `misclassified=1`
 - hybrid: `accuracy=0.9583`, `macro_f1=0.9583`, `misclassified=4`
+
+The `- rules:` row is **not** a frozen record of what Cycle H measured, and is the
+one row in this file that gets rewritten. `scripts/readme_facts.py` reads it as the
+live figure for the rules layer and holds an invariant that it agrees with
+`baseline_rules_v3.json`, so a re-recorded baseline moves it or the build goes red.
+Cycle H recorded `accuracy=0.9792`, `macro_f1=0.9791`, `misclassified=2` on
+2026-03-03; the row was re-measured and rewritten on 2026-09-07 with the baselines
+themselves (#446). Two mismatches became one: a rejection worded as a courtesy
+close is now read correctly, and the follow-up that the rules layer answers
+`assessment` is the one that remains.
+
+The `- hybrid:` row is the full cascade and did **not** move. Its source is
+`baseline_cascade_v3.json`, which needs a SetFit checkpoint and an environment
+meeting `requirements.txt`'s floors; neither re-recording it nor the provenance
+work of #446's amendment is done here.
 
 ### Step H4 - CI + regression coverage updates (`completed`)
 
@@ -668,7 +683,7 @@ Implemented in `jobtracker/scripts/evaluate_classifier.py`:
   loaded, and the store size), the dataset SHA-256, and the layer that answered each
   mismatch.
 - `compare_against_baseline` refuses a run whose learned layer is absent where the
-  baseline had it answering. Without that, a checkpoint-less run scores 0.9791 --
+  baseline had it answering. Without that, a checkpoint-less run scores 0.9896 --
   higher than the cascade -- and passes as a cascade non-regression.
 
 ### Step N2 - Cascade baseline + gate (`completed`)

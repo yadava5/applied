@@ -128,9 +128,11 @@ export function EmployerSetRow({
         <button
           type="button"
           // The focus anchor for a row that regrouped INTO this set (#425).
-          // A corrected row landing in a COLLAPSED set has no `status-<id>`
-          // select to return the reader to, because it is not rendered; the
-          // board falls back to this header, which is where the row now is.
+          // Since #873 a stage change opens the destination set first, so a
+          // corrected row keeps its own `status-<id>` select and the board
+          // hands the reader back to that; this stays the anchor for a regroup
+          // no stage control drove, where the members are not rendered and
+          // there is nothing else to give back.
           // A data attribute rather than an id: a company name is arbitrary
           // text and would need escaping to survive `getElementById`.
           data-set-toggle={setKey}

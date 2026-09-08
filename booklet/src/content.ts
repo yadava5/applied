@@ -86,7 +86,7 @@ export const TOC = {
     WHY: "the verdict is already in the inbox",
     HOW: "rules → e5 → SetFit → the gate",
     INSIDE: "int8 ONNX, zero servers — withdrawn",
-    PROOF: "0.979 macro-F1 (rules stage), CI-gated",
+    PROOF: "0.9896 macro-F1 (rules stage), CI-gated",
     SECURITY: "no LLM · on-device · least-privilege",
     BUILD: "train · register · export · ship",
   } as Record<string, string>,
@@ -441,17 +441,17 @@ export const PROOF = {
 
   f1: {
     eyebrow: "§04 · THE NUMBER",
-    headline: "0.979 macro-F1.",
-    hero: "0.979",
+    headline: "0.9896 macro-F1.",
+    hero: "0.9896",
     heroLabel: "macro-F1 · rules stage",
     body:
-      "Macro-F1 averages the per-class F1 so no category can hide behind the frequent ones. On the held-out evaluation the RULES stage scores 0.9791 — accuracy 0.9792, two emails misclassified. Not the full cascade, which scores 0.9583 on the same set: the evaluation runs under the `deterministic` hybrid profile, which disables SetFit and blanks the embedding examples, so the file named baseline_hybrid_v3.json measures the regexes alone. It is not a cherry-picked accuracy headline; it is the metric that punishes a weak class.",
-    exact: "0.9791304 macro-F1 · 0.9792 accuracy · 2 misclassified",
+      "Macro-F1 averages the per-class F1 so no category can hide behind the frequent ones. On the held-out evaluation the RULES stage scores 0.9896 — accuracy 0.9896, 1 misclassified out of 96. Not the full cascade, which scores 0.9583 on the same set: the evaluation runs under the `deterministic` hybrid profile, which disables SetFit and blanks the embedding examples, so the file named baseline_hybrid_v3.json measures the regexes alone. It is not a cherry-picked accuracy headline; it is the metric that punishes a weak class.",
+    exact: "0.9895652 macro-F1 · 0.9896 accuracy · 1 misclassified",
     ciValue: "0.95",
     ciLabel: "CI floor — the merge blocks below it",
     ciBody:
       "The score is not a one-time screenshot. Two GitHub Actions gates re-run the evaluation on every backend change and fail the build if macro-F1 drops below 0.95. The number is load-bearing.",
-    source: "source · baseline_hybrid_v3.json:114–115 · backend-ci.yml:143,155 (--min-macro-f1 0.95)",
+    source: "source · baseline_hybrid_v3.json:123–124 · backend-ci.yml:244,257 (--min-macro-f1 0.95)",
   },
 
   classes: {

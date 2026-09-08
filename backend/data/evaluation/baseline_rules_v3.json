@@ -1,4 +1,5 @@
 {
+  "artifacts": {},
   "confusion_matrix": {
     "applied": {
       "applied": 12,
@@ -76,9 +77,9 @@
       "follow_up": 0,
       "interview": 0,
       "offer": 0,
-      "other": 1,
+      "other": 0,
       "pending_application": 0,
-      "rejection": 11
+      "rejection": 12
     }
   },
   "label_distribution": {
@@ -91,29 +92,29 @@
     "pending_application": 12,
     "rejection": 12
   },
+  "layers": {
+    "rules": 96
+  },
   "meta": {
     "dataset": "data/evaluation/classifier_eval_v3.jsonl",
-    "generated_at": "2026-03-03T00:01:57.266898+00:00",
+    "dataset_sha256": "0aa053536573cd733293fa6a054076a5f78b5c01ebc559e7f912f629fd6adf7e",
+    "generated_at": "2026-09-07T22:59:45.443001+00:00",
     "mode": "rules",
     "sample_count": 96
   },
   "mismatches": [
     {
-      "expected": "rejection",
-      "predicted": "other",
-      "subject": "Thank you for interviewing with us"
-    },
-    {
       "expected": "follow_up",
+      "method": "rules",
       "predicted": "assessment",
       "subject": "Follow-up after completing assessment"
     }
   ],
   "overall": {
-    "accuracy": 0.9791666666666666,
-    "macro_f1": 0.9791304347826086,
-    "misclassified": 2,
-    "weighted_f1": 0.9791304347826086
+    "accuracy": 0.9895833333333334,
+    "macro_f1": 0.9895652173913043,
+    "misclassified": 1,
+    "weighted_f1": 0.9895652173913043
   },
   "per_label": {
     "applied": {
@@ -162,10 +163,10 @@
       "tp": 12
     },
     "other": {
-      "f1": 0.9600000000000001,
+      "f1": 1.0,
       "fn": 0,
-      "fp": 1,
-      "precision": 0.9230769230769231,
+      "fp": 0,
+      "precision": 1.0,
       "recall": 1.0,
       "support": 12,
       "tp": 12
@@ -180,13 +181,13 @@
       "tp": 12
     },
     "rejection": {
-      "f1": 0.9565217391304348,
-      "fn": 1,
+      "f1": 1.0,
+      "fn": 0,
       "fp": 0,
       "precision": 1.0,
-      "recall": 0.9166666666666666,
+      "recall": 1.0,
       "support": 12,
-      "tp": 11
+      "tp": 12
     }
   },
   "prediction_distribution": {
@@ -195,8 +196,8 @@
     "follow_up": 11,
     "interview": 12,
     "offer": 12,
-    "other": 13,
+    "other": 12,
     "pending_application": 12,
-    "rejection": 11
+    "rejection": 12
   }
 }

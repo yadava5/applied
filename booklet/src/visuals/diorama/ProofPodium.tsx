@@ -4,7 +4,7 @@ import { SceneFrame, iso } from "./primitives";
 
 /**
  * PROOF — the verdict. A vertical instrument gauge reads the held-out
- * macro-F1 (0.979): a green needle pegged near the top, a ring of ticks,
+ * macro-F1 (0.9896): a green needle pegged near the top, a ring of ticks,
  * and one amber tick pinning the 0.95 confidence-interval floor below it.
  * The gauge stands on a small isometric plinth carrying nine short bars —
  * the nine classes, every one clearing the amber floor.
@@ -39,7 +39,7 @@ const poly = (pts: { sx: number; sy: number }[]) =>
   pts.map((p) => `${p.sx.toFixed(2)},${p.sy.toFixed(2)}`).join(" ");
 
 export const ProofPodium: React.FC = () => {
-  const needleF = fOf(0.979);
+  const needleF = fOf(0.9896);
   const floorF = fOf(0.95);
   const needleTip = arcPt(needleF, R * 0.9);
   const floorOuter = arcPt(floorF, R);
@@ -148,14 +148,21 @@ export const ProofPodium: React.FC = () => {
 
       {/* ---- Score plate (left, in the open half) ------------------- */}
       {(() => {
-        const cx = 52;
+        // 52 until 2026-09-07, when the score gained a digit (#446). "0.9896"
+        // is six characters at fontSize 30 in a 0.6em mono face — about 105
+        // units of advance — and centred on 52 the box would start at -0.75,
+        // putting the leading glyph on the viewBox edge. 56 seats it at
+        // 3.25..108.75 and still clears the gauge hub at x=124. That is
+        // arithmetic off the advance width, not a look: this is a print
+        // artifact and nothing rendered it before it was committed.
+        const cx = 56;
         return (
           <g textAnchor="middle">
             <text x={cx} y={88} fontFamily="ui-monospace, monospace" fontSize={5.6} letterSpacing="1.4" fill="currentColor" opacity={0.7}>
               MACRO-F1
             </text>
             <text x={cx} y={122} fontFamily="ui-monospace, monospace" fontSize={30} fontWeight={700} letterSpacing="-0.5" fill="currentColor" stroke="currentColor" strokeWidth={0.3}>
-              0.979
+              0.9896
             </text>
             <g style={{ color: GREEN }}>
               <text x={cx} y={138} fontFamily="ui-monospace, monospace" fontSize={4.4} letterSpacing="0.6" fill="currentColor">

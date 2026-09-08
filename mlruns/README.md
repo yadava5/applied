@@ -7,7 +7,11 @@ they are the recorded provenance of published numbers.
 ## `1/*/artifacts/hybrid_eval.json` — the 0.979 figure
 
 Both runs report 96 samples, 94 correct: accuracy `0.97917`, macro-F1 `0.97913`.
-That is the **0.979** quoted in the README, the résumé and the system card.
+That is the **0.979** the README and the system card quoted until 2026-09-07, and
+the figure the résumé and the portfolio still carry. The rules and hybrid v3
+baselines were re-recorded that day (#446) and read **0.9896** with one mismatch;
+these two runs are the provenance of the superseded number, not of the current
+one, and they are kept for exactly that reason.
 
 The file self-describes as `"mode": "hybrid"`. **Read that with the profile next
 to it:** the same object records `"hybrid_profile": "deterministic"`, and
@@ -55,8 +59,8 @@ so on a guard hit the rules verdict is never consulted. A worked counterexample:
 On this particular 96-sample set the two agree everywhere: 91 samples never
 touch the guard, and the 5 that do are ones rules independently scored `other`.
 That is a property of the dataset, not a guarantee from the code. The guard is
-live in production too, so 0.979 does not describe the deployed decision
-function on guard-hit mail.
+live in production too, so the published macro-F1 does not describe the deployed
+decision function on guard-hit mail.
 
 ## Known gaps
 

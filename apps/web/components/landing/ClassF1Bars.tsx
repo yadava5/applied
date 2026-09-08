@@ -7,11 +7,22 @@ import { Reveal } from "./Reveal";
  * Per-class F1 for the RULES stage on the 96-email v3 benchmark, read verbatim
  * from backend/data/evaluation/baseline_hybrid_v3.json — which despite its name
  * holds the rules-only result, because evaluate_classifier.py's `deterministic`
- * hybrid profile disables SetFit and blanks the embedding examples, making that
- * file byte-identical to baseline_rules_v3.json. Do not describe these as the
- * cascade's numbers. Their
- * average is the 0.9791 macro-F1 headline — shown here so the weakest class is
- * visible rather than hidden behind an accuracy number.
+ * hybrid profile disables SetFit and blanks the embedding examples, so its
+ * metric blocks are identical to baseline_rules_v3.json's — the two differ only
+ * in which layer is credited with each answer. Do not describe these as the
+ * cascade's numbers. Their average is the 0.9896 macro-F1 headline — shown here
+ * so the weakest class is visible rather than hidden behind an accuracy number.
+ *
+ * NOTHING GATES THIS FILE, and the correction below was made by hand.
+ * `scripts/readme_facts.py` has no claim site in it, and the component has no
+ * importer anywhere in `apps/web`; the landing was swept of self-graded figures
+ * in #394 and this was left behind. Until 2026-09-07 the comment and the table
+ * under it both carried the baseline as recorded on 2026-03-03 — 0.9791, with
+ * `rejection` at 0.9565 and `other` at 0.96. Re-recording it (#446) moved a
+ * different pair: `rejection` and `other` are 1.0 now, and the two under 1.0 are
+ * `follow_up` and `assessment`, which is one mismatch read from both ends —
+ * recall on the expected label, precision on the predicted one. Copied out of
+ * `backend/data/evaluation/baseline_rules_v3.json`'s `per_label` block.
  *
  * The bars are scaled to a 0.90–1.00 window (labeled as such) so the spread is
  * legible; the ┊ marker sits on the 0.95 CI floor that blocks merges. Every one
@@ -31,9 +42,9 @@ const CLASSES: { label: string; f1: number }[] = [
   { label: "pending_application", f1: 1.0 },
   { label: "interview", f1: 1.0 },
   { label: "offer", f1: 1.0 },
-  { label: "other", f1: 0.96 },
+  { label: "other", f1: 1.0 },
+  { label: "rejection", f1: 1.0 },
   { label: "assessment", f1: 0.96 },
-  { label: "rejection", f1: 0.9565 },
   { label: "follow_up", f1: 0.9565 },
 ];
 
