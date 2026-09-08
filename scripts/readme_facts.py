@@ -1417,7 +1417,19 @@ def corpus_recorded(key: str) -> int:
 
 
 DEPLOYMENT_DOC = "docs/DEPLOYMENT.md"
-GMAIL_OAUTH = "backend/jobtracker/cloud/gmail_oauth.py"
+# NAMED FOR WHAT IT IS, NOT FOR ITS FILENAME, and that is load-bearing rather
+# than taste. `describe` strings are interpolated into the messages `--check`
+# prints on failure, so a constant that reaches one is on a path CodeQL models
+# as a logging sink. `py/clear-text-logging-sensitive-data` classifies any
+# identifier matching its credential heuristic as sensitive, "auth" included, so
+# a constant called GMAIL_OAUTH holding a file PATH raised two high-severity
+# alerts the moment it appeared in a printed message (PR #913). The value is
+# `backend/jobtracker/cloud/gmail_oauth.py` and always was. Renaming removes the
+# heuristic's grounds rather than suppressing its finding, and it is the more
+# accurate name: what this file is read for here is the sync target, not OAuth.
+# `ROUTE_AUTH_GATE` above is the same shape and does NOT alert, because it never
+# reaches a `describe`. Do not rename this back.
+GMAIL_SYNC_MODULE = "backend/jobtracker/cloud/gmail_oauth.py"
 GMAIL_QUOTA_GATE = "backend/tests/test_the_page_size_fits_gmails_minute.py"
 BACKEND_CONFIG = "backend/jobtracker/config.py"
 
@@ -1538,7 +1550,7 @@ def function_max_duration() -> int:
 def sync_scan_target() -> int:
     """`_SYNC_DEFAULT_SCAN_TARGET` — how deep one cron/`Sync now` scan reads."""
 
-    return int(ast.literal_eval(_assigned(GMAIL_OAUTH, "_SYNC_DEFAULT_SCAN_TARGET")))
+    return int(ast.literal_eval(_assigned(GMAIL_SYNC_MODULE, "_SYNC_DEFAULT_SCAN_TARGET")))
 
 
 def sync_scan_pages() -> int:
@@ -2836,7 +2848,7 @@ FACTS: dict[str, dict] = {
     # These facts make the same paragraph red the day any input moves.
     "syncScanTarget": {
         "kind": "static",
-        "describe": f"_SYNC_DEFAULT_SCAN_TARGET in {GMAIL_OAUTH}",
+        "describe": f"_SYNC_DEFAULT_SCAN_TARGET in {GMAIL_SYNC_MODULE}",
         "compute": sync_scan_target,
         "sites": [
             {"re": r"full scan of up to (\d+) messages", "file": DEPLOYMENT_DOC},
@@ -2903,8 +2915,8 @@ FACTS: dict[str, dict] = {
     },
     "syncTimeBudgetSeconds": {
         "kind": "static",
-        "describe": f"_SYNC_TIME_BUDGET_SECONDS in {GMAIL_OAUTH}",
-        "compute": lambda: _seconds(GMAIL_OAUTH, "_SYNC_TIME_BUDGET_SECONDS"),
+        "describe": f"_SYNC_TIME_BUDGET_SECONDS in {GMAIL_SYNC_MODULE}",
+        "compute": lambda: _seconds(GMAIL_SYNC_MODULE, "_SYNC_TIME_BUDGET_SECONDS"),
         "sites": [
             {"re": r"against a (\d+) s scan budget", "file": DEPLOYMENT_DOC},
         ],
