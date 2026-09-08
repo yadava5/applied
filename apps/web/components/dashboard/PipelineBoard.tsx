@@ -28,6 +28,7 @@ import { boardColumns, cardQualifier, type BoardColumn } from "@/lib/dashboard/b
 import { filedAt } from "@/lib/dashboard/dates";
 import { matchesPulseFilter, type PulseFilter } from "@/lib/dashboard/pulseFilter";
 import { elsewhereLabel, groupByEmployer } from "@/lib/dashboard/employerGroups";
+import { focusCandidatesAfterRemoval, type OrderedRow } from "@/lib/dashboard/rowFocus";
 import { cn } from "@/lib/utils";
 import { type Application, STAGES, stageOf, type StageKey } from "@/lib/dashboard/summary";
 import {
@@ -313,11 +314,16 @@ function StaticApplicationRow({
  */
 function BoardCell({
   layoutKey,
+  rowId,
   entering,
   travel,
   children,
 }: {
   layoutKey: string;
+  /** The application this cell holds, when it holds one — the anchor the
+   *  post-removal focus restore looks the reader's row up by (#903). An
+   *  employer set's cell has no single row and passes none. */
+  rowId?: number;
   entering: boolean;
   /** Seconds for the shared-layout glide (`travel` on the board). Only the
    *  LAYOUT transition slows — the opacity settle keeps the default tempo,
@@ -341,6 +347,7 @@ function BoardCell({
   // glide; the zero duration makes the remaining opacity settle instant.
   return (
     <motion.li
+      data-row-id={rowId}
       layout={!reduceMotion}
       layoutId={layoutKey}
       // `travel` marks a CHOREOGRAPHED mount (the landing's window act), where
@@ -864,9 +871,19 @@ export function PipelineBoard({
    */
   const focusedRowId = useRef<number | null>(null);
   const stageById = useRef<Map<number, StageKey> | null>(null);
+  /** The row the reader is anywhere INSIDE, for the removal restore below.
+   *  Deliberately not `focusedRowId`: that one means "standing on this row's
+   *  stage select", which is the condition the reparent branch is written
+   *  against, and widening it would change which regroups steal focus. */
+  const focusedRowCell = useRef<number | null>(null);
   const noteRowFocus = (event: FocusEvent<HTMLDivElement>) => {
     const id = rowSelectId(event.target);
     if (id !== null) focusedRowId.current = id;
+    const cell =
+      event.target instanceof HTMLElement ? event.target.closest("[data-row-id]") : null;
+    if (cell instanceof HTMLElement && cell.dataset.rowId !== undefined) {
+      focusedRowCell.current = Number(cell.dataset.rowId);
+    }
   };
   useLayoutEffect(() => {
     const next = new Map<number, StageKey>();
@@ -918,6 +935,68 @@ export function PipelineBoard({
     if (header === undefined) return;
     focusedRowId.current = null;
     header.focus({ preventScroll: true });
+  });
+
+  /**
+   * THE ROW LEFT THE BOARD, not just its group (#903).
+   *
+   * The effect above answers a reparent, where `#status-<id>` exists again in
+   * the new section. A removal has no such anchor: the row is gone from
+   * `applications` and nothing in it survives — the card, its tombstone and the
+   * Undo the reader was standing on unmount together. Measured on /demo at
+   * 1024: focus is on `<body>` from the instant the undo slot goes (t=6.02s
+   * after the dismissal, 359ms before the row itself leaves the board) and
+   * never returns on its own.
+   *
+   * So it is the same repair in the same place — this component outlives the
+   * row — with a different destination, and `lib/dashboard/rowFocus.ts` owns
+   * the choice of it. The target is the successor row's `···` trigger rather
+   * than its stage select, deliberately: a `<select>` under a reader who did
+   * not ask to be there turns one arrow key into a stage change on a row they
+   * never touched, and the menu trigger's worst case is a menu that opens.
+   *
+   * The same three conditions the reparent branch states, for the same
+   * reasons: the reader was in THAT row, the row went in THIS commit, and
+   * focus is on `<body>` — this claims only focus that was dropped, never
+   * focus the reader has since put somewhere else. It does not fire for the
+   * cancel path, which never unmounts anything and returns focus itself.
+   *
+   * WHAT IT DOES NOT COVER, said plainly. Between the slot unmounting and the
+   * board dropping the row there is one commit — 359ms on /demo, a server
+   * round trip on the signed-in board — where focus is on `<body>` and this
+   * has nothing to fire on yet, because the row is still in `applications`.
+   * Closing that would mean holding focus inside the row that is about to
+   * leave, or moving it to the corner toast, and where the acknowledgement
+   * should live is #903's other half: a layout decision, not this one.
+   */
+  const rowOrder = useRef<OrderedRow[] | null>(null);
+  useLayoutEffect(() => {
+    const now: OrderedRow[] = applications.map((app) => ({
+      id: app.id,
+      stage: stageOf(shownStatus(app)),
+    }));
+    const previous = rowOrder.current;
+    rowOrder.current = now;
+    if (previous === null) return;
+    const gone = focusedRowCell.current;
+    if (gone === null) return;
+    const surviving = new Set(now.map((row) => row.id));
+    if (surviving.has(gone)) return;
+    if (document.activeElement !== document.body) return;
+    // Consumed either way: one removal restores focus once, and a board with
+    // nothing left to focus must not keep trying on every later commit.
+    focusedRowCell.current = null;
+    for (const id of focusCandidatesAfterRemoval(previous, surviving, gone)) {
+      // A candidate inside a COLLAPSED employer set has no control rendered,
+      // so the walk continues past it rather than focusing nothing.
+      const trigger = document.querySelector<HTMLElement>(
+        `[data-row-id="${id}"] [aria-haspopup="menu"]`,
+      );
+      if (trigger !== null) {
+        trigger.focus({ preventScroll: true });
+        return;
+      }
+    }
   });
 
   const locked = variant === "locked";
@@ -1021,7 +1100,13 @@ export function PipelineBoard({
   const rowCell = (app: Application, column: BoardColumn, inSet = false) => {
     const chip = inSet || !grouping ? null : crossStageChip(app.company, column.key, columns);
     return (
-      <BoardCell key={`app-${app.id}`} layoutKey={`app-${app.id}`} entering={hydrated} travel={travel}>
+      <BoardCell
+        key={`app-${app.id}`}
+        layoutKey={`app-${app.id}`}
+        rowId={app.id}
+        entering={hydrated}
+        travel={travel}
+      >
         {interactive ? (
           <ApplicationRow
             app={app}

@@ -26,12 +26,13 @@ import {
   REMOVE_LABEL,
   REMOVE_STICKY_HINT,
   UNDO_LABEL,
-  UNDO_WINDOW_SECONDS,
   removalPendingTail,
   removedToastMessage,
   restoreFailedMessage,
   rowName,
   statusChangeFailure,
+  undoSecondsLeft,
+  undoWindowEndsAt,
 } from "@/lib/dashboard/rowActions";
 import { statusOptions, statusSelectValue } from "@/lib/dashboard/status";
 import { type Application, STAGES, stageOf } from "@/lib/dashboard/summary";
@@ -367,8 +368,18 @@ export function ApplicationRow({
   /** The stage the user just picked, shown before the server confirms it. */
   const [optimistic, setOptimistic] = useState<{ from: string; to: string } | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-  /** Non-null while a removal is pending and still cancellable. */
-  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  /** Non-null while a removal is pending: the instant the window closes.
+   *  A DEADLINE, never a countdown held in state — see `undoWindowEndsAt`. */
+  const [removalEndsAt, setRemovalEndsAt] = useState<number | null>(null);
+  /** The clock the pending label is read against. It is TICKED, and the number
+   *  on screen is derived from it and the deadline; nothing decrements.
+   *
+   *  Seeded at 0 rather than from the clock, and never read before a removal
+   *  seeds it for real: a board is fifty of these, and a `Date.now()` per row
+   *  per mount would be fifty reads for a value only the row being removed
+   *  ever renders — and a clock read during a server render is a value the
+   *  hydrating pass cannot reproduce. */
+  const [nowMs, setNowMs] = useState(0);
   /** How this row left the board — the two outcomes are not the same event. */
   const [removed, setRemoved] = useState<null | "dismissed" | "deleted">(null);
 
@@ -415,7 +426,10 @@ export function ApplicationRow({
   // Real received date from the mail; fall back to the row's filed date.
   const filed = filedAt(app);
   const fromGmail = app.source === "gmail" || app.source === "gmail_user";
-  const removalPending = secondsLeft !== null;
+  const removalPending = removalEndsAt !== null;
+  /** What the tombstone says right now: the deadline minus the clock, every
+   *  render. A late tick makes this number smaller, never the window longer. */
+  const secondsLeft = removalEndsAt === null ? null : undoSecondsLeft(removalEndsAt, nowMs);
 
   // `useCallback`, not a plain function: this is `StageSelect`'s only unstable
   // prop, and a fresh closure per render would re-render the control on every
@@ -505,7 +519,7 @@ export function ApplicationRow({
   const commitRemoval = useCallback(async () => {
     if (committing.current) return;
     committing.current = true;
-    setSecondsLeft(null);
+    setRemovalEndsAt(null);
     setBusy("removing");
     const result = await transport.dismiss(app.id);
     committing.current = false;
@@ -534,16 +548,34 @@ export function ApplicationRow({
   // The undo window. The request is sent only when it runs out, so unmounting
   // (navigation, tab close) cancels the removal rather than committing it —
   // the safe direction for a destructive action.
+  //
+  // TWO EFFECTS, AND THE SPLIT IS THE FIX (#902). The commit is armed ONCE
+  // against the deadline; the label's clock is a separate subscription that
+  // only repaints a number. The old shape fused them — one 1s timer that both
+  // drew the next number and, on the sixth pass, sent the request — so the
+  // window's real length was six wakeups rather than six seconds, and every
+  // wakeup a busy thread delayed was added to the total. Same defect class as
+  // #750's frozen deferral: a duration held in state instead of a deadline
+  // read against the clock.
   useEffect(() => {
-    if (secondsLeft === null) return;
-    const timer = setTimeout(() => {
-      // The commit happens in the timer callback, never in the effect body:
-      // the countdown is a subscription to the clock, not a cascading render.
-      if (secondsLeft <= 1) void commitRemoval();
-      else setSecondsLeft((s) => (s === null ? null : s - 1));
-    }, 1000);
+    if (removalEndsAt === null) return;
+    // `removalEndsAt - Date.now()`, not the full window: this effect re-arms
+    // whenever `commitRemoval`'s identity changes, and a re-arm must resume the
+    // window rather than restart it. That is the property a decremented counter
+    // cannot have and this shape gets for free.
+    const timer = setTimeout(() => void commitRemoval(), Math.max(0, removalEndsAt - Date.now()));
     return () => clearTimeout(timer);
-  }, [secondsLeft, commitRemoval]);
+  }, [removalEndsAt, commitRemoval]);
+
+  // The label's clock, at the same cadence the rest of the app ticks one
+  // (`SyncBar`, `InboxWorkbench`). It carries no decision: if this interval is
+  // starved, the next tick recomputes against the deadline and the number
+  // simply skips — the window still closes when it said it would.
+  useEffect(() => {
+    if (removalEndsAt === null) return;
+    const clock = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(clock);
+  }, [removalEndsAt]);
 
   // Focus follows the row: onto Undo while the removal is cancellable, and back
   // onto the menu trigger if it is cancelled. The trigger is unmounted at the
@@ -584,7 +616,11 @@ export function ApplicationRow({
       onSelect: () => {
         setError(null);
         setConfirmingDelete(false);
-        setSecondsLeft(UNDO_WINDOW_SECONDS);
+        // Both from one read of the clock, so the first frame cannot show a
+        // number the deadline disagrees with.
+        const opened = Date.now();
+        setNowMs(opened);
+        setRemovalEndsAt(undoWindowEndsAt(opened));
       },
     },
     {
@@ -611,7 +647,7 @@ export function ApplicationRow({
           type="button"
           onClick={() => {
             refocusTrigger.current = true;
-            setSecondsLeft(null);
+            setRemovalEndsAt(null);
           }}
           className="inline-flex shrink-0 items-center gap-1.5 rounded border border-line px-2 py-1 text-xs text-strong transition-colors hover:border-line-strong hover:bg-surface"
         >
