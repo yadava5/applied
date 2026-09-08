@@ -846,13 +846,18 @@ test.describe("live demo (/demo)", () => {
     // WHAT THIS ASSERTION PINS, measured rather than asserted, because the
     // import makes the scope easy to overstate.
     //
-    // It pins the ECHO and the NUMBER. `SyncBar.tsx:470` builds the rendered
+    // It pins the ECHO and the NUMBER. `SyncBar.tsx` builds the rendered
     // string with `scanScopeLine(d, r)` — the same function imported here — so
-    // mutating the caller to `scanScopeLine(750, r)` reds this **6 of 6**
+    // mutating the caller to `scanScopeLine(297, r)` reds this **6 of 6**
     // (3 projects × 2 jobs) with a real DOM diff. That is the CI failure of
     // 2026-09-04 reproduced in reverse: there the spec hardcoded 750 against
     // an app rendering 200; here the spec imports 200 against an app
-    // rendering 750.
+    // rendering something else.
+    //
+    // The mutation used to be written as `scanScopeLine(750, r)`. #743
+    // narrowed the menu to depths one invocation can actually read, so 750 is
+    // no longer a `ScanDepth` and that edit would be caught by `tsc` before it
+    // ever reached a browser. 297 is the deepest option the dialog now offers.
     //
     // It does NOT pin the WORDING. Mutating `scanScopeLine` itself — dropping
     // `all mail`, changing the separator — leaves this **green 6 of 6**,
