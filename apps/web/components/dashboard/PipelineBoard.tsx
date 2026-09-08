@@ -614,7 +614,7 @@ export function PipelineBoard({
   const toggleSet = (key: string) => setOpenSets((s) => ({ ...s, [key]: !s[key] }));
 
   /**
-   * A STAGE CHANGE REVEALS WHERE THE CARD LANDED (#772).
+   * A STAGE CHANGE REVEALS WHERE THE CARD LANDED (#772, #873).
    *
    * `EmployerSetRow` renders its members only while open, so a card arriving at
    * a stage where its employer already has rows folds into that set and leaves
@@ -622,30 +622,39 @@ export function PipelineBoard({
    * it again, gone at the moment the reader was moving it — and it recovers on
    * expanding the group with nothing on screen saying so.
    *
-   * THE DROP PATH ONLY, AND THAT IS A DELIBERATE STOP RATHER THAN AN
-   * OVERSIGHT. `moveTo` is the drop path and the only caller of itself; the
-   * row's `<select>` and the detail pane call `transport.changeStatus`
-   * directly and never enter it, so the same defect is reachable through both
-   * — measured on the twin: a select-driven move takes the row out of
+   * ALL THREE DOORS CALL IT (#873). `moveTo` is the drop path; the row's
+   * `<select>` and the detail pane's take this as `onRevealStage` and call it
+   * on the same edge, immediately before their own write. Wiring only the drop
+   * left the identical defect reachable through the other two — measured on
+   * /demo before the wiring: a select-driven move took the row out of
    * `interviewing` and into a still-collapsed `applied` set, gone.
    *
-   * IT IS NOT FIXED HERE BECAUSE #425 ALREADY OWNS THAT PATH, and the two
-   * answers contradict each other. `tests/e2e/stage-focus.spec.ts`'s "a
-   * correction into a COLLAPSED employer set" asserts the row DOES fold and
-   * that focus is parked on the set header, because a folded row has no
-   * `#status-<id>` to return to. Wiring the reveal into the select made that
-   * test red — its premise, not its assertion. Revealing is very likely the
-   * better answer (the row stays visible and the id it wants exists again),
-   * but that is a change to #425's design and it needs #425's evidence, not a
-   * drag issue's. Filed rather than smuggled in.
+   * WHY REVEAL RATHER THAN PARK FOCUS ON THE SET HEADER, the answer #425
+   * shipped, the two being mutually exclusive on this path: parking leaves the
+   * reader having just changed a card's stage, watched the card vanish, and
+   * handed a header that is not the thing they were manipulating. It makes the
+   * disappearance keyboard-navigable rather than undoing it. Revealing keeps
+   * the row on the page and, as a side effect, the `#status-<id>` anchor the
+   * restore below looks for exists again in the new group — so #425's recorded
+   * residual is closed rather than worked around.
    *
-   * A CALLBACK SHAPE IS KEPT even with one caller, because that is what the
-   * other two doors will use. NOT A WRAPPED TRANSPORT: wrapping `transport`
-   * would change its identity, and `transport` is a dependency of
-   * `StageSelect`'s memo — the bail-out that stops React 19 re-asserting a
-   * controlled select's value over a choice in flight (see
-   * `playwright.config.ts`, which records that no test in this suite can
-   * observe that race).
+   * MEASURED, because until #873 nobody had run it: /demo in Chromium at
+   * 1024x768 with the pane closed, correcting the one Northstar row in
+   * `interviewing` into the collapsed `applied` set of three. The set opens on
+   * the change and the row's old node detaches 316ms later, when the demo
+   * transport's 300ms write returns — so the destination is open well before
+   * the row arrives in it, and the restore below finds the rebuilt select.
+   * Focus read `status-1` in all 246 samples of the 8ms probe and `<body>` in
+   * none (`tests/e2e/stage-focus.spec.ts`).
+   *
+   * NOT A WRAPPED TRANSPORT: wrapping `transport` would change its identity,
+   * and `transport` is a dependency of `StageSelect`'s memo — the bail-out
+   * that stops React 19 re-asserting a controlled select's value over a choice
+   * in flight (see `playwright.config.ts`, which records that no test in this
+   * suite can observe that race). A callback the board owns leaves that
+   * identity alone, and `useCallback` with no deps makes it stable for the row
+   * — where it is a dependency of `onStatusChange`, which is that same memo
+   * contract.
    *
    * `stageOf` rather than the raw status, because the caller may hand back a
    * finer word than a stage key — `withdrawn` and `ghosted` both live under
@@ -657,6 +666,8 @@ export function PipelineBoard({
    * stays open showing that employer's other rows while the card does not
    * arrive. Cosmetic, chosen rather than overlooked — reverting it would need
    * "was it open before", which is exactly the second opinion this avoids.
+   * That trade now covers all three doors, not just the drop: each of them
+   * reveals BEFORE its await, for the reason above.
    */
   const revealStage = useCallback((status: string, company: string) => {
     setOpenSets((s) => ({ ...s, [`${stageOf(status)}:${company}`]: true }));
@@ -841,10 +852,15 @@ export function PipelineBoard({
    * way — swapping this for `useEffect` keeps `stage-focus.spec.ts` green 3/3
    * (measured). It is a decision about paint, held by this comment.
    *
-   * ONE CASE IT DELIBERATELY DOES NOT REPAIR: a row that lands inside a
-   * COLLAPSED employer set has no `#status-<id>` to return to. The lookup
-   * fails, nothing is focused, and the reader is where today's code leaves
-   * them — no regression, and no pretending.
+   * THE COLLAPSED-SET CASE, #425's own residual, is closed from the other end
+   * (#873): a row landing inside a collapsed employer set had no
+   * `#status-<id>` to return to, and every control that changes a stage now
+   * calls `revealStage` first, so the set is open and the anchor exists again
+   * by the time this runs. Measured on /demo: the set opens 316ms before the
+   * row regroups. The header fallback below is what remains for a regroup none
+   * of those controls drove — server data arriving under a focused select —
+   * and no test in this repo reaches it any more. Said plainly rather than
+   * left to be assumed.
    */
   const focusedRowId = useRef<number | null>(null);
   const stageById = useRef<Map<number, StageKey> | null>(null);
@@ -876,12 +892,15 @@ export function PipelineBoard({
       control.focus({ preventScroll: true });
       return;
     }
-    // THE ROW LANDED IN A COLLAPSED SET, which #425 recorded as not repaired
-    // and left as its own line item. There is no `status-<id>` to return to
-    // because the member rows of a collapsed set are not rendered at all, so
-    // the reader was dropped at <body> and every subsequent Tab restarted
-    // from the top of the document — the same defect the branch above fixes,
-    // reached by a different route.
+    // THE ROW LANDED IN A COLLAPSED SET. There is no `status-<id>` to return
+    // to, because the member rows of a collapsed set are not rendered at all,
+    // so the reader would be dropped at <body> — the same defect the branch
+    // above fixes, reached by a different route.
+    //
+    // NOT THE PATH A CORRECTION TAKES SINCE #873: the drop, the row's select
+    // and the pane's select all reveal the destination first, so the branch
+    // above is the one they hit. What is left here is a regroup none of them
+    // drove — server data arriving while the reader stands on a row's select.
     //
     // The chosen place is the SET HEADER that now holds the row: it is where
     // the row went, it is one keystroke from opening it, and it is a control
@@ -1013,6 +1032,7 @@ export function PipelineBoard({
             folded={detailPaneOpen}
             detailOpen={detailApp !== null && detailApp.id === app.id}
             revealOnOpen={detailUserOpened}
+            onRevealStage={revealStage}
             inSet={inSet}
             sameCompanyCount={inSet ? 0 : sameCompanyCount(app)}
             sameCompanyLabel={chip?.label ?? null}
@@ -1576,6 +1596,7 @@ export function PipelineBoard({
             }
             onTraverse={traverseDetail}
             transport={transport}
+            onRevealStage={revealStage}
             focusOnOpen={detailUserOpened}
             focusScrollOnOpen={focusScrollOnOpen}
           />
