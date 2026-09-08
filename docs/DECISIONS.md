@@ -495,3 +495,44 @@ Valid while: `withdrawn` remains unreachable from mail. It is in
   Also revisit if `contested` is ever widened past `OFFERED` — the scope is
   argued in `applications.employers_with_a_live_offer`, not here.
 Markers: backend/jobtracker/cloud/pipeline.py, backend/jobtracker/cloud/applications.py, backend/tests/test_a_withdrawal_reaches_the_queue.py, docs/CLASSIFIER_RULES_GOVERNANCE.md
+
+## DEC-011 — the browser port keeps its own copy of the preprocessing, and a gate keeps it honest
+
+Status: active (2026-09-08)
+Claim: `ml/browser/site/preprocess.js` is a third hand-maintained copy of the
+  body preprocessing and the three scoring mechanisms that are not in
+  `rules.json` — the quote strip, the conditional mask, the reflow, the
+  reply-subject demotion, the genre-filter outranking and the refutation cap.
+  It is not extracted into a module the other engines share. What keeps it in
+  step is the cross-engine differential scoring all three ports against the
+  Python reference case by case, plus a gate asserting both `rules.json` tables
+  ARE `rules.py`'s pattern table.
+Why: `ml/browser/site` is a static site with no build step. It is opened over
+  `file:` or served flat, so every import it makes has to resolve inside that
+  directory; a module under `apps/web` cannot be reached from it at runtime,
+  and one placed outside both cannot be reached from a Next build without
+  crossing a workspace boundary. The same constraint already settled the same
+  question for `rules.json`, which is duplicated for exactly this reason.
+Moved away from: two alternatives, and the first is what #955 asked for.
+  (1) A shared artifact both engines load the way both already load
+  `rules.json`. It is the shape that cannot drift and it is unreachable here
+  for the deployment reason above: what can be shared as DATA already is, and
+  the rest is control flow, which a JSON file cannot carry.
+  (2) Porting the functions with a comment saying "keep these in step". That
+  is what `rules.json` had, and #955 is the bill: #928 deleted a pattern arm
+  from `rules.py` and both tables kept the three-arm form, so the engine that
+  ships and the two ports copied from it were running different pattern sets
+  in the one place this repository asserts they are the same. The comment did
+  not fail; nothing was checking it.
+Enforced by: scripts/cross_engine_differential.py runs the browser port as a
+  third arm over 139 cases and reports any case it answers differently from
+  the reference, and backend/tests/test_the_rules_tables_cannot_drift.py
+  asserts both tables equal `rules.py`. The differential is invoked from
+  `.github/workflows/e2e-ci.yml`, which is path-filtered and so cannot be a
+  required status check — that gap is #864's and is stated in the script's own
+  header rather than left to be discovered.
+Valid while: the browser demo is a static site with no build step. If it ever
+  gains one — a bundler, a workspace package, anything that can resolve an
+  import outside its own directory — the copy loses its justification and
+  alternative (1) becomes available; re-read this entry then.
+Markers: ml/browser/site/preprocess.js, scripts/cross_engine_differential.py, backend/tests/test_the_rules_tables_cannot_drift.py

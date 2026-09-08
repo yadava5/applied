@@ -397,11 +397,11 @@ safe under Supabase's shared PgBouncer in transaction-pooling mode:
 `backend/tests/test_rls_postgres.py` exercises this against a **real Postgres**,
 not SQLite — SQLite has no row-level security, so a test that ran there would
 prove nothing. It runs in CI in the `rls-postgres` job, against a Postgres
-service container (`.github/workflows/backend-ci.yml:277-291`), and the
+service container (`.github/workflows/backend-ci.yml:297-311`), and the
 workflow explicitly guards against the skip-is-green failure mode: if
 `JOBTRACKER_TEST_PG_ADMIN_URL` were unset the tests would skip silently and the
 job would still pass, so the *Assert the RLS suite actually ran* step parses the
-JUnit XML and fails when the suite reports zero tests or any skip (`:340-360`).
+JUnit XML and fails when the suite reports zero tests or any skip (`:360-380`).
 
 ### 4.3 Layer 3 — explicit `user_id` scoping in the application
 

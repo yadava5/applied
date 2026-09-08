@@ -13,6 +13,11 @@ on:
       # line above: it lives outside both engine trees, so a change to the
       # harness alone would otherwise never run the harness.
       - "scripts/cross_engine_differential.py"
+      # The third engine that harness now runs (#955). It sits outside both
+      # `apps/web` and `backend`, so before this line an edit to the browser
+      # port fired no workflow in this repository at all -- including the only
+      # one that scores it against the engine it is a port of.
+      - "ml/browser/site/**"
       - ".github/workflows/e2e-ci.yml"
       # The browser-install action these jobs depend on. Without this, an edit
       # to it alone would ship untested by the only jobs that run it.
@@ -32,6 +37,11 @@ on:
       # line above: it lives outside both engine trees, so a change to the
       # harness alone would otherwise never run the harness.
       - "scripts/cross_engine_differential.py"
+      # The third engine that harness now runs (#955). It sits outside both
+      # `apps/web` and `backend`, so before this line an edit to the browser
+      # port fired no workflow in this repository at all -- including the only
+      # one that scores it against the engine it is a port of.
+      - "ml/browser/site/**"
       - ".github/workflows/e2e-ci.yml"
       # The browser-install action these jobs depend on. Without this, an edit
       # to it alone would ship untested by the only jobs that run it.
