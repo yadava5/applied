@@ -65,14 +65,28 @@ THREE KINDS OF ANCHOR
               the document — a document is untrusted input in a public repo —
               and the document's printed command must equal the registered one.
 
-A RANGE'S END IS TRANSLATED, AND THAT IS A STATED LIMIT
+TWO LIMITS, STATED RATHER THAN LEFT TO BE FOUND
 
-A symbol anchor pins the START. The end of a range moves by the same delta, so
-an insertion above a cited region — the mechanism behind every drift #754
-documented, including two identical +34s from one edit — is corrected exactly.
-A region that grows *in place* keeps a range one or two lines short and this
-gate will not notice. Where the exact extent is the claim, use a `block`, which
-reads both ends from the source.
+The list above is what this gate reds on. It is not a list of everything that
+can go wrong with a citation, and pretending otherwise would make this docstring
+the next unchecked claim in a pack that exists because of one.
+
+1.  **A range's end is translated.** A symbol anchor pins the START; the end of
+    a range moves by the same delta, so an insertion above a cited region — the
+    mechanism behind every drift #754 documented, including two identical +34s
+    from one edit — is corrected exactly. A region that grows *in place* keeps a
+    range one or two lines short and this gate will not notice. Where the exact
+    extent is the claim, use a `block`, which reads both ends from the source.
+
+2.  **A `block` is only as good as its regexes, and `--write` trusts them.**
+    `_one()` refuses an anchor that matches twice, but nothing can tell an
+    anchor that matches once *in the wrong place* from a right one — and
+    `--write` will then cement that wrong number in the document, confidently.
+    Every block here was checked when it was written, against an independent
+    re-resolution (blame each citation to the commit that wrote it, then
+    difflib-map that commit's source onto HEAD). **A new block needs the same
+    check: run `--audit` and read the line it resolves to.** Uniqueness is not
+    correctness.
 
 Exit 0 when the pack agrees with the tree, 1 when it does not. Stdlib only, no
 network, no install — the same contract as `check_decisions.py`.
