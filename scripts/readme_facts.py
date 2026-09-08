@@ -603,6 +603,14 @@ WEB_IMPORT_MAIL = "apps/web/components/import/ImportMail.tsx"
 # which is already a claim site. Corrected in one file and not the other is the
 # exact failure this checker exists to prevent, so the sentence is now a site.
 BROWSER_SITE_README = "ml/browser/site/README.md"
+# The browser demo's PAGE. Registered 2026-09-07 for the same reason its README
+# was, one step worse: it published the macro-F1 in three places -- the
+# `<meta name="description">` a search result shows, the hero paragraph and the
+# facts row -- and it was registered in NOTHING. No fact named it and no
+# workflow path filter mentioned it (`.github/workflows/frontend-ci.yml` names
+# `ml/browser/site/app.js` and only that), so the three figures went six months
+# stale with no gate anywhere able to notice (#446).
+BROWSER_SITE_INDEX = "ml/browser/site/index.html"
 BROWSER_DEMO_JS = "ml/browser/site/app.js"
 BOOKLET_CONTENT = "booklet/src/content.ts"
 
@@ -1889,6 +1897,16 @@ FACTS: dict[str, dict] = {
                 "re": r'PROOF: "([\d.]+) macro-F1 \(rules stage\), CI-gated"',
                 "file": BOOKLET_CONTENT,
             },
+            # THE BROWSER DEMO PAGE, three sites (#446). Each span is cut to
+            # hold ONE number: the meta description and the hero sentence both
+            # continue "…, CI-gated at 0.95", and the facts row puts the figure
+            # and the floor on the same line, so a span that ran to the end of
+            # any of them would drag the floor inside it with no capture group
+            # on it — precisely what `uncaptured_numbers()` reports. The floor
+            # is claimed separately, by `macroF1Floor` below.
+            {"re": r"No server\. ([\d.]+) macro-F1", "file": BROWSER_SITE_INDEX},
+            {"re": r"Python pipeline; ([\d.]+) macro-F1", "file": BROWSER_SITE_INDEX},
+            {"re": r"<dd>([\d.]+) / gate", "file": BROWSER_SITE_INDEX},
         ],
     },
     "rulesAccuracy": {
@@ -1956,6 +1974,13 @@ FACTS: dict[str, dict] = {
             r"--min-macro-f1 ([\d.]+)",
             r"promotion past the ([\d.]+) floor",
             r"The macro-F1 floor is ([\d.]+) against",
+            # The other half of each browser-demo claim. The page states the
+            # score and the floor in the same breath three times over, and the
+            # floor is the half that would have stayed plausible for years:
+            # nothing else on that page reads the workflow it comes from.
+            {"re": r'macro-F1, CI-gated at ([\d.]+)\." />', "file": BROWSER_SITE_INDEX},
+            {"re": r"eval set, CI-gated at ([\d.]+)\.</p>", "file": BROWSER_SITE_INDEX},
+            {"re": r"/ gate ([\d.]+)</dd>", "file": BROWSER_SITE_INDEX},
         ],
     },
     # ── the cascade's thresholds ──

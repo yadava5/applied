@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="theme-color" content="#0a0a0b" />
 <title>JobTracker classifier — runs in your browser</title>
-<meta name="description" content="A fine-tuned 3-layer email classifier — rules, e5 embeddings, SetFit — running entirely in your browser via quantized ONNX. No server. 0.979 macro-F1, CI-gated at 0.95." />
+<meta name="description" content="A fine-tuned 3-layer email classifier — rules, e5 embeddings, SetFit — running entirely in your browser via quantized ONNX. No server. 0.9896 macro-F1, CI-gated at 0.95." />
 <style>
 :root{color-scheme:dark;--bg:#0a0a0b;--surface:#0f1011;--surface2:#141517;--fg:#d6d8db;--strong:#f7f8f8;--muted:#8a8f98;--dim:#63666c;--line:rgb(255 255 255/.09);--line-soft:rgb(255 255 255/.055);--line-strong:rgb(255 255 255/.2);--green:#4ade80;--amber:#f59e0b;--mono:ui-monospace,'SF Mono',Menlo,monospace}
 *{box-sizing:border-box}
@@ -67,7 +67,7 @@ footer a{color:var(--muted)}
   <h1>The classifier left the server.<br/><span>It runs here, in your browser.</span></h1>
   <p class="sub">The 3-layer pipeline behind JobTracker — regex rules, fine-tuned e5 embeddings, a SetFit head —
   ported to quantized ONNX and executing on your machine. Nothing you paste leaves this page. Verified
-  output-identical to the Python pipeline; 0.979 macro-F1 on the committed eval set, CI-gated at 0.95.</p>
+  output-identical to the Python pipeline; 0.9896 macro-F1 on the committed eval set, CI-gated at 0.95.</p>
 
   <div class="frame">
     <div class="titlebar">
@@ -93,7 +93,7 @@ footer a{color:var(--muted)}
       </div>
     </div>
     <dl class="facts">
-      <div><dt>macro-F1</dt><dd>0.979 / gate 0.95</dd></div>
+      <div><dt>macro-F1</dt><dd>0.9896 / gate 0.95</dd></div>
       <div><dt>model</dt><dd>e5-small · int8</dd></div>
       <div><dt>weights</dt><dd>22.8MB once</dd></div>
       <div><dt>server calls</dt><dd>zero</dd></div>
