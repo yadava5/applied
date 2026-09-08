@@ -126,7 +126,7 @@ nonetheless the narrower scope, so it was evaluated on capability:
 
 | Scope | Google's tier | Why it does not work |
 | --- | --- | --- |
-| `gmail.metadata` | **Restricted** | **Cannot run a Gmail query.** Applied lists messages with a `q` it builds itself — by default `in:inbox` plus a `newer_than:<N>m` age filter (`DEFAULT_QUERY`, `backend/jobtracker/cloud/gmail_client.py:92`, composed by `build_gmail_query`, `:325-362`), passed to `users.messages.list` inside `_collect_page` at `:648`. Google documents on [`users.messages.list`](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list) that the `q` parameter "cannot be used when accessing the api using the gmail.metadata scope." Without `q`, Applied cannot restrict its read to the inbox or to a recent window — it would have to enumerate *more* of the mailbox, not less. Separately, it returns no message body, which §3 shows is decisive. |
+| `gmail.metadata` | **Restricted** | **Cannot run a Gmail query.** Applied lists messages with a `q` it builds itself — by default `in:inbox` plus a `newer_than:<N>m` age filter (`DEFAULT_QUERY`, `backend/jobtracker/cloud/gmail_client.py:96`, composed by `build_gmail_query`, `:1084-1121`), passed to `users.messages.list` inside `_collect_page` at `:1539`. Google documents on [`users.messages.list`](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list) that the `q` parameter "cannot be used when accessing the api using the gmail.metadata scope." Without `q`, Applied cannot restrict its read to the inbox or to a recent window — it would have to enumerate *more* of the mailbox, not less. Separately, it returns no message body, which §3 shows is decisive. |
 | `gmail.addons.current.message.metadata` | Sensitive | Grants access only to the message a Google Workspace Add-on is currently open on. Applied is a standalone web application whose sync runs on a schedule with no user present and no add-on surface. |
 | `gmail.addons.current.message.readonly` | Sensitive | Same architectural limitation. |
 | `gmail.labels` | Non-sensitive | Labels only — no message content of any kind. |
@@ -219,8 +219,8 @@ prominent, user-facing feature the data serves; there is no other use.
   learned. When `settings.deployment == "cloud"` — which is every hosted
   request — the classifier is built in lite mode and **the embedding and SetFit
   layers are never constructed at all**
-  (`backend/jobtracker/classifier/hybrid.py:199-200`); `classify` then returns
-  the rules verdict rather than escalating past it (`:326`). Construction is
+  (`backend/jobtracker/classifier/hybrid.py:208-209`); `classify` then returns
+  the rules verdict rather than escalating past it (`:372`). Construction is
   the load-bearing half: a layer that is never built cannot run, whatever any
   later branch does. Their
   dependencies — torch, sentence-transformers, setfit — are absent from the
@@ -232,7 +232,7 @@ prominent, user-facing feature the data serves; there is no other use.
   and the email is flagged reviewed, so the answer is durable and a later sync
   will not overwrite it. It does **not** change any future classification.
   There is no per-user model and no per-user classifier state of any kind —
-  `get_rules_classifier()` (`backend/jobtracker/classifier/rules.py:1633`) is a
+  `get_rules_classifier()` (`backend/jobtracker/classifier/rules.py:2154`) is a
   process-wide singleton that takes no user argument, so the same message
   classifies identically before and after any correction, for every account.
 
@@ -247,7 +247,7 @@ prominent, user-facing feature the data serves; there is no other use.
   the corpus to be either wholly synthetic or owned by a user on an explicit
   allowlist that is **empty by default and set by nothing in the hosted
   deployment**, so production refuses every user, including the operator
-  (`backend/jobtracker/classifier/setfit_model.py:38-75`).
+  (`backend/jobtracker/classifier/setfit_model.py:39-75`).
 
   **An earlier checkpoint, disclosed for completeness — and it contains no
   Gmail data.** Before Applied was a hosted application it was a single-user
@@ -308,14 +308,15 @@ prominent, user-facing feature the data serves; there is no other use.
 1. **One scope, read-only.** No write capability of any kind.
 2. **The body is never stored** (§4), enforced by a test that fails if it ever is.
 3. **Bodies are truncated at 4,000 characters** before the classifier sees them
-   (`gmail_client.py:163`), so even the in-memory copy is bounded.
+   (`_MAX_BODY_CHARS`, `gmail_client.py:171`), so even the in-memory copy is
+   bounded.
 4. **Only Gmail's own snippet is retained**, never a slice of the body that was
    just read — a separate assertion checks that the stored snippet *equals*
    Gmail's, because a sentinel search alone would pass for a body prefix that
    stops short of the sentinel.
 5. **Server-side narrowing before any message is transferred.** Applied builds
    a Gmail `q` rather than enumerating the mailbox (`build_gmail_query`,
-   `gmail_client.py:359-362`), and the default read is `in:inbox` plus a
+   `gmail_client.py:1084-1121`), and the default read is `in:inbox` plus a
    `newer_than:<N>m` age filter, so ordinary syncs never see archived or sent
    mail, or mail older than the window. This is the minimisation that
    `gmail.metadata` would make impossible (§3.2).
@@ -325,7 +326,7 @@ prominent, user-facing feature the data serves; there is no other use.
 
    - **Three paths read `in:anywhere`**, which includes archived mail. Sent
      mail is not included: `build_gmail_query` composes the base as
-     `in:anywhere -in:sent` (`gmail_client.py:359`), because the first windowed
+     `in:anywhere -in:sent` (`gmail_client.py:1118`), because the first windowed
      scan ever run against the owner's mailbox filed four of its five new rows
      off outreach he had written himself. One of the three paths forces the
      wider read and two are the caller's own choice — an asymmetry the web
@@ -334,17 +335,17 @@ prominent, user-facing feature the data serves; there is no other use.
 
      - **Forced.** `POST /gmail/sync` with `mode="rebuild"`. The server sets
        `mail_scope = "anywhere" if rebuild` and ignores any `scope` the caller
-       sent (`gmail_oauth.py:2222-2232`); the dashboard omits `scope` from that
+       sent (`gmail_oauth.py:2498-2508`); the dashboard omits `scope` from that
        body precisely because it has no say (`scanRequestBody`,
-       `sync-plan.ts:134-135`).
+       `sync-plan.ts:173-174`).
      - **The caller's choice, and the dashboard always makes it.** `POST
        /gmail/sync` with `mode="additive"` — the windowed scan's "Keep them"
        disposition. `scanRequestBody` puts `scope: "anywhere"` on every additive
-       body (`sync-plan.ts:136`), so that scan reads archived mail on every run.
+       body (`sync-plan.ts:175`), so that scan reads archived mail on every run.
      - **The caller's choice, off by default.** `GET /gmail/inbox?scope=anywhere`
-       — the inbox view's "All mail" segment (`InboxWorkbench.tsx:725-728`).
-       `buildInboxParams` always sends `scope` (`types.ts:242`) and
-       `DEFAULT_FILTERS` sets it to `inbox` (`types.ts:123-127`), so a user has
+       — the inbox view's "All mail" segment (`InboxWorkbench.tsx:1044-1045`).
+       `buildInboxParams` always sends `scope` (`types.ts:324`) and
+       `DEFAULT_FILTERS` sets it to `inbox` (`types.ts:160-164`), so a user has
        to pick "All mail" for this one to happen.
 
      The rebuild is the one that is forced, and for a reason: it is a
@@ -356,7 +357,8 @@ prominent, user-facing feature the data serves; there is no other use.
      stale row is, by the time anyone notices, archived. Listed here are the
      paths that build an `in:anywhere` *query*; a sync resuming from a Gmail
      `historyId` cursor issues no query at all and narrows by label instead
-     (`gmail_client.py:785`, `:885-886`).
+     (`_HISTORY_EXCLUDED_LABELS`, `gmail_client.py:1676`, and the label filter
+     itself at `:1808-1809`).
    - **`range` is not a closed set, and "All time" is a choice the product
      offers.** `_parse_range_months` accepts 3, 6, 9 and 12
      (`_ALLOWED_RANGE_MONTHS`). `all`, `any`, `0`, an empty value and an
@@ -372,23 +374,23 @@ prominent, user-facing feature the data serves; there is no other use.
      time" option, and choosing it produces a read with no age bound at all:**
 
      - The inbox view's age control renders `RANGE_OPTIONS`, whose last entry is
-       `{ value: "all", label: "All time" }` (`types.ts:105-111`, rendered at
-       `InboxWorkbench.tsx:713-718`). `buildInboxParams` *omits* `range` entirely
-       when it is `"all"` (`types.ts:243`), and `gmail_inbox` declares `range`
-       with `default=None` (`gmail_oauth.py:1606`) and hands it to
-       `_parse_range_months`, which returns `None` for `None` (`:1555-1556`).
+       `{ value: "all", label: "All time" }` (`types.ts:142-148`, rendered at
+       `InboxWorkbench.tsx:1031-1036`). `buildInboxParams` *omits* `range` entirely
+       when it is `"all"` (`types.ts:325`), and `gmail_inbox` declares `range`
+       with `default=None` (`gmail_oauth.py:1715`) and hands it to
+       `_parse_range_months`, which returns `None` for `None` (`:1656-1657`).
        Omission and the literal `"all"` therefore mean the same thing on this
        endpoint: no bound.
      - The dashboard's scan dialog renders `SCAN_RANGE_OPTIONS`, the same five
-       choices (`sync-plan.ts:50-56`, rendered at `SyncBar.tsx:1235-1240`), and
+       choices (`sync-plan.ts:89-95`, rendered at `SyncBar.tsx:1246-1251`), and
        `scanRequestBody` sends `range` literally, `"all"` included
-       (`sync-plan.ts:129-137`).
+       (`sync-plan.ts:168-176`).
 
      The two endpoints disagree about a *missing* `range`, which is why the
      client cannot treat them alike: `GET /gmail/inbox` reads absence as
      all-time, while `POST /gmail/sync` substitutes `_SYNC_DEFAULT_RANGE_MONTHS`,
-     twelve months (`gmail_oauth.py:2216-2221`). The comment at
-     `sync-plan.ts:110-122` records the bug that asymmetry caused — a "Rebuild
+     twelve months (`gmail_oauth.py:2492-2497`). The comment at
+     `sync-plan.ts:149-161` records the bug that asymmetry caused — a "Rebuild
      from all time" that quietly ran twelve months while the UI said otherwise —
      and is why the scan path sends the literal. The honest statement is
      therefore the reverse of the old one: the API grants no wider a window than
@@ -424,15 +426,15 @@ prominent, user-facing feature the data serves; there is no other use.
 
 | Claim | Where to check |
 | --- | --- |
-| Single scope, read-only | `gmail_scopes`, `backend/jobtracker/config.py:292-295`, requested by `_build_flow` at `backend/jobtracker/cloud/gmail_oauth.py:783` |
+| Single scope, read-only | `gmail_scopes`, `backend/jobtracker/config.py:272-275`, requested by `_build_flow` at `backend/jobtracker/cloud/gmail_oauth.py:827` |
 | The metadata measurement | `backend/jobtracker/cloud/gmail_client.py:27-34` |
 | Snippet gets a rejection wrong; body gets it right | `test_the_fetched_body_is_what_makes_the_verdict_right`, `backend/tests/test_body_is_never_persisted.py:344-362` |
 | Body is never persisted | `backend/tests/test_body_is_never_persisted.py` (whole file) |
 | Stored snippet equals Gmail's own — `emails.body_snippet` by equality | `backend/tests/test_body_is_never_persisted.py:627` |
-| Body truncation | `_MAX_BODY_CHARS`, `backend/jobtracker/cloud/gmail_client.py:163` |
-| The hosted classifier is rules-only (the `_cloud_rules_only` short-circuit itself) | `backend/jobtracker/classifier/hybrid.py:308-326` |
-| No per-user classifier state — a process-wide singleton, no user argument | `get_rules_classifier`, `backend/jobtracker/classifier/rules.py:1633` |
-| Training is default-deny: allowlist empty, nothing in the deployment sets it | `backend/jobtracker/classifier/setfit_model.py:38-75` |
+| Body truncation | `_MAX_BODY_CHARS`, `backend/jobtracker/cloud/gmail_client.py:171` |
+| The hosted classifier is rules-only (the `_cloud_rules_only` short-circuit itself) | `backend/jobtracker/classifier/hybrid.py:355-372` |
+| No per-user classifier state — a process-wide singleton, no user argument | `get_rules_classifier`, `backend/jobtracker/classifier/rules.py:2154` |
+| Training is default-deny: allowlist empty, nothing in the deployment sets it | `backend/jobtracker/classifier/setfit_model.py:39-75` |
 | A training corpus spanning two users raises rather than trains | `backend/tests/test_training_is_single_user.py` |
 | One user's corpus still refuses unless that user is allowlisted | `backend/tests/test_training_is_owner_only.py` |
 | No `POST /classify/retrain` route exists — the four routers the app registers | the `include_router` calls in `backend/jobtracker/main_cloud.py` |
@@ -474,7 +476,23 @@ disclosed here rather than discovered:
 
 ---
 
-*Prepared 2026-08-15. Production figures were read on that date. Every code
-citation in this document was re-resolved line by line against `main` on
-2026-08-31; where a line had moved, the citation was corrected and the
-surrounding prose now names the function or constant so it can be re-found.*
+*Prepared 2026-08-15. Production figures were read on that date.*
+
+*Every code citation in this document is re-resolved from the source on every
+push, by `scripts/check_citations.py` — CI runs it as the job "Compliance pack
+citations resolve". Each citation is bound to a symbol the prose names, or to a
+literal fragment of the line it points at; the checker finds that anchor in the
+source file and fails if the document disagrees with where it actually is, if
+the anchor has been renamed or deleted, or if a citation has nothing recomputing
+it at all. So a citation that has drifted reddens a build rather than waiting to
+be discovered by a reviewer following it.*
+
+*This replaces a sentence that used to stand here — that every citation "was
+re-resolved line by line against `main` on 2026-08-31". **That was false the day
+it was written**: this document twice cited `get_rules_classifier` at line 1633
+of `rules.py` while the function stood at line 1809, and that citation entered
+the file in the very commit that claimed to have checked it. Nothing could have
+noticed, because nothing was checking. The claim is not repeated here; it is
+replaced by the check. (Those two line numbers are quoted as history and are
+deliberately not written as citations — a checker that "corrected" them would
+erase the record of the error.)*

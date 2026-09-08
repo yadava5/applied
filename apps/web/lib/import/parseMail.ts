@@ -54,7 +54,11 @@ export type MailFormat = "mbox" | "eml" | "json";
 export interface ParseResult {
   format: MailFormat;
   messages: ParsedMessage[];
-  /** Messages detected in the file before the cap was applied. */
+  /**
+   * Messages detected in the file, all of them, whether or not the cap kept
+   * them. Not "before the cap was applied": on the mbox path the cap is applied
+   * DURING the split now (#810), and this number is counted to EOF alongside it.
+   */
   totalFound: number;
   /** True when `totalFound` exceeded the cap and `messages` was trimmed. */
   truncated: boolean;
@@ -834,12 +838,32 @@ export interface MboxChunk {
    * ending — the split that produces these does not keep the terminators, so
    * on a CRLF export this is not a byte count. It is strictly increasing and
    * unique per message, which is the whole of what `contentId` asks of it.
+   *
+   * AND IT STAYS THAT WAY ON PURPOSE. The bounded scan (#810) walks `text` by
+   * index, so it has a true character offset in hand and deliberately keeps
+   * accumulating this one instead. This number is the `salt` every mbox id is
+   * minted from — see `contentId` — so "fixing" it into a byte offset would
+   * change every id on every CRLF export, which is every real Takeout file,
+   * and buy nothing: nothing reads it as a position into the file.
    */
   offset: number;
 }
 
 export interface MboxSplit {
+  /**
+   * The messages that were MATERIALISED, which is at most `cap` of them and is
+   * NOT the file's message count. That is `total`.
+   */
   chunks: MboxChunk[];
+  /**
+   * Every message in the file, counted to EOF and exact.
+   *
+   * DELIBERATELY NOT `chunks.length` (#810). `ImportMail` publishes this to the
+   * visitor as fact — "{totalFound} messages found" — while `chunks` is bounded
+   * by the cap, so a split that stops materialising early still has to count
+   * all the way. See `splitMbox` for why the count survives the bound.
+   */
+  total: number;
   /** See `ParseResult.malformed`, which this is the only source of. */
   malformed: string | null;
 }
@@ -848,17 +872,26 @@ export interface MboxSplit {
  * What the line after a separator has to look like: a header field name and
  * its colon (RFC 5322 §3.6 field names are printable ASCII without a colon;
  * this is the narrower shape every real header uses).
+ *
+ * STICKY RATHER THAN `^`-ANCHORED, because the scan below never cuts a line
+ * out of the file to test it — it points `lastIndex` at the line's first
+ * character instead (#810). No character this pattern can match is `\r` or
+ * `\n`, so a sticky match cannot run past the line it started on, and the two
+ * forms therefore accept exactly the same lines.
  */
-const HEADER_LINE = /^[A-Za-z][A-Za-z0-9-]*:/;
+const HEADER_LINE = /[A-Za-z][A-Za-z0-9-]*:/y;
 
 /**
  * How far into a block this looks for an envelope header.
  *
  * A bound is needed because a block with no blank line in it is ALL header
- * block, and this runs on every chunk of the file including the ones past
- * DEFAULT_MESSAGE_CAP that will never be parsed. Real mail puts `From:` and
- * `Date:` in the first few lines; RFC 5322 caps a header line at 998 octets,
- * so 8,000 is several headers deep and still constant work per chunk.
+ * block, and this question has to be answered for every chunk in the file
+ * including the ones past DEFAULT_MESSAGE_CAP that will never be parsed — the
+ * cap bounds what the split MATERIALISES, and it is this predicate that makes
+ * `MboxSplit.total` exact, so the count cannot be had without it (#810). Real
+ * mail puts `From:` and `Date:` in the first few lines; RFC 5322 caps a header
+ * line at 998 octets, so 8,000 is several headers deep and still constant work
+ * per chunk.
  */
 const MAX_ENVELOPE_SCAN_CHARS = 8000;
 
@@ -870,13 +903,13 @@ const MAX_ENVELOPE_SCAN_CHARS = 8000;
  * the same answer and builds a Map plus a substring per header line — for
  * EVERY chunk in the file, because the re-join has to happen before
  * `totalFound` is counted. Measured on 100,000 minimal messages (19.9 MB),
- * min of three, against the same file before this change:
+ * min of three, against the same file before that change:
  *
- *     split only, before this change    62 ms
+ *     split only, before that change    62 ms
  *     parseHeaders per chunk           119 ms   (1.82x)
  *     this scan                         77 ms   (1.23x)
  *
- * The cap does not help here — it is applied after the split — and a Takeout
+ * The cap does not spare this — see MAX_ENVELOPE_SCAN_CHARS — and a Takeout
  * export runs to 786,800 messages, which is 7.9x this fixture. So the two
  * implementations are about 0.3 s of blocked tab time apart on the largest
  * input this page accepts, and what is left over the old split is about 0.1 s.
@@ -886,11 +919,71 @@ const MAX_ENVELOPE_SCAN_CHARS = 8000;
  * exists to recognise as body, and matching it would leave the phantom row in
  * place. `^` under `m` sits after the `\n` of a CRLF pair, so this reads a
  * CRLF export the same way.
+ *
+ * IT IS THE FALLBACK NOW, NOT THE FIRST TRY (#810). `splitMbox` answers the
+ * same question from the file's own indices for any block whose rendered lines
+ * begin `From:` or `Date:` — which is every message in a real export — and
+ * only builds the head string this reads when that pre-filter came back empty.
+ * See ENVELOPE_FIELD for why the pre-filter can never say yes where this would
+ * have said no.
  */
 function carriesAnEnvelope(raw: string): boolean {
   const blank = raw.search(/\r?\n\r?\n/);
   const end = blank === -1 ? raw.length : blank;
   return /^(from|date):/im.test(raw.slice(0, Math.min(end, MAX_ENVELOPE_SCAN_CHARS)));
+}
+
+/**
+ * `carriesAnEnvelope`'s question asked of ONE LINE, so the common case never
+ * builds the block (#810).
+ *
+ * A SOUND PRE-FILTER AND NOT A REPLACEMENT, which is the only property that
+ * matters here. `carriesAnEnvelope` runs `/^(from|date):/im` over the head, and
+ * under `m` a JavaScript `^` sits after every LineTerminator — including a bare
+ * `\r` or a U+2028 that `text.split(/\r?\n/)` does NOT treat as a line ending.
+ * So the rendered line starts this is tested at are a SUBSET of the positions
+ * that function would try: a hit here is a hit there, always; a miss here may
+ * still be a hit there, and is therefore resolved by building the head and
+ * calling the real function.
+ *
+ * Both alternatives are five characters, which is what bounds a match against
+ * MAX_ENVELOPE_SCAN_CHARS the way `raw.slice` bounds the real one.
+ */
+const ENVELOPE_FIELD = /(?:from|date):/iy;
+const ENVELOPE_FIELD_CHARS = 5;
+
+/**
+ * The whitespace `String.prototype.trim` removes, tested one character at a
+ * time.
+ *
+ * The scan decides "is this line blank" (the mbox separator rule) and "where
+ * does this segment's rendered text begin" (`render`'s leading `.trim()`)
+ * without cutting the line out of the file, so it needs the predicate as a
+ * test on a character rather than as `line.trim() === ""`. This set is JS `\s`
+ * exactly — WhiteSpace ∪ LineTerminator — which is the same set `trim` removes,
+ * so the two agree on NBSP, U+FEFF and the Unicode space separators as well as
+ * on the ASCII five.
+ */
+function isSpaceCode(code: number): boolean {
+  return (
+    code === 0x20 ||
+    (code >= 0x09 && code <= 0x0d) ||
+    code === 0xa0 ||
+    code === 0x1680 ||
+    (code >= 0x2000 && code <= 0x200a) ||
+    code === 0x2028 ||
+    code === 0x2029 ||
+    code === 0x202f ||
+    code === 0x205f ||
+    code === 0x3000 ||
+    code === 0xfeff
+  );
+}
+
+/** First non-whitespace character in `text[from, to)`, or -1 when there is none. */
+function firstNonSpace(text: string, from: number, to: number): number {
+  for (let i = from; i < to; i++) if (!isSpaceCode(text.charCodeAt(i))) return i;
+  return -1;
 }
 
 /** The sentence `ParseResult.malformed` carries. Each clause only when true. */
@@ -954,66 +1047,249 @@ function malformedNote(unescaped: number, rejoined: number): string | null {
  * changes is that the page stops claiming a message where it only had text.
  * `malformed` says so out loud, and it is null whenever neither test fired —
  * a guard that also fired on the correctly escaped file would measure nothing.
+ *
+ * ---------------------------------------------------------------------------
+ * IT WALKS THE WHOLE FILE AND MATERIALISES `cap` OF IT (#810).
+ * ---------------------------------------------------------------------------
+ *
+ * This opened on `text.split(/\r?\n/)` and then built a `lines: string[]` per
+ * segment and a joined, un-escaped, trimmed `raw` per segment — for the whole
+ * file, before a cap that only ever keeps 400. The cap worked perfectly on the
+ * 400 messages it reached, and on nothing before them.
+ *
+ * So the walk is by index now. `indexOf("\n")` finds each line, and the
+ * separator rule, the `>From ` counter and the blank-line rule are all decided
+ * against `text` in place: no line is cut out of the file, and nothing but a
+ * handful of numbers is retained for a segment past the cap. `render` — the old
+ * split / un-escape / join / trim, unchanged — runs at most `cap` times.
+ *
+ * MEASURED, both arms, node v24.9.0 on an Apple M1 Pro under load average ~2
+ * (not an idle machine, so the absolutes are pessimistic and the ratio is the
+ * stable part). Min of k, k=5 at 10 and 50 MB and k=3 above. The fixture is a
+ * synthetic CRLF mbox at a real export's density — 661 bytes per message — so
+ * the message counts line up with #810's own table:
+ *
+ *      MB   messages       splitMbox         parseMailFile        peak RSS
+ *      10     15,129    20.4 ->   5.2 ms    19.9 ->   6.4 ms    399 ->   132 MB
+ *      50     75,643   116.5 ->  27.8      113.8 ->  29.4       946 ->   253
+ *     150    226,929   370.2 ->  83.4      438.5 ->  84.9     1,718 ->   634
+ *     290    438,730   735.2 -> 158.5      800.8 -> 163.8     2,963 -> 1,157
+ *     520    786,714 1,301.1 -> 289.2    1,531.7 -> 290.9     4,263 -> 1,595
+ *
+ * 520 MB IS NOT AN ARBITRARY TOP ROW. V8's maximum string length is 536,870,888
+ * characters, so that is the largest file `File.text()` can hand this page at
+ * all — see the cliff `ImportMail.onFile` brackets. The parse therefore cannot
+ * cross a second on any input this page can accept any more; it used to cross
+ * it at 290 MB. Peak RSS is sampled from outside the process every 4 ms, the
+ * same instrument on both arms; the 1,595 MB the bounded scan peaks at is the
+ * fixture string and its read buffer, and the split's own transient heap is no
+ * longer measurable beside it.
+ *
+ * AND IT IS A WASH AT THE CAP, which is the size the ordinary import is. On a
+ * 400-message export nothing is past the cap, everything is materialised either
+ * way, and `parseMailFile` measures 1.87 -> 1.94 ms on 1,000-character bodies
+ * and 7.40 -> 7.46 ms on 8,000-character ones. The whole win is in what is no
+ * longer built, so it arrives with the file's size and not before.
+ *
+ * `total` IS STILL EXACT, which is the reason to walk to EOF rather than stop.
+ * The count the page publishes is the post-re-join chunk count, and re-joining
+ * needs only each block's HEAD (see `carriesAnEnvelope`, bounded to
+ * MAX_ENVELOPE_SCAN_CHARS) plus whether the block held any text at all. Both
+ * are O(1) per segment, so a bounded split reports the number an unbounded one
+ * does and the sentence `ImportMail` prints did not have to change.
+ *
+ * THE CAP AND THE RE-JOIN MEET AT THE BOUNDARY. A block that carries no
+ * envelope is appended to the chunk above it; when the retained set has just
+ * reached `cap` that chunk is the last retained one, and it must still be
+ * extended — or a capped split would return different TEXT for chunk `cap - 1`
+ * than an uncapped one while `total` and `truncated` looked identical.
  */
-export function splitMbox(text: string): MboxSplit {
-  const lines = text.split(/\r?\n/);
-
-  const segments: { separator: string | null; lines: string[]; offset: number }[] = [];
-  let current: { separator: string | null; lines: string[]; offset: number } = {
-    separator: null,
-    lines: [],
-    offset: 0,
-  };
-  let prevBlank = true; // start-of-file counts as "after a blank line"
-  let offset = 0;
+export function splitMbox(text: string, cap: number = Infinity): MboxSplit {
+  const chunks: MboxChunk[] = [];
+  let total = 0;
   let unescaped = 0;
+  let rejoined = 0;
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+  /**
+   * The one place a message's text is built — character for character the
+   * whole-file `render` this used to run on every segment, run on a range. The
+   * trailing line terminator a range carries becomes an empty last element,
+   * which `.trim()` removes, so a range and a segment render alike.
+   */
+  const render = (from: number, to: number) =>
+    text
+      .slice(from, to)
+      .split(/\r?\n/)
+      .map((l) => (l.startsWith(">From ") ? l.slice(1) : l))
+      .join("\n")
+      .trim();
+
+  // The file walk. `offset` is MboxChunk.offset's coordinate — see there; it is
+  // deliberately not the index this scan already has in hand.
+  let offset = 0;
+  let prevBlank = true; // start-of-file counts as "after a blank line"
+
+  // The segment being accumulated, held as indices and counters only.
+  let sepStart = -1; // its `From ` separator line, -1 for the head of the file
+  let sepEnd = -1;
+  let bodyStart = 0; // its first line, past the separator's terminator
+  let segOffset = 0;
+  let firstText = -1; // its first non-whitespace character: `render` starts here
+  let sawEnvelope = false;
+  let headOpen = true; // still inside the header block, still under the bound
+  let headEnd = -1; // where the head stopped, for the fallback's sake
+  let rawPos = 0; // where the NEXT rendered line starts, in `render`'s coordinates
+
+  const startSegment = (from: number, to: number, body: number, at: number) => {
+    sepStart = from;
+    sepEnd = to;
+    bodyStart = body;
+    segOffset = at;
+    firstText = -1;
+    sawEnvelope = false;
+    headOpen = true;
+    headEnd = -1;
+    rawPos = 0;
+  };
+
+  /**
+   * Fold one line into the segment's head. Everything here is O(1) except the
+   * whitespace search, which stops at the line's first non-space character.
+   */
+  const readLine = (lineStart: number, lineEnd: number, at: number) => {
+    let start = lineStart;
+    if (firstText === -1) {
+      // Before the first non-whitespace character there is nothing: that is
+      // exactly what `render`'s leading `.trim()` removes, so `raw` — and the
+      // `^` the envelope test anchors on — begins here, not at the segment's
+      // first line.
+      if (at === -1) return;
+      firstText = at;
+      start = at;
+    } else {
+      if (!headOpen) return;
+      // A rendered line of "" or "\r" is the blank line that ends the header
+      // block: those are the only two shapes `raw.search(/\r?\n\r?\n/)` matches.
+      if (
+        lineEnd === lineStart ||
+        (lineEnd - lineStart === 1 && text.charCodeAt(lineStart) === 0x0d)
+      ) {
+        headOpen = false;
+        headEnd = lineStart;
+        return;
+      }
+    }
+
+    if (rawPos > MAX_ENVELOPE_SCAN_CHARS) {
+      headOpen = false;
+      headEnd = lineStart;
+      return;
+    }
+
+    // `>From ` renders as `From `, which is neither `from:` nor `date:` — so an
+    // escaped line is never an envelope line, and the character the un-escape
+    // removes only has to be paid into `rawPos`.
+    const escaped = text.startsWith(">From ", lineStart);
+    if (!escaped && rawPos + ENVELOPE_FIELD_CHARS <= MAX_ENVELOPE_SCAN_CHARS) {
+      ENVELOPE_FIELD.lastIndex = start;
+      if (ENVELOPE_FIELD.test(text)) {
+        sawEnvelope = true;
+        headOpen = false;
+        return;
+      }
+    }
+    rawPos += lineEnd - start - (escaped ? 1 : 0) + 1;
+  };
+
+  const closeSegment = (endsAt: number) => {
+    // Blank runs between messages, and the empty head of every file that opens
+    // on a separator. Never counted: they are not a decision.
+    if (firstText === -1) return;
+
+    if (total > 0) {
+      // The pre-filter only ever says yes where the real predicate would, so
+      // the head is built exactly when the cheap answer came back empty — which
+      // in a well-formed export is never. `headEnd` is where the walk stopped
+      // reading the header block, so what gets built is MAX_ENVELOPE_SCAN_CHARS
+      // plus a line; `-1` means the block ended first and is smaller still. The
+      // one input that builds more is a block with no line ending in it at all,
+      // and the split it replaces built that block too.
+      //
+      // AND IT IS THE ONE PLACE `render` STARTS MID-LINE, which is safe only
+      // because of an argument that is not visible from here. If `firstText`
+      // sat past its line's start on a line beginning `">From "`, this slice's
+      // first element WOULD match `startsWith(">From ")` and be un-escaped,
+      // while the real `raw` — rendered from `bodyStart`, where the full line
+      // `"  >From x"` does not match — would not. `firstText` can only sit past
+      // a line's start when that line opens with whitespace, and the only
+      // segment that can begin on such a line is the head of the file: every
+      // other one begins on a line `HEADER_LINE` accepted, which starts with a
+      // letter. The head of the file has no separator and closes with
+      // `total === 0`, so it never reaches this branch. RELAXING THE SEPARATOR
+      // RULE WOULD MAKE THAT LIVE — render from `bodyStart` here if it changes.
+      const envelope =
+        sawEnvelope || carriesAnEnvelope(render(firstText, headEnd === -1 ? endsAt : headEnd));
+      if (!envelope) {
+        rejoined += 1;
+        // The chunk this belongs to is index `total - 1`, which is in `chunks`
+        // only while that index is under the cap. Past the cap the re-join is
+        // counted and nothing is built — that is the point — but AT the cap the
+        // previous chunk is retained and must still be extended.
+        if (total <= cap) {
+          const previous = chunks[chunks.length - 1];
+          const separator = sepStart === -1 ? "" : text.slice(sepStart, sepEnd);
+          previous.raw = `${previous.raw}\n\n${separator}\n${render(bodyStart, endsAt)}`;
+        }
+        return;
+      }
+    }
+
+    total += 1;
+    if (total <= cap) chunks.push({ raw: render(bodyStart, endsAt), offset: segOffset });
+  };
+
+  for (let lineStart = 0; ; ) {
+    const nl = text.indexOf("\n", lineStart);
+    const last = nl === -1;
+    // The line as `split(/\r?\n/)` would have produced it: one `\r` before the
+    // `\n` belongs to the terminator, any further one belongs to the line.
+    const lineEnd = last
+      ? text.length
+      : nl > lineStart && text.charCodeAt(nl - 1) === 0x0d
+        ? nl - 1
+        : nl;
+
     const startsAt = offset;
-    offset += line.length + 1;
+    offset += lineEnd - lineStart + 1;
 
-    if (prevBlank && /^From /.test(line)) {
-      if (HEADER_LINE.test(lines[i + 1] ?? "")) {
-        segments.push(current);
-        current = { separator: line, lines: [], offset: startsAt };
-        prevBlank = false;
-        continue; // the "From " separator line itself is not part of the message
+    // `startsWith` cannot reach past the line: the fifth character it needs is
+    // a space, and a shorter line puts `\r` or `\n` there instead.
+    if (prevBlank && text.startsWith("From ", lineStart)) {
+      if (!last) {
+        HEADER_LINE.lastIndex = nl + 1;
+        if (HEADER_LINE.test(text)) {
+          closeSegment(lineStart);
+          startSegment(lineStart, lineEnd, nl + 1, startsAt);
+          prevBlank = false;
+          lineStart = nl + 1;
+          continue; // the "From " separator line itself is not part of the message
+        }
       }
       // Not a separator. Keep it as the body text it is, and remember that
       // this file made us decide.
       unescaped += 1;
     }
-    current.lines.push(line);
-    prevBlank = line.trim() === "";
+
+    const at = firstNonSpace(text, lineStart, lineEnd);
+    readLine(lineStart, lineEnd, at);
+    prevBlank = at === -1;
+
+    if (last) break;
+    lineStart = nl + 1;
   }
-  segments.push(current);
+  closeSegment(text.length);
 
-  const render = (segment: { lines: string[] }) =>
-    segment.lines
-      .map((l) => (l.startsWith(">From ") ? l.slice(1) : l))
-      .join("\n")
-      .trim();
-
-  const chunks: MboxChunk[] = [];
-  let rejoined = 0;
-
-  for (const segment of segments) {
-    const raw = render(segment);
-    // Blank runs between messages, and the empty head of every file that opens
-    // on a separator. Never counted: they are not a decision.
-    if (!raw) continue;
-
-    const previous = chunks[chunks.length - 1];
-    if (previous && !carriesAnEnvelope(raw)) {
-      previous.raw = `${previous.raw}\n\n${segment.separator ?? ""}\n${raw}`;
-      rejoined += 1;
-      continue;
-    }
-    chunks.push({ raw, offset: segment.offset });
-  }
-
-  return { chunks, malformed: malformedNote(unescaped, rejoined) };
+  return { chunks, total, malformed: malformedNote(unescaped, rejoined) };
 }
 
 // ---------------------------------------------------------------------------
@@ -1143,6 +1419,14 @@ export function parseMailFile(
 
   let raws: Candidate[] = [];
   let malformed: string | null = null;
+  /**
+   * How many messages the file holds, when that is not `raws.length`.
+   *
+   * It is `raws.length` on every path but one. The mbox split stops
+   * MATERIALISING at the cap (#810) and counts to EOF separately, so on that
+   * path `raws` is the first `cap` messages and this is all of them.
+   */
+  let found: number | null = null;
   if (format === "json") {
     const data = JSON.parse(text) as unknown;
     const arr = Array.isArray(data)
@@ -1152,8 +1436,9 @@ export function parseMailFile(
         : [];
     raws = arr.map((value, i) => ({ value, salt: String(i) }));
   } else if (format === "mbox") {
-    const split = splitMbox(text);
+    const split = splitMbox(text, cap);
     malformed = split.malformed;
+    found = split.total;
     raws = split.chunks.map((chunk) => ({ value: chunk.raw, salt: String(chunk.offset) }));
   } else {
     // The one format that is defined as a single message, and the one that had
@@ -1171,7 +1456,9 @@ export function parseMailFile(
     raws = [{ value: single, salt: "0" }];
   }
 
-  const totalFound = raws.length;
+  const totalFound = found ?? raws.length;
+  // A no-op on the mbox path, where the split already stopped at `cap`. It is
+  // what applies the cap on the other two, which materialise their whole file.
   const capped = raws.slice(0, cap);
 
   const messages: ParsedMessage[] = [];
