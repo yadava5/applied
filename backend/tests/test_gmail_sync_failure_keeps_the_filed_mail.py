@@ -88,7 +88,29 @@ from tests.test_gmail_oauth_cloud import (  # noqa: F401 — fixtures by name
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 LEDGER_REVISION = "a3f7d21c60be"
 
-HEADERS = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+
+def _headers(user_id: str = USER_A) -> dict[str, str]:
+    """Authorization header minted NOW, at the call site (#942).
+
+    This was a module-level constant, which put a **300-second** stopwatch on
+    the whole suite: pytest imports every test module during *collection*, so
+    the token's clock started before the first test in the run rather than
+    before the first test in this file, and the module passed only while the
+    run stayed fast enough to reach it. Reproduced on clean ``main`` by putting
+    an eleven-minute module in front — nine of the twenty-one tests in
+    ``test_gmail_sync_says_what_it_looked_at.py`` went red on
+    ``{"detail":"Token expired"}`` / 401, starting at the wall-clock point where
+    the token died.
+
+    ``_token_for``'s 300 seconds is deliberately unchanged: widening it is a
+    bigger stopwatch, not no stopwatch, and the expiry branch is asserted on
+    purpose elsewhere with an explicitly past ``exp``. See the fuller account in
+    ``test_gmail_sync_says_what_it_looked_at.py``, which shares this fixture
+    module and had the same defect.
+    """
+
+    return {"Authorization": f"Bearer {_token_for(user_id)}"}
+
 
 # The owner id AS THE RAW SQL BELOW HAS TO SPELL IT. ``_user_id_field`` declares
 # ``sa.Uuid(as_uuid=True)``, which renders native ``UUID`` on Postgres and
@@ -373,7 +395,7 @@ async def _make_returning_user(client: AsyncClient) -> None:
     """
 
     await _connect_gmail(USER_A)
-    seeded = await client.post("/gmail/sync", json={"items": _seed_items()}, headers=HEADERS)
+    seeded = await client.post("/gmail/sync", json={"items": _seed_items()}, headers=_headers())
     assert seeded.status_code == 200, seeded.text
     assert seeded.json()["created"] == 1, seeded.text
     await _seed_cursor()
@@ -397,7 +419,7 @@ async def test_returning_user_keeps_the_mail_it_filed(client_500: AsyncClient) -
     await _set_ledger_columns(present=False)
 
     resp = await client_500.post(
-        "/gmail/sync", json={"items": _filable_items()}, headers=HEADERS
+        "/gmail/sync", json={"items": _filable_items()}, headers=_headers()
     )
 
     assert resp.status_code == 500, resp.text
@@ -435,7 +457,7 @@ async def test_the_same_relay_succeeds_with_the_columns_intact(
     await _make_returning_user(client_500)
 
     resp = await client_500.post(
-        "/gmail/sync", json={"items": _filable_items()}, headers=HEADERS
+        "/gmail/sync", json={"items": _filable_items()}, headers=_headers()
     )
 
     assert resp.status_code == 200, resp.text
@@ -481,7 +503,7 @@ async def test_first_time_user_files_nothing(client_500: AsyncClient) -> None:
     await _set_ledger_columns(present=False)
 
     resp = await client_500.post(
-        "/gmail/sync", json={"items": _filable_items()}, headers=HEADERS
+        "/gmail/sync", json={"items": _filable_items()}, headers=_headers()
     )
 
     assert resp.status_code == 500, resp.text
@@ -501,7 +523,7 @@ async def test_first_time_user_files_nothing(client_500: AsyncClient) -> None:
     # nobody ever posted to.
     await _set_ledger_columns(present=True)
     recovered = await client_500.post(
-        "/gmail/sync", json={"items": _filable_items()}, headers=HEADERS
+        "/gmail/sync", json={"items": _filable_items()}, headers=_headers()
     )
     assert recovered.status_code == 200, recovered.text
     assert recovered.json()["created"] == 3, recovered.text
@@ -530,7 +552,7 @@ async def test_recovery_re_files_idempotently_and_then_stamps(
     await _set_ledger_columns(present=False)
 
     failed = await client_500.post(
-        "/gmail/sync", json={"items": _filable_items()}, headers=HEADERS
+        "/gmail/sync", json={"items": _filable_items()}, headers=_headers()
     )
     assert failed.status_code == 500, failed.text
     mail_after_failure = await _filed_mail_rows()
@@ -542,7 +564,7 @@ async def test_recovery_re_files_idempotently_and_then_stamps(
     await _set_ledger_columns(present=True)
 
     recovered = await client_500.post(
-        "/gmail/sync", json={"items": _filable_items()}, headers=HEADERS
+        "/gmail/sync", json={"items": _filable_items()}, headers=_headers()
     )
 
     assert recovered.status_code == 200, recovered.text
@@ -642,7 +664,7 @@ async def test_the_500_says_what_it_filed_before_the_stamp_failed(
     resp = await client_500.post(
         "/gmail/sync",
         json={"items": _items_with_three_distinct_counts()},
-        headers=HEADERS,
+        headers=_headers(),
     )
 
     assert resp.status_code == 500, resp.text
@@ -682,7 +704,7 @@ async def test_a_first_time_syncer_gets_no_counts(client_500: AsyncClient) -> No
     await _set_ledger_columns(present=False)
 
     resp = await client_500.post(
-        "/gmail/sync", json={"items": _filable_items()}, headers=HEADERS
+        "/gmail/sync", json={"items": _filable_items()}, headers=_headers()
     )
 
     assert resp.status_code == 500, resp.text
@@ -725,7 +747,7 @@ async def test_the_typed_500_still_records_the_failure_against_the_mailbox(
     )
 
     resp = await client_500.post(
-        "/gmail/sync", json={"items": _filable_items()}, headers=HEADERS
+        "/gmail/sync", json={"items": _filable_items()}, headers=_headers()
     )
 
     # BOTH halves in one test, deliberately: either alone passes while the
@@ -742,3 +764,85 @@ async def test_the_typed_500_still_records_the_failure_against_the_mailbox(
         "exists for"
     )
     assert error_message == "RuntimeError", error_message
+
+
+# =============================================================================
+# The clock (#942)
+# =============================================================================
+
+
+async def test_a_request_made_long_after_collection_still_authenticates(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A request made long after collection still authenticates (#942).
+
+    ``HEADERS`` used to be a module-level constant holding a 300-second token,
+    and pytest mints module-level constants during *collection* — so the clock
+    started before the first test in the run, and this module passed only while
+    the run stayed fast enough to reach it. The full account, with the
+    eleven-minute reproduction on clean ``main``, is in
+    ``test_gmail_sync_says_what_it_looked_at.py``, which shares this module's
+    fixtures and had the identical defect.
+
+    The 300 seconds is deliberately unchanged; the expiry branch is asserted
+    explicitly and locally in ``test_auth_supabase_jwt.py`` with a token whose
+    ``exp`` is already in the past, which is where a claim about expiry belongs.
+    """
+
+    import time
+
+    import jwt as pyjwt
+
+    from tests.test_gmail_oauth_cloud import JWT_SECRET
+
+    real_time = time.time
+
+    # Reproduce COLLECTION: the header this module would have built ten minutes
+    # before the request that uses it. ``_token_for`` mints off ``time.time()``
+    # and PyJWT validates ``exp`` off ``datetime.now()`` — two separate clocks —
+    # so winding back only the MINTER's puts a genuinely dead token in front of
+    # a live verifier, in microseconds instead of in five real minutes. A test
+    # that had to wait out the expiry to prove this would be the defect.
+    with monkeypatch.context() as m:
+        m.setattr(time, "time", lambda: real_time() - 600)
+        at_collection = _headers()
+
+    at_request = _headers()
+
+    # THE PROPERTY. A module-level constant hands back the same header both
+    # times; a helper called at the request mints a new one.
+    assert at_collection != at_request, (
+        "this module's Authorization header is fixed at import time, so every "
+        "request it makes carries a 300-second token whose clock started during "
+        "pytest's COLLECTION — before the first test in the RUN, not before the "
+        "first test in this file (#942)"
+    )
+
+    # PROVE THE WIND-BACK LANDED. Without this the 401 below would still pass on
+    # a patch that silently failed to apply: a malformed header, a wrong secret
+    # and an expired token are the same status code, and the assertion would
+    # read as a surviving gate while measuring nothing.
+    stale = pyjwt.decode(
+        at_collection["Authorization"].removeprefix("Bearer "),
+        JWT_SECRET,
+        algorithms=["HS256"],
+        audience="authenticated",
+        options={"verify_exp": False},
+    )
+    assert stale["exp"] < real_time(), (
+        f"the wound-back clock never reached ``_token_for`` — exp {stale['exp']} "
+        f"is not in the past. This test is not measuring what it claims to."
+    )
+
+    # DIRECTIONAL CONTROL: the collection-time header really is refused, so the
+    # 200 that follows is evidence about freshness and not about a verifier that
+    # would have accepted anything.
+    dead = await client.get("/auth/gmail/status", headers=at_collection)
+    assert dead.status_code == 401, dead.text
+    assert "expired" in dead.text.lower(), (
+        f"the stale header was refused for some reason OTHER than expiry, so "
+        f"this pair does not isolate the clock: {dead.text}"
+    )
+
+    alive = await client.get("/auth/gmail/status", headers=at_request)
+    assert alive.status_code == 200, alive.text
