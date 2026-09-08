@@ -621,18 +621,22 @@ def test_the_orm_emits_the_predicates_these_indexes_were_measured_against(
     re-cut". Cited rather than copied — a second copy of a number drifts the way
     a second copy of a predicate does, and nothing here re-measured them.
 
-    WHAT IS STILL RETYPED, AND WHAT WOULD FIX IT
-    ---------------------------------------------
-    The tile's projection. Its PREDICATE is imported, which is the half that
-    moves a plan, but the ``select()`` itself is built inline inside
-    :func:`~jobtracker.cloud.applications.application_summary_cloud` and there is
-    no statement to import — so those six columns are a copy, and a copy is the
-    thing this issue is about. What would close it is a
-    ``_review_queue_rows_statement(user_id)`` in ``applications.py`` that the
-    endpoint and this test both call; that is a production refactor for a test's
-    benefit and is deliberately NOT done here. Until it exists this projection is
-    checked by a human against ``applications.py``, and saying which half is
-    imported beats letting the import at the top imply both.
+    NOTHING HERE IS RETYPED ANY MORE (#827)
+    ----------------------------------------
+    The tile's projection used to be. Its PREDICATE was imported, which is the
+    half that moves a plan, but the ``select()`` was built inline inside
+    :func:`~jobtracker.cloud.applications.application_summary_cloud`, so there
+    was no statement to import and those six columns were a copy — the thing
+    #590 is about. ``_review_queue_rows_statement(user_id)`` now exists and the
+    endpoint and this test both call it, which was #827's acceptance criterion.
+
+    IMPORTING IT IS NOT ITSELF A GATE, and saying so is the point. Nothing in
+    this module reds if the projection changes — these assertions read a PLAN,
+    and a plan does not care which columns are fetched. What the import buys is
+    that the statement EXPLAINed here cannot be a different statement from the
+    one the endpoint issues. That the endpoint really issues it is a separate
+    claim with a separate gate:
+    ``tests/test_the_tile_reads_through_its_own_statement.py``.
     """
 
     from sqlalchemy import func
@@ -641,6 +645,7 @@ def test_the_orm_emits_the_predicates_these_indexes_were_measured_against(
 
     from jobtracker.cloud.applications import (
         _not_filed_on_an_application_that_answers,
+        _review_queue_rows_statement,
     )
     from jobtracker.database.models import Application, Email, EmailCategory
 
@@ -701,18 +706,12 @@ def test_the_orm_emits_the_predicates_these_indexes_were_measured_against(
         ),
         (
             "GET /applications/summary — the needs_review tile",
-            # RETYPED PROJECTION, IMPORTED PREDICATE — see the docstring. The
-            # columns are ``pipeline.review_dedup_key``'s inputs; the tile stopped
-            # counting DISTINCT coalesce(thread_id, message_id) in #454 because
-            # that key cannot be computed in SQL.
-            select(
-                Email.message_id,
-                Email.thread_id,
-                Email.subject,
-                Email.body_snippet,
-                Email.identity_role,
-                Email.identity_req_id,
-            ).where(*review_predicates),
+            # THE HANDLER'S OWN STATEMENT, not a copy of it (#827). This case
+            # spelled out the six columns until the tile's `select()` was
+            # extracted; a retyped projection is the thing #590 is about, and
+            # `tests/test_the_tile_reads_through_its_own_statement.py` is what
+            # keeps the endpoint reaching this same builder.
+            _review_queue_rows_statement(USER),
             # No ORDER BY and no LIMIT, so WHICH join and WHICH scan the planner
             # picks here is a fact about this corpus's statistics rather than
             # about the handler. Asserted only at the level that is about the
