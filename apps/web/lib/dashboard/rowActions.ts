@@ -88,12 +88,12 @@ export function removeFromBoardRequest(id: number): ProxyRequest {
  * The way back from {@link removeFromBoardRequest} — the row returns to the
  * board with its mail intact.
  *
- * It is the endpoint the toast's Undo sends, and that is a different job from
- * the in-card window above. The window CANCELS a dismissal that has not been
- * sent yet, and it dies with the row: once the request lands, `router.refresh()`
- * unmounts the card and the tombstone with it, leaving no affordance anywhere.
- * This one REVERSES a dismissal that already happened, from a surface that
- * outlives the row.
+ * It REVERSES a dismissal the server already made, which is a different job
+ * from the in-card window above: that one CANCELS a dismissal nothing has been
+ * told about yet. The board itself no longer sends this (#903 — the row's own
+ * cell carries the whole undo, and it cancels rather than reverses); the
+ * caller left is the scan receipt's per-row `restore`, which is answering for
+ * rows the SYNC removed, where there was never a window to cancel.
  *
  * `dismissed_reason = "user"` is why the reversal has to be explicit rather
  * than left to the next sync: the backend honours that flag
@@ -116,14 +116,30 @@ export function permanentDeleteRequest(id: number): ProxyRequest {
 // --- Undo window ------------------------------------------------------------
 
 /**
- * Seconds a removal stays cancellable in the card before it is sent.
+ * Seconds a removal stays cancellable in the card before it is sent — and, as
+ * of #903, the WHOLE undoable life of a removal rather than the first half of
+ * it.
  *
- * Long enough to notice a misclick and reach the button, short enough that the
- * board is not lying about its contents for an age. The card is not sent
- * anywhere during the window: leaving the page cancels it, which is the safe
- * direction for a destructive action (worst case the row survives).
+ * It used to be six, followed by a corner toast carrying a second Undo for
+ * `DURATIONS.undo` more. Measured on /demo at 1024: that toast landed at
+ * focusable index 0 of 69 (its Undo at index 1) while painted bottom-right, so
+ * from where the reader was left — index 33 — it was 32 Shift+Tabs backwards,
+ * and it covered the stage select and the menu trigger of the row beneath it.
+ * A second window nobody could reach by keyboard is not eight extra seconds of
+ * recovery; it is eight seconds of the board saying something is reachable
+ * when it is not. So it is gone, and this window absorbs what it was for.
+ *
+ * TEN, AND BOUNDED IN BOTH DIRECTIONS. Downward by what the window is for: a
+ * reader has to notice, look away from whatever they were doing and press one
+ * button, and six was chosen when a second chance existed behind it. Upward by
+ * what the window COSTS: the dismissal is not sent until it closes, so this is
+ * also how long a removal fails to persist — a reader who navigates away at
+ * nine seconds has silently cancelled their own removal, and widening that gap
+ * to make the number feel generous would be trading a real guarantee for a
+ * cosmetic one. Ten is also the ceiling `tests/unit/row-actions.test.mjs`
+ * already sanctions, which is the band this decision has to live inside.
  */
-export const UNDO_WINDOW_SECONDS = 6;
+export const UNDO_WINDOW_SECONDS = 10;
 
 /**
  * WHEN THE WINDOW CLOSES, NOT HOW LONG IT IS (#902, and #750 before it).
@@ -203,33 +219,6 @@ const OFF_THE_BOARD = " removed from the board";
 export const REMOVED_TAIL = `${OFF_THE_BOARD} · not deleted`;
 
 export const DELETED_TAIL = " deleted permanently";
-
-/**
- * What the toast says once the removal is COMMITTED — the moment the tombstone
- * above stops existing, because the refresh it triggers unmounts the card.
- *
- * Same words as `REMOVED_TAIL`, built from the same fragment so the sentence
- * the card shows for six seconds and the one the corner shows afterwards can
- * never drift. It drops "· not deleted" because the toast carries an Undo
- * button, which says the same thing in a form the reader can act on — and the
- * hard delete raises no toast at all, so there is no pair here to confuse.
- */
-export function removedToastMessage(company: string): string {
-  return `${rowName(company)}${OFF_THE_BOARD}`;
-}
-
-/**
- * The failed Undo. It mirrors `REMOVE_FAILED`'s shape — name what did not
- * happen, then the state the board is actually in — and it matches what the
- * rebuild receipt already says when its own per-row restore fails
- * ("couldn't restore — still removed"). The toast that carries it keeps the
- * button, for the reason that receipt keeps its own: a dismissal nothing can
- * reverse is a dead end, and there is no other surface in the app that lists
- * dismissed rows.
- */
-export function restoreFailedMessage(company: string): string {
-  return `Couldn't put ${rowName(company)} back — it is still off your board.`;
-}
 
 export function removalPendingMessage(company: string, secondsLeft: number): string {
   return `${rowName(company)}${removalPendingTail(secondsLeft)}`;
