@@ -106,3 +106,59 @@ test("a giant encoded-word subject is bounded and does not decode the whole head
   );
   assert.equal(messages[0].subject.length, EXPECTED);
 });
+
+/**
+ * THE RAW BUDGET MUST NOT STARVE THE DECODED BOUND, and the first version did.
+ *
+ * `MAX_RAW_SUBJECT_CHARS` was 8,000, justified as "four raw characters yield
+ * three bytes, so 2,000 decoded characters need at most ~2,667 raw ones" —
+ * which counts BYTES and spends them as CHARACTERS. Measured against
+ * `decodeEncodedWords` itself, at 8,000 raw:
+ *
+ *     B-encoded  ASCII 5706   CJK 2078   emoji 2668
+ *     Q-encoded  ASCII 7412   CJK 1412   emoji 1358   <- under the bound
+ *
+ * Quoted-printable spends three raw characters per byte, so a four-byte
+ * character costs twelve. A Q-encoded CJK subject reached the classifier 30%
+ * short of the bound it was supposed to get, on well-formed mail.
+ *
+ * This is the guard. It is parametrized over BOTH encodings and three byte
+ * widths, because ASCII passes at 8,000 under either constant and would have
+ * shown nothing.
+ */
+const b64Word = (s) => "=?utf-8?B?" + Buffer.from(s, "utf8").toString("base64") + "?=";
+const qWord = (s) =>
+  "=?utf-8?Q?" +
+  [...Buffer.from(s, "utf8")]
+    .map((b) =>
+      b >= 33 && b <= 126 && b !== 61 && b !== 63 && b !== 95
+        ? String.fromCharCode(b)
+        : "=" + b.toString(16).toUpperCase().padStart(2, "0"),
+    )
+    .join("") +
+  "?=";
+
+for (const [encoding, word] of [
+  ["B", b64Word],
+  ["Q", qWord],
+])
+  for (const [width, unit] of [
+    ["1-byte", "abcdefghij"],
+    ["3-byte", "日本語テスト"],
+    ["4-byte", "🙂"],
+  ])
+    test(`a ${encoding}-encoded ${width} subject still fills the decoded bound`, () => {
+      const words = [];
+      while (words.join(" ").length < 40_000) words.push(word(unit.repeat(15)));
+      const raw = words.join(" ");
+
+      const { messages } = parseMailFile(
+        "s.eml",
+        `Subject: ${raw}\nFrom: a@b.example\n\nbody`,
+      );
+      // The raw cut must leave at least a full decoded bound behind it, or the
+      // subject the classifier reads is shorter for non-ASCII mail than for
+      // ASCII — a different classifier per language, which is the asymmetry
+      // this whole change exists to remove.
+      assert.equal(messages[0].subject.length, EXPECTED);
+    });

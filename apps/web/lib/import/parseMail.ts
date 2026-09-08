@@ -123,12 +123,27 @@ export const MAX_SUBJECT_CHARS = 2000;
  * string by `parseHeaders` before it gets here, so "the header is short because
  * lines are short" is not a property this code may assume.
  *
- * WHERE THE NUMBER COMES FROM. The most compact encoded word is base64: four
- * raw characters yield three bytes, so 2,000 decoded characters need at most
- * ~2,667 raw ones before the `=?utf-8?B?` and `?=` wrappers. 8,000 is three
- * times that, so the cut can never starve the bound it protects.
+ * WHERE THE NUMBER COMES FROM, AND THE FIRST ANSWER WAS WRONG. This read
+ * 8,000, justified as "four raw characters yield three bytes, so 2,000 decoded
+ * characters need at most ~2,667 raw ones" — which counts BYTES and then spends
+ * them as CHARACTERS, the identical confusion the Python half of this change
+ * exists to correct. Measured against `decodeEncodedWords` itself, 8,000 raw
+ * characters of RFC 2047 encoded words yield:
+ *
+ *     B-encoded  ASCII 5706   CJK 2078   emoji 2668
+ *     Q-encoded  ASCII 7412   CJK 1412   emoji 1358   <- under the 2,000 bound
+ *
+ * Quoted-printable spends three raw characters per byte, so a four-byte
+ * character costs twelve, and the "three times" headroom was in fact four per
+ * cent for B-encoded CJK and NEGATIVE for Q-encoded. The claim that the cut
+ * "can never starve the bound it protects" was false for real, well-formed mail.
+ *
+ * So the budget is the worst case rather than the best: 12 raw characters per
+ * decoded character, plus encoded-word wrappers, is 24,000 plus slack. Decoding
+ * 32,000 characters is microseconds — the bound exists to stop a 1 MB header
+ * costing seconds, and it still does.
  */
-const MAX_RAW_SUBJECT_CHARS = 8000;
+const MAX_RAW_SUBJECT_CHARS = 32_000;
 
 /**
  * Upper bound on the RAW text handed to a decoder, applied BEFORE the decode.
