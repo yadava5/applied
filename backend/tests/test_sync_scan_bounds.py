@@ -120,12 +120,19 @@ class _ShrinkingGmail:
         )
 
 
+# Deeper than any corpus in the tests that take the default, so that what stops
+# those scans is the MAIL running out and not the target — they are about the
+# shape of the bound, not its size. Tests that are about the size say so by
+# passing `_SYNC_DEFAULT_SCAN_TARGET` explicitly.
+_DEEPER_THAN_ANY_CORPUS_HERE = 750
+
+
 async def _scan(
     monkeypatch: pytest.MonkeyPatch,
     gmail: _ShrinkingGmail,
     query: str,
     *,
-    target: int = 750,
+    target: int = _DEEPER_THAN_ANY_CORPUS_HERE,
     deadline: float | None = None,
 ) -> Any:
     """Drive the real ``_full_scan`` against the fake and return its result."""
@@ -159,11 +166,22 @@ async def test_a_wider_window_never_examines_less_than_a_narrower_one(
     never come back having read fewer messages — however small Gmail's pages get.
 
     The narrow window holds 100 messages in pages of 60; the wide one holds 300
-    in pages of 20. Bounded by pages, the wide scan reads 80 and "loses" to the
-    narrow one. Bounded by messages examined, it reads all 300.
+    in pages of 25. Bounded by pages, the wide scan reads four pages and merely
+    TIES the narrow one while holding three times the mail. Bounded by messages
+    examined, it reads all 300.
+
+    25 A PAGE, NOT 20, SINCE #912. The list rail is 12 calls now — what 6,000
+    units a minute pays for once the 297-message target has taken 5,940 of them
+    — so a 20-a-page fixture stops on the rail at 240 and this test would be
+    measuring the budget instead of the property it exists for. 25 is the
+    smallest page that still reaches the default target inside the rail
+    (``ceil(297/25) = 12``), which makes it the sharpest pathological page size
+    available for a test about the SHAPE of the bound. The old-bug
+    reproduction below deliberately keeps 20 a page: it pins its own rail at 4
+    and is unaffected by what the shipped one is.
     """
 
-    gmail = _ShrinkingGmail({NARROW: (100, 60), WIDE: (300, 20)})
+    gmail = _ShrinkingGmail({NARROW: (100, 60), WIDE: (300, 25)})
 
     narrow = await _scan(monkeypatch, gmail, NARROW)
     wide = await _scan(monkeypatch, gmail, WIDE)
@@ -208,17 +226,26 @@ async def test_the_message_target_is_what_stops_a_deep_scan(
     """With the shipped rails, the target is what binds — not the list ceiling.
 
     30 messages a page is well below anything measured (41 was the worst live
-    page for a 100-message request), and 25 list calls still reach the full
-    750-message target. If that stops being true this fails, which is the point.
+    page for a 100-message request), and the rail still reaches the whole
+    297-message default target there: ``ceil(297/30) = 10`` of the 12 calls the
+    minute pays for. If that stops being true this fails, which is the point.
+
+    DRIVEN AT THE PRODUCTION TARGET, not at the helper's deeper default. This
+    test is about the size of the bound, so reading a number the shipped scan
+    would never use made it answer a question nobody asks: at 750 it needed 25
+    pages of 30, which is where #912's 6,065-unit scan lived.
     """
 
     import jobtracker.cloud.gmail_oauth as gmail_module
 
     gmail = _ShrinkingGmail({WIDE: (100_000, 30)})
-    result = await _scan(monkeypatch, gmail, WIDE)
+    result = await _scan(
+        monkeypatch, gmail, WIDE, target=gmail_module._SYNC_DEFAULT_SCAN_TARGET
+    )
 
-    assert result.scanned == 750
+    assert result.scanned == 297
     assert result.stopped_by == "target"
+    assert len(gmail.calls) == 10
     assert len(gmail.calls) <= gmail_module._SYNC_MAX_LIST_CALLS
 
 
@@ -546,3 +573,366 @@ async def test_every_stop_reason_the_backend_can_emit_is_a_known_constant(
             f"is the only channel to the user, so they are told the scan "
             f"stopped early and never that waiting fixes it."
         )
+
+
+# =============================================================================
+# What the scan SPENDS
+# =============================================================================
+#
+# Everything above bounds the scan in MESSAGES and in PAGES, and asserts what
+# it read. Gmail charges for neither: it charges 20 units for every
+# `messages.get` and 5 for every `messages.list`, against 6,000 per user per
+# minute. The two bounds therefore MULTIPLY, and #912 is what that product
+# does — `_SYNC_DEFAULT_SCAN_TARGET = 297` was derived as three whole pages of
+# 99 at 5,955 units "with 45 units to spare", but 45 units is nine list calls
+# and the loop was allowed 25 of them. Every short page Gmail hands back is
+# another 5 units the derivation never paid for, and every unreadable id is
+# another 20: it took its `messages.get` slot, did not count toward 297, and
+# the loop asked for a replacement.
+#
+# Neither file that owned half of this could see it. `test_the_page_size_fits_
+# gmails_minute.py` prices ONE page against one minute; the tests above assert
+# call counts and stop reasons. Nothing computed the spend of a whole SCAN.
+
+# Read from Cloud Console (project jobtracker-502918) and Gmail's quota table,
+# 2026-09-04. HARD-CODED, for the reason `test_the_page_size_fits_gmails_
+# minute.py` gives at length in its module docstring: an expectation taken from
+# the same source as the code compares a config against itself, catches drift
+# and passes every edit. These three are the ceiling every assertion in this
+# section is sourced FROM — never `_SYNC_DEFAULT_SCAN_TARGET` and never
+# `_SYNC_MAX_LIST_CALLS`, which are the values under test and would make the
+# gate pass for any value of themselves.
+UNITS_PER_MINUTE = 6000
+UNITS_PER_GET = 20
+UNITS_PER_LIST = 5
+
+# The smallest page Gmail has ever handed this project for a 100-message
+# request: 68 / 43 / 45 / 41 for 3m / 6m / 12m / all-time, measured live on
+# 2026-08-10 and recorded in `gmail_oauth.py`'s own commentary. A MEASUREMENT,
+# not a constant of the code — it is what the rail has to stay large enough to
+# reach the target through, and the reason a rail cut to what the budget
+# affords is not also a rail that strands ordinary mailboxes.
+WORST_OBSERVED_PAGE = 41
+
+
+class _QuotaMeteredGmail:
+    """A Gmail that respects ``maxResults``, and a meter for what it costs.
+
+    ``_ShrinkingGmail`` above cannot be used for this. It adds
+    ``unreadable_per_page`` on TOP of a full page, so a request for 99 comes
+    back carrying 102 ids — which no real ``messages.list`` does, and which
+    would make the units number wrong in exactly the direction under test.
+
+    Here a page is what Gmail would really hand back: at most ``maxResults``
+    ids, ``unreadable`` of which fail to come back as messages. That is the
+    split :class:`MessagePage` documents — ``len(messages) + unreadable`` is
+    what the page set out to fetch — and it is why ``requested`` and
+    ``scanned`` are different numbers whenever ``unreadable_per_page`` is set.
+    A fixture where they were equal could not see the second half of #912 at
+    all.
+
+    ``units`` prices what the scan spent: one ``messages.list`` per page (the
+    client's ``list_pages_walked`` is 1 at every page size this scan uses) plus
+    one ``messages.get`` per id LISTED, readable or not.
+    """
+
+    def __init__(
+        self,
+        *,
+        per_page: int,
+        unreadable_per_page: int = 0,
+        total: int = 100_000,
+    ) -> None:
+        self.per_page = per_page
+        self.unreadable_per_page = unreadable_per_page
+        self.total = total
+        self.lists = 0
+        self.ids = 0
+        self.requested_sizes: list[int] = []
+
+    @property
+    def units(self) -> int:
+        return UNITS_PER_LIST * self.lists + UNITS_PER_GET * self.ids
+
+    async def fetch_message_page(
+        self,
+        user_id: Any,
+        *,
+        query: str,
+        page_size: int | None = None,
+        page_token: str | None = None,
+    ) -> Any:
+        from jobtracker.cloud.gmail_client import CloudGmailMessage, MessagePage
+
+        asked = page_size or self.per_page
+        self.requested_sizes.append(asked)
+        start = int(page_token or 0)
+        ids = max(0, min(asked, self.per_page, self.total - start))
+        self.lists += 1
+        self.ids += ids
+        unreadable = min(self.unreadable_per_page, ids)
+        messages = [
+            CloudGmailMessage(
+                message_id=f"m{i}",
+                thread_id=f"t{i}",
+                subject="Subject",
+                sender_name="Sender",
+                sender_email="someone@example.test",
+                snippet="snippet",
+                received_at=datetime(2026, 7, 1, tzinfo=UTC),
+            )
+            for i in range(start, start + ids - unreadable)
+        ]
+        nxt = str(start + ids) if start + ids < self.total else None
+        return MessagePage(
+            messages=messages,
+            next_page_token=nxt,
+            unreadable=unreadable,
+            result_size_estimate=None,
+        )
+
+
+async def _metered_scan(
+    monkeypatch: pytest.MonkeyPatch, gmail: _QuotaMeteredGmail
+) -> Any:
+    """Drive the real ``_full_scan`` at the real default target."""
+
+    import jobtracker.cloud.gmail_oauth as gmail_module
+
+    return await _scan(
+        monkeypatch, gmail, WIDE, target=gmail_module._SYNC_DEFAULT_SCAN_TARGET
+    )
+
+
+def test_the_two_test_files_agree_about_gmails_quota() -> None:
+    """The three numbers are duplicated on purpose; drift between them is not.
+
+    ``test_the_page_size_fits_gmails_minute.py`` states why they are not
+    imported from the application. It does not follow that a SECOND copy may
+    quietly disagree with the first — the day Google moves one of these, both
+    files have to move, and this is what says so instead of leaving one gate
+    grading against a stale minute.
+
+    A text read rather than an import, matching how this suite already reads
+    ``types.ts`` and ``sync-plan.ts``: the point is to notice the other file's
+    numbers changing, and importing them would make the two agree by
+    construction.
+    """
+
+    sibling = Path(__file__).resolve().parent / "test_the_page_size_fits_gmails_minute.py"
+    source = sibling.read_text(encoding="utf-8")
+    ours = {
+        "UNITS_PER_MINUTE": UNITS_PER_MINUTE,
+        "UNITS_PER_GET": UNITS_PER_GET,
+        "UNITS_PER_LIST": UNITS_PER_LIST,
+    }
+    for name, mine in ours.items():
+        match = re.search(rf"^{name} = (\d+)$", source, flags=re.M)
+        assert match, f"{name} is no longer declared where this gate can read it"
+        assert int(match.group(1)) == mine, (
+            f"{sibling.name} says {name} = {match.group(1)} and this file says "
+            f"{mine}. One of them is grading against a quota Google no longer "
+            f"charges; re-derive `_SYNC_DEFAULT_SCAN_TARGET` and "
+            f"`_SYNC_MAX_LIST_CALLS` from whichever is right."
+        )
+
+
+async def test_a_whole_scan_of_full_pages_fits_the_minute(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The happy case — AND THE TRAP, which is why it is not the only arm.
+
+    This assertion passes with #912 reinstated. Three pages of 99 is precisely
+    the case the 297 target was derived for, so measuring it proves the
+    derivation and nothing about the loop that spends it. Every other test in
+    this section exists because this one cannot fail for the right reason.
+    """
+
+    gmail = _QuotaMeteredGmail(per_page=99)
+    result = await _metered_scan(monkeypatch, gmail)
+
+    assert (gmail.lists, gmail.ids) == (3, 297)
+    assert gmail.units == 5955
+    assert gmail.units <= UNITS_PER_MINUTE
+    assert result.scanned == 297
+    assert result.stopped_by == "target"
+
+
+@pytest.mark.parametrize(
+    ("per_page", "lists", "scanned", "units", "stopped_by"),
+    [
+        # Gmail under-fills a page and the scan takes another one — at 5 units
+        # a time the derivation never budgeted for. Re-derived against the
+        # loop itself; `lists` is what the rail permits and `units` is
+        # `20 * ids + 5 * lists`.
+        (WORST_OBSERVED_PAGE, 8, 297, 5980, "target"),
+        (30, 10, 297, 5990, "target"),
+        # ON the boundary: 12 calls is exactly what the minute pays for, and
+        # 25 a page is exactly the smallest page that still reaches 297 inside
+        # them. 6,000 units, not one over, and the target is still met whole.
+        (25, 12, 297, 6000, "target"),
+        # Below it the rail binds, and the scan SAYS it stopped short rather
+        # than buying the rest of the target on credit. Under the 25-call rail
+        # these three read 297 messages for 6,005 / 6,015 / 6,065 units.
+        (24, 12, 288, 5820, "page_limit"),
+        (20, 12, 240, 4860, "page_limit"),
+        (12, 12, 144, 2940, "page_limit"),
+    ],
+)
+async def test_a_whole_scan_fits_the_minute_when_gmail_underfills_its_pages(
+    monkeypatch: pytest.MonkeyPatch,
+    per_page: int,
+    lists: int,
+    scanned: int,
+    units: int,
+    stopped_by: str,
+) -> None:
+    """#912's first vector: the scan is bounded by MESSAGES, and pages cost.
+
+    Gmail treats ``maxResults`` as an upper bound — the live figures are 68 /
+    43 / 45 / 41 for a 100-message request — so the same 297 messages arrive
+    over as many pages as Gmail feels like, and each one is another
+    ``messages.list``. The crossover is 25 a page: at 24 the old loop spent
+    6,005 units, at 20 it spent 6,015, at 12 it spent 6,065 and used every one
+    of the 25 calls it was allowed.
+
+    MUST RED ON: `_SYNC_MAX_LIST_CALLS` going back to 25 (the 20-a-page row
+    becomes 15 calls and 6,015 units). The control immediately below runs that
+    mutation rather than trusting this note.
+    """
+
+    gmail = _QuotaMeteredGmail(per_page=per_page)
+    result = await _metered_scan(monkeypatch, gmail)
+
+    assert gmail.units <= UNITS_PER_MINUTE, (
+        f"a default scan against {per_page}-message pages spends "
+        f"{gmail.units} of {UNITS_PER_MINUTE} units per user per minute "
+        f"({gmail.lists} list calls at {UNITS_PER_LIST} plus {gmail.ids} gets "
+        f"at {UNITS_PER_GET}); its last pages take the 429."
+    )
+    assert (gmail.lists, gmail.ids, gmail.units) == (lists, scanned, units)
+    assert result.scanned == scanned
+    assert result.stopped_by == stopped_by
+
+
+async def test_the_old_25_call_rail_is_what_put_a_short_page_scan_over(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The directional control: make it WORSE and watch the number go UP.
+
+    A gate that only ever reds on loss cannot tell a fix from a coincidence.
+    So this puts the rail back to the 25 it was — the same fixture, one
+    constant changed — and asserts the spend crosses the ceiling it now fits
+    under. 6,015 against 6,000, which is the 20-messages-a-page row of #912's
+    table reproduced against the shipped loop.
+
+    It also pins WHY 25 was wrong rather than merely large: the extra calls buy
+    57 more messages for 1,155 more units, which is a bucket the scan does not
+    have.
+    """
+
+    import jobtracker.cloud.gmail_oauth as gmail_module
+
+    shipped = _QuotaMeteredGmail(per_page=20)
+    fitted = await _metered_scan(monkeypatch, shipped)
+
+    monkeypatch.setattr(gmail_module, "_SYNC_MAX_LIST_CALLS", 25)
+    worse = _QuotaMeteredGmail(per_page=20)
+    overspent = await _metered_scan(monkeypatch, worse)
+
+    assert worse.units > shipped.units
+    assert worse.units == 6015 > UNITS_PER_MINUTE >= shipped.units
+    assert (worse.lists, shipped.lists) == (15, 12)
+    assert (overspent.scanned, fitted.scanned) == (297, 240)
+
+
+async def test_an_unreadable_id_is_paid_for_even_though_it_is_never_scanned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#912's second vector, and it stacks with the first rather than replacing it.
+
+    ``unreadable`` is how many ids a page LISTED and could not turn into a
+    message. Every one of them consumed a request slot — the ``messages.get``
+    was issued — and none of them counted toward the target, so a loop bounded
+    on messages PARSED asked for a replacement page and paid 20 units again.
+    ONE unreadable id per page, with nothing short about the pages at all, put
+    the old loop over the ceiling on its fourth page — 6,020 units — and it
+    then spent the rest of its 25 calls chasing three messages it could not
+    read, finishing at 6,545 for 296 messages.
+
+    The two numbers in the assertion are the whole point: the scan asked Gmail
+    for 297 and read 288. It reports 288, beside 9 unreadable, because that is
+    what it read — the fix bounds the LOOP on what was requested and leaves the
+    RECEIPT saying what was parsed. A scan that said "297 scanned" with nine of
+    them unreadable would be a new lie in the place of the old one.
+
+    MUST RED ON: `_full_scan`'s bound going back to counting
+    `len(page.messages)`. That mutation alone takes this fixture to 12 list
+    calls, 330 gets and 6,660 units; with the 25-call rail back beside it —
+    the shipped bug entire — 25 calls, 369 gets and 7,505 units.
+    """
+
+    lossy = _QuotaMeteredGmail(per_page=99, unreadable_per_page=3)
+    result = await _metered_scan(monkeypatch, lossy)
+
+    assert lossy.units <= UNITS_PER_MINUTE, (
+        f"three pages of 99 with 3 unreadable ids each spent {lossy.units} of "
+        f"{UNITS_PER_MINUTE} units: the unreadable ids were fetched, did not "
+        f"count toward the target, and the loop bought their replacements."
+    )
+    assert (lossy.lists, lossy.ids, lossy.units) == (3, 297, 5955)
+    # Requested and parsed are DIFFERENT NUMBERS here, which is the only shape
+    # of fixture that can see this defect: 297 asked for, 288 read back.
+    assert result.scanned == 288
+    assert result.unreadable == 9
+    assert result.scanned + result.unreadable == 297
+    assert result.stopped_by == "target"
+
+    # And the paired case: same pages, nothing unreadable. The SPEND is
+    # identical because the same 297 ids were fetched either way — what moves
+    # is what came back readable. Under the old bound these two differed by
+    # 1,550 units.
+    clean = _QuotaMeteredGmail(per_page=99)
+    whole = await _metered_scan(monkeypatch, clean)
+
+    assert clean.units == lossy.units
+    assert whole.scanned == 297 != result.scanned
+
+
+def test_the_list_rail_is_what_the_minute_pays_for() -> None:
+    """The algebra behind the rail, stated where a reviewer can check it.
+
+    A default scan's gets are fixed at the target, so the only thing left to
+    buy is list calls: ``6000 - 20*297 = 60``, and 60 units is twelve calls at
+    five. Twelve is therefore not a safety margin or a round number, it is the
+    last call the minute pays for.
+
+    Two-sided on purpose. The upper bound alone would be satisfied by a rail of
+    ONE, which fits any budget by scanning almost nothing; the lower bound says
+    the rail must still reach the whole target through the smallest page this
+    project has ever measured (``ceil(297/41) = 8``).
+
+    BLIND ON ITS OWN to the unreadable vector, and that is why the behavioural
+    arms above are not redundant with it: this assumes the scan issues exactly
+    one get per targeted message, which is a property `_full_scan` has only
+    because it counts what it REQUESTED. Do not delete them in favour of this.
+    """
+
+    import jobtracker.cloud.gmail_oauth as gmail_module
+
+    target = gmail_module._SYNC_DEFAULT_SCAN_TARGET
+    rail = gmail_module._SYNC_MAX_LIST_CALLS
+    spend = UNITS_PER_GET * target + UNITS_PER_LIST * rail
+
+    assert spend <= UNITS_PER_MINUTE, (
+        f"a scan that reaches its {target}-message target over {rail} list "
+        f"calls spends {spend} of {UNITS_PER_MINUTE} units per user per "
+        f"minute. Gmail defers the remainder; the fix is the rail, not the "
+        f"target, which is already derived from this same ceiling."
+    )
+    assert rail * WORST_OBSERVED_PAGE >= target, (
+        f"{rail} list calls cannot reach {target} messages at "
+        f"{WORST_OBSERVED_PAGE} a page — the smallest page Gmail has actually "
+        f"handed this project — so an ordinary all-time scan would stop on the "
+        f"rail rather than on its target."
+    )
