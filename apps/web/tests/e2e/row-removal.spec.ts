@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 /**
  * What the board does to the reader when a row leaves it, and when it comes
- * back (#903, and #904).
+ * back (#903, and what is left of #904 — see below).
  *
  * #903's second half landed here too, and it deleted a surface rather than
  * repairing one: the corner toast that used to carry a second Undo after the
@@ -14,23 +14,25 @@ import { expect, test, type Page } from "@playwright/test";
  * Undo is adjacent to the control that spawned it" is a fact about the DOM
  * rather than a tab-order claim laid over a fixed overlay.
  *
- * Both defects were measured on /demo at 1024 with an in-page sampler, because
- * that is the only board CI can reach without a Supabase session and it mounts
- * the real components over fixtures:
+ * Every defect here was measured on /demo at 1024 with an in-page sampler,
+ * because that is the only board CI can reach without a Supabase session and
+ * it mounts the real components over fixtures. Focus was on `<body>` from the
+ * instant the undo slot unmounted (t=6.02s after the dismissal) to the end of
+ * the trace, with the reader standing on `Undo`, deciding about a destructive
+ * action.
  *
- *  - focus was on `<body>` from the instant the undo slot unmounted (t=6.02s
- *    after the dismissal) to the end of the trace. The reader had been standing
- *    on `Undo`, deciding about a destructive action;
- *  - `Harbor Analytics` (filed Aug 27) sat THIRD in `applied`, and after
- *    dismiss-then-Undo it sat last, below a row filed Sep 7.
+ * #904 USED TO HAVE A CASE IN THIS FILE AND NO LONGER DOES. It drove the
+ * toast's Undo — a RESTORE of a dismissal the server had made — and compared
+ * the whole column, because `Harbor Analytics` sat third in `applied` and came
+ * back last. #903 deleted that affordance, so the case went with it rather
+ * than being pointed at the in-cell Undo, which cancels and cannot reorder
+ * anything. The order a restore puts a row back in is pinned by
+ * `tests/unit/undo-restores-in-place.test.mjs`, and `POST /restore` keeps its
+ * browser coverage in `demo.spec.ts`'s scan-receipt case.
  *
- * WHAT THE ASSERTIONS HAVE TO BE, given that. "Focus is somewhere" and "the row
- * is back" are both true of the broken build — the first defect ends with focus
- * on a real element (`<body>` is one) and the second ends with the row on the
- * board. So the assertions name the exact successor the rule chooses, and
- * compare the column's WHOLE order; and the removal case picks a row that is
- * demonstrably not last, with that fact asserted first, because on a row that
- * genuinely was last both builds agree.
+ * WHAT THE ASSERTIONS HAVE TO BE, given that. "Focus is somewhere" is true of
+ * the broken build too — `<body>` is a real element — so the assertions name
+ * the exact successor the rule chooses rather than refuting a value.
  *
  * The clock is real here and cannot be stalled, so the countdown's own
  * behaviour under a starved thread is not this file's — that is
@@ -42,21 +44,11 @@ import { expect, test, type Page } from "@playwright/test";
 /** The owner's width. Every measurement quoted above was taken here. */
 const OWNER_VIEWPORT = { width: 1024, height: 768 };
 
-/** The row this file removes: third of eight in `applied`, so not last. */
+/** The row this file removes: third of eight in `applied`, so not last — the
+ *  successor rule has somewhere to go in both directions from it. */
 const TARGET = "Harbor Analytics";
 /** The row directly below it, which the list closes up onto. */
 const SUCCESSOR = "Quarry Data";
-
-/** The `applied` column's rows, in the order the board draws them. */
-async function appliedColumn(page: Page): Promise<string[]> {
-  return page.evaluate(() => {
-    const column = document.querySelector('section[aria-label^="applied —"] ul');
-    if (column === null) throw new Error("row-removal: no applied column on the page");
-    return [...column.children].map((row) =>
-      (row.textContent ?? "").replace(/\s+/g, " ").slice(0, 40),
-    );
-  });
-}
 
 /** `document.activeElement`, named the way a reader would name it: its
  *  `aria-label`, else its own text, else the bare tag — so a blur to the
@@ -275,41 +267,39 @@ test.describe("a row leaving the board", () => {
     await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
   });
 
-  test("the row comes back where it was when the window is cancelled", async ({ page }) => {
-    // #904's shape, moved onto the affordance that still exists. The removal's
-    // way back is the in-cell Undo, which CANCELS — the row never left, so the
-    // column is asserted whole to prove the tombstone gave the place back
-    // rather than the row being appended.
+  test("cancelling hands the reader back the control they opened", async ({ page }) => {
+    // THIS IS NOT #904'S TEST WEARING NEW CLOTHES, and it must not be read as
+    // one. The case that used to sit here drove the toast's Undo — a RESTORE
+    // of a dismissal the server had made — and asserted the whole column came
+    // back in order. That affordance is gone with #903, and with it this
+    // file's coverage of `POST /restore`. Not relocated: REMOVED. What still
+    // holds the ground it covered is `undo-restores-in-place.test.mjs` for the
+    // order a restore puts a row back in, and `demo.spec.ts`'s "restoring a
+    // row first does not trap the scan in a loop" for the endpoint.
     //
-    // The post-commit restore this used to drive is gone with #903, and with
-    // it this file's coverage of `POST /restore`. That endpoint's remaining UI
-    // caller is the scan receipt (`demo.spec.ts`, "restoring a row first does
-    // not trap the scan in a loop"), and the ORDER a restore puts a row back
-    // in is pinned by `tests/unit/undo-restores-in-place.test.mjs`.
+    // Asserting the column here instead would be a check that cannot fail: the
+    // in-cell Undo CANCELS, the `<li>` never unmounts, and the row's place is
+    // therefore preserved by construction rather than by any rule. So this
+    // asserts the thing cancelling actually decides — where the reader is left
+    // — which the old test never covered.
     await page.goto("/demo");
     await expect(page.locator('section[aria-label^="applied —"]')).toBeVisible();
-
-    const before = await appliedColumn(page);
-    const at = before.findIndex((row) => row.startsWith(TARGET));
-    expect(at, `${TARGET} is not in the applied column any more`).toBeGreaterThanOrEqual(0);
-    // THE GUARD THAT MAKES THE ASSERTION MEAN SOMETHING. On a row that really
-    // was last, appending and reinserting agree, and this test would pass on
-    // the build it exists to catch.
-    expect(at, `${TARGET} is last in its column, so this case proves nothing`).toBeLessThan(
-      before.length - 1,
-    );
 
     await dismiss(page, TARGET);
     const undo = page.locator("[data-row-id]").getByRole("button", { name: "Undo" });
     await expect(undo).toBeFocused();
     await undo.click();
-    await expect(page.locator(`button[aria-label^="Row actions for ${TARGET}"]`)).toHaveCount(1);
 
+    // The row's own controls are back — the trigger is the one that matters,
+    // because it is where focus is going.
+    await expect(page.locator(`button[aria-label^="Row actions for ${TARGET}"]`)).toHaveCount(1);
+    // Named, not "not BODY": the trigger unmounts the instant Undo is pressed,
+    // so the return has to wait a render, and "focus is somewhere" is true of
+    // the build where it never comes back.
     expect(
-      await appliedColumn(page),
-      "the row came back, but the column did not come back with it",
-    ).toEqual(before);
-    // Focus returns to the control the action was opened from, not to nothing.
-    expect(await activeElement(page)).toMatch(new RegExp(`^Row actions for ${TARGET}`));
+      await activeElement(page),
+      "cancelling left the reader somewhere other than the row they cancelled from",
+    ).toMatch(new RegExp(`^Row actions for ${TARGET}`));
+    await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
   });
 });
