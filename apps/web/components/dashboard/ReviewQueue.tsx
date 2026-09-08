@@ -20,12 +20,14 @@ import {
   classifyDecisionBody,
   confirmCompanyPrompt,
   employerPromptFor,
+  groupReviewItems,
   holdReasonSentence,
   readClassifyOutcome,
-  reviewCandidates,
+  reviewGroupHeading,
   rowStaysInQueue,
   type CandidateApplication,
   type ReviewAssignment,
+  type ReviewUnit,
 } from "@/lib/dashboard/review";
 import { safeText } from "@/lib/security/hostileText";
 import type { Application } from "@/lib/dashboard/summary";
@@ -53,6 +55,21 @@ export interface ReviewItem {
    * applications. This is the only field that tells them apart.
    */
   role?: string | null;
+  /**
+   * The classifier's own guess at the stage — ORDERING AND GATING ONLY.
+   *
+   * It has always been on the wire (`ReviewItemResponse.suggested_category`)
+   * and has never been rendered, and that stays true. `groupReviewItems` reads
+   * it for exactly one thing: a group whose members disagree about it opens
+   * EXPANDED, which spends the field to demand MORE scrutiny. Printing it —
+   * a header, a count, "assessment x3" — is the machine answering its own
+   * question at the strongest anchoring position on the page, in the band
+   * where the 69-of-137 measurement says that guess misreads rejections, and
+   * next to the select whose disabled placeholder exists to stop precisely
+   * that. See `groupReviewItems` in `lib/dashboard/review.ts`, and DEC-009 for
+   * the rule and the alternative it was chosen against.
+   */
+  suggested_category?: string | null;
 }
 
 /**
@@ -450,6 +467,85 @@ function ReviewRow({
 }
 
 /**
+ * Several held messages about ONE employer, behind one expandable line (#517).
+ *
+ * WHAT THIS IS NOT. There is no group-level answer control here and there must
+ * never be one. A "these are all the assessment" affordance would let a misread
+ * rejection be swept in as an AUTHORITATIVE USER ANSWER, which outranks machine
+ * evidence permanently — and the corpus measurement behind this issue says the
+ * dominant misread in this band is exactly a rejection wearing a status-quo
+ * stage. So the header carries ONE control, the expander, and every member row
+ * below it is the unmodified `ReviewRow` with its own select, its own picker and
+ * its own classify button. The answer count is invariant; the READING count is
+ * what falls.
+ *
+ * COLLAPSED BY DEFAULT IS SAFE ONLY BECAUSE THE ROWS ARE UNMOUNTED. A collapsed
+ * group renders no `<select>` at all, so its members are physically
+ * unanswerable — the evidence has to be on screen before any answer can be
+ * given, which is the property that keeps the sweep hazard closed. It is
+ * further gated: a group whose members DISAGREE about `suggested_category`
+ * opens expanded. #517's own four rows (three assessment, one applied) render
+ * expanded under that rule. That is correct rather than a failure — the win
+ * there is the header saying the four are one employer, and the one-line
+ * collapse accrues to uniform reminder piles.
+ *
+ * THE GATE IS INITIAL STATE, AND ONLY INITIAL STATE. `useState` runs once per
+ * mount, and the group key deliberately survives a refresh (see below), so a
+ * group that was uniform and collapsed, and then gains a DISAGREEING member on
+ * the next sync, stays collapsed — the gate has already had its say. Forcing it
+ * open on every re-render is the obvious fix and is worse: it would yank a
+ * group shut, or open, under a reader mid-triage, and it would fight the
+ * expansion they just chose. Stated here rather than discovered, because "band
+ * data buys more scrutiny" is a claim about first render, not an invariant.
+ *
+ * THE HEADER DOES NOT OVERCLAIM. The key proves "same employer name, same
+ * derived role", which is NOT "one application" — one employer can hold several
+ * (#454), and the role component is what keeps three requisitions from folding
+ * into one header. So the line says "N held messages · <Company>" and the date
+ * is the NEWEST member's, so an aging pile visibly ages.
+ */
+function ReviewGroup({ unit }: { unit: ReviewUnit<ReviewItem> }) {
+  const [expanded, setExpanded] = useState(!unit.uniformCategory);
+  // Both names go through `safeText` for the same reason the row's own subject
+  // and sender do: an employer name and a role are strings a stranger chose,
+  // and this one becomes a button's accessible name.
+  const heading = reviewGroupHeading(
+    unit.members.length,
+    safeText(unit.company),
+    unit.role ? safeText(unit.role) : null,
+    unit.receivedAt ? shortDate(unit.receivedAt) : null,
+  );
+
+  return (
+    <li className="rounded-lg border border-line-soft bg-surface-2">
+      {/* `h3` under the section's `h2`. It is also what the tests scope the
+          "exactly one interactive control" and "no classifier output leaks into
+          the header" pins to, so the header subtree stays a nameable thing
+          rather than a div a later edit can widen unnoticed.
+          No `aria-controls`: the panel it would name does not exist while the
+          group is collapsed, and an unmounted panel is the point. */}
+      <h3>
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-strong transition-colors hover:bg-surface"
+        >
+          {heading}
+        </button>
+      </h3>
+      {expanded ? (
+        <ul className="space-y-2 px-3 pb-3">
+          {unit.members.map(({ item, candidates }) => (
+            <ReviewRow key={item.message_id} item={item} candidates={candidates} />
+          ))}
+        </ul>
+      ) : null}
+    </li>
+  );
+}
+
+/**
  * The needs-review queue — what needs the user, so it leads the page (or, when
  * the Settings "Needs review alerts" toggle is off, waits under the board).
  * Each uncertain verdict (the 0.70–0.85 band, or a confident one whose
@@ -472,8 +568,12 @@ function ReviewRow({
  * `CATEGORY_META.needs_review.chipLabel`.
  *
  * Density follows the board's rule — no scroller nested inside the scrolling
- * page. A long queue shows its first {@link COLLAPSED_COUNT} rows and a
- * "show all N" expander that grows the page.
+ * page. A long queue shows its first {@link COLLAPSED_COUNT} UNITS — lone rows
+ * and employer groups alike (#517) — and a "show all N" expander that grows the
+ * page. N is still MESSAGES: it is the same number the heading, the Inbox chip
+ * and the summary tile are telling this reader, and a second, smaller number in
+ * the same card is the "two renderers, one number" defect this repo has already
+ * shipped once.
  */
 const COLLAPSED_COUNT = 4;
 
@@ -499,9 +599,29 @@ export function ReviewQueue({
     [applications],
   );
 
+  /**
+   * The queue as the things it is asking ABOUT (#517).
+   *
+   * ONE call to `reviewCandidates` per item, here, feeding BOTH the group key
+   * and the row's picker — the member carries the result. The component used to
+   * call it inline at the render site, and the whole rationale for grouping
+   * ("a group can never offer options the picker would not") is only true while
+   * it is the same call; two call sites is how the two drift apart.
+   */
+  const units = useMemo(
+    () => groupReviewItems(items, candidatePool),
+    [items, candidatePool],
+  );
+
   if (items.length === 0) return null;
-  const visible = expandedList ? items : items.slice(0, COLLAPSED_COUNT);
-  const hidden = items.length - visible.length;
+  // THE EXPANDER SLICES UNITS; EVERY COUNT ON SCREEN STAYS ROWS. The heading,
+  // the Inbox chip and the summary tile all count messages, and this repo has
+  // already shipped a "two renderers, one number" defect — a header saying
+  // "+50 this wk" over a momentum line saying 7. So `show all N` is N MESSAGES
+  // even though what it reveals is units, because N is the number the rest of
+  // the product is telling the same person.
+  const visible = expandedList ? units : units.slice(0, COLLAPSED_COUNT);
+  const hidden = units.length - visible.length;
 
   return (
     <section
@@ -526,9 +646,24 @@ export function ReviewQueue({
         </span>
       </div>
       <ul className="space-y-2">
-        {visible.map((item) => (
-          <ReviewRow key={item.message_id} item={item} candidates={reviewCandidates(item, candidatePool)} />
-        ))}
+        {visible.map((unit) =>
+          // A GROUP OF ONE RENDERS NO GROUP CHROME AT ALL — grouping has to be
+          // invisible where it does not apply, and most of the queue is that
+          // case. Keyed by the STABLE group key, never by index: answering one
+          // row of four re-renders the queue with the group one member shorter,
+          // and an index key hands that group whatever expansion state the unit
+          // now at its index had, silently re-collapsing the three rows the
+          // reader is still working through.
+          unit.members.length === 1 ? (
+            <ReviewRow
+              key={unit.key ?? unit.members[0]!.item.message_id}
+              item={unit.members[0]!.item}
+              candidates={unit.members[0]!.candidates}
+            />
+          ) : (
+            <ReviewGroup key={unit.key ?? unit.members[0]!.item.message_id} unit={unit} />
+          ),
+        )}
       </ul>
       {hidden > 0 || expandedList ? (
         <button

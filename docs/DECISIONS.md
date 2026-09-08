@@ -338,4 +338,152 @@ Valid while: the employer map keys on bare registrable domains and is matched
   with `rules.domain_matches`. If it ever moves to full hostnames, or is
   derived rather than written out, re-read this entry: the reason a reserved
   substitute asserts nothing is that the key is a real registration.
-Markers: docs/TEST_DATA_POLICY.md, scripts/cross_engine_differential.py
+Markers: docs/TEST_DATA_POLICY.md, scripts/cross_engine_differential.py, backend/tests/test_a_withdrawal_reaches_the_queue.py (names the carve-out to say
+  it is NOT needed there — a reference, not a marker; registered because no script
+  can tell the two apart, see the header)
+
+---
+
+## DEC-009 — fields of a band verdict are not decision inputs; render-layer use only
+
+Status: active (2026-09-08)
+Claim: for a message in the needs-review band, every field the classifier
+  produced — `suggested_category`, the suggested stage, `confidence` — is the
+  DOUBTED OBJECT, not evidence about it. `NEEDS_REVIEW` is the typed null. Such
+  a field may ORDER and GROUP the asking, and may never ANSWER it: no band
+  verdict's own field may decide whether a row is queued, suppressed, attached,
+  filed, merged or pre-answered. The one use this permits beyond ordering is a
+  gate that spends the field to demand MORE scrutiny — the review queue's
+  employer group opens EXPANDED when its members disagree about
+  `suggested_category` — because that direction cannot answer anything.
+Why: the alternative was measured, not argued. A predicate that declined to
+  queue (and instead attached) a held row whose suggested stage would not move
+  its card was built and replayed over 40 day-batches of the 18,320-message
+  independent corpus. Of the 137 rows it touched, 69 were ground-truth
+  REJECTIONS. The mechanism is why no conditioning rescues it: production
+  classifies from roughly the first 186 characters, and an ATS rejection spends
+  that entire budget on a polite preamble, so it scores the card's own stage at
+  around 0.70 — meaning "would not move anything" is true of exactly the message
+  that would move everything. Agreement with the card is the SIGNATURE of the
+  misread, not noise around it, so the errors are aligned rather than random and
+  a threshold cannot separate them. A confidence floor is sourced from the very
+  measurement it must survive; a category restriction reads another field of the
+  same doubted verdict, produced from the same prefix; and second-signal
+  corroboration only works with a signal the classifier did not produce, at
+  which point that signal is doing all the work. 69 of 137 is not a corner case
+  — it is the queue meeting the charter the ATS floor was built for (#166).
+Moved away from: three, and the first two are the attractive ones.
+  (1) SUPPRESSING a non-advancing row. Worse than it looks: filing and queueing
+  are mutually exclusive, so "do not queue it" is a route to nowhere and the
+  message is dropped outright.
+  (2) ATTACHING it to the employer's existing card without asking. This is the
+  one a competent person rebuilds, because it sounds conservative — nothing is
+  deleted and the mail stays visible on the card. It is a wrong-state hazard:
+  the question goes silent while the stage stays stale, and for 69 of those 137
+  rows the stale stage is "still in play" on an application that was rejected.
+  (3) Narrowing it to cards past `applied`. It removes 69 bad and 66 good,
+  leaving 2 of 137, and it is curve-fitting — the hazard is not the `applied`
+  stage, so the family reproduces one stage up as soon as a corpus family for it
+  exists.
+  What was chosen instead changes no data at all: collapse the PRESENTATION.
+  Rows about one employer render as one expandable group, every per-row answer
+  preserved. It is fail-soft where every attach is fail-hard — a wrong group
+  renders oddly and the reader answers the rows individually, while a wrong
+  attach leaves the board confidently wrong with no question pending.
+Enforced by: apps/web/tests/unit/review-queue-group-renders.test.mjs holds the
+  two halves that are mechanically checkable. Its header test EQUALITY-pins the
+  group header's full rendered text to a hand-written string of raw facts, so
+  any leak of a classifier-produced word reds it — an absence check would only
+  catch the words someone thought to list. Its bulk-answer test pins the header
+  subtree to exactly ONE interactive control by COUNT, which is what forbids a
+  group-level "these are all the assessment" affordance; that affordance is the
+  sharpest form of this decision's reversal, because a user answer outranks
+  machine evidence permanently and would launder a misread rejection into one.
+  apps/web/tests/unit/review-queue-groups-one-employer.test.mjs pins that the
+  grouping key derives from the BOARD and never from a band field.
+  For the general rule — that no future surface reads a band verdict's field to
+  decide anything — nothing enforces this; prose only. No scan can tell reading
+  a field for ordering from reading it for a decision.
+Valid while: production classifies band messages from the stored snippet rather
+  than the full body. That is the falsifier a reader can check in a minute, and
+  it is the one worth watching: this repository already records that the same
+  rejection family delivered WHOLE scores `rejection` at 0.95, above the
+  auto-file gate. If a full-text pass over band rows ships, the aligned-error
+  mechanism above weakens and the 69-of-137 figure must be re-measured before
+  anyone cites this entry as still binding. Note what does NOT falsify it: a
+  better model. The rule is about what a doubted field may be used for, not
+  about how often it is wrong.
+Markers: apps/web/lib/dashboard/review.ts, apps/web/components/dashboard/ReviewQueue.tsx
+
+## DEC-010 — an offer withdrawal is ADMITTED to the queue, not lifted into it
+
+Status: active (2026-09-08)
+Claim: a message that scores `other` under `pipeline.REVIEW_FLOOR`, whose own
+  asserted text retracts something about the reader's process, and whose named
+  employer holds a live `OFFERED` card, is admitted to the human review queue
+  by a fourth arm of `collect_review_items`. Its stored confidence STAYS 0.50.
+  Nothing about the classifier's score, its category vocabulary, or
+  `rules.py` changes, and no new wording is authored anywhere.
+Why: the mechanism has to survive the sentence people will use to describe it.
+  #800 and #814 both ask for the score to be "lifted into `[0.70, 0.85)`", and
+  that wording is wrong twice over. A lift asserts a confidence the classifier
+  does not have — 0.50 is the honest answer for a message it has no withdrawal
+  class for — and it puts the fix in the scorer, where it would move every
+  message the patterns can reach rather than the one the board contradicts.
+  What is actually wrong is not the score but WHO GETS ASKED. The precedent is
+  pinned: #166's rescue queues a 0.42 untouched, and
+  `backend/tests/test_dropped_verdict_is_logged.py` records "Note what does NOT
+  change: confidence".
+  The predicate consumes NO classifier verdict to decide "contradicts". Its
+  operands are the message's own text and a settled card's stage — written at or
+  above `AUTO_FILE_GATE`, or by a human. Reading `item.category` through
+  `CATEGORY_TO_STATUS` and comparing it to the card would ask the verdict we
+  distrust to arbitrate its own doubt.
+Moved away from: three alternatives, and the first two are cheap to rebuild.
+  (1) A `rescind|withdraw` keyword pattern in `rules.py`. This is the shape
+  `docs/CLASSIFIER_RULES_GOVERNANCE.md` refuses, and it has been refused for
+  this exact vocabulary twice — `9e013ff` ("#10 forbids inventing one from three
+  wordings written by the author of the rules") and `91838a6`, which declined to
+  add the withdrawal patterns its own measurement had just shown were missing.
+  Per #531 the grading corpus holds no rescission wordings at all, so a pattern
+  fitted here would be graded only by fixtures its own author wrote. The
+  admission arm sidesteps this by composing two families that already shipped
+  and already have controls — `rules._RETRACTION` (#417) and
+  `references_an_application` (#447) — and authoring nothing.
+  (2) Lowering `REVIEW_FLOOR`, or a score lift. Both move every message in the
+  band, and the second is what the two issues literally ask for. See above.
+  (3) Keying the withdrawal apart in `review_dedup_key` so the settled filter
+  misses it, rather than exempting it. That key is read at four sites and is the
+  shared definition of "one decision per conversation per application"; a
+  withdrawal names the same application ON PURPOSE, and giving it a different
+  identity to dodge a filter would put #454's and #630's guarantees inside this
+  change's blast radius to solve a problem that is not about identity.
+  Also decided, and pinned either way rather than left to discovery: a
+  candidate-authored "I am withdrawing my application" is DROPPED — #447's
+  phrase set describes the reader's process as a correspondent speaks of it, and
+  the user does not need to be asked to confirm their own decision. A NEGATED
+  retraction ("we will not be withdrawing the offer") is ADMITTED, which is a
+  known false positive: there is no negation facility in `rules.py` to reuse, so
+  excluding it means authoring the wording this entry just refused to author.
+  The cost is one review-queue row; nothing files and no status moves.
+Enforced by: backend/tests/test_a_withdrawal_reaches_the_queue.py. The gate of
+  record is `test_r2_a_withdrawal_reaches_the_queue_through_the_sync`, which
+  replays through the sync entrypoint and was red on this branch for BOTH of the
+  two drop sites before the fix. `test_r1_the_arm_admits_without_touching_the_score`
+  pins the confidence at 0.50, so a later rewrite into the score lift reds rather
+  than ships. `test_n1_the_same_text_with_no_live_card_is_still_dropped` is the
+  control that separates this from a keyword in a floor costume. All three were
+  demonstrated to fail by mutation.
+  What is NOT enforced: that a future arm keeps consuming no verdict. Nothing
+  can see a `CATEGORY_TO_STATUS` lookup appearing inside the predicate — for
+  that half, prose only.
+Valid while: `withdrawn` remains unreachable from mail. It is in
+  `_TERMINAL_STATUSES` and has no `EmailCategory` to come from and no
+  `_STATUS_RANK` entry to advance into (#814), so this change deliberately
+  leaves the card reading `offered` with a queue row beside it rather than
+  moving a stage it cannot legitimately set. If #814 ships a `WITHDRAWAL`
+  category and a status-transition arm, re-read this entry: the admission arm
+  becomes the second decision about the same message and one of them should go.
+  Also revisit if `contested` is ever widened past `OFFERED` — the scope is
+  argued in `applications.employers_with_a_live_offer`, not here.
+Markers: backend/jobtracker/cloud/pipeline.py, backend/jobtracker/cloud/applications.py, backend/tests/test_a_withdrawal_reaches_the_queue.py, docs/CLASSIFIER_RULES_GOVERNANCE.md

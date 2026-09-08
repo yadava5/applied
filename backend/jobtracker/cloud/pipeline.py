@@ -2311,6 +2311,13 @@ class MessageRef:
     # classifier layer actually answered instead of asserting one (#496).
     # ``None`` means the server never saw a classifier run for this message.
     method: str | None = None
+    # WHY the queue holds this message, recorded when the decision was made
+    # rather than reconstructed later (#800). Carried on the REVIEW path only —
+    # a rolled application's ref has a committed category and is not waiting for
+    # anybody. ``None`` is the ratchet's floor, the same one ``identity_role``
+    # two fields up uses: it means "this pass recorded nothing" and the writer
+    # leaves whatever is stored alone.
+    hold_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -2376,6 +2383,13 @@ class ReviewItem:
     # through review had its stored snippet ERASED — taking the role with it,
     # which is the one field per-application identity depends on.
     snippet: str = ""
+    # WHY this item is in the queue, when that is something the read path cannot
+    # work out for itself. ``None`` — the case for every route but #800's
+    # contradiction arm — means "no admission-time reason was recorded", and
+    # :func:`hold_reason` derives one at read time exactly as it always has.
+    # Only :data:`HOLD_CONTRADICTS_FILED` is ever set here; see
+    # :data:`HOLD_REASONS` for why it is the one that cannot be re-derived.
+    hold_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -5116,6 +5130,74 @@ def references_an_application(subject: str, snippet: str) -> bool:
     return bool(_APPLICATION_REFERENCE.search(text))
 
 
+def retracts_an_application(subject: str, snippet: str) -> bool:
+    """Does this message's OWN TEXT take back something about the reader's process?
+
+    ISSUE #800. Two shipped vocabularies, composed and neither of them new:
+
+    * ``classifier.rules._RETRACTION`` — "the thing this thread was about has
+      been taken back". Authored for #417, where it caps a confident wrong
+      answer; it never scores and never names a verdict.
+    * :func:`references_an_application` — #447's own-process phrase set, which
+      answers "is this about an application of YOURS?" and deliberately never
+      answers "what happened to it".
+
+    NOTHING IS AUTHORED HERE, and that is a governance requirement rather than
+    tidiness. ``docs/CLASSIFIER_RULES_GOVERNANCE.md`` records #10 refusing
+    withdrawal vocabulary TWICE (``9e013ff``, ``91838a6``) on the ground that
+    the candidate wordings were invented by the author of the rules and the
+    corpus therefore could not grade them. A third invented set would be the
+    same move a third time. Composing two families that already shipped, and
+    that already have their own controls, is the only version of this that is
+    not a new pattern.
+
+    ON ``asserted_text``, so two of the three near-misses cost nothing and need
+    no wording of their own. It strips quoted history first and then conditional
+    clauses, so "if the offer were withdrawn…" and a withdrawal the sender
+    merely QUOTES are both gone before either family is consulted. A
+    candidate-authored "I am withdrawing my application" is refused on the other
+    side of the conjunction: #447's phrase set describes the READER'S process as
+    a correspondent speaks of it ("your application", "the offer"), and the
+    reader's own possessive matches nothing in it.
+
+    WHAT THIS DOES NOT REFUSE, and it is a known false positive rather than an
+    oversight: a NEGATED retraction — "we will not be withdrawing the offer" —
+    is admitted. ``asserted_text`` handles quotes and conditionals and there is
+    no negation facility anywhere in ``rules.py`` to reuse, so excluding it means
+    AUTHORING a refutation wording from an example written by the author of this
+    change. ``docs/CLASSIFIER_RULES_GOVERNANCE.md`` refuses exactly that, twice,
+    and a corpus with no rescission wordings in it (#531) could not grade the
+    result. The cost is bounded and is the same one #447 accepts one function
+    up: ONE REVIEW-QUEUE ROW asking a person to look at a message about an offer
+    they hold. Nothing files, no status moves, ``_qualifies_for_hard_row`` is
+    untouched. The case is PINNED as admitted in the controls rather than left
+    unasserted, so a later negation handler reds that test and has to say so.
+
+    WIDER INPUT THAN #417 GAVE THE PATTERN, stated because the pattern's own
+    docstring bounds its ReDoS argument to "a span shorter than
+    ``_MIN_ASSERTED_CHARS``" and this passes it a whole snippet. Every quantifier
+    in ``_RETRACTION`` is bounded (``[^.\\n]{0,30}``) over a class excluding the
+    sentence delimiter, so the walk is linear and the claim survives the wider
+    input; it is timed on an adversarial body in
+    ``tests/test_a_withdrawal_reaches_the_queue.py`` rather than asserted here.
+
+    CARRIES NO VERDICT, exactly like both of its halves. It cannot file a row,
+    assert a status or change a score. It decides whether a human is asked.
+    """
+
+    from jobtracker.classifier.rules import _RETRACTION, asserted_text
+
+    # Subject and snippet, the same two fields #447's floor reads and the only
+    # two a cloud scan is guaranteed to hold — the body is read in flight and
+    # never retained.
+    own = asserted_text(f"{subject} {snippet}")
+    if not _RETRACTION.search(own):
+        return False
+    # The subject is already inside ``own``; passing it again would read it
+    # twice and let a phrase stripped from the body survive in the subject copy.
+    return references_an_application("", own)
+
+
 # --- WHY a message is in the review queue --------------------------------
 #
 # The queue has always shown a sentence explaining the hold. Until #507 that
@@ -5156,7 +5238,24 @@ HOLD_WHICH_APPLICATION = "which_application"
 #: Clears the gate and none of the above fits. Deliberately not folded into a
 #: neighbour: an unexplained hold is a bug, and naming it is how it surfaces.
 HOLD_GATED_OTHER = "gated_other"
+#: Under ``REVIEW_FLOOR``, kept because its OWN TEXT retracts an offer the board
+#: currently holds for this employer (#800). The only reason in this set that
+#: :func:`hold_reason` cannot compute, and the only one that is STORED rather
+#: than re-derived at read time — see :data:`HOLD_REASONS` below.
+HOLD_CONTRADICTS_FILED = "contradicts_filed"
 
+#: Every reason a queue row can carry.
+#:
+#: SEVEN OF THESE EIGHT ARE RE-DERIVED AT READ TIME by :func:`hold_reason`, from
+#: the same functions the sync used to hold the row. :data:`HOLD_CONTRADICTS_FILED`
+#: is the exception and cannot join them, because its operands MOVE: the
+#: ``OFFERED`` card that made the message a contradiction can be accepted,
+#: dismissed or advanced between the sync that admitted it and the read that
+#: describes it. Re-deriving would then explain the row as ``below_gate`` — "the
+#: classifier was unsure" — about a message admitted precisely because something
+#: else was certain. That is #507's defect (a plausible sentence in place of a
+#: true one) rebuilt one layer down, so this reason is attached at admission and
+#: persisted. See :func:`collect_review_items` and ``emails.hold_reason``.
 HOLD_REASONS: frozenset[str] = frozenset(
     {
         HOLD_NO_PROPOSAL,
@@ -5167,6 +5266,7 @@ HOLD_REASONS: frozenset[str] = frozenset(
         HOLD_NOT_FILEABLE,
         HOLD_WHICH_APPLICATION,
         HOLD_GATED_OTHER,
+        HOLD_CONTRADICTS_FILED,
     }
 )
 
@@ -5281,6 +5381,7 @@ def collect_review_items(
     dropped_out: list[DroppedVerdict] | None = None,
     known_multi: frozenset[str] = frozenset(),
     known_threads: frozenset[str] = frozenset(),
+    contested: frozenset[str] = frozenset(),
 ) -> list[ReviewItem]:
     """Return the uncertain lifecycle verdicts that need a human decision.
 
@@ -5295,7 +5396,17 @@ def collect_review_items(
         confidence. ``follow_up`` means the READER'S OWN chasing mail, which is
         why it is dropped everywhere else; a relay does not carry the reader's
         own mail, so on that sender the verdict is a category error and
-        dropping it silently loses the sender's message (#458).
+        dropping it silently loses the sender's message (#458), or
+      - its own text retracts something about the reader's process AND the
+        employer it names holds a live ``OFFERED`` card — the CONTRADICTION arm,
+        ``contested`` below and #800. Any sender, ATS or not.
+
+    ``contested`` is the employer tokens whose board currently shows an offer,
+    supplied by the caller from the same session that supplies ``known_multi``.
+    It is an ARGUMENT and not a lookup for the reason every other set here is:
+    this module does no I/O. An empty set is the safe answer and degrades this
+    function to its pre-#800 behaviour exactly, which is what a caller that
+    cannot query the board should get.
 
     Anything below the review floor, or plain ``other`` noise, is omitted. That
     drop is terminal — the one path through this module that leaves no row and
@@ -5482,9 +5593,100 @@ def collect_review_items(
             )
             or item.category == "follow_up"
         )
+        # THE CONTRADICTION ARM — issue #800, and the fourth way into this queue.
+        #
+        # A long-form offer withdrawal — one whose own text is long enough to
+        # survive quote-stripping, so #417's retraction cap never sees it —
+        # classifies ``other`` at 0.50. That is under ``REVIEW_FLOOR``, so it
+        # left by the terminal drop below: no row, no queue entry, and the offer
+        # it cancels still filed on the board. Reproduced at HEAD, and the
+        # matched patterns are the whole story:
+        #
+        #     long-form withdrawal -> OTHER 0.50  matched: ['[NEGATIVE] offer',
+        #                                                   '[NEGATIVE] offer']
+        #
+        # ADMISSION, NOT A CONFIDENCE LIFT, and the distinction is the design.
+        # DEC-010 records this choice and what it was chosen against.
+        # Both #800 and #814 propose lifting the score into ``[0.70, 0.85)``.
+        # That wording is wrong and is deliberately not built: the stored
+        # confidence STAYS 0.50, because 0.50 is what the classifier honestly
+        # believes about a message it has no withdrawal class for. What changes
+        # is WHO GETS ASKED. The precedent is #166's own rescue, which queues a
+        # 0.42 untouched, and ``tests/test_dropped_verdict_is_logged.py`` pins
+        # it: "Note what does NOT change: confidence".
+        #
+        # CONSUMES NO CLASSIFIER VERDICT TO DECIDE "CONTRADICTS". The category
+        # and confidence below are the arm's GUARD — the same routing role
+        # ``item.category == "other"`` plays in #447's clause above — and they
+        # are all they are. What makes this a contradiction is read from two
+        # places that are not the doubted verdict: the message's OWN TEXT, and a
+        # SETTLED CARD'S STAGE, written at or above ``AUTO_FILE_GATE`` or by a
+        # human. Nothing here maps ``item.category`` through
+        # ``CATEGORY_TO_STATUS`` and compares it to the card, and nothing may:
+        # deciding that a doubted verdict contradicts a filed one is asking the
+        # thing we distrust to arbitrate, which is the shape a prior measurement
+        # closed. It is also why ``_RETRACTABLE`` is not consulted — it is keyed
+        # by category, and reading it would smuggle the verdict back in.
+        #
+        # SCOPED TO ``OFFERED`` CARDS ONLY, and the boundary is written down
+        # rather than left to the caller. An offer is the one stage where the
+        # board makes a claim about something the reader HOLDS, so a retraction
+        # of it is a statement about a fact on screen. An interview-stage
+        # contradiction is rejection-shaped mail, which is a lifecycle verdict
+        # the ``dropped`` counter already sees and can already be reasoned about
+        # from stored data; widening to it is a separate decision with a
+        # different instrument behind it, and is not taken here.
+        #
+        # WHY IT NEEDS THE CARD AT ALL — this is what separates it from a
+        # keyword in a floor costume. The identical text with no live offer
+        # behind it stays dropped, because there is nothing on the board for it
+        # to contradict and no reason to ask a person about it. That control is
+        # ``N1`` in ``tests/test_a_withdrawal_reaches_the_queue.py`` and it is
+        # the assertion that would red if this ever became a wording match.
+        #
+        # STILL THE QUEUE AND NOTHING ELSE. ``_qualifies_for_hard_row`` is
+        # untouched and still requires ``AUTO_FILE_GATE``, so a message arriving
+        # by this arm cannot file a row, cannot assert a status and cannot make
+        # the board confidently wrong. It can only get a person asked — which is
+        # the right outcome, because a withdrawal is not a confident verdict
+        # about anything.
+        #
+        # UNREACHABLE AT OR ABOVE THE FLOOR, deliberately. A retraction that
+        # scores that high is #417's case, already capped and already queued,
+        # and this arm must not become a second decision about it.
+        contradicts_filed = (
+            item.category == "other"
+            and item.confidence < REVIEW_FLOOR
+            and bool(contested)
+            and retracts_an_application(item.subject, item.snippet)
+        )
+        if contradicts_filed:
+            named = resolve_employer(
+                item.sender_email, item.subject, item.sender_name
+            )
+            # THE NAMED EMPLOYER, not any employer with an offer. A decoy card
+            # at another employer must not admit this message, and the row that
+            # results must reference the card the message actually names.
+            contradicts_filed = named is not None and named[0] in contested
+        # LAST OF THE FOUR ARMS, and only when it is the one that ADMITS.
+        #
+        # The reason a row carries has to be the reason it is here. A withdrawal
+        # an ATS relayed is already kept by #166's floor, and was before #800
+        # existed; relabelling it would claim a decision that did not happen and
+        # would move 260 corpus rows off ``ats_floor`` while changing nothing
+        # about where any of them went. So the new arm is consulted only for mail
+        # every existing arm refuses — which is exactly the direct-from-recruiter
+        # remainder #800 is about, and is why the corpus delta for this change is
+        # zero rather than merely small.
+        contradicts_filed = contradicts_filed and not (
+            is_needs_review
+            or ats_floor
+            or (is_lifecycle and item.confidence >= REVIEW_FLOOR)
+        )
         if (
             not is_needs_review
             and not ats_floor
+            and not contradicts_filed
             and not (is_lifecycle and item.confidence >= REVIEW_FLOOR)
         ):
             # THE ONLY TERMINAL DROP IN THE PIPELINE, and until now a silent one.
@@ -5572,7 +5774,7 @@ def collect_review_items(
         # these is that a human can act on them.
         employer = (
             resolve_employer(item.sender_email, item.subject, item.sender_name)
-            if (is_lifecycle or ats_floor)
+            if (is_lifecycle or ats_floor or contradicts_filed)
             else None
         )
         candidate = ReviewItem(
@@ -5587,6 +5789,12 @@ def collect_review_items(
             confidence=item.confidence,
             company_display=employer[1] if employer else None,
             snippet=item.snippet,
+            # ATTACHED HERE, WHERE THE DECISION IS MADE, and carried from here
+            # to the stored row. See :data:`HOLD_REASONS` for why this one
+            # reason cannot be re-derived at read time like the other seven.
+            # ``None`` on every other route, which is what leaves those seven to
+            # :func:`hold_reason` exactly as before.
+            hold_reason=HOLD_CONTRADICTS_FILED if contradicts_filed else None,
         )
         key = review_dedup_key(
             message_id=item.message_id,

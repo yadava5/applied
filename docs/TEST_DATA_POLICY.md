@@ -27,7 +27,8 @@ That is the gap this document closes. It is not a cleanup.
 ## The rule
 
 Anything published from this repository that carries a sender address, an
-employer, a requisition number or a role title uses **invented** particulars:
+employer, a requisition number, a role title, a Gmail id, or an employer paired
+with what happened to an application to it, uses **invented** particulars:
 
 | you are writing | use |
 | --- | --- |
@@ -36,6 +37,13 @@ employer, a requisition number or a role title uses **invented** particulars:
 | a requisition number | an invented one, in a shape no real ATS issues |
 | a role title | an invented or generic one |
 | a person's name | a placeholder, or a parameter — `{display}`, `{role}` |
+| a Gmail thread id or message id | an invented one in the reserved band: `000000001a2b3c4d` — see [Reserved ids](#reserved-ids) |
+| an employer **and what happened** to an application to it | invent the employer *and* keep the outcome — see [An employer and an outcome](#an-employer-and-an-outcome) |
+
+The last two rows are #924's, and they arrived the way the first five did: not
+from a leak but from somebody reading `cloud/pipeline.py` for an unrelated
+reason and noticing that nothing in this table covered what was in front of
+them.
 
 The rule covers **fixtures, docstrings, comments, commit messages, PR bodies and
 issue bodies**, not fixtures alone. Scoping it to fixtures would have permitted
@@ -93,6 +101,103 @@ in the tree. It stays because it is a corporate no-reply robot that identifies
 a company rather than a person, and the module names say which company already.
 Written down so the next fixture on a routable domain is a decision and not a
 copy of this one.
+
+### Reserved ids
+
+A Gmail thread id and a Gmail message id are the same shape: **sixteen lowercase
+hex characters**. That shape is what makes them gateable without a denylist, and
+`scripts/check_test_data.py` reds on every one it does not already have recorded.
+
+**An id whose first eight characters are `0` is reserved for invented ids and is
+silent.** Write one when a fixture, a docstring or a comment needs an id:
+
+> `000000001a2b3c4d`, `000000005e6f7a8b` — vary the tail for distinct ids in the
+> same fixture.
+
+Be exact about what kind of claim that is, because it is **not** the kind
+[Reserved domains](#reserved-domains) makes and reading it as the same thing
+would be a mistake in the direction of over-trusting it. `.test` cannot route
+because IANA reserves it, and nothing in this repository could change that. An
+id does not route at all; there is no such property to assert. The band is
+trustworthy for a different reason:
+
+> **The gate reds on every id-shaped token outside the band, so a token inside it
+> can only be one somebody invented.** The convention enforces itself. That is a
+> weaker claim than an RFC and a sufficient one, and it holds only for as long as
+> the ratchet does — which is the argument for the gate, not against the band.
+
+**The ledger is not an accusation, and the wording matters.** The `ids` section
+counts sixteen-hex tokens outside the band. It **cannot** tell one copied out of
+a mailbox from one a fixture author invented before the band existed, and several
+of the recorded files are certainly the latter. So a line there means "an
+id-shaped token that is not in the reserved band" and nothing more — the same
+sentence [What is already clean](#what-is-already-clean) makes about the address
+arm: *the baseline is a ledger of address-shaped runs, not an accusation.* What
+the ratchet guarantees is narrower and is enough: the set cannot move without a
+commit that says so.
+
+The empirical half, measured across all 26 files the id ledger records: of the
+**62 distinct id-shaped tokens** already in this tree, not one begins with even a
+single zero. The band was unoccupied, so adopting it renamed nothing and
+grandfathered nothing.
+
+(That figure is 62 and not the 47 an earlier draft of this section carried. The
+47 came from a seven-file sample taken while the shape was still being chosen,
+and it was re-derived over the whole ledger before this shipped. The property it
+is cited for holds either way, which is exactly why a number like this drifts
+unnoticed.)
+
+The limit, stated rather than assumed, in the same spirit as [Why a digest is
+allowed where a literal is not](#why-a-digest-is-allowed-where-a-literal-is-not):
+a real id could land in the band about once in four billion, and the gate would
+stay silent on it. That is a far smaller hole than the one the band closes, and
+without the band there would be no way to write an id at all — every new fixture
+would red, the baseline would be re-recorded by reflex, and a ratchet nobody
+trusts is a ratchet nobody reads.
+
+**An id is opaque and that is not the same as harmless.**
+`backend/tests/corpus_independent/observed.py` is right that a thread id means
+nothing without the account's OAuth, and #924 is right that this is therefore
+not an incident. It is still job-search information about one identifiable
+person, published, in the same category as the requisition numbers #593 found —
+and the reason to gate it is the one that has always applied here: it
+accumulated by precedent, because there was no rule to cite.
+
+### An employer and an outcome
+
+**A separate category, and the answer to #924's fourth question is yes.** An
+employer paired with what happened to an application to it — "this employer's
+subject cleared the floor, that one's did not"; "this thread holds four
+applications" — is not a sender address, not a requisition number, not a role
+title and not an id. Nothing in the five rows above covered it, and it is the
+part of this material that is **not opaque**. An id is meaningless without the
+mailbox. A company name beside an outcome publishes which companies one
+identifiable person applied to and how each one went, to anyone who can read.
+
+The substitute is not simply "use an invented company", because the pairing is
+the unit:
+
+- you may **not** keep the real employer on the grounds that the outcome is
+  generic — the employer is the identifying half; and
+- you may **not** keep the real outcome on the grounds that the employer is
+  invented — an outcome attached to a real name is the disclosure whichever way
+  round it was written.
+
+Invent the employer from the row above and keep the **argument**, exactly as
+[When the real message is the only
+evidence](#when-the-real-message-is-the-only-evidence) already requires. The
+arguments this material is load-bearing for survive the substitution intact,
+because none of them is about which companies these were: "one ATS relay's
+subject happened to contain a confirmation phrase and another's did not" is the
+whole of #166's knife-edge, and Northwind Systems and Halberd carry it as well
+as the real pair do.
+
+**Nothing gates this and nothing can.** A company name beside an outcome has no
+shape — it is prose, and a text scan cannot tell it from any other prose. This
+is the same admission the table already makes about requisition numbers and role
+titles, and it is worth making loudly here because the id gate sits right next
+to it and could be mistaken for covering it. See [What the gate does not
+check](#what-the-gate-does-not-check), where the live instance is named.
 
 ### The shape to copy
 
@@ -185,6 +290,19 @@ Three reasons, and the first is the one that settles it:
    `backend/jobtracker/classifier/rules.py`) as well as in tests. Sanitising the
    tests while the values remain in the code they test leaves the material
    published and the repository looking as though the question was handled.
+
+**#924 is recorded under this section and not cleaned up, and the first reason
+above is why.** The ids in `cloud/pipeline.py` and `classifier/rules.py` date to
+2026-08-10 and later, months before the rule existed; deleting them forward
+removes nothing from git history or from any fork, and the comments they sit in
+are the evidence for #454's dedupe key and #166's snippet knife-edge. So they are
+in the `ids` ledger, where a change to them is visible, and the working tree
+keeps them. What #924 buys is that the **next** one cannot be added silently.
+
+One consequence of recording rather than cleaning: `backend/tests/corpus_independent/`
+holds the largest single group of these, and it is baselined without being
+touched. If its ids move for an unrelated reason the result is a loud red and one
+`--write-baseline`, which is the ratchet working rather than a problem with it.
 
 Whether to scrub properly — a history rewrite, which breaks every open PR and
 cannot un-index what is already served — is the owner's decision and is
@@ -381,6 +499,57 @@ For each file it records two things: the **count** of addresses whose domain is
 not reserved, by occurrence, and a **digest** — a truncated SHA-256 over the
 sorted, lower-cased, de-duplicated set of those addresses.
 
+### Two arms, two ledgers
+
+Since #924 the same walk answers a second question, and the baseline has a
+second section, `ids`, recorded and ratcheted exactly like `files`: the count and
+digest of the **Gmail thread and message ids** in each file that are not in the
+[reserved band](#reserved-ids). Every sentence in this section applies to it
+unchanged — a count up, a count down, a new file, a cleared file, a same-count
+swap, all fail, in either direction.
+
+Three things about the second arm are worth knowing before they surprise you.
+
+**The shape is not `[0-9a-f]{16}` on its own, and the measurement is why.** A
+bare sixteen-hex pattern found 341 tokens on a pristine tree, and **91 of them
+were the fractional digits of a float** — `0.9166666666666666` ends in sixteen
+decimal digits, and decimal digits are hex digits. Every hit under `mlruns/` and
+every hit in `backend/data/evaluation/` was one of those. So the pattern also
+requires no hex character on either side, which is what keeps a 32-character
+MLflow run id and a 64-character SHA-256 from being read as their own first
+sixteen characters, and no `<digit>.` in front, which is what a float's fraction
+always has. Note what that corrects: **there were never any MLflow run ids in
+range** — a run id is 32 characters and never matched. The floats inside the
+artifacts did.
+
+**The alternative rule is named because somebody will propose it**: require at
+least one `a`–`f`, which also drops every float. On this tree the two rules are
+indistinguishable — both leave 250 tokens across 27 files — and they are not the
+same rule. Roughly one real id in 1,800 is all-decimal, and the letter rule would
+be blind to that one forever while printing green.
+`backend/tests/test_test_data_gate.py` carries the input that separates them, so
+the choice is pinned rather than incidental.
+
+**Its cost, stated rather than discovered later.** Keeping all-decimal tokens
+visible means two shapes red that are not ids, and both have a one-line remedy:
+an abbreviated git SHA cut to *exactly* sixteen characters (use 7, or the full
+40), and a **microsecond-precision Unix timestamp**, which is exactly sixteen
+digits and is the false positive this rule buys where the letter rule would not
+have. Neither is a reason to change the rule — write the value some other width,
+or record the line on purpose — but a reader meeting one should know it is
+expected rather than a bug.
+
+**One path is outside this arm, and it is a fixed point rather than a
+judgement**: `scripts/test_data_baseline.json` itself. A digest *is* sixteen
+lowercase hex characters, so scanning the baseline would mean recording a count
+of its own digests, which writes another digest, which moves the count — measured,
+the write path goes 276, then 277, and a check run straight after a write fails.
+It would also couple the arms, so that every address re-record moved the id
+ledger. That exclusion lives in `ID_EXCLUDED`, a **separate list from
+`EXCLUDED`** and applied to the id arm alone: an entry in `EXCLUDED` filters the
+file list and would silently narrow the address scan too. `EXCLUDED` is still
+empty, and the claim above that it is empty is still true.
+
 **Any divergence from the baseline fails, in either direction:** a count up, a
 count down, a scanned file that the baseline does not list, a baselined file
 that has gone to zero, a file whose count is unchanged while its digest is not,
@@ -493,10 +662,18 @@ them at all.
 
 ### What the gate does not check
 
-- **It only sees addresses.** A real requisition number, a real subject line or
-  a real role title carries no `@` and is invisible to it. The gate measures one
-  shape well; the rule above is wider than the gate, on purpose, and review is
-  what covers the difference.
+- **It sees two shapes, not five.** A real requisition number, a real subject
+  line or a real role title carries neither an `@` nor sixteen hex characters and
+  is invisible to it. The gate measures two shapes well; the rule above is wider
+  than the gate, on purpose, and review is what covers the difference.
+- **An employer paired with an outcome is prose, and no scan will ever see it.**
+  This is the sharpest instance of the line above, and it has a live example, so
+  it is named rather than left abstract: `backend/jobtracker/cloud/pipeline.py`
+  states which of two named employers' mail cleared the review floor and which
+  was lost. **Those lines carry no hex token and no `@`** — the id arm added
+  directly beneath them is structurally blind to them. Nothing mechanical will
+  catch the next one. See [An employer and an
+  outcome](#an-employer-and-an-outcome) for what to write instead.
 - **An interpolated local part over a literal domain is read now** (#619). A
   template whose local part interpolates over a spelled-out domain used to be
   invisible from both sides at once: the run after the `@` holds no marker, so
@@ -570,6 +747,17 @@ separate code path:
 | a tracked file whose bytes are not UTF-8 | skipped, and red until the skip is recorded |
 | a file that WAS scanned and stops decoding | `--write-baseline` refuses to record it |
 | a path named in `EXCLUDED` | not scanned |
+| an out-of-band id in a brand-new file | red |
+| an out-of-band id added to a file the id baseline already lists | red |
+| a same-count id swap | red |
+| an id count going down, and a listed file going to zero | red |
+| an id in the reserved band | green |
+| an all-decimal, non-fraction sixteen-digit token | red — the case that separates the shape rule from "must contain a letter" |
+| `0.` followed by sixteen digits | green — a float's fraction is not an id |
+| a 32- and a 64-character hex run | green — never read as their own first sixteen |
+| `0x` followed by sixteen hex characters | green |
+| a pre-#924 baseline with no `ids` section | refused, not half-read |
+| the same ids reordered, re-cased or duplicated | green |
 
 The green rows are not padding. A gate that reddened on `careers@halberd.test`
 would punish the shape this document tells you to write. It nearly did: review
