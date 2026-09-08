@@ -13,16 +13,30 @@ it. Read `Enforced by: nothing enforces this; prose only` as exactly what it
 says: the decision holds by agreement and a future change can undo it silently.
 
 `scripts/check_decisions.py` (workflow: `.github/workflows/decisions.yml`)
-refuses a record that has gone stale in the three ways a script can see: an
-entry missing a field, an `Enforced by:` citing a file that no longer exists,
-and a `DEC-nnn` marker in the tree with no entry here or an entry whose marker
-is gone from the file it names. It runs on every pull request.
+refuses a record that has gone stale in the four ways a script can see: an
+entry missing a field, an `Enforced by:` citing a file that no longer exists, a
+gap in the id sequence, and a `DEC-nnn` marker in the tree with no entry here,
+or an entry whose marker is gone from the file it names, or a file naming an id
+that no entry claims. It runs on every pull request.
+
+**`Markers:` lists every tracked file that names the id — not only the sites
+the decision caused.** That is a deliberately wide reading, and #950 is why. A
+file naming a number no entry claims is indistinguishable, to any script, from
+the wreckage of a collision: two branches allocated `DEC-009` independently,
+and resolving the merge by keeping either entry left the other's three marker
+sites resolving to somebody else's decision, with the gate green. Requiring
+every occurrence to be claimed makes that loud. Where a file names an id to
+explain why the decision does **not** apply to it, list it anyway and say so in
+a parenthetical — the gate reads the paths and ignores the prose.
 
 **Three things it cannot see, stated so nobody mistakes this file for cover:**
 
 1. A decision nobody wrote down. This file cannot notice its own gaps.
 2. A reversal that edits the code *around* a surviving marker — the marker
    stays true about where it is and becomes false about what it claims.
+   Registration narrows this but does not close it: a marker whose file is
+   correctly claimed, and whose surrounding code has been reversed, still
+   resolves. Only a reader catches that one.
 3. Whether the prose is still accurate. That is what `Valid while:` is for: it
    names the condition a reader can check in one minute, years later, instead
    of taking the entry on trust.
@@ -231,7 +245,7 @@ Enforced by: .github/workflows/booklet.yml enforces the byte-for-byte half.
 Valid while: the built System Card is committed under `apps/web/public/` and
   served directly. If it is ever built at deploy time, the drift class and this
   entry go with it.
-Markers: .github/dependabot.yml, .github/workflows/booklet.yml
+Markers: .github/dependabot.yml, .github/workflows/booklet.yml, scripts/complete-booklet-bump.sh
 
 ## DEC-007 — `ix_emails_review_queue` is kept unused rather than dropped, and the migration that created it is corrected in place
 
@@ -324,4 +338,4 @@ Valid while: the employer map keys on bare registrable domains and is matched
   with `rules.domain_matches`. If it ever moves to full hostnames, or is
   derived rather than written out, re-read this entry: the reason a reserved
   substitute asserts nothing is that the key is a real registration.
-Markers: docs/TEST_DATA_POLICY.md
+Markers: docs/TEST_DATA_POLICY.md, scripts/cross_engine_differential.py
