@@ -61,7 +61,18 @@ even when both messages sit on the wrong cards:
   ``_persist_review_items_additive``, because the sync had already settled this
   message's (thread, application). Reaching NOTHING for a designed reason is
   still a different thing from reaching nothing, so it gets its own bucket and
-  stays out of ``total``. It reads 0 on this corpus; see ``BoardScore``.
+  stays out of ``total``. It read 0 until the corpus gained families that put a
+  queued message on a thread AND an identity something already answers for
+  (#630, #614); it is 140 now, and the three families that make it up are named
+  in ``RECORDED``. Before them the filter ran on every batch and never bit.
+
+* **SETTLED BY A STANDING INSTRUCTION** — the USER's own decision took it off
+  the board, in the two shapes a decision has: filed on a card they dismissed by
+  hand, or reviewed into a category that files nothing. Both pass ``LOST``'s
+  test — no live card, no queue, no counter — and both are its opposite, because
+  a person saw the mail and chose. Kept apart from ``LOST`` because the row still
+  exists and ``restore_application`` brings a dismissed card's mail back, while
+  mail arriving AFTER a dismissal has no row to restore. Out of ``total``.
 
 * **WRONG COMPANY / WRONG ROLE** — the card holds the right mail and is NAMED
   after something else. Everything above this line is about which messages
@@ -98,10 +109,12 @@ from sqlmodel import select
 from jobtracker.classifier.rules import RulesClassifier
 from jobtracker.cloud import pipeline
 from jobtracker.cloud.applications import (
+    DISMISSED_BY_USER,
     Application,
     Email,
     _not_filed_on_an_application_that_answers,
     classify_review_item,
+    dismiss_application,
     employers_with_several_applications,
     reconcile_orphaned_classifications,
     sync_gmail_pipeline_additive,
@@ -113,6 +126,20 @@ from jobtracker.database.models import EmailCategory
 from .generate import Case, snippet_of
 
 _USER = uuid.UUID("00000000-0000-0000-0000-00000000c0de")
+
+#: THE OTHER MAILBOX (#614). Fixture, not a second subject: it exists so that
+#: the owner's board has a stranger's settled mail to NOT be answered by.
+#:
+#: The corpus generated one user until now, and a one-user corpus cannot fail a
+#: ``user_id``-scoped predicate — every such clause is true by construction, so
+#: removing one moves no number and nothing asserts the scoping. Cases carrying
+#: ``Case.user_slot == 1`` sync here, on the SAME thread ids as the owner's, so
+#: the only thing standing between this mailbox's settled rows and the owner's
+#: arriving refs is the scoping clause itself.
+_USER_B = uuid.UUID("00000000-0000-0000-0000-0000000b0b0b")
+
+#: Slot -> mailbox. ``Case.user_slot`` says WHICH mailbox; this says what one is.
+_USERS = (_USER, _USER_B)
 
 #: One classifier for the whole run. Constructing it per message would dominate
 #: the wall clock and measure nothing.
@@ -444,20 +471,105 @@ class Replay:
     #: recorded verdict falls to the non-offer bucket and the SUM — which is all
     #: those fixtures read — is unaffected.
     verdict: dict[str, str] = field(default_factory=dict)
+    #: Every id the sync HANDED to :func:`_persist_review_items_additive`, over
+    #: the whole replay.
+    #:
+    #: REACH, SEPARATELY FROM OUTCOME, and the two are not the same claim. A
+    #: message that never became a review ref and a message that became one and
+    #: was refused both end up in no queue and no card, and from the outcome
+    #: alone they are indistinguishable — so a family whose wording quietly
+    #: stopped clearing ``REVIEW_FLOOR`` would empty itself and read exactly
+    #: like a settled filter that did not bite. ``replay`` already computed this
+    #: per batch to derive ``suppressed`` and threw it away; keeping it lets a
+    #: test assert a case ARRIVED at the filter before asserting what the filter
+    #: did with it.
+    offered: set[str] = field(default_factory=set)
+    #: Messages the USER'S OWN DECISION took off the board, in the two shapes a
+    #: decision has. Read back from the database, never replayed from the
+    #: standing instructions — so a dismissal the product silently declined
+    #: shows up here as an absence rather than as a claim.
+    #:
+    #:   * filed on a card the user dismissed by hand. The row is still there
+    #:     and ``restore_application`` brings the card and every one of its
+    #:     messages back; what the dismissal removes is the CARD, not the mail.
+    #:   * reviewed by the user into a category that files nothing —
+    #:     ``is_reviewed`` set with ``application_id`` still NULL. The product
+    #:     asked, a person answered, and the answer was "not this".
+    #:
+    #: NOT LOST, and the distinction is the whole reason this field exists.
+    #: ``lost``'s test is "no live card, no queue, no counter", and BOTH shapes
+    #: pass it while being the opposite of a message that vanished — the user
+    #: saw them and chose. Mail that arrives AFTER a dismissal gets no row at
+    #: all and has nothing to restore; that is what ``lost`` is for. Folding the
+    #: two together would make most of #614's headline number mail the product
+    #: handled exactly as asked.
+    settled_by_a_standing_instruction: set[str] = field(default_factory=set)
 
 
-async def _stored(session, message_ids: list[str]) -> set[str]:
+
+async def _stored(session, message_ids: list[str], user=_USER) -> set[str]:
     """Which of these messages the database holds a row for, right now."""
 
     return set(
         (
             await session.exec(
                 select(Email.message_id).where(
-                    Email.user_id == _USER, Email.message_id.in_(message_ids)
+                    Email.user_id == user, Email.message_id.in_(message_ids)
                 )
             )
         ).all()
     )
+
+
+async def _carry_out(session, user, cases: list[Case]) -> None:
+    """Do what the user said they would, once their sync has run.
+
+    THE CORPUS HAD NO VOCABULARY FOR A USER ACTION UNTIL #614, and that absence
+    is what made two defect classes ungradeable. ``dismissed_at`` is written by
+    :func:`dismiss_application` and by a re-sync; ``is_reviewed`` is written by
+    :func:`classify_review_item` and ``_settle_thread_siblings``. A replay that
+    only ever delivers mail reaches none of them, so every generated row had
+    ``dismissed_at IS NULL`` and ``is_reviewed = false`` forever, and both
+    predicates that read them were satisfied by construction.
+
+    THROUGH THE PRODUCT'S OWN FUNCTIONS, never by writing the state. Setting
+    ``dismissed_reason`` on a row by hand would be this harness approximating a
+    production input instead of calling one — a shape this corpus has already
+    paid for three times, most recently in the identity layer — and it would
+    make the resulting number a property of the fixture rather than of the
+    product. ``dismiss_application`` is what the endpoint calls;
+    ``classify_review_item`` is what the review queue calls.
+
+    Run BETWEEN day-batches, which is the other half of the point. Production
+    interleaves — sync, a person acts, more mail arrives, sync again — and this
+    harness answered the queue exactly once, after the last day. So no batch
+    ever ran against a board a human had touched, and the ``is_reviewed`` arm of
+    the additive persist's settled test could not fire at all.
+    """
+
+    for case in cases:
+        if case.standing_instruction == "dismiss":
+            # The card THIS message opened, found the way anything else here
+            # finds it: through the row its mail is filed on.
+            row = (
+                await session.exec(
+                    select(Email.application_id).where(
+                        Email.user_id == user,
+                        Email.message_id == case.message_id,
+                    )
+                )
+            ).first()
+            if row is not None:
+                await dismiss_application(session, user, row)
+        elif case.standing_instruction == "answer_other":
+            # `other` files nothing, which is the arm that matters: it leaves
+            # `is_reviewed` set with `application_id` still NULL, and those two
+            # facts are exactly what the #596 spelling and the current one
+            # disagree about.
+            await classify_review_item(
+                session, user, case.message_id, EmailCategory.OTHER, None
+            )
+    await session.flush()
 
 
 async def replay(session, verdicts: list[Verdict]) -> Replay:
@@ -517,33 +629,53 @@ async def replay(session, verdicts: list[Verdict]) -> Replay:
 
     dropped: set[str] = set()
     suppressed: set[str] = set()
+    offered_all: set[str] = set()
     synced = SyncTotals()
     for day in sorted(by_day):
-        batch = [_item(v) for v in by_day[day]]
-        known_multi = await employers_with_several_applications(session, _USER)
-        known_threads = await threads_naming_one_application(session, _USER)
-        rolled = pipeline.roll_up_applications(batch, known_multi, known_threads)
-        fell_out: list[pipeline.DroppedVerdict] = []
-        review = pipeline.collect_review_items(
-            batch, fell_out, known_multi, known_threads
-        )
-        dropped.update(d.message_id for d in fell_out)
-        # UNCONDITIONALLY, including on a day whose mail rolls up to nothing and
-        # asks nothing. That is a sync a user really makes — the auto sync runs
-        # on a schedule, not on there being something to find — and it is the
-        # only way the per-batch catch-up and the emptied-row dismissal get the
-        # chance production gives them. The old loop skipped both.
-        offered = [r.message_id for r in review]
-        synced.add(
-            await sync_gmail_pipeline_additive(session, _USER, rolled, review)
-        )
-        if offered:
-            suppressed |= set(offered) - await _stored(session, offered)
+        # SPLIT BY MAILBOX, and the owner's is synced FIRST every day so the
+        # ordering is a property of the harness rather than of dict iteration.
+        # Two mailboxes are two syncs: `sync_gmail_pipeline_additive` takes one
+        # `user_id`, and handing it another user's mail is not a thing any
+        # entrypoint can do.
+        per_user: dict[int, list[Verdict]] = defaultdict(list)
+        for v in by_day[day]:
+            per_user[v.case.user_slot].append(v)
+        for slot in sorted(per_user):
+            user = _USERS[slot]
+            batch = [_item(v) for v in per_user[slot]]
+            known_multi = await employers_with_several_applications(session, user)
+            known_threads = await threads_naming_one_application(session, user)
+            rolled = pipeline.roll_up_applications(batch, known_multi, known_threads)
+            fell_out: list[pipeline.DroppedVerdict] = []
+            review = pipeline.collect_review_items(
+                batch, fell_out, known_multi, known_threads
+            )
+            # UNCONDITIONALLY, including on a day whose mail rolls up to nothing
+            # and asks nothing. That is a sync a user really makes — the auto
+            # sync runs on a schedule, not on there being something to find —
+            # and it is the only way the per-batch catch-up and the emptied-row
+            # dismissal get the chance production gives them.
+            offered = [r.message_id for r in review]
+            result = await sync_gmail_pipeline_additive(session, user, rolled, review)
+            # THE OWNER'S NUMBERS ARE THE OWNER'S. The other mailbox is a
+            # fixture; summing its syncs into `SyncTotals`, its drops into
+            # `dropped` or its refusals into `suppressed` would put a stranger's
+            # mail inside figures the README publishes about this board.
+            if slot == 0:
+                synced.add(result)
+                dropped.update(d.message_id for d in fell_out)
+                offered_all |= set(offered)
+                if offered:
+                    suppressed |= set(offered) - await _stored(session, offered, user)
+            # WHAT THE USER DOES NEXT, after this mailbox's sync and before the
+            # next day's. See :func:`_carry_out`.
+            await _carry_out(session, user, [v.case for v in per_user[slot]])
 
     return await _read_the_board(
         session,
         dropped,
         suppressed,
+        offered_all,
         synced,
         {v.case.message_id: v.category for v in verdicts},
     )
@@ -553,6 +685,7 @@ async def _read_the_board(
     session,
     dropped: set[str],
     suppressed: set[str],
+    offered: set[str],
     synced: SyncTotals,
     verdict: dict[str, str],
 ) -> Replay:
@@ -609,6 +742,36 @@ async def _read_the_board(
     # A dismissed row is not on the board; counting one would report a card the
     # user cannot see.
     live = [r for r in rows if r.dismissed_at is None]
+    # MAIL ON A CARD THE USER REMOVED BY HAND. Read off the board — the rows
+    # carry ``dismissed_reason`` and the emails carry the link — rather than
+    # replayed from the standing instructions, so this says what the DATABASE
+    # holds and not what the harness believes it asked for. A dismissal the
+    # product silently declined would show up here as an absence.
+    #
+    # `_is_hand_dismissed`'s spelling, not `dismissed_at IS NOT NULL`: a
+    # re-sync dismissal is a different act with a different meaning, and this
+    # corpus produces none of them (`RECORDED_SYNC["purged"]` is 0). If one ever
+    # appears, it must not be quietly counted as a user's decision.
+    removed_by_hand = {
+        r.id
+        for r in rows
+        if r.dismissed_at is not None and r.dismissed_reason == DISMISSED_BY_USER
+    }
+    # THE SECOND SHAPE: the user answered and the answer filed nothing. Asked
+    # of the database rather than derived from `Case.expected_category`, which
+    # is ground truth about the MAIL and says nothing about what a person did
+    # with it.
+    answered_nowhere = set(
+        (
+            await session.exec(
+                select(Email.message_id).where(
+                    Email.user_id == _USER,
+                    Email.is_reviewed == True,  # noqa: E712 — SQL boolean
+                    Email.application_id.is_(None),
+                )
+            )
+        ).all()
+    )
     return Replay(
         groups=[
             (f"row{r.id}:{r.company}", sorted(filed.get(r.id, []))) for r in live
@@ -616,6 +779,11 @@ async def _read_the_board(
         reviewed=set(queued),
         dropped=dropped,
         suppressed=suppressed,
+        offered=offered,
+        settled_by_a_standing_instruction=(
+            {mid for rid in removed_by_hand for mid in filed.get(rid, [])}
+            | answered_nowhere
+        ),
         synced=synced,
         status={
             f"row{r.id}:{r.company}": getattr(r.status, "value", str(r.status))
@@ -818,6 +986,7 @@ async def answer_the_queue(
         session,
         replayed.dropped,
         replayed.suppressed,
+        replayed.offered,
         replayed.synced,
         replayed.verdict,
     )
@@ -1012,6 +1181,26 @@ class BoardScore:
     #: as "does not reproduce". The reproducing edit replaces the key with
     #: ``thread_id`` at both sites.
     suppressed_as_settled: int = 0
+    #: Mail the USER'S OWN DECISION took off the board (#614).
+    #:
+    #: THE SIXTH OUTCOME, and it exists so that the fifth one means something.
+    #: When the user says "not an application", the card leaves the board and
+    #: its mail stays linked to it; when they answer a queue item "not this",
+    #: the row is reviewed and files nothing. Both are on no LIVE card, in no
+    #: queue and under no floor, which is `lost`'s test exactly — and both are
+    #: the opposite of a message that vanished, because a person saw them.
+    #:
+    #: Mail that arrives AFTER a dismissal has no row to restore at all, because
+    #: `upsert_applications_for_user` `continue`s on a user-dismissed row before
+    #: `_persist_message_refs` runs. THAT is `lost`, and separating the two is
+    #: what stops most of #614's headline number being mail the product handled
+    #: exactly as asked.
+    #:
+    #: Outside `total`, like `suppressed_as_settled` and `update_held_for_review`:
+    #: a designed outcome is counted so it is visible, never so it reads as a
+    #: defect. Whether a hand dismissal SHOULD swallow later mail is a product
+    #: question that follows this number rather than one the scorer settles.
+    settled_by_a_standing_instruction: int = 0
     failures: list[Failure] = field(default_factory=list)
 
     @property
@@ -1128,6 +1317,12 @@ def _overstates(
 def score_board(
     replayed: Replay, cases: list[Case]
 ) -> BoardScore:
+    # THE OWNER'S MAIL ONLY. `replayed` reads the owner's board, so scoring a
+    # case that was never synced to it would count a stranger's message as
+    # having reached nothing and report it as LOST — a fixture inventing a
+    # defect. The other mailbox is graded by its own assertions; see
+    # `_USER_B` and the `another-mailbox-cannot-settle-mine` family.
+    cases = [c for c in cases if c.user_slot == 0]
     groups = replayed.groups
     by_mid = {c.message_id: c for c in cases}
     score = BoardScore(cards=len(groups))
@@ -1460,14 +1655,21 @@ def score_board(
 
     # ── every application mail is addressed ──────────────────────────────────
     #
-    # FIVE OUTCOMES, ALL COUNTED, because four of them used to be a `continue`.
+    # SIX OUTCOMES, ALL COUNTED, because four of them used to be a `continue`.
     # A message that must be addressed is on a card, in the queue, suppressed by
-    # the additive persist, dropped under the floor, or lost — and the first two
-    # were invisible here, which left `lost` and `dropped` as leftovers with no
-    # denominator. The five are asserted to close against a population counted
-    # from `cases` rather than from a counter this loop increments; a
-    # denominator this loop maintains would fall with the buckets and the
-    # closure could not fail.
+    # the additive persist, on a card the user removed by hand, dropped under
+    # the floor, or lost — and the first two were invisible here, which left
+    # `lost` and `dropped` as leftovers with no denominator. The six are
+    # asserted to close against a population counted from `cases` rather than
+    # from a counter this loop increments; a denominator this loop maintains
+    # would fall with the buckets and the closure could not fail.
+    #
+    # THE SIXTH ARRIVED WITH #614's DISMISSAL FAMILY. Before it, no generated
+    # application was ever dismissed, so "on a card the user removed" was a
+    # state no case could be in and five buckets closed. Ordered ABOVE the
+    # lost/dropped fall-through on purpose: a message on a removed card passes
+    # `lost`'s test — no live card, no queue, no counter — and would otherwise
+    # be counted as mail that vanished when it is mail the user put away.
     for case in cases:
         if not case.must_be_addressed:
             continue
@@ -1476,6 +1678,20 @@ def score_board(
             continue
         if case.message_id in replayed.reviewed:
             score.addressed_in_the_queue += 1
+            continue
+        if case.message_id in replayed.settled_by_a_standing_instruction:
+            score.settled_by_a_standing_instruction += 1
+            score.failures.append(
+                Failure(
+                    mode="SETTLED-BY-A-STANDING-INSTRUCTION",
+                    family=case.family,
+                    detail=(
+                        "the user's own decision took it off the board: a card "
+                        "they dismissed, or an answer that files nothing"
+                    ),
+                    message_ids=(case.message_id,),
+                )
+            )
             continue
         if case.message_id in replayed.suppressed:
             # Recorded as a Failure so `rank` can name the FAMILIES being
