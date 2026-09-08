@@ -75,6 +75,29 @@ body, with no ``asserted_text`` mask, no quoted-history strip and no reflow,
 where ``rules.py`` and ``rulesLayer.ts`` both mask first. Two engines reading
 the same patterns through different preprocessing are not the same classifier.
 
+SEVEN REAL RELAY DOMAINS APPEAR IN THE BAIT CORPUS, UNDER DEC-008 AND NOT BY
+HABIT. ``docs/TEST_DATA_POLICY.md`` licenses a routable sender domain only where
+the code KEYS ON THAT EXACT DOMAIN, so a reserved substitute would assert
+nothing, and only where the fixture names the ``file:line`` it keys on. Both
+conditions hold here and this paragraph is the second one:
+
+  * ``rules.ATS_DOMAINS`` (``backend/jobtracker/classifier/rules.py:1139``) is
+    the closed list, matched by ``is_ats_sender`` (``:1520``) through
+    ``domain_matches`` (``:1576``); the TypeScript mirror is
+    ``apps/web/lib/demo/rulesLayer.ts:568``.
+  * The anchoring is the point (#651): a listed domain or a PROPER subdomain,
+    never a host that merely contains the name. ``xgreenhouse.io`` is
+    registrable by a stranger and ``endsWith(a)`` without the leading dot
+    accepts it, so the near-miss can only be written with the real string --
+    ``cedarhollow.example`` cannot express "ends with the listed name but is
+    not a subdomain of it".
+  * ``myworkday.com`` is in the list on its own account; it does not end with
+    ``.workday.com``, which is exactly what makes the entry load-bearing.
+
+No employer is real: every one is ``cedarhollow.example`` or a subdomain of it.
+What is real is the RELAY, which identifies an applicant tracking vendor rather
+than a person, and which the scoring keys on by name.
+
 The concrete instance, confirmed on this tree and owned by #928:
 ``be in touch (soon|shortly|if)`` is present in all three ports here. The ``if``
 arm is DEAD in Python and TypeScript, because the mask removes the conditional
