@@ -306,3 +306,56 @@ def test_both_parts_are_decoded_when_the_budget_allows(
 
     assert len(calls) == 2, calls
     assert "SENTINELSECONDPART" in out
+
+
+@pytest.mark.parametrize(
+    ("label", "unit"),
+    [
+        ("ascii, 1 byte per character", "A"),
+        ("cjk, 3 bytes per character", "日"),
+        ("supplementary plane, 4 bytes", "\U0001d11e"),
+    ],
+)
+def test_the_pre_decode_cut_delivers_the_budget_in_characters(
+    label: str, unit: str
+) -> None:
+    """The budget is in CHARACTERS and the base64 arithmetic is in BYTES.
+
+    The first version of the cut read ``4 * ceil(budget / 3)`` — "3 bytes in,
+    4 base64 characters out" — and then treated one byte as one character,
+    which holds only for ASCII. Probed against the shipped function at a budget
+    of 1,000 it returned 334 characters for CJK and 251 for a supplementary
+    plane character: a third and a quarter of what was asked for.
+
+    At the shipped constants that could not starve the 4,000-character output,
+    so it was latent rather than live — which is exactly why it needs a test.
+    It becomes real the moment either constant moves, and nobody re-derives
+    this arithmetic when they change a number.
+
+    Parametrized by BYTES PER CHARACTER because that is the variable the bug
+    was in. One encoding cannot distinguish the broken formula from the right
+    one: the ASCII arm passes under both.
+    """
+
+    budget = 1_000
+    text = unit * 20_000
+    got = gc._decode_part(_plain(text), budget)
+
+    assert len(got) >= budget, (label, len(got))
+    # And it is a genuine prefix, not padding to reach the number.
+    assert text.startswith(got.rstrip("�")), label
+
+
+def test_the_cut_never_changes_the_characters_before_it() -> None:
+    """A severed multibyte sequence must shorten the result, never corrupt it.
+
+    ``errors="replace"`` is what makes this true, and it is worth asserting
+    rather than trusting: the alternative is a byte-level cut that silently
+    moves a character the classifier then matches against.
+    """
+
+    text = ("aé日\U0001d11e" * 12_000)
+    full = gc._decode_part(_plain(text), 10**9)
+    for budget in (1, 3, 4, 100, 1_001, 4_096):
+        cut = gc._decode_part(_plain(text), budget)
+        assert full.startswith(cut.rstrip("�")), (budget, cut[:40])

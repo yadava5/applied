@@ -1021,12 +1021,28 @@ def normalise_body_text(text: str) -> str:
 def _decode_part(part: dict, budget: int = _MAX_RAW_BODY_CHARS) -> str:
     """Decode one MIME part's base64url body to text, or "" if undecodable.
 
-    ``budget`` is how many decoded characters the caller can still use. The
-    base64 payload is cut to the smallest multiple of four that can yield that
-    many characters BEFORE it is decoded — bounding the work rather than its
-    result, which is the whole point of #427's second half. A multiple of four
-    is a clean base64 prefix, and ``errors="replace"`` already absorbs a
-    multibyte sequence split by the cut.
+    ``budget`` is how many decoded CHARACTERS the caller can still use. The
+    base64 payload is cut to a clean prefix that is guaranteed to yield at least
+    that many BEFORE it is decoded — bounding the work rather than its result,
+    which is the whole point of #427's second half. ``errors="replace"`` absorbs
+    a multibyte sequence split by the cut, and the cut can only ever shorten the
+    result, never change the characters before it.
+
+    THE ARITHMETIC COUNTS BYTES, NOT CHARACTERS, and the first version of it did
+    not. ``4 * ceil(budget / 3)`` reads as "3 bytes in, 4 base64 characters out"
+    and then silently treats one byte as one character, which is true only for
+    ASCII. Probed against the shipped function with a budget of 1,000::
+
+        "A" x 50,000   -> 1002 characters      (1 byte each, fine)
+        CJK            ->  334                 (3 bytes each)
+        U+1D11E        ->  251                 (4 bytes each)
+
+    A third of the budget for Japanese mail and a quarter for anything in a
+    supplementary plane. At the shipped constants that could not starve the
+    4,000-character output — 256,000/4 is still 64,000 — so it was not a live
+    defect, but it becomes one the moment either constant moves, which is
+    exactly the kind of latent arithmetic nobody re-derives later. A character
+    is at most four UTF-8 bytes, so the budget in bytes is ``4 * budget``.
     """
 
     if budget <= 0:
@@ -1034,8 +1050,10 @@ def _decode_part(part: dict, budget: int = _MAX_RAW_BODY_CHARS) -> str:
     data = (part.get("body") or {}).get("data")
     if not data:
         return ""
-    # 3 bytes in, 4 characters out. `-(-x // y)` is ceil without importing math.
-    limit = 4 * -(-budget // 3)
+    # 3 bytes -> 4 base64 characters. `-(-x // y)` is ceil without importing
+    # math. Cutting on a multiple of four keeps the prefix a valid base64
+    # stream, so no quantum is dropped before the one the cut lands on.
+    limit = 4 * -(-(4 * budget) // 3)
     if len(data) > limit:
         data = data[:limit]
     try:
@@ -1104,7 +1122,15 @@ def extract_body_text(payload: dict | None) -> str:
     # The walk still VISITS every part: the tree is what says which branch wins,
     # and skipping a `text/plain` part because the budget is spent must not turn
     # a plain-bodied message into an HTML-bodied one.
-    text = " ".join(t for t in plain if t).strip()[:_MAX_RAW_BODY_CHARS]
+    # CUT BEFORE STRIP, and the order is load-bearing. `_decode_part`'s
+    # pre-decode bound must over-approximate — it counts bytes and a character
+    # is up to four of them — so an ASCII part can come back several times the
+    # budget and this slice is what actually pins it. Stripping first would
+    # apply the bound to POST-STRIP offsets: a body whose first quarter-megabyte
+    # is whitespace has all of it removed by `strip()`, and text that sat past
+    # the bound slides inside it. Found by the sentinel test going red when the
+    # byte arithmetic was corrected, which is the test earning its place.
+    text = " ".join(t for t in plain if t)[:_MAX_RAW_BODY_CHARS].strip()
     if not text:
         text = _html_to_text(" ".join(t for t in html if t)).strip()
     return normalise_body_text(text)
