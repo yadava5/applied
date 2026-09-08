@@ -3013,6 +3013,252 @@ def _eligibility_verification(b: _Builder, n: int) -> None:
         )
 
 
+# ── an autoresponder to the reader's OWN message, both ways round ────────────
+
+
+#: One SHAPE per pair, and the pair is the point. Fields:
+#: ``(subject, sender, sender_name_suffix, body, refusal_object, twin_object)``.
+#:
+#: ``{obj}`` is the ONLY slot that differs between the two members of a pair.
+#: Subject, sender, sender display name, the courtesy opener and the closing
+#: clause are character-identical; the refusal acknowledges a MESSAGE and the
+#: twin acknowledges an APPLICATION. A pair that varied the sender as well
+#: would prove neither half — the attribute under test here is what the
+#: sentence is ABOUT, and nothing else may move with it. See
+#: ``_outreach_autoresponders``, and
+#: ``tests/test_an_autoresponder_to_outreach_is_not_an_application.py``, which
+#: asserts the one-slot property rather than trusting this comment.
+#:
+#: ``{d}`` is the employer display, ``{r}`` the role, ``{t}`` the employer
+#: token (the sender's domain). Every wording is INVENTED; see the family
+#: docstring.
+_OUTREACH_PAIRS: tuple[tuple[str, str, str, str, str, str], ...] = (
+    # THE CASE #521 IS ABOUT: a careers autoresponder carrying "reviewing
+    # applications", which is a strong `applied` BODY match and therefore the
+    # exact message a genre negative parked behind `has_strong_body` cannot
+    # touch. Its twin is a full confirmation and is the cost bound.
+    (
+        "Re: Compiler work for embedded targets, happy to talk",
+        "careers@{t}.example",
+        "Careers",
+        "Thank you for reaching out to our careers team. We have {obj} and are "
+        "reviewing applications on a rolling basis.",
+        "read your note",
+        "received your application for the {r} position",
+    ),
+    # The plain contact-form acknowledgement, which the product ALREADY gets
+    # right — and whose twin is the weakest genuine confirmation here. This
+    # pair is the one that says what a genre negative costs: nothing to gain
+    # on the left, a silent drop on the right.
+    (
+        "Re: Question about your roadmap",
+        "hello@{t}.example",
+        "Team",
+        "Thank you for getting in touch with us. We appreciate you taking the "
+        "time to write, and {obj} is with the team now; you will be hearing "
+        "from us.",
+        "your message",
+        "your application for the {r} position at {d}",
+    ),
+    # `confirm(ing)? receipt` is a strong `applied` pattern and a contact-form
+    # autoresponder says it about a MESSAGE. The twin says it about an
+    # application, so both sides of this pair carry a strong body match — which
+    # is what makes it the sharpest pair in the family: inside
+    # `_NOISE_NEGATIVES` a negative is exempted on BOTH.
+    (
+        "Re: Introduction from a systems engineer",
+        "talent@{t}.example",
+        "Talent",
+        "Thanks for contacting our talent team. This note is confirming "
+        "receipt of {obj}; one of us will read it this week.",
+        "your introduction",
+        "your application for the {r} position at {d}",
+    ),
+    (
+        "Re: Following up on my note last week",
+        "info@{t}.example",
+        "People",
+        "Thank you for reaching out. We will review {obj} and let you know if "
+        "there is news worth sharing.",
+        "your resume",
+        "your application for the {r} position at {d}",
+    ),
+    (
+        "Re: Enjoyed the launch write-up",
+        "press@{t}.example",
+        "Team",
+        "Thanks for getting in touch, and thank you for your interest in the "
+        "{r} position at {d}. {obj} is with the team and we read everything "
+        "that arrives here.",
+        "Your note",
+        "Your application for the role",
+    ),
+    # NOT A REPLY, and the courtesy is in the SUBJECT. Negatives are checked
+    # against subject OR body, so a family made only of `Re:` threads would
+    # leave the subject arm of any proposed filter ungraded.
+    (
+        "Thank you for contacting {d}",
+        "support@{t}.example",
+        "Team",
+        "Thank you for contacting us. {obj} has been received and a member of "
+        "the team will be in touch shortly.",
+        "Your message",
+        "Your application",
+    ),
+    (
+        "Re: Intro and portfolio",
+        "recruiting@{t}.example",
+        "Recruiting",
+        "Thank you for reaching out. {obj} for the {r} position at {d} is with "
+        "the hiring manager and you will be hearing from us shortly.",
+        "Your note",
+        "Your application",
+    ),
+    # The second subject-side wording, and the second `reviewing …` refusal.
+    (
+        "Thanks for reaching out to {d}",
+        "jobs@{t}.example",
+        "Recruiting Team",
+        "Thank you for getting in touch about opportunities at {d}. {obj} Our "
+        "recruiters are reviewing candidates for several teams this quarter.",
+        "We keep every note on file.",
+        "We have received your application for the {r} position.",
+    ),
+)
+
+
+def _fill(body: str, display: str, role: str, obj: str) -> str:
+    """One member of a pair. ``obj`` is the slot the pair varies, and nothing else.
+
+    A module-level function rather than a closure over the loop variables:
+    ruff's B023 is right that a closure reading `body_t`, `display` and `role`
+    from the enclosing scope is a hazard, and here the three are exactly what
+    must not drift between the two halves of a pair.
+    """
+
+    return body.format(d=display, r=role, obj=obj.format(d=display, r=role))
+
+
+def _outreach_autoresponders(b: _Builder, n: int) -> None:
+    """A robot acknowledging the reader's MESSAGE, and its genuine twin (#521).
+
+    "Thank you for getting in touch / reaching out / contacting us"
+    acknowledges a MESSAGE. #520 reported one on the real board: a company the
+    owner had cold-emailed sat in his review queue as though it were an
+    application update, and he had applied to the same company separately —
+    which is why the two members of every pair here share an employer.
+
+    THIS FAMILY IS INVENTED, AND THAT MAKES IT CIRCULAR WITH RESPECT TO THE
+    ACCURACY HEADLINE. Every wording below was written by the author of
+    ``rules.py``, so it can only confirm the pattern list against itself; it is
+    not evidence that the classifier is accurate on real mail, and no number it
+    moves may be read as evidence of reach. ``observed.py`` is where this
+    corpus's non-circular evidence lives and NOTHING here belongs under it —
+    that file is transcription and this is authorship. What this family DOES
+    grade is one specific CODE behaviour, in both directions, which is what the
+    corpus had no case for at all: measured at HEAD before it was written, the
+    phrase family appeared **0 times** in 18,320 cases, so a green corpus run
+    proved nothing either way.
+
+    BOTH WAYS ROUND, AND ONE SLOT APART. Every shape in ``_OUTREACH_PAIRS``
+    emits two messages that are character-identical except for the object of
+    the acknowledgement: the REFUSAL says "your message / your note / your
+    introduction" (``identity=None``: it must never reach a card), the TWIN
+    says "your application for the <role> position" and is a genuine
+    acknowledgement that must keep a verdict. A family made only of refusals
+    would be green for a change that deleted the category.
+
+    WHAT IT MEASURED, which is the reason it exists. Three arms, each run PER
+    CASE over the whole 18,480 and diffed against the last — counted in cases
+    and not in shapes, because the shapes are not uniform and a shape count
+    would round the cost down:
+
+      (a) no pattern, today          40 autoresponders score `applied` 0.70 and
+                                     reach the review queue. 40 twins sit at
+                                     0.70, 10 at 0.80 and 30 at 0.90.
+      (b) inside `_NOISE_NEGATIVES`  ZERO of the 40 move — every one carries a
+                                     strong `applied` BODY match, so
+                                     `has_strong_body` exempts the negative in
+                                     exactly the case it was written for — and
+                                     40 genuine confirmations fall under
+                                     `REVIEW_FLOOR` to `other` 0.50. A blast
+                                     radius of nothing that should move and 40
+                                     that must not: a regression, not a fix.
+      (c) outside it                 all 40 are fixed. 55 genuine confirmations
+                                     go under `REVIEW_FLOOR` — no card, no
+                                     queue entry, nothing the reader can
+                                     correct — and 25 more fall from auto-file
+                                     to the queue. Corpus `correct` 17250 ->
+                                     17235: the repair costs more than the
+                                     defect.
+
+    Nothing OUTSIDE this family moved in either arm, and that is a fact about
+    the corpus rather than a reassurance: the phrase appears 160 times in
+    18,480 cases and all 160 are here.
+
+    So the negative stays out, and this family is the measurement that settles
+    it rather than the pattern's regression test. ``rules.py`` records the same
+    beside `applied`'s negatives.
+
+    WHAT THIS FAMILY CANNOT SHOW, said here rather than left to read as
+    coverage:
+
+      * The genre reaches the queue through `follow_up` as well. "someone will
+        reach out with updates" scores `follow_up` 3 against `applied` 2, and
+        an `applied`-only genre filter cannot see it in any arm. No pair here
+        can grade that, because a pair whose refusal leaks to `follow_up` has
+        no twin that stays `applied`.
+      * Its senders are the employer's own inboxes, never an ATS relay, so the
+        +0.05 relay bonus is out of the arithmetic. That is deliberate — it
+        keeps the confidence a property of the words — and it means this family
+        says nothing about the same wording arriving over Greenhouse.
+
+    Every wording is synthetic. The shape is the owner's; the words are not,
+    and no real employer, address or thread appears anywhere in it.
+    """
+
+    if n % 2:  # pragma: no cover — a harness error, not a product finding
+        raise AssertionError(f"{n} is odd; this family emits pairs")
+
+    for i in range(n // 2):
+        subject_t, sender_t, suffix, body_t, refusal_obj, twin_obj = _OUTREACH_PAIRS[
+            i % len(_OUTREACH_PAIRS)
+        ]
+        display, token = b.employer()
+        role = b.role(i)
+        # ONE draw, used by both members. A pair whose employer or role moved
+        # between its halves would vary two things and prove neither.
+        subject = subject_t.format(d=display, r=role)
+        sender = sender_t.format(t=token)
+        sender_name = f"{display} {suffix}"
+
+        b.add(
+            family="outreach-autoresponder",
+            subject=subject,
+            sender=sender,
+            sender_name=sender_name,
+            body=_fill(body_t, display, role, refusal_obj),
+            expected_category="other",
+            identity=None,
+            employer=None,
+            adversarial=True,
+            day=i % 60,
+            note="a robot acknowledging a MESSAGE, in an acknowledgement's words",
+        )
+        b.add(
+            family="outreach-autoresponder",
+            subject=subject,
+            sender=sender,
+            sender_name=sender_name,
+            body=_fill(body_t, display, role, twin_obj),
+            expected_category="applied",
+            identity=f"{token}|{role}",
+            employer=token,
+            day=(i % 60) + 1,
+            note="one slot from the refusal above it, and a real confirmation",
+        )
+
+
 _FAMILIES: tuple[tuple[str, object, int], ...] = (
     ("confirmation", _confirmations, 1100),
     ("rejection-plain", _rejections_plain, 550),
@@ -3074,6 +3320,14 @@ _FAMILIES: tuple[tuple[str, object, int], ...] = (
     # rather than an application. 120 messages: 60 refusals (``identity=None``)
     # and the 60 twins that keep them honest.
     ("eligibility-verification", _eligibility_verification, 120),
+    # #521. Appended last for the reason four entries above states — the
+    # builder shares one seeded RNG, so anywhere else re-draws every employer,
+    # role and wording after it. 160 messages: 80 outreach/contact-form
+    # autoresponders (`identity=None`) and the 80 genuine confirmations that
+    # are one slot away from them. It is the first family here whose refusal
+    # and its twin share a sender, a subject and an employer, which is what
+    # makes it a control rather than two unrelated samples.
+    ("outreach-autoresponder", _outreach_autoresponders, 160),
 )
 
 
