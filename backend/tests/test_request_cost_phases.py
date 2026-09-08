@@ -337,8 +337,31 @@ def test_transaction_gucs_are_one_round_trip_with_identity() -> None:
     assert re.search(r"request\.jwt\.claims'\s*,\s*'[^']*'\s*,\s*true", stmt), stmt
 
 
-def test_transaction_gucs_without_identity_pin_search_path_only() -> None:
-    """No identity → search_path pin only, and never an empty claims GUC."""
+def test_transaction_gucs_without_identity_neutralise_the_claims_guc() -> None:
+    """No identity → search_path pin PLUS a subject-less claims GUC, one statement.
+
+    THIS ASSERTION IS DELIBERATELY REVERSED, AND WAS NOT DELETED WHEN IT WENT
+    RED. It used to read ``"request.jwt.claims" not in conn.statements[0]``,
+    under the name ``..._pin_search_path_only``, and it was a real design claim:
+    the branch wrote nothing, on the strength of a comment saying the GUC
+    "stays unset so auth.uid() returns NULL and RLS fails closed".
+
+    #634 measured that comment false. A transaction-local GUC is not left unset
+    when its transaction ends, it is left as the EMPTY STRING, so on a reused
+    connection the identity-less branch INHERITED whatever was there. Our own
+    ``''`` was harmless; a foreign co-tenant's session-level
+    ``SET request.jwt.claims`` on a shared pooler connection is not, and
+    writing nothing is precisely what let it through. So the branch now writes
+    ``'{}'`` — valid JSON naming no subject — and this test asserts the new
+    behaviour rather than guarding the old one. The behavioural half, against a
+    real Postgres and a real poisoned connection, is
+    ``test_the_no_identity_branch_defeats_a_foreign_session_level_claim`` in
+    tests/test_rls_postgres.py.
+
+    Equality, not ``in``: a substring check on ``request.jwt.claims`` passes for
+    a branch that writes a STALE subject, which is the whole failure being
+    closed here.
+    """
 
     from jobtracker.database.connection import _apply_transaction_gucs, user_id_scope
 
@@ -346,9 +369,21 @@ def test_transaction_gucs_without_identity_pin_search_path_only() -> None:
     with user_id_scope(None):
         _apply_transaction_gucs(conn)
 
+    # ONE statement is the cost property, unchanged by #634: the extra
+    # set_config rides the SELECT that was already going, so it buys no round
+    # trip on the request's critical path.
     assert len(conn.statements) == 1, conn.statements
-    assert "search_path" in conn.statements[0]
-    assert "request.jwt.claims" not in conn.statements[0]
+    assert conn.statements[0] == (
+        "SELECT set_config('search_path', 'public', true), "
+        "set_config('request.jwt.claims', '{}', true)"
+    ), conn.statements[0]
+
+    # What survives of the ORIGINAL claim, and the reason '{}' rather than '':
+    # the empty string is what the cast-first shim (#847) raises on, so it must
+    # never be what this branch emits.
+    assert "set_config('request.jwt.claims', '', true)" not in conn.statements[0]
+    # And it must be transaction-local, like the identity itself.
+    assert re.search(r"request\.jwt\.claims'\s*,\s*'\{\}'\s*,\s*true", conn.statements[0])
 
 
 @pytest.mark.asyncio

@@ -382,9 +382,17 @@ safe under Supabase's shared PgBouncer in transaction-pooling mode:
 - `search_path` is pinned to `public` on every transaction in the same call.
   This is not decoration: the shared pooler previously suffered a co-tenant
   `search_path` poisoning incident on a sibling project.
-- When no user is bound — health and unauthenticated paths — `request.jwt.claims`
-  stays unset, so RLS **fails closed** and reads zero rows rather than reading
-  everything.
+- When no user is bound — health and unauthenticated paths — the same statement
+  writes `request.jwt.claims` as `'{}'`: valid JSON naming no subject, so
+  `auth.uid()` is NULL and RLS **fails closed**, reading zero rows rather than
+  everything. It is written rather than left alone deliberately (#634). A
+  transaction-local GUC does not revert to *unset* at COMMIT, it reverts to the
+  empty string, so an identity-less transaction on a reused connection inherits
+  whatever that connection carries — including a claim left by a foreign
+  co-tenant of the shared pooler, which no other control here defends against.
+  Overwriting it makes the fail-closed property structural rather than a
+  consequence of a `nullif` inside a Supabase-managed function this project
+  neither owns nor pins.
 
 `backend/tests/test_rls_postgres.py` exercises this against a **real Postgres**,
 not SQLite — SQLite has no row-level security, so a test that ran there would
