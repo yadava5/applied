@@ -118,11 +118,16 @@ from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
-from jobtracker.classifier.rules import PATTERNS
+from jobtracker.classifier.rules import (
+    PATTERNS,
+    asserted_text,
+    reflow_paragraphs,
+)
 from jobtracker.database.models import EmailCategory
 
 from .employers import POOL
 from .generate import ROLES, Case
+from .harness import as_classified
 
 __all__ = [
     "Reach",
@@ -234,21 +239,68 @@ def wording(subject: str, body: str) -> str:
     return " ".join(text.split()).lower()
 
 
-def scan_text(subject: str, delivered: str) -> str:
-    """What a pattern is searched in: the subject and what production delivers.
+def scan_text(subject: str, classified: str) -> str:
+    """What a pattern is searched in: exactly what ``classify`` searches.
 
-    ``delivered`` and not ``body`` here, and for the opposite reason: a rule
-    that only matches text the product never receives has not been exercised by
-    this corpus in any sense a user would recognise.
+    ``classified`` is :func:`harness.as_classified`'s output — the text
+    production hands ``classify()``, cap and all — and this function then
+    applies the one transform ``classify`` applies to it before any pattern
+    sees a body::
+
+        body = reflow_paragraphs(asserted_text(body))    # rules.py
+
+    THREE NARROWINGS, and this function had only the first for as long as it
+    existed (#934).
+
+    1. not ``case.body`` but what production DELIVERS: a rule that only
+       matches text the product never receives has not been exercised by this
+       corpus in any sense a user would recognise;
+    2. not the delivered text but what production hands the classifier, which
+       is ``normalise_body_text``'s output for a real body — a 4,000-character
+       cap. #767 fixed exactly this for the classifier half and the census
+       never got it;
+    3. not that text but ``reflow_paragraphs(asserted_text(...))`` of it.
+       ``asserted_text`` deletes quoted history and everything from a
+       conditional marker to the end of its sentence, and the engine cannot
+       match inside either.
+
+    WHAT THE THREE COST, measured over the 18,980-case corpus by building the
+    triples three ways and calling :func:`measure_texts` on each. No pattern
+    changes its FIRED verdict, and two families stop being credited with reach
+    they do not have — 420 messages in total, each by a different mechanism:
+
+        family                       raw   this function   mechanism
+        rescinded-offer                0             260   quoted history
+        verdict-past-the-body-cap      0             160   the 4,000-char cap
+
+    The 260 are the rescind halves of the offer pairs, whose only ``strong``
+    match was inside the offer they QUOTE. Production strips that quote, and
+    its verdict on them is ``other`` at 0.50 against a ground truth of
+    ``rejection`` — so the corpus does contain 260 messages the engine has no
+    strong rule for, and this census reported zero. The 160 are the family
+    built to measure the cap, which the census was reading past.
+
+    On the arm that found the defect — the ``|if`` alternation of ``be in
+    touch (soon|shortly|if)``, deleted in #928 for being unreachable:
+
+        three-arm pattern, raw text     547 messages
+        two-arm pattern (arm gone)       20
+        credited ONLY through ``if``    527   ->   0 through this function
+
+    THE SUBJECT IS LEFT ALONE, deliberately and to match: ``classify``
+    transforms the body and never the subject — see the comment above that
+    line, "The subject's TEXT is left alone by design". Masking it here would
+    make the census stricter than the engine, which is the same class of error
+    facing the other way.
     """
 
-    return f"{subject}\n{delivered}"
+    return f"{subject}\n{reflow_paragraphs(asserted_text(classified))}"
 
 
 def texts_of(case: Case) -> tuple[str, str, str]:
     """``(family, scan text, wording)`` for one case."""
 
-    return case.family, scan_text(case.subject, case.delivered), wording(
+    return case.family, scan_text(case.subject, as_classified(case)), wording(
         case.subject, case.body
     )
 
