@@ -4202,6 +4202,160 @@ def employer_named_in_body(snippet: str, sender_email: str = "") -> tuple[str, s
     return token, display
 
 
+#: THE ATS SUBJECT WHOSE ROLE SITS AT THE END OF A HYPHEN RUN — #485.
+#:
+#:     "<lifecycle prose> from <Employer> - <Candidate Name> - <Role>"
+#:
+#: Lever writes the job title into its rejection subject and, before this
+#: reader, nothing read it: ``application_sub_key`` returned None and the
+#: message resolved to no identity at all. It was PLACED only by having no
+#: identity — ``_pick_application`` rule 3 carries a role-less message onto the
+#: employer's single cluster — which works right up until the employer has two.
+#:
+#: THIS READER IS DELIBERATELY NARROWER THAN THE SHAPE IT READS, and every
+#: narrowing below is a refusal that a real subject fails rather than one the
+#: reported wording happens to satisfy.
+#:
+#: 1. NO PIPE. The two readers above own that shape; this one may not
+#:    reinterpret a subject either of them already answers.
+#: 2. THE LEADING SEGMENT ENDS "from <Title-Case run>". That is the only thing
+#:    in this shape standing where the trailing reader's employer echo stands,
+#:    and it is WEAKER: the echo is checked against a second occurrence in the
+#:    same subject, and there is no second occurrence here. Said out loud
+#:    because a future reader should not mistake it for the same licence.
+#: 3. …AND THE MATERIAL IN FRONT OF "from" CONTAINS A LOWERCASE WORD. This
+#:    module has already adjudicated "from" as the preposition that introduces
+#:    a PERSON as readily as an employer — see :data:`_LIFECYCLE_OBJECT`, which
+#:    excludes it for exactly that reason, and the minted-company post-mortem
+#:    above :func:`_lead_segment_candidates`. ``_valid_company_token`` cannot
+#:    tell ``John Smith`` from ``Acme``. What separates them here is that the
+#:    reported shape opens with PROSE and the defeats open with a NAME:
+#:
+#:        "Thank you from <Employer> - …"       prose  -> read
+#:        "A note from <Employer> - …"          prose  -> read
+#:        "Sarah Chen from <Employer> - <Title>"  name -> refuse
+#:        "Referral from <Person> - <Role>"       name -> refuse
+#:        "Working from Home - <Role>, …"         name -> refuse
+#:
+#:    Every one of those three defeats captured a role before this test was
+#:    added, and the first captured a RECRUITER'S OWN JOB TITLE, which would
+#:    have become the card's name.
+#: 4. THE ROLE IS THE LAST SEGMENT AND NOTHING ELSE. A first draft ran the role
+#:    from its head noun to the END of the subject, so an interior dash stayed
+#:    inside the title. That is unlicensed at exactly the edge #553 measured:
+#:    the subject simply ends, so there is nothing to check the right side
+#:    against, and
+#:
+#:        "…- <Candidate> - <Role> - Boston"   captured "<Role> - Boston"
+#:        "…- <Role> - <Candidate Name>"       captured "<Role> - <Candidate>"
+#:
+#:    both passing every guard, because ``_post_head_is_introduced`` accepts a
+#:    spaced dash as a title continuation and no list closes place names. The
+#:    cost of refusing is real and is recorded below: a true role carrying its
+#:    own interior dash now reads as nothing and the row goes to the queue.
+#: 5. NO EARLIER SEGMENT MAY ALSO LOOK LIKE A ROLE. Two role-shaped segments
+#:    mean the reader cannot say which one the mail is about.
+#: 6. ANY PARENTHETICAL REFUSES, the same rule and the same regex the trailing
+#:    reader uses. Keeping it measured 34 exact on this corpus and would have
+#:    been right about the cohort parenthetical — but ``normalize_role_token``
+#:    deletes the brackets and KEEPS THE WORDS, so "<Role>, Platform (Boston)"
+#:    and "<Role>, Platform" are two tokens for one job, and place names are an
+#:    open set no vocabulary closes. Refusing can only cost recall.
+#: 7. …then every guard :func:`_role_from_trailing_segment` applies.
+#:
+#: MEASURED over the 18,980-case corpus against ground truth, comparing
+#: ``normalize_role_token`` of the capture with the case's own identity:
+#:
+#:     to the end of the subject, keep parenthetical   34 fire, 34 exact, 0 wrong
+#:     to the end of the subject, strip parenthetical  34 fire, 31 exact, 3 WRONG
+#:     THIS READER (last segment, refuse parenthetical) 29 fire, 29 exact, 0 wrong
+#:
+#: and in all three arms every firing case reads no role today, so nothing that
+#: resolves now resolves differently. The five this reader gives up against the
+#: widest arm are the interior-dash titles and the cohort parenthetical, and
+#: they go to the review queue where a person decides — the direction this
+#: module takes everywhere.
+#:
+#: WHAT THE CORPUS CANNOT GRADE, stated because the number above looks stronger
+#: than it is: all 29 come from ONE transcribed wording in one family. The
+#: corpus can say this reader does not fire wrongly across 18,980 messages; it
+#: cannot say the reader reads the Lever family, because it holds one member of
+#: it. Every REFUSAL above is graded by cases written alongside this rule, in
+#: ``test_the_lever_rejection_names_the_role.py``, and those are the author's.
+#:
+#: THE RESIDUAL, unfixed and unfixable from a subject alone: a candidate whose
+#: surname is a job-title head noun ("Priya Lead") in the last segment reads as
+#: a role. Nothing in a subject separates that from a real title. It is pinned
+#: in the test file so the limitation is visible rather than discovered.
+_FROM_EMPLOYER_TAIL = re.compile(
+    r"\bfrom\s+([A-Z][\w&.,'’\-]*(?:\s+[A-Z][\w&.,'’\-]*){0,4})\s*$"
+)
+
+#: A word that starts lowercase — prose, as opposed to a Title-Case name.
+_HAS_LOWERCASE_WORD = re.compile(r"(?:^|\s)[a-z]")
+
+
+def _looks_like_a_role(segment: str) -> str | None:
+    """``segment`` read as a title, or None. Shape and head noun only."""
+
+    role = _clean_role(segment)
+    if role is None or not _TITLE_SHAPED.match(role):
+        return None
+    return role if _last_head_noun_end(role) is not None else None
+
+
+def _role_from_dash_run(subject: str) -> str | None:
+    """The job title closing an ATS subject's hyphen run, or None.
+
+    ``"Thank you from <Employer> - <Candidate> - Backend Engineer"`` ->
+    ``Backend Engineer``. See the note above for the six refusals that make
+    this safe and for what it gives up to stay safe.
+    """
+
+    text = subject or ""
+    if "|" in text:
+        return None
+    segments = [s.strip() for s in _SPACED_DASH.split(text)]
+    if len(segments) < 2:
+        return None
+
+    lead = segments[0]
+    named = _FROM_EMPLOYER_TAIL.search(lead)
+    if not named:
+        return None
+    before = lead[: named.start()].strip()
+    if not before or not _HAS_LOWERCASE_WORD.search(before):
+        return None
+    employer_token = _normalize_token(named.group(1).split(" ")[0])
+    if not _valid_company_token(employer_token):
+        return None
+
+    role = _looks_like_a_role(segments[-1])
+    if role is None:
+        return None
+    if _normalize_token(role) == employer_token:
+        return None
+    if _TRAILING_SEGMENT_PAREN.search(role):
+        return None
+    if any(_looks_like_a_role(s) for s in segments[1:-1]):
+        return None
+
+    head_end = _last_head_noun_end(role)
+    if head_end is None:  # pragma: no cover - _looks_like_a_role proved it
+        return None
+    region = _post_head_region(role, head_end)
+    if _LIFECYCLE_IN_REGION.search(region):
+        return None
+    normalized_region = _normalize_token(region)
+    if normalized_region and any(
+        f" {word} " in f" {normalized_region} " for word in _WORK_ARRANGEMENT_WORDS
+    ):
+        return None
+    if not _post_head_is_introduced(region):
+        return None
+    return role
+
+
 def _role_from_subject(subject: str) -> str | None:
     """Extract a job role/title from a subject, or None. Never 'Unknown role'."""
 
@@ -4228,7 +4382,15 @@ def _role_from_subject(subject: str) -> str | None:
     from_lead = _role_from_lead_segment(text)
     if from_lead is not None:
         return from_lead
-    return _role_from_trailing_segment(text)
+    from_trailing = _role_from_trailing_segment(text)
+    if from_trailing is not None:
+        return from_trailing
+    # LAST of the three, for the reason the other two are ordered as they are:
+    # it recognises the narrowest shape and the pipe readers must keep their
+    # answers. Its own first refusal is a pipe, so the sets are disjoint by
+    # construction rather than by ordering, and this line only decides what
+    # happens to a subject none of them reads.
+    return _role_from_dash_run(text)
 
 
 def is_terminal_status(value: str) -> bool:
@@ -4562,6 +4724,28 @@ def partition_applications(
         # otherwise never meet: a confirmation carries the requisition id, the
         # interview invite that follows carries only the title, and a dict keyed
         # on "whichever we have" would file one application under two keys.
+        # AN IDENTIFIED UPDATE THAT MATCHES NOTHING DOES NOT MINT HERE — #485.
+        #
+        # Pass 2 below states the rule this pass was missing: "A NEW
+        # CONFIRMATION IS A NEW APPLICATION. AN UPDATE IS NOT." It applied it
+        # only to mail carrying NO identity, so an update that carried one
+        # minted unconditionally — and `_may_join` refuses a cluster whose
+        # `role_token` is None against an item whose is not, so "matches
+        # nothing" is the ordinary case at an employer whose cards are blank.
+        #
+        # Measured on the composition #485 is actually about: two anonymous
+        # rows at one employer, then a rejection whose subject names the role.
+        # Before this deferral the rejection minted a THIRD cluster and
+        # `unplaceable_message_ids` returned empty — so the board grew a
+        # rejected card beside two open ones and the review queue, which had
+        # been asking the user which application it was about, went silent.
+        # That is strictly worse than reading no role at all.
+        #
+        # The corpus could not see it. Its rejections are drawn one application
+        # per employer, so the two-anonymous-row composition is absent and a
+        # measurement over it returns "no rival card is ever minted" no matter
+        # what this code does.
+        deferred: list[tuple[PipelineItem, str | None, str | None, str | None]] = []
         for item, _display, req_id, role_token, role in entries:
             if req_id is None and role_token is None:
                 continue
@@ -4574,6 +4758,13 @@ def partition_applications(
                 None,
             )
             if match is None:
+                if item.category not in APPLIED_SIGNAL_CATEGORIES:
+                    # Held until pass 2 has built the employer's clusters, then
+                    # placed by the same rule an anonymous update is placed by.
+                    # It keeps its identity: landing on a single cluster STAMPS
+                    # the title, which is the whole of what #485 buys.
+                    deferred.append((item, req_id, role_token, role))
+                    continue
                 keyed.append(
                     _Cluster(
                         company_token=token,
@@ -4761,6 +4952,59 @@ def partition_applications(
                     keyed[0].items.extend(unclaimed)
                 else:
                     unplaced.extend(unclaimed)
+
+        # THE UPDATES HELD BACK IN PASS 1, placed by the rule pass 2 uses for
+        # the anonymous ones — with one addition it earns by carrying an
+        # identity: landing on a single cluster STAMPS the title.
+        #
+        # Four outcomes, and the last is the one #485 is about:
+        #
+        #   * a cluster it may JOIN                -> join, and stamp
+        #   * the employer has no cluster at all   -> mint, exactly as before.
+        #     A rejection from an employer whose other mail never arrived is a
+        #     real application and a card is the right answer.
+        #   * exactly one cluster, and the board is not already holding several
+        #     -> join it and stamp. This is the shape #485's own subjects have,
+        #     and it is where the nine blank cards get their titles.
+        #   * anything else                        -> the review queue, which
+        #     is where it went before a role could be read out of the subject.
+        #     `known_multi` is consulted for the same reason pass 2 consults
+        #     it: a single cluster in THIS batch is not "the employer's only
+        #     application" when the board already holds several.
+        for item, req_id, role_token, role in deferred:
+            match = next(
+                (
+                    c
+                    for c in keyed
+                    if _may_join(c.req_id, c.role_token, req_id, role_token)
+                ),
+                None,
+            )
+            if match is None and not keyed and token not in known_multi:
+                keyed.append(
+                    _Cluster(
+                        company_token=token,
+                        company_display=display,
+                        req_id=req_id,
+                        role_token=role_token,
+                        role=role,
+                        items=[item],
+                    )
+                )
+                continue
+            if match is None and len(keyed) == 1 and token not in known_multi:
+                match = keyed[0]
+            if match is None:
+                unplaced.append(item)
+                continue
+            index = keyed.index(match)
+            keyed[index] = replace(
+                match,
+                req_id=match.req_id or req_id,
+                role_token=match.role_token or role_token,
+                role=match.role or role,
+                items=[*match.items, item],
+            )
 
         clusters.extend(keyed)
 

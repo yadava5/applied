@@ -146,7 +146,25 @@ RECORDED_AFTER_ANSWERING = {
     # lie — the card says nothing rather than something wrong — so it is
     # pinned here at its size rather than fixed in a change about a genre
     # negative.
-    "role_missing": 73,
+    #
+    # 73 -> 64 (#485). NINE of them are gone, and none by the shape this file
+    # warns about twice: `role_missing` falling because the DENOMINATOR shrank.
+    # `cards`, `titles_graded`, `splits`, `merges`, `roles_graded` and
+    # `role_wrong` are all unmoved on both boards. What changed is that
+    # `_role_from_dash_run` reads the job title Lever writes into the trailing
+    # segment of a rejection subject, and nine employers' single anonymous
+    # cluster acquires the correct title instead of staying blank.
+    #
+    # THE PLACEMENT WAS MEASURED BEFORE THIS WAS RE-RECORDED, because a role
+    # where there was none can mint a rival card rather than title an existing
+    # one: `_may_join` returns False when a cluster's `role_token` is None and
+    # an item's is not. Built both ways over the whole corpus: clusters 10,215
+    # either way, unplaced 370 either way, and exactly nine cluster keys swap
+    # `role_token=None` for the role. The rejection mints in pass 1 and the
+    # anonymous confirmation joins it, so the card gains a title, not a
+    # sibling. All nine pairs straddle a day batch, so the persisted path is
+    # exercised by this replay rather than argued about.
+    "role_missing": 64,
     # ZERO AGAINST A DENOMINATOR THAT HAS TO BE SAID OUT LOUD. #548 refuses to
     # stamp a title on a blind landing, and 421 of the 2,341 filed answers
     # landed where the employer held several cards — so those 421 are excluded
@@ -937,7 +955,16 @@ RECORDED = {
     # the 260 is titled. Break `_role_from_trailing_segment` and this number
     # goes to 343 and `splits` to 20; measured under a stubbed reader, not
     # assumed. See `test_this_corpus_reaches_the_trailing_segment_reader`.
-    "role_missing": 63,
+    #
+    # 63 -> 54 (#485), the same nine cards seen from the titling board. This
+    # number's own regression signature is a DROP that comes with `splits` or
+    # `role_wrong` moving; neither does. Every other pin in this block held:
+    # `cards` 10058, `titles_graded` 10058, `splits` 0, `merges` 0,
+    # `role_wrong` 0, `roles_graded` 8412, `blank_required` 1246,
+    # `role_unsettleable` 400, `company_drift` 0. Nine cards moved from blank
+    # to correctly titled inside a fixed denominator, and all 29 captures the
+    # new reader makes are exact against ground truth.
+    "role_missing": 54,
     # Mail that names NO job title, where the only correct card is a blank one.
     # These were SKIPPED entirely until the two counters below existed: "no role
     # to grade against" read as "nothing to assert", and 960 cards — 10.4% of
