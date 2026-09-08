@@ -104,10 +104,10 @@ of a stored credential goes through that function, and no `Fernet` object is
 built anywhere else.
 
 The *variable* is read at **four** lines, not one: `credentials/cloud.py:116`
-inside `_require_fernet()`; `cloud/gmail_oauth.py:693` and `:721`, which sign
+inside `_require_fernet()`; `cloud/gmail_oauth.py:762` and `:790`, which sign
 and verify the OAuth `state` JWT with the same material (§3.4); and
 `getattr(self, name)` inside `gmail_oauth_missing_fields`
-(`backend/jobtracker/config.py:629`), which reaches it by name out of
+(`backend/jobtracker/config.py:599`), which reaches it by name out of
 `_GMAIL_OAUTH_REQUIRED_FIELDS` to answer "is Gmail OAuth configured" and never
 uses the value it gets. That fourth site cannot be found by grepping for
 `settings.secret_encryption_key`, and that limitation is stated where the grep
@@ -172,8 +172,8 @@ jobs:
 
 1. the Fernet envelope over stored credentials (§3.2), and
 2. signing the Gmail OAuth `state` parameter, which is a JWT signed **HS256**
-   in `_sign_state` (`backend/jobtracker/cloud/gmail_oauth.py:693`) and
-   verified in `_verify_state` at `:721`.
+   in `_sign_state` (`backend/jobtracker/cloud/gmail_oauth.py:762`) and
+   verified in `_verify_state` at `:790`.
 
 Reusing one key across two constructions is not a break here — Fernet derives
 distinct AES and HMAC halves from its 32 bytes, and PyJWT's HS256 takes the
@@ -220,13 +220,13 @@ matter for assessment:
 
 - **The algorithm is dispatched strictly, and the accepted set is a
   whitelist.** ES256 tokens verify against the project JWKS
-  (`_SUPABASE_ASYMMETRIC_ALGORITHMS = ["ES256"]`, `:86`); HS256 tokens verify
-  against the shared secret (`_SUPABASE_ALGORITHMS = ["HS256"]`, `:85`). The
-  unverified header `alg` selects which branch runs, but it can never widen the
-  set passed to `jwt.decode`, so `alg: none` and algorithm-confusion
-  substitution are both rejected. `backend/tests/test_auth_supabase_jwt.py:169`
-  (`test_alg_none_rejected`) mints a genuinely signature-less token with
-  `algorithm="none"` and asserts a 401.
+  (`_SUPABASE_ASYMMETRIC_ALGORITHMS = ["ES256"]`, `supabase_jwt.py:86`); HS256
+  tokens verify against the shared secret (`_SUPABASE_ALGORITHMS = ["HS256"]`,
+  `:85`). The unverified header `alg` selects which branch runs, but it can
+  never widen the set passed to `jwt.decode`, so `alg: none` and
+  algorithm-confusion substitution are both rejected. `test_alg_none_rejected`
+  (`backend/tests/test_auth_supabase_jwt.py:169`) mints a genuinely
+  signature-less token with `algorithm="none"` and asserts a 401.
 - If an ES256 token arrives and `JOBTRACKER_SUPABASE_JWKS_URL` is not
   configured, verification **fails closed** with an explicit error rather than
   falling back to the symmetric path — `_decode_token`,
