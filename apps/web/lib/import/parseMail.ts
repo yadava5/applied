@@ -54,7 +54,11 @@ export type MailFormat = "mbox" | "eml" | "json";
 export interface ParseResult {
   format: MailFormat;
   messages: ParsedMessage[];
-  /** Messages detected in the file before the cap was applied. */
+  /**
+   * Messages detected in the file, all of them, whether or not the cap kept
+   * them. Not "before the cap was applied": on the mbox path the cap is applied
+   * DURING the split now (#810), and this number is counted to EOF alongside it.
+   */
   totalFound: number;
   /** True when `totalFound` exceeded the cap and `messages` was trimmed. */
   truncated: boolean;
@@ -1210,6 +1214,19 @@ export function splitMbox(text: string, cap: number = Infinity): MboxSplit {
       // plus a line; `-1` means the block ended first and is smaller still. The
       // one input that builds more is a block with no line ending in it at all,
       // and the split it replaces built that block too.
+      //
+      // AND IT IS THE ONE PLACE `render` STARTS MID-LINE, which is safe only
+      // because of an argument that is not visible from here. If `firstText`
+      // sat past its line's start on a line beginning `">From "`, this slice's
+      // first element WOULD match `startsWith(">From ")` and be un-escaped,
+      // while the real `raw` — rendered from `bodyStart`, where the full line
+      // `"  >From x"` does not match — would not. `firstText` can only sit past
+      // a line's start when that line opens with whitespace, and the only
+      // segment that can begin on such a line is the head of the file: every
+      // other one begins on a line `HEADER_LINE` accepted, which starts with a
+      // letter. The head of the file has no separator and closes with
+      // `total === 0`, so it never reaches this branch. RELAXING THE SEPARATOR
+      // RULE WOULD MAKE THAT LIVE — render from `bodyStart` here if it changes.
       const envelope =
         sawEnvelope || carriesAnEnvelope(render(firstText, headEnd === -1 ? endsAt : headEnd));
       if (!envelope) {
