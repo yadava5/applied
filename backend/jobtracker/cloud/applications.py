@@ -5299,9 +5299,10 @@ def _review_queue_rows_statement(user_id: uuid.UUID):
     rest of the request" is ROUGHLY FIFTY MATCHING ROWS — six times the live
     queue's 8, and reachable.
 
-    Comparable is not expensive. At 60 matching rows the whole tile is 2.96 ms.
-    Being the larger half of a 4 ms budget is not a reason to rewrite anything,
-    which is why the crossover is reported rather than acted on.
+    Comparable is not expensive, and that is what decides the rewrite. At those
+    same 60 ATS-shaped rows the whole tile is 2.96 ms against the other two's
+    2.19 ms. Being the larger half of a 5 ms budget is not a reason to rewrite
+    anything, which is why the crossover is reported rather than acted on.
 
     THE STATEMENT IS NOT THE EXPENSIVE HALF. At 30,000 matching rows the tile's
     140.57 ms is 21 ms of server-side SQL and 104 ms of ``review_dedup_key``.
