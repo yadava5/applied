@@ -33,6 +33,7 @@ import {
   subscribeLastLook,
   writeLastLook,
 } from "@/lib/dashboard/lastLookStore";
+import { plateSlide } from "@/lib/dashboard/platePlacement";
 import { STAGES } from "@/lib/dashboard/summary";
 import { useLocalToday } from "@/lib/dashboard/useLocalToday";
 
@@ -467,6 +468,36 @@ export function SinceLastLook({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const plateRef = useRef<HTMLElement | null>(null);
+  /** The boxes the placement below is a function of — the plate's own, and
+   *  whichever neighbours were found on its line — kept so the width watcher
+   *  can be aimed at exactly those and re-aimed when they change. */
+  const measuredRef = useRef<readonly Element[]>([]);
+  const watcherRef = useRef<ResizeObserver | null>(null);
+
+  /**
+   * Aim the width watcher at the boxes the last placement measured.
+   *
+   * A no-op when they are the same objects in the same order, which is the
+   * common case and is load-bearing rather than an optimisation: `observe()`
+   * delivers an initial callback, so re-observing on every placement would
+   * place, notify, place, and never settle. Re-aiming therefore happens only
+   * when the SET changes — the plate swapping branches, or a neighbour
+   * mounting — and the notification that follows re-places once and finds the
+   * same set on the way through.
+   */
+  const watch = useCallback((boxes: readonly (Element | null)[]) => {
+    const next = boxes.filter((box): box is Element => box !== null);
+    const aimed = measuredRef.current;
+    if (next.length === aimed.length && next.every((box, i) => box === aimed[i])) return;
+    measuredRef.current = next;
+    const watcher = watcherRef.current;
+    // On the first placement there is no watcher yet — ref callbacks run
+    // before effects. The effect below takes its first aim from `measuredRef`
+    // for exactly that reason, so this early return loses nothing.
+    if (watcher === null) return;
+    watcher.disconnect();
+    for (const box of next) watcher.observe(box);
+  }, []);
 
   /**
    * Centre on the BAR; yield only what a neighbour forces — measured.
@@ -489,36 +520,59 @@ export function SinceLastLook({
    * chip is an in-flow line and this is a no-op (the transform is cleared,
    * then the guard returns). The panel follows the nudged plate because
    * `placePanel` reads bounding rects, which include transforms.
+   *
+   * The arithmetic itself is `plateSlide` (`lib/dashboard/platePlacement.ts`),
+   * so the one number this is about can be executed by `node --test`; this
+   * keeps the DOM half — which box is on the line, and whether the overlay is
+   * even out of flow. Every box it measures is also handed to `watch`, because
+   * a placement is only as current as the widths it was computed from (#610,
+   * and the effect below).
    */
-  const placePlate = useCallback((plate: HTMLElement | null) => {
-    plateRef.current = plate;
-    if (!plate) return;
-    // Cleared first so the measurement reads the stylesheet's own centred
-    // position, not the slide a previous pass applied.
-    plate.style.transform = "";
-    const overlay = plate.closest("section")?.parentElement;
-    const row = overlay?.parentElement;
-    if (!overlay || !row || getComputedStyle(overlay).position !== "absolute") return;
-    /** What the plate keeps from a same-line neighbour. Under the gate's
-     *  24px floor for the arrangement that fits (the neighbours there are
-     *  70px+ away and never bind); the crowded fixture twin is gated at 12. */
-    const CLEAR = 16;
-    const p = plate.getBoundingClientRect();
-    const sameLine = (el: Element | null) => {
-      if (!el) return null;
-      const b = el.getBoundingClientRect();
-      return b.width > 0 && p.top < b.bottom && b.top < p.bottom ? b : null;
-    };
-    const cluster = sameLine(row.querySelector("[data-sync-cluster]"));
-    const totals = sameLine(row.querySelector("[data-sync-subtitle]"));
-    let dx = 0;
-    if (cluster) dx = Math.min(dx, cluster.left - CLEAR - p.right);
-    if (totals) dx = Math.max(dx, totals.right + CLEAR - p.left);
-    if (dx !== 0) plate.style.transform = `translateX(${dx}px)`;
-  }, []);
+  const placePlate = useCallback(
+    (plate: HTMLElement | null) => {
+      plateRef.current = plate;
+      if (!plate) {
+        // The reserve line, and the instant between two branches. The aim goes
+        // with the plate it was taken for: the next plate takes it again
+        // below, and an observation kept alive here would wake this callback
+        // to place nothing.
+        watch([]);
+        return;
+      }
+      // Cleared first so the measurement reads the stylesheet's own centred
+      // position, not the slide a previous pass applied.
+      plate.style.transform = "";
+      const overlay = plate.closest("section")?.parentElement;
+      const row = overlay?.parentElement;
+      if (!overlay || !row || getComputedStyle(overlay).position !== "absolute") return;
+      const totals = row.querySelector("[data-sync-subtitle]");
+      const cluster = row.querySelector("[data-sync-cluster]");
+      watch([plate, totals, cluster]);
+      const p = plate.getBoundingClientRect();
+      const sameLine = (el: Element | null) => {
+        if (!el) return null;
+        const b = el.getBoundingClientRect();
+        return b.width > 0 && p.top < b.bottom && b.top < p.bottom ? b : null;
+      };
+      const dx = plateSlide({
+        plate: p,
+        totals: sameLine(totals),
+        cluster: sameLine(cluster),
+      });
+      if (dx !== 0) plate.style.transform = `translateX(${dx}px)`;
+    },
+    // `watch` is itself stable, so this callback is too — which the placement
+    // depends on: React re-invokes a ref callback when its IDENTITY changes,
+    // and one that changed every render would hide the defect below by
+    // re-placing on every render of this component (and only this one).
+    [watch],
+  );
 
-  // Re-place on resize: both neighbours' edges are content-sized readings.
-  // Form/state changes re-run the ref callback on their own.
+  // Re-place on resize: a window resize moves both neighbours' edges without
+  // necessarily resizing any of them (the row is centred in a growing main),
+  // and edges are what the placement is made of. The ref callback re-runs only
+  // when the PLATE ELEMENT changes — a branch swap — so it covers neither this
+  // nor the widths the effect below watches.
   useEffect(() => {
     const onResize = () => placePlate(plateRef.current);
     window.addEventListener("resize", onResize);
@@ -610,6 +664,71 @@ export function SinceLastLook({
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, [named, placePanel]);
+
+  /**
+   * Re-place when a MEASURED WIDTH changes — the half `resize` cannot see.
+   *
+   * #610, and it was a timing defect rather than a missing budget. The
+   * clearance in `plateSlide` is right; it was spent once, at mount, against a
+   * subtitle that then GREW. `BoardSubtitle` corrects `+N this wk` to the
+   * reader's own week shortly after hydration (#518), and because
+   * `buildSubtitle` omits the whole segment at zero, the correction does not
+   * change a digit — it makes ~70px of subtitle appear. That re-renders a
+   * SIBLING subtree: no resize, no branch swap, so neither of the two things
+   * that used to re-place this plate happened.
+   *
+   * HOW THE GROWTH WAS STAGED, because the twin cannot produce it unaided and
+   * a reading that does not say so invites someone to try: the segment was
+   * APPENDED to `[data-sync-subtitle]` in the DOM, then the rects re-read. It
+   * has to be staged, for the structural reason the e2e block records — the
+   * mid-session correction is `BoardSubtitle`'s and only the signed-in
+   * dashboard imports it, so nothing on the twin grows this line after mount.
+   * Staging it is what isolates the defect: `placePlate` is a ref callback
+   * that re-runs on a plate-element change and on `window.resize`, so a load
+   * that already had the long line would have placed against it at mount and
+   * read the full clearance — the composite below could not come from any
+   * unaided load, and is not evidence that one exists.
+   *
+   * Twin at 1024 (`?session=1`, headless Chrome, 2026-09-07), growth staged as
+   * above: the subtitle grew 69.7px, the plate held its position to the pixel,
+   * and 65.0px of clearance became −4.7px of overlap. Reproduced independently
+   * against a `next start` production build, where the fix moves the plate
+   * `translateX(20.77px)` and the clearance lands at 16.0px. On the owner's
+   * board, where the totals already bind at exactly the 16px budget, the same
+   * growth runs ~53px of the line under the chip.
+   *
+   * Watching the boxes rather than the state that writes them is deliberate:
+   * the widths come from three components that know nothing about each other
+   * (`SyncBar`'s totals, its action cluster, this chip), and the only thing
+   * they share is the line. `measuredRef` holds exactly what the last
+   * placement read, so this observes the placement's own inputs and nothing
+   * else — the plate included, since `plateSlide` reads its box too. A
+   * transform does not change a border box, so applying the slide cannot
+   * notify this back into a loop.
+   *
+   * NOTHING HERE ANIMATES. The plate carries no transition, so a re-place is
+   * the same instantaneous correction a resize has always been; `prefers-
+   * reduced-motion` has nothing to answer for, and a plate that eased into its
+   * new position would be a 200ms overlap in place of a 0ms one.
+   */
+  useEffect(() => {
+    if (typeof ResizeObserver === "undefined") return;
+    const watcher = new ResizeObserver(() => {
+      placePlate(plateRef.current);
+      // The sheet hangs off the plate's measured box, so a plate that slides
+      // out from under an open panel strands it. `placePanel` reads its own
+      // guards and no-ops while the panel is closed.
+      placePanel(panelRef.current);
+    });
+    watcherRef.current = watcher;
+    // The first aim. Ref callbacks run before effects, so on any branch that
+    // renders a plate `placePlate` has already recorded what it measured.
+    for (const box of measuredRef.current) watcher.observe(box);
+    return () => {
+      watcher.disconnect();
+      watcherRef.current = null;
+    };
+  }, [placePlate, placePanel]);
 
   // The panel is an overlay, so it gets an overlay's exits — the same three
   // RowActionsMenu earned the hard way (see its header): Escape (which hands
