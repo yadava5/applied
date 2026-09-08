@@ -465,12 +465,18 @@ def test_the_substring_stripper_deletes_text_the_reader_can_see() -> None:
         if PREHEADER not in _SUBSTRING_STRIPPER.sub(" ", shape.markup):
             casualties.append(shape.id)
 
-    assert casualties == ["display-nonesuch", "display-none-then-block"], (
-        f"the substring stripper deletes {casualties} from the rendered half of "
-        "the population. If this list changed, the population changed; the "
-        "assertion is that it deletes rendered text AT ALL, and which shapes "
-        "is the evidence."
+    # THE CLAIM IS "AT ALL", NOT "EXACTLY THESE TWO". Which shapes die is a
+    # property of THIS pattern's quote style — widen it to ``["']`` and the list
+    # grows, which is a different pattern and not a different population. An
+    # equality here would red on a rewrite of the demonstration itself and say
+    # "the population changed" when nothing did. Today the list is
+    # ``display-nonesuch`` and ``display-none-then-block``.
+    assert casualties, (
+        "the substring stripper deleted nothing from the rendered half of the "
+        "population, so #766's abandonment no longer has an executable witness "
+        "and a fifth round would be assessed on the leak alone"
     )
+    assert set(casualties) <= {s.id for s in VISIBLE_TO_THE_READER}
 
 
 # ---------------------------------------------------------------------------
@@ -558,7 +564,12 @@ def test_the_mail_corpus_carries_both_polarities_and_one_of_them_auto_files() ->
         "this case is one of the mail corpus's confidently-wrong auto-files. "
         "Losing that is the whole cost of #766 and it must not go quiet."
     )
-    assert wrong.confidence == 0.9
+    # THE GATE COMPARISON AND NOT THE FIGURE. It reads 0.9 today, and an
+    # equality on that would red for every rules edit that moves a confidence
+    # by a hundredth without changing anything this file is about. What has to
+    # hold is that it clears the auto-file gate, because "queued for a person"
+    # and "written to the board as fact" are the two different products.
+    assert wrong.confidence >= AUTO_FILE_GATE
 
     accidental = outcomes["rejection"]
     assert accidental.actual == "rejection"
