@@ -5406,10 +5406,10 @@ async def application_summary_cloud(
     the other two are linear in nothing the mail count moves.
     :func:`_review_queue_rows_statement` carries the measured curve, the reason
     the key cannot be computed in SQL, and what a bounded read would have to
-    render if one is ever taken. Measured on one basis: the two
-    aggregates cost 0.51-0.55 ms server-side at every mail count, while the tile
-    goes from 0.95 ms at 6 matching rows to 140 ms at 30,000 and passes the two
-    of them at roughly fifty.
+    render if one is ever taken. Measured on one basis: the two aggregates cost
+    0.51-0.55 ms server-side at every mail count, while the tile goes from
+    0.95 ms at 6 matching rows to 140 ms at 30,000 and passes them at roughly
+    fifty.
 
     WHOSE MONDAY (#518). Counts alone cannot carry a zone, so this used to be
     the UTC Monday and nothing else, while the momentum caption on the same

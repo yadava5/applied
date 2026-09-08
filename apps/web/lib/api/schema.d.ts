@@ -218,8 +218,9 @@ export interface paths {
          * @description Return counts-only pipeline summary for the authenticated user.
          *
          *     Powers the dashboard stat tiles + funnel without transferring a single
-         *     application row. Two aggregate queries run against the composite
-         *     ``(user_id, status)`` index:
+         *     application row. THREE statements, not the two this used to name (#827).
+         *     Two of them are aggregates against the composite ``(user_id, status)``
+         *     index:
          *
          *     - ``GROUP BY status`` → per-status counts (≤7 rows regardless of how many
          *       applications the user has). ``total`` is their sum.
@@ -227,9 +228,21 @@ export interface paths {
          *       calendar week's Monday (see :func:`_week_start`). Not "created", which is
          *       when our sync inserted the row, and not a trailing seven days.
          *
-         *     Both are O(1) in transfer and index-assisted in the DB, so this endpoint
-         *     stays flat as an account scales from 10 to 10,000 applications — the whole
-         *     reason it exists instead of counting client-side over the full list.
+         *     Those two are O(1) in transfer and index-assisted in the DB, so they stay
+         *     flat as an account scales from 10 to 10,000 applications — the whole reason
+         *     this endpoint exists instead of counting client-side over the full list.
+         *
+         *     THE THIRD IS NOT FLAT, and until #827 this docstring was written as though
+         *     the whole endpoint were. ``needs_review`` fetches six columns of every
+         *     un-reviewed ``NEEDS_REVIEW`` row that no application of the user's answers
+         *     for and counts them in Python, so it is linear in their queue depth while
+         *     the other two are linear in nothing the mail count moves.
+         *     :func:`_review_queue_rows_statement` carries the measured curve, the reason
+         *     the key cannot be computed in SQL, and what a bounded read would have to
+         *     render if one is ever taken. Measured on one basis: the two aggregates cost
+         *     0.51-0.55 ms server-side at every mail count, while the tile goes from
+         *     0.95 ms at 6 matching rows to 140 ms at 30,000 and passes them at roughly
+         *     fifty.
          *
          *     WHOSE MONDAY (#518). Counts alone cannot carry a zone, so this used to be
          *     the UTC Monday and nothing else, while the momentum caption on the same
