@@ -160,10 +160,19 @@ const CLASSIFY_BATCH = 16;
  *
  * THE CLOCK STARTS WHEN THE FILE IS HANDED OVER, not when the classify pass
  * does, because that is when the visitor's wait started: `file.text()` and
- * `parseMailFile` run first and neither is instant — the mbox split alone is
- * 538 ms on a 150 MB export, which is #810's subject and not this pass's. So
- * on any file big enough to have made somebody wait, the field is up from the
- * first batch.
+ * `parseMailFile` run first and neither is instant — the mbox split is 291 ms
+ * on the largest file a browser can hand this page, which is #810's subject
+ * and not this pass's. So on any file big enough to have made somebody wait,
+ * the field is up from the first batch.
+ *
+ * #810 BOUNDED THAT SPLIT AND DID NOT MOVE THESE THREE ROWS, which is the one
+ * thing that could have gone wrong here: the gate reads a clock that includes
+ * the parse, so a change to the parse could in principle have re-drawn the
+ * table. It could not, because the table's fixtures ARE 400-message files —
+ * the cap never bites on them, nothing is skipped either way, and
+ * `parseMailFile` measures 1.87 → 1.94 ms on the 1,000-character row and
+ * 7.40 → 7.46 ms on the 8,000-character one. Two to eight milliseconds inside
+ * a 92-to-558 ms window, unchanged to a tenth of a millisecond.
  *
  * It gates the REVEAL and nothing else. What the field then draws is the real
  * count; no threshold can make it move.
