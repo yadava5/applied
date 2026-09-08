@@ -722,3 +722,263 @@ export function holdReasonSentence(
       return null;
   }
 }
+
+// --- Grouping the ASKING, never the answering --------------------------------
+
+/**
+ * The queue-row slice grouping reads.
+ *
+ * Structural, for the same reason as `CandidateApplication` above: this module
+ * is loaded directly by `tests/unit/` under Node's type stripping and must stay
+ * free of React and of the generated schema. `ReviewItem` in
+ * `components/dashboard/ReviewQueue.tsx` satisfies it structurally; importing
+ * that type back from the `.tsx` would put a component on this module's import
+ * graph for nothing.
+ */
+export interface GroupableReviewItem {
+  message_id: string;
+  subject?: string | null;
+  sender_name?: string | null;
+  sender_email?: string | null;
+  received_at?: string | null;
+  /** Derived identity — what tells two applications at one employer apart. */
+  role?: string | null;
+  /**
+   * The classifier's own guess, read ONLY to decide whether a group opens
+   * collapsed. Never compared, never counted, never rendered — see
+   * `groupReviewItems`. ORDERING AND GATING ONLY.
+   */
+  suggested_category?: string | null;
+  employer_token?: string | null;
+}
+
+/** One queue row with the candidate pool it resolved to — computed ONCE. */
+export interface ReviewUnitMember<T extends GroupableReviewItem> {
+  item: T;
+  candidates: CandidateApplication[];
+}
+
+/** One line of the queue: either a lone row, or several rows about one employer. */
+export interface ReviewUnit<T extends GroupableReviewItem> {
+  /**
+   * The GROUP key — normalised company and normalised role joined on NUL — or
+   * `null` where the row is ungrouped and stands alone.
+   *
+   * NUL is the separator because `normalizeCompanyName` emits `[a-z0-9 ]` only,
+   * so it cannot appear on the left of the join and a company whose name ends
+   * where a role begins cannot collide with a different split of the same
+   * characters. It is also what lets the render fall back to `message_id` for
+   * an ungrouped row without either namespace reaching the other.
+   */
+  key: string | null;
+  /** The board's DISPLAY spelling of the employer, for the header. */
+  company: string | null;
+  /** The role as the mail carried it, unnormalised. `null` on most live rows. */
+  role: string | null;
+  members: ReviewUnitMember<T>[];
+  /** The NEWEST member's receipt time, so an aging group visibly ages. */
+  receivedAt: string | null;
+  /**
+   * Whether every member carries the same `suggested_category`.
+   *
+   * The one permitted gate. See `groupReviewItems` for why it may only open the
+   * group WIDER and never narrower.
+   */
+  uniformCategory: boolean;
+}
+
+/** NUL — see `ReviewUnit.key`. */
+const GROUP_KEY_SEP = "\u0000";
+
+/**
+ * A role reduced to what makes two of them the same question.
+ *
+ * Case and internal whitespace only. NOT `normalizeCompanyName`: a role is
+ * punctuated on purpose ("Backend Engineer, Alarms" against "Backend Engineer -
+ * Access Control" are two requisitions at one employer, and the demo queue
+ * carries exactly that pair), and folding punctuation out of it would merge
+ * what #454 split.
+ *
+ * RENDER LAYER ONLY, AND THE LICENCE STOPS AT THAT BOUNDARY. This is a
+ * deliberate MERGE widening — it decides that two spellings are one heading —
+ * and it is safe here for one reason: the worst case is a confusing header, and
+ * the reader still answers every row individually. Never reuse it for a key
+ * that FILES, LINKS or DEDUPES anything. There the same widening silently
+ * destroys a record, which is the asymmetry (#454) that put this whole feature
+ * at the presentation layer instead of in the pipeline. A filing-grade role key
+ * is a different function with a different bar.
+ */
+function normalizeRoleName(value: string | null | undefined): string | null {
+  const folded = typeof value === "string" ? value.trim().toLowerCase().replace(/\s+/g, " ") : "";
+  return folded ? folded : null;
+}
+
+/** Milliseconds, or `null` for absent/unparseable — the queue renders dateless rows. */
+function receivedMillis(value: string | null | undefined): number | null {
+  if (typeof value !== "string") return null;
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/** Newest first, dateless last. A total order, so the render is deterministic. */
+function newestFirst(a: number | null, b: number | null): number {
+  if (a === b) return 0;
+  if (a === null) return 1;
+  if (b === null) return -1;
+  return b - a;
+}
+
+/**
+ * The queue's rows, collapsed into the things it is asking ABOUT (#517).
+ *
+ * WHAT THIS MAY AND MAY NOT DO. In the review band every field the classifier
+ * produced — stage, category, confidence — IS the doubted object; `NEEDS_REVIEW`
+ * is the typed null. Classifier output may ORDER and GROUP the asking, and may
+ * never ANSWER it. So this changes no data, removes no row and merges no
+ * decision: every member keeps its own select, its own picker and its own
+ * classify button, and the answer count is invariant. Grouping collapses the
+ * READING, and there is deliberately no group-level answer control of any kind —
+ * a bulk "these are all the assessment" affordance would let a misread rejection
+ * be swept in as an AUTHORITATIVE USER ANSWER, which outranks machine evidence
+ * permanently.
+ *
+ * The alternative was closed by measurement rather than by taste, and it is
+ * cheap to rebuild, so it is written down here: not queueing (or silently
+ * attaching) a held row whose suggested stage would not move its card was built
+ * and measured over 40 day-batches of the independent corpus, and 69 of the 137
+ * rows it touched were ground-truth REJECTIONS. A rejection whose verdict
+ * sentence falls past the stored snippet reads as a polite preamble and scores
+ * the card's own stage, so "would not move anything" is true of exactly the
+ * message that would move everything. Agreement with the card is the SIGNATURE
+ * of the misread, not noise around it. Do not reintroduce a stage predicate
+ * here in any form.
+ *
+ * THE KEY. For each row, ask `reviewCandidates` — the picker's own function,
+ * called ONCE and handed back on the member so a group can never offer options
+ * the picker would not — which applications the mail could name. If every
+ * candidate is the same employer by `normalizeCompanyName`, the row's key is
+ * that name plus its `role`; anything else (no candidate, or candidates at two
+ * different employers) is ungrouped and renders alone.
+ *
+ * `role` IS A MANDATORY SECOND COMPONENT. One employer legitimately holds
+ * several applications — that is #454's whole case, and `ReviewItem.role`'s own
+ * comment calls the field "the only field that tells them apart". Three held
+ * acknowledgements for three different requisitions at one employer are three
+ * questions, and company alone folds them under one header. It is derived
+ * identity rather than classifier output, so it is lawful in the band. Stated
+ * honestly: the live queue carries no roles at all today (measured, 0 of 8), so
+ * this component is insurance rather than an observed fix.
+ *
+ * The rule this function is bound by is recorded as DEC-009 — "fields of a band
+ * verdict are not decision inputs; render-layer use only" — because the
+ * rejected alternative is attractive, cheap to rebuild, and invisible from this
+ * code.
+ *
+ * `suggested_category` IS READ HERE AND NOWHERE ELSE, for one gate: a group
+ * whose members DISAGREE about it opens EXPANDED. That spends band data to
+ * demand more scrutiny, never less, which is the only direction the law above
+ * permits. It is never rendered — printing "assessment x3" above the select the
+ * reader is about to answer is the machine's guess at the strongest anchoring
+ * position on the page, in the band where #554 measured what a
+ * preselection-shaped default costs (19 applications destroyed, 0 once the
+ * answer had to be the user's). ALL-ABSENT COUNTS AS AGREEMENT: disagreement
+ * needs two distinct known values, and a backend that sends no category at all
+ * has not disagreed about anything.
+ *
+ * ORDER. Units newest-member-first, members newest-first, dateless last — so an
+ * aging pile sinks as a pile and the header can honestly show one date.
+ */
+export function groupReviewItems<T extends GroupableReviewItem>(
+  items: readonly T[],
+  applications: readonly CandidateApplication[],
+): ReviewUnit<T>[] {
+  const units: ReviewUnit<T>[] = [];
+  const byKey = new Map<string, ReviewUnit<T>>();
+
+  for (const item of items) {
+    const candidates = reviewCandidates(item, applications);
+    const member: ReviewUnitMember<T> = { item, candidates };
+
+    // "All share one company NAME" — NOT "exactly one candidate". An employer
+    // holding four cards is one employer, and that is the shape the picker
+    // exists for; two candidates at two DIFFERENT employers is a row this
+    // cannot place and must not group.
+    const names = new Set(candidates.map((c) => normalizeCompanyName(c.company)));
+    const normalized = names.size === 1 ? ([...names][0] as string) : "";
+
+    if (!normalized) {
+      units.push({
+        key: null,
+        company: null,
+        role: null,
+        members: [member],
+        receivedAt: item.received_at ?? null,
+        uniformCategory: true,
+      });
+      continue;
+    }
+
+    const key = `${normalized}${GROUP_KEY_SEP}${normalizeRoleName(item.role) ?? ""}`;
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.members.push(member);
+      continue;
+    }
+    // The board's own spelling, from the first member to reach this key. The
+    // candidates all normalise alike by construction, so any of them names the
+    // same employer; this one is the one the reader met first.
+    const unit: ReviewUnit<T> = {
+      key,
+      company: candidates[0]!.company,
+      role: item.role ?? null,
+      members: [member],
+      receivedAt: null,
+      uniformCategory: true,
+    };
+    byKey.set(key, unit);
+    units.push(unit);
+  }
+
+  for (const unit of units) {
+    unit.members.sort((a, b) =>
+      newestFirst(receivedMillis(a.item.received_at), receivedMillis(b.item.received_at)),
+    );
+    unit.receivedAt = unit.members[0]!.item.received_at ?? null;
+    const categories = new Set(unit.members.map((m) => m.item.suggested_category ?? null));
+    unit.uniformCategory = categories.size <= 1;
+  }
+  units.sort((a, b) => newestFirst(receivedMillis(a.receivedAt), receivedMillis(b.receivedAt)));
+  return units;
+}
+
+/**
+ * The header line for a group, composed from RAW FACTS only.
+ *
+ * "N held messages · <Company> · <Role> · <date>", and never "about one
+ * application": the key proves same employer NAME and same derived role, which
+ * is not the same claim as one application — an employer holds several (#454).
+ * Nothing the classifier produced appears here — see `groupReviewItems`.
+ *
+ * THE ROLE IS PART OF THE LINE BECAUSE IT IS PART OF THE KEY. Without it, two
+ * groups at one employer differing only by requisition rendered byte-identical
+ * headers: the key told them apart and the copy did not, so the reader met "2
+ * held messages · <Company>" twice with no way to tell which pile was which.
+ * That is the "asking about one employer several times" complaint reappearing
+ * one level up, and a header must name every component the grouping used.
+ * Omitted when the unit has no role, which is the live queue's whole
+ * population today — a trailing separator with nothing after it is noise.
+ *
+ * Both names arrive already neutralised by the caller (`safeText`): an employer
+ * name and a role are mail-derived, and this string becomes a button's
+ * accessible name.
+ */
+export function reviewGroupHeading(
+  count: number,
+  company: string,
+  role: string | null,
+  date: string | null,
+): string {
+  return [`${count} held messages`, company, role, date]
+    .filter((part): part is string => Boolean(part))
+    .join(" · ");
+}
