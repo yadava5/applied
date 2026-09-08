@@ -34,27 +34,52 @@
 // --- The windowed scan request ------------------------------------------------
 
 /**
- * The depth choices the dialog offers.
+ * The depth choices the dialog offers. THE CEILING IS THE POINT: nothing here
+ * exceeds what a single `/gmail/sync` invocation can read, which is about 297
+ * messages.
  *
- * 750 WAS THE SERVER DEFAULT AND IS NOT ANY MORE. `_SYNC_DEFAULT_SCAN_TARGET`
- * is 297, because Gmail's per-user ceiling fell to 6,000 units a minute and
- * `messages.get` rose to 20, so 297 messages (three pages at `20N + 5`) is
- * what one invocation can actually read. The default here follows it, and a
- * default-depth scan is now a depth the server can finish rather than one it
- * reports as partial every time.
+ * Where 297 comes from. Gmail affords 6,000 quota units per user per minute
+ * and a list page costs `20N + 5` (`messages.get` rose to 20 on 2026-05-01),
+ * so three whole pages of 99 come to 5,955 units and a fourth page does not
+ * fit beside them. The backend enshrines the same figure as
+ * `_SYNC_DEFAULT_SCAN_TARGET = 297` (`cloud/gmail_oauth.py`), restated here
+ * rather than imported for the reason the module comment gives — this file
+ * stays dependency-free, and the two halves are in different languages and
+ * cannot import each other either way. `tests/unit/sync-plan.test.mjs`
+ * re-derives the bound from the quota arithmetic instead of reading it back
+ * off this list.
  *
- * THE LARGER OPTIONS STILL OVERPROMISE, and that is a known open gap rather
- * than something this constant can fix: one `/gmail/sync` invocation cannot
- * exceed a bucket, and an explicit `count` restarts from the newest message
- * rather than resuming, so pressing 2000 repeatedly re-reads the same window.
- * The path that does read deeply is the inbox mine — it pages, paces itself
- * against 429s, and files what it found. Tracked separately; the options are
- * left in place rather than silently removed, because narrowing a control is a
- * product decision and not a bug fix.
+ * 500, 750, 1000 AND 2000 USED TO BE OFFERED AND WERE NEVER REACHABLE (#743).
+ * One invocation cannot outspend a bucket, `_full_scan` always starts from the
+ * newest message, and an explicit `count` drops the history cursor, so
+ * pressing 2000 a second time re-read exactly the same window rather than
+ * continuing past it. The comment that used to sit here called that a known
+ * open gap and left the options in place; they are gone now, and what remains
+ * is the set a press can finish. The deep read still exists and
+ * {@link SCAN_DEPTH_NOTE} points at it: the inbox workbench pages, paces
+ * itself against 429s, and files what it found with no further Gmail calls.
  */
-export const SCAN_DEPTH_OPTIONS = [100, 200, 500, 750, 1000, 2000] as const;
+export const SCAN_DEPTH_OPTIONS = [100, 200, 297] as const;
 export type ScanDepth = (typeof SCAN_DEPTH_OPTIONS)[number];
 export const SCAN_DEFAULT_DEPTH: ScanDepth = 200;
+
+/**
+ * What the dialog says beneath the depth control.
+ *
+ * It is a direction, not an apology: the menu stops at what one scan can
+ * finish, and the reader who wants more mail read is told which surface reads
+ * it. "Inbox workbench" is the label the sync menu already uses for the same
+ * destination (`SyncBar.tsx`), so the sentence names a control the reader can
+ * go and find rather than describing a capability.
+ *
+ * No dash of any kind, and that is a copy decision rather than an accident:
+ * this line renders under a figure and beside `scanScopeLine`'s ` · `
+ * separators, where a hyphen reads as punctuation of the number above it.
+ * The unit test pins the absence, since a later edit would otherwise restore
+ * one without anyone noticing.
+ */
+export const SCAN_DEPTH_NOTE =
+  "One scan reads what Gmail allows in a minute. To go further back, open the inbox workbench: it pages through older mail and files what it finds.";
 
 /**
  * The window choices, mirroring the inbox's `RANGE_OPTIONS` values (restated

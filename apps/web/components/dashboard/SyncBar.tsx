@@ -21,6 +21,7 @@ import {
   SCAN_DEFAULT_DEPTH,
   SCAN_DEFAULT_DISPOSITION,
   SCAN_DEFAULT_RANGE,
+  SCAN_DEPTH_NOTE,
   SCAN_DEPTH_OPTIONS,
   SCAN_DISPOSITION_OPTIONS,
   SCAN_RANGE_OPTIONS,
@@ -1266,6 +1267,13 @@ export function SyncBar({
                 </option>
               ))}
             </select>
+            {/* The menu stops at what one scan can finish (#743: it used to
+                offer 2000, which no single invocation could reach and a second
+                press could not continue), so the dialog has to say where a
+                deeper read happens. The sentence is `SCAN_DEPTH_NOTE` like
+                every other sentence on this surface — the component writes
+                none of its own. */}
+            <p className="text-xs text-muted">{SCAN_DEPTH_NOTE}</p>
           </div>
           {/* Stated, not offered, on BOTH dispositions — but for two different
               reasons, and the sentence has to be true of each. The backend

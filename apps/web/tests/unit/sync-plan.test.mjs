@@ -32,6 +32,7 @@ import {
   SCAN_DEFAULT_DEPTH,
   SCAN_DEFAULT_DISPOSITION,
   SCAN_DEFAULT_RANGE,
+  SCAN_DEPTH_NOTE,
   SCAN_DEPTH_OPTIONS,
   formatCount,
   formatElapsed,
@@ -74,15 +75,20 @@ test("the dialog's defaults are the safe ones, and the window is unchanged", () 
   // partial — the banner every time, on the press most people make.
   //
   // 200 rather than 297 because this list is a vocabulary a person reads, and
-  // it is shared with the inbox mine's own count options. The deeper choices
-  // remain available and remain honest about being partial.
+  // it is shared with the inbox mine's own count options. 297 is offered too,
+  // as the deepest single press, but it is not what a default press spends.
   assert.equal(SCAN_DEFAULT_DEPTH, 200);
   assert.ok(SCAN_DEPTH_OPTIONS.includes(200));
-  // The deeper options are deliberately still offered — narrowing a control is
-  // a product decision, not a bug fix — so this pins that they were not
-  // removed by accident along with the default.
-  assert.ok(SCAN_DEPTH_OPTIONS.includes(750));
-  assert.ok(SCAN_DEPTH_OPTIONS.includes(2000));
+  // THIS PAIR USED TO ASSERT THE OPPOSITE — `includes(750)` and
+  // `includes(2000)`, pinning that the deeper options had not been removed by
+  // accident, on the reasoning that narrowing a control is a product decision
+  // rather than a bug fix. #743 made that decision: no invocation could reach
+  // either value, and a second press restarted the same window instead of
+  // continuing it, so the options promised a read the control could not
+  // perform. What is pinned now is the ceiling, and the test below derives it
+  // rather than reading it back off the list.
+  assert.equal(SCAN_DEPTH_OPTIONS.includes(750), false);
+  assert.equal(SCAN_DEPTH_OPTIONS.includes(2000), false);
 
   // What DID change in #474: the default press no longer purges. `keep` must
   // be the resting disposition — a default of "remove" here is the destructive
@@ -95,14 +101,14 @@ test("the dialog's defaults are the safe ones, and the window is unchanged", () 
 });
 
 test("the destructive disposition sends the rebuild mode, and no scope", () => {
-  assert.deepEqual(scanRequestBody(750, "12", "remove"), {
+  assert.deepEqual(scanRequestBody(297, "12", "remove"), {
     mode: "rebuild",
-    count: 750,
+    count: 297,
     range: "12",
   });
-  assert.deepEqual(scanRequestBody(2000, "all", "remove"), {
+  assert.deepEqual(scanRequestBody(100, "all", "remove"), {
     mode: "rebuild",
-    count: 2000,
+    count: 100,
     range: "all",
   });
 });
@@ -118,7 +124,7 @@ test("all-time sends range='all' — on THIS endpoint, omitting it means 12 mont
   for (const disposition of ["keep", "remove"]) {
     for (const range of ["3", "6", "9", "12", "all"]) {
       assert.equal(
-        scanRequestBody(750, range, disposition).range,
+        scanRequestBody(297, range, disposition).range,
         range,
         `range must be sent verbatim (${disposition}/${range})`,
       );
@@ -131,10 +137,10 @@ test("scope is opposite on the two paths, and each way round is required", () =>
   // additive MUST claim the one the server would otherwise default to
   // `in:inbox`. Asserting either alone would defend the other's bug.
   for (const range of ["3", "12", "all"]) {
-    const rebuild = scanRequestBody(750, range, "remove");
+    const rebuild = scanRequestBody(297, range, "remove");
     assert.equal("scope" in rebuild, false, `rebuild must not send scope (${range})`);
 
-    const keep = scanRequestBody(750, range, "keep");
+    const keep = scanRequestBody(297, range, "keep");
     assert.equal(keep.scope, "anywhere", `keep-scan must send scope=anywhere (${range})`);
   }
 });
@@ -146,8 +152,8 @@ test("a windowed body always carries count, so the history cursor is dropped", (
   for (const disposition of ["keep", "remove"]) {
     for (const [depth, range] of [
       [100, "3"],
-      [2000, "all"],
-      [750, "12"],
+      [297, "all"],
+      [200, "12"],
     ]) {
       const body = scanRequestBody(depth, range, disposition);
       assert.equal(body.count, depth, `count must be sent (${disposition}/${range})`);
@@ -173,8 +179,119 @@ test("counts group deterministically without consulting a locale", () => {
 });
 
 test("the running line states exactly what was chosen, plus the stated scope", () => {
-  assert.equal(scanScopeLine(750, "12"), "up to 750 messages · last 12 months · all mail");
-  assert.equal(scanScopeLine(2000, "all"), "up to 2,000 messages · all time · all mail");
+  // Both cases are depths the dialog offers. They used to be 750 and 2,000,
+  // which also covered `formatCount`'s comma inside this sentence; no offered
+  // depth reaches four digits any more (#743), so the grouping case lives
+  // where it belongs — with `formatCount`, whose other caller is the scanned
+  // count and can still run into thousands.
+  assert.equal(scanScopeLine(100, "12"), "up to 100 messages · last 12 months · all mail");
+  assert.equal(scanScopeLine(297, "all"), "up to 297 messages · all time · all mail");
+});
+
+// --- The ceiling ------------------------------------------------------------
+//
+// The bound below is DERIVED from what constrains a scan, not read back off
+// `SCAN_DEPTH_OPTIONS`. `max(options) <= max(options)` is true of every list,
+// including the one this test exists to reject, so an assertion shaped that
+// way would be green on 2,000 exactly as it is on 297.
+//
+// The three figures it is built from are Gmail's, measured from this project's
+// own Cloud Console and recorded in `backend/jobtracker/config.py`
+// (`gmail_fetch_page_size`) and `cloud/gmail_oauth.py`
+// (`_SYNC_DEFAULT_SCAN_TARGET`). They are restated here rather than imported
+// because the constraint is enforced in Python and the control is written in
+// TypeScript: neither side can read the other, which is exactly why the
+// browser's menu could drift 2,000 messages past what the server could do.
+
+/** Quota units Gmail affords one user per minute. */
+const GMAIL_UNITS_PER_MINUTE = 6000;
+/** `messages.get` — 20 units since 2026-05-01, when it rose from 5. */
+const MESSAGES_GET_UNITS = 20;
+/** `messages.list` — one per page, on top of the gets it yields. */
+const MESSAGES_LIST_UNITS = 5;
+/** Messages per page the backend asks for (`gmail_fetch_page_size`). */
+const GMAIL_PAGE_SIZE = 99;
+
+/**
+ * The most messages one `/gmail/sync` invocation can read before the bucket
+ * refuses it: pages of `GMAIL_PAGE_SIZE`, each costing
+ * `20 * messages + 5`, taken while the running total still fits in a minute's
+ * budget.
+ */
+function readableInOneInvocation() {
+  let messages = 0;
+  for (;;) {
+    const next = messages + 1;
+    const pages = Math.ceil(next / GMAIL_PAGE_SIZE);
+    const units = next * MESSAGES_GET_UNITS + pages * MESSAGES_LIST_UNITS;
+    if (units > GMAIL_UNITS_PER_MINUTE) return messages;
+    messages = next;
+  }
+}
+
+test("no depth on the menu is deeper than one invocation can read", () => {
+  const ceiling = readableInOneInvocation();
+
+  // The instrument first, since a bound computed wrong would pass any list.
+  // Three whole pages of 99 cost `1985 * 3 = 5,955`; two more messages on a
+  // fourth page add `45` and land exactly on 6,000, and a third would put it
+  // 20 over. The menu's deepest option is 297 rather than this ceiling
+  // because the server's target is three WHOLE pages, 5,955 units with 45 to
+  // spare (`_SYNC_DEFAULT_SCAN_TARGET`, which says exactly that and never
+  // discusses a part-page fourth); the menu follows the server rather than
+  // the arithmetic. What is asserted below is only that no option is past
+  // what a bucket affords.
+  assert.equal(ceiling, 299, "the quota arithmetic is not computing what it claims");
+  assert.ok(
+    ceiling < 500,
+    `a bound of ${ceiling} would admit 500, the shallowest option #743 removed`,
+  );
+  assert.ok(
+    ceiling >= SCAN_DEFAULT_DEPTH,
+    `a bound of ${ceiling} excludes the dialog's own default of ${SCAN_DEFAULT_DEPTH}`,
+  );
+
+  // The gate. Every option has to be a depth a single press can finish: a
+  // deeper one cannot be reached by pressing again, because an explicit
+  // `count` restarts the scan from the newest message rather than resuming.
+  for (const depth of SCAN_DEPTH_OPTIONS) {
+    assert.ok(
+      depth <= ceiling,
+      `the dialog offers ${depth} messages, and one /gmail/sync invocation reads ${ceiling} ` +
+        `before Gmail refuses it (${GMAIL_UNITS_PER_MINUTE} units a minute, ` +
+        `${MESSAGES_GET_UNITS} a message). Pressing it twice re-reads the same window; ` +
+        `deep reads belong to the inbox workbench.`,
+    );
+  }
+});
+
+test("the dialog says where a deeper read happens", () => {
+  // The menu stopping at what one press can finish is only honest if the
+  // dialog names the surface that goes further. It has to be a direction the
+  // reader can act on — "open the inbox workbench" — and not a statement of
+  // regret about the limit.
+  assert.match(SCAN_DEPTH_NOTE, /open the inbox workbench/);
+
+  // The sentence renders under a figure and beside `scanScopeLine`'s
+  // separators, where a dash reads as punctuation of the number above it.
+  //
+  // Spelled as three separate `includes` rather than one character class:
+  // `/[-–—]/` is correct today only because a hyphen FIRST in a class is
+  // literal, and the day somebody adds a fourth mark in front of it the
+  // hyphen becomes a RANGE endpoint spanning most of ASCII — a gate that
+  // matches every letter and reds on any sentence at all. Naming each mark
+  // costs two lines and cannot acquire that meaning.
+  for (const [mark, name] of [
+    ["-", "a hyphen"],
+    ["\u2013", "an en dash"],
+    ["\u2014", "an em dash"],
+  ]) {
+    assert.equal(
+      SCAN_DEPTH_NOTE.includes(mark),
+      false,
+      `the depth note carries ${name}; it sits under a number, where one reads as part of it`,
+    );
+  }
 });
 
 test("the confirm button names the window AND the act it commits", () => {
