@@ -105,14 +105,18 @@ so each omission is a decision rather than an oversight:
   - The 18 OpenSSF Scorecard checks. Computed by someone else, which the
     README correctly says is the entire value of the number.
 
-Two figures that LOOK like they belong on that list are checked anyway, because
-they have a committed source of record: the cascade's 0.9583 / 4 misclassified
-on v3, and the 0.9843 / 0.9686 v2 comparison. The README names
-`docs/ML_EXECUTION_TRACKER.md` as their source, so the tracker is their
-definition site and `tracker_metric` reads it. Reproducing them from scratch
-would need a `--hybrid-profile full` run with torch and SetFit resident; that
-is a `--record` job nobody has wired, and until somebody does, agreeing with
-the tracker is a real and checkable constraint rather than no constraint.
+Figures that LOOK like they belong on that list are checked anyway, because
+they have a committed source of record. The cascade's v3 numbers come out of
+`backend/data/evaluation/baseline_cascade_v3.json`, written by
+`scripts/cascade_gate.sh --update-baseline` on a machine with a SetFit
+checkpoint; `docs/ML_EXECUTION_TRACKER.md`'s v3 hybrid row mirrors them and an
+invariant holds it there. That arrangement is newer than it looks (#446): the
+tracker row used to be the definition site with nothing checking it, and it had
+drifted a digit — 0.9583 where its own named source recorded 0.9582 — while two
+other documents printed the artifact's value. The v2 comparison, 0.9843 against
+0.9686, still reads from the tracker alone: no v2 artifact was committed, and
+agreeing with the tracker is a real constraint where recomputation is not
+available.
 
 USAGE
   python3 scripts/readme_facts.py            # --check: verify, exit 1 on drift
@@ -1028,17 +1032,20 @@ def tracker_metric(row: str, metric: str) -> float:
     A metric off one of ML_EXECUTION_TRACKER.md's result rows, e.g.
 
         - rules: `accuracy=0.9896`, `macro_f1=0.9896`, `misclassified=1`
-        - hybrid: `accuracy=0.9583`, `macro_f1=0.9583`, `misclassified=4`
+        - hybrid: `accuracy=0.9688`, `macro_f1=0.9686`, `misclassified=3`
         - v2 hybrid: `accuracy=0.9844`, `macro_f1=0.9843`
 
-    The tracker is the definition site for the cascade's numbers, not a peer
-    document: the README says so itself, in the Documentation table, and there
-    is nowhere else for them to come from. `baseline_hybrid_v3.json` cannot
-    supply them — it was generated under the `deterministic` profile and reads
-    0.9896, which is the whole trap the Classifier-evaluation section exists to
-    defuse. Recomputing them for real needs a `--hybrid-profile full` run with
-    torch and SetFit resident, which is exactly the kind of thing that must not
-    live on the fast path.
+    For the v3 rows this is a MIRROR, not a definition site. Both have a
+    committed artifact — `baseline_rules_v3.json` and `baseline_cascade_v3.json`
+    — the facts compute from those, and invariants hold these rows to them.
+    Note that `baseline_hybrid_v3.json` is not one of them: it was generated
+    under the `deterministic` profile and reads 0.9896, which is the whole trap
+    the README's Classifier-evaluation section exists to defuse. The cascade's
+    artifact comes from a `--hybrid-profile full` run with torch and SetFit
+    resident, which is why it is written by `scripts/cascade_gate.sh` on a
+    machine that has a checkpoint and never on the fast path.
+
+    The v2 rows have no artifact and this IS their definition site.
 
     Anchored on `- <row>: ` at the start of a line so the v2 rows cannot be
     confused with the v3 rows; each of the four is unique in the file, and the
@@ -2099,22 +2106,48 @@ FACTS: dict[str, dict] = {
             {"re": r'accuracy · (\d+) misclassified"', "file": BOOKLET_CONTENT},
         ],
     },
-    # ── the cascade, whose numbers live in the tracker and nowhere else ──
+    # ── the cascade, whose numbers now have a committed artifact of their own ──
+    #
+    # These read `baseline_cascade_v3.json`, not the tracker, and that changed
+    # with #446. The old arrangement was a hand-maintained tracker row that
+    # nothing checked, and it had already drifted: the row said
+    # `macro_f1=0.9583` while the artifact it claimed as its source recorded
+    # 0.9581695, which rounds to 0.9582. Both `ml/README.md` and
+    # `docs/ML_PROMOTION_POLICY.md` printed 0.9582 from the artifact, so the
+    # repository published two different cascade macro-F1s and no gate could
+    # see it. The artifact is the measurement; the tracker row is now checked
+    # against it by an invariant below, exactly as the rules row already was.
     "cascadeMacroF1": {
         "kind": "static",
-        "describe": f"macro_f1 on the `- hybrid:` v3 row of {TRACKER}",
-        "compute": lambda: tracker_metric("hybrid", "macro_f1"),
+        "describe": "macro_f1 in baseline_cascade_v3.json",
+        "compute": lambda: baseline("baseline_cascade_v3.json")["overall"]["macro_f1"],
         "sites": [
             r"full three-layer cascade\*\* scores \*\*([\d.]+)\*\*",
-            r"\(accuracy ([\d.]+), \d+ misclassified\)",
             r"the one that reads ([\d.]+)",
-            r"the source for the cascade's ([\d.]+)",
+            r"The cascade's ([\d.]+) is measured into",
+            {
+                "re": r"the full cascade, which scores ([\d.]+) on the same set",
+                "file": BOOKLET_CONTENT,
+            },
         ],
+    },
+    # Split out of `cascadeMacroF1` by #446. That fact owned a site capturing
+    # the word after "accuracy", which is not a macro-F1 — it passed only
+    # because the cascade's two figures happened to round to the same four
+    # digits (0.9583). The 2026-09-08 re-record separated them, 0.9688 accuracy
+    # against 0.9686 macro-F1, and the site started checking one number against
+    # the other's fact. A coincidence of rounding was doing the work of an
+    # assertion.
+    "cascadeAccuracy": {
+        "kind": "static",
+        "describe": "accuracy in baseline_cascade_v3.json",
+        "compute": lambda: baseline("baseline_cascade_v3.json")["overall"]["accuracy"],
+        "sites": [r"\(accuracy ([\d.]+), \d+ misclassified\)"],
     },
     "cascadeMismatches": {
         "kind": "static",
-        "describe": f"misclassified on the `- hybrid:` v3 row of {TRACKER}",
-        "compute": lambda: int(tracker_metric("hybrid", "misclassified")),
+        "describe": "mismatch records in baseline_cascade_v3.json",
+        "compute": lambda: len(baseline("baseline_cascade_v3.json")["mismatches"]),
         "sites": [r"\(accuracy [\d.]+, (\d+) misclassified\)"],
     },
     "cascadeV2MacroF1": {
@@ -3208,6 +3241,26 @@ INVARIANTS = [
             f"{TRACKER} says the rules layer scores {tracker_metric('rules', 'macro_f1')} with "
             f"{int(tracker_metric('rules', 'misclassified'))} misclassified; "
             f"baseline_rules_v3.json says {round(f['rulesMacroF1'], 4)} with {f['rulesMismatches']}."
+        ),
+    },
+    {
+        "name": "the tracker's v3 hybrid row agrees with the committed cascade baseline",
+        # The mirror of the rules invariant above, and it is here because its
+        # absence had already cost something. The tracker's `- hybrid:` row
+        # names `baseline_cascade_v3.json` as its source in prose, but nothing
+        # compared the two, and the row drifted to 0.9583 against an artifact
+        # recording 0.9582. A source of record that no check reads is a comment.
+        "holds": lambda f: (
+            tracker_metric("hybrid", "macro_f1") == round(f["cascadeMacroF1"], 4)
+            and tracker_metric("hybrid", "accuracy") == round(f["cascadeAccuracy"], 4)
+            and int(tracker_metric("hybrid", "misclassified")) == f["cascadeMismatches"]
+        ),
+        "explain": lambda f: (
+            f"{TRACKER} says the cascade scores {tracker_metric('hybrid', 'macro_f1')} macro-F1 "
+            f"at {tracker_metric('hybrid', 'accuracy')} accuracy with "
+            f"{int(tracker_metric('hybrid', 'misclassified'))} misclassified; "
+            f"baseline_cascade_v3.json says {round(f['cascadeMacroF1'], 4)} at "
+            f"{round(f['cascadeAccuracy'], 4)} with {f['cascadeMismatches']}."
         ),
     },
     {
