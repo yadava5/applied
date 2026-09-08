@@ -5268,47 +5268,68 @@ def _review_queue_rows_statement(user_id: uuid.UUID):
     WHAT IT COSTS, MEASURED
     -----------------------
     #827, 2026-09-08, ``postgres:16`` in Docker on the owner's laptop, min of 5,
-    ``applications`` HELD at 2,000 rows so only the mail count moves. The seed is
-    ``tests/test_read_path_indexes_postgres.py``'s, whose rows carry a NULL
-    ``body_snippet``:
+    ``applications`` HELD at 2,000 rows so only the mail count moves — the plan
+    module's fixture sweeps both off one ``SEED_ROWS``, which attributes nothing.
+    Seed is that fixture's otherwise, so the rows carry a NULL ``body_snippet``.
+    "SQL" is ``EXPLAIN ANALYZE`` execution time, "trip" is the client's wall
+    clock around execute-and-fetch, "dedupe" is the Python loop::
 
-    =========  =============  =======  ========  =======  =============
-    emails     matching rows  buffers  this SQL  fetch    Python dedupe
-    =========  =============  =======  ========  =======  =============
-    200                    6       33    0.31ms   1.00ms         0.02ms
-    1,000                 30       42    0.32ms   1.02ms         0.09ms
-    5,000                150       89    0.38ms   1.23ms         1.48ms
-    25,000               750      320    0.71ms   1.86ms         2.45ms
-    100,000            3,000    1,191    2.01ms   5.54ms        11.19ms
-    200,000            6,000    2,341    4.04ms   8.75ms        20.37ms
-    1,000,000         30,000   11,538   21.74ms  35.64ms       107.54ms
-    =========  =============  =======  ========  =======  =============
+      emails     matching rows   buffers      SQL     trip    dedupe     total
+      200                    6        33   0.32ms   0.93ms    0.02ms    0.95ms
+      1,000                 30        42   0.32ms   0.95ms    0.09ms    1.04ms
+      5,000                150        89   0.38ms   1.91ms    1.89ms    3.80ms
+      25,000               750       320   0.71ms   2.66ms    5.73ms    8.38ms
+      100,000            3,000     1,191   2.15ms   4.13ms   10.87ms   15.00ms
+      200,000            6,000     2,341   4.07ms   9.16ms   20.41ms   29.57ms
+      1,000,000         30,000    11,538  21.04ms  36.10ms  104.47ms  140.57ms
 
-    The endpoint's other two statements cost 0.53 ms together and do not move
-    with the mail count at all.
+    The endpoint's other two statements, timed THE SAME TWO WAYS at every one of
+    those sizes, cost 0.51-0.55 ms server-side and 1.4-3.0 ms round trip, and do
+    not move with the mail count. Timing them the same way is not a formality:
+    comparing this statement's round trip against their execution time made the
+    tile look like the dominant half at six rows, which it is not.
 
-    THE STATEMENT IS NOT THE EXPENSIVE HALF. #827 names 2,316 buffers and that
-    reproduces exactly on the fixture's own lockstep seed — but at 30,000
-    matching rows the tile's wall cost is 143 ms, of which the server-side SQL
-    is 22 ms (15%) and the ``review_dedup_key`` loop is 108 ms (75%). The seed understates even that:
-    ``body_snippet`` is NULL there, so ``role_from_message`` searches an empty
-    string and ``_clean_role`` never runs. Re-seeded with ATS-shaped text at
-    3,000 matching rows the same dedupe is 71.95 ms rather than 11.19 ms — 6.4x,
-    ~24 µs a row — because every row then derives an identity. Optimising the
-    query alone would move the smaller half.
+    THE CROSSOVER. Server-side, where the other two vary only between 0.51 and
+    0.55 ms across every size measured, this statement passes them between 240
+    and 360 matching rows — 0.42 ms against 0.53 ms at 240, 0.58 ms against
+    0.55 ms at 360. On whole cost (trip plus
+    dedupe against their trips) it passes between 150 and 360 on this seed, and
+    at 60 matching rows on ATS-shaped text, where it is already 1.35x. So on
+    realistic mail the answer to "at what size does this become comparable to the
+    rest of the request" is ROUGHLY FIFTY MATCHING ROWS — six times the live
+    queue's 8, and reachable.
 
-    #827's 61.6 ms does not reproduce: same corpus, same plan, the same 2,316
-    buffers, 6.5 ms on the first execution and 5.4 ms as a min-of-5. The buffer
-    count is the durable half of that measurement; the wall time was not.
+    Comparable is not expensive. At 60 matching rows the whole tile is 2.96 ms.
+    Being the larger half of a 4 ms budget is not a reason to rewrite anything,
+    which is why the crossover is reported rather than acted on.
+
+    THE STATEMENT IS NOT THE EXPENSIVE HALF. At 30,000 matching rows the tile's
+    140.57 ms is 21 ms of server-side SQL and 104 ms of ``review_dedup_key``.
+    And the seed understates that loop: ``body_snippet`` is NULL there, so
+    ``role_from_message`` searches an empty string and ``_clean_role`` never
+    runs. Re-seeded with ATS-shaped text at 3,000 matching rows the dedupe is
+    69.62 ms rather than 10.87 ms — 6.4x, ~23 µs a row — because every row then
+    derives an identity (3,000 of 3,000 did). Optimising the query alone would
+    move the smaller half.
+
+    #827's 2,316 buffers reproduce EXACTLY, on the fixture's own lockstep seed
+    and with the plan shape it describes. Its 61.6 ms does not reproduce WARM:
+    6.9 ms on the first execution after ``VACUUM ANALYZE``, 5.7 ms as a min-of-5.
+    Every buffer in every run here was a cache HIT — ``Shared Read Blocks`` was 0
+    in all nineteen sizes whose split was recorded — so nothing here rules out
+    61.6 ms being a COLD read of the same 2,316 blocks (18 MB), which is the
+    likeliest reading and is not testable on a container the harness had just
+    seeded. The buffer
+    count is the durable half of that measurement either way.
 
     WHY IT IS STILL UNBOUNDED
     -------------------------
-    The live queue is 8 rows deep. At 6 matching rows the whole tile — round
-    trip plus dedupe — is 1.0 ms, and the dedupe inside it is 0.02 ms. At 3,000
-    matching rows on ATS-shaped text — 375x the live depth — it is ~80 ms
-    against the 700-1150 ms of origin time #827 itself records for a click. No mailbox in reach makes this the read path's
-    dominant cost, so the bounded read is priced below and deliberately not
-    taken; #827 stays open on it rather than being answered with a rewrite.
+    The live queue is 8 rows deep, where the whole tile is ~1 ms. It stays cheap
+    in absolute terms far past its crossover: ~80 ms at 3,000 matching rows of
+    ATS-shaped mail, which is 375x the live depth, against the 700-1150 ms of
+    origin time #827 itself records for a click. So the shape is worth writing
+    down and the rewrite is not worth buying yet; #827 stays open on it rather
+    than being answered with one.
 
     IF A BOUND IS EVER TAKEN, ITS NUMBER COMES FROM THE QUEUE
     ---------------------------------------------------------
@@ -5385,9 +5406,10 @@ async def application_summary_cloud(
     the other two are linear in nothing the mail count moves.
     :func:`_review_queue_rows_statement` carries the measured curve, the reason
     the key cannot be computed in SQL, and what a bounded read would have to
-    render if one is ever taken. Measured: the two aggregates cost 0.53 ms
-    together at every mail count, while the tile costs 1.0 ms at 6 matching rows
-    and 143 ms at 30,000.
+    render if one is ever taken. Measured on one basis: the two
+    aggregates cost 0.51-0.55 ms server-side at every mail count, while the tile
+    goes from 0.95 ms at 6 matching rows to 140 ms at 30,000 and passes the two
+    of them at roughly fifty.
 
     WHOSE MONDAY (#518). Counts alone cannot carry a zone, so this used to be
     the UTC Monday and nothing else, while the momentum caption on the same
