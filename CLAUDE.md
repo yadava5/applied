@@ -27,8 +27,11 @@ real mailbox content — addresses, subjects, requisition numbers, message ids �
 in fixtures, docstrings, comments, commit messages or issue bodies.
 `scripts/check_test_data.py` catches addresses in every tracked file it can
 decode — since #623 it is an exclusion list and the list is empty, not four scan
-roots — but it only ever sees ADDRESSES. Subjects, requisition numbers, role
-titles and names are on the writer.
+roots — and since #924 it also catches GMAIL THREAD AND MESSAGE IDS, on shape:
+sixteen lowercase hex characters. Invent one in the reserved band (eight leading
+zeros) and it stays silent. Those two shapes are all it sees. Subjects,
+requisition numbers, role titles, names, and an employer paired with what
+happened to an application to it, are on the writer.
 
 **A gate that has never been shown to fail has not been tested.** Every check
 in this repository is expected to carry a demonstration that it reds — a

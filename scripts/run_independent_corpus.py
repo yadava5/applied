@@ -209,16 +209,23 @@ def main() -> int:
     print(f"  ROLE MISSING      {bs.role_missing:6d}  ground truth names a role, the card is blank")
     print(f"  UPDATE HELD       {bs.update_held_for_review:6d}  an update the product asked about instead of filing")
     print(f"  SUPPRESSED        {bs.suppressed_as_settled:6d}  offered to the queue and refused a row: already settled")
-    # THE FIVE OUTCOMES, SHOWN CLOSING, for the reason the title populations
+    print(f"  USER SETTLED      {bs.settled_by_a_standing_instruction:6d}  the user's own decision took it off the board")
+    # THE SIX OUTCOMES, SHOWN CLOSING, for the reason the title populations
     # above are: `LOST` and `DROPPED` are leftovers, and a leftover printed
     # without its denominator cannot tell "nothing went missing" from "nothing
     # was examined".
-    _must = sum(1 for c in cases if c.must_be_addressed)
+    #
+    # SIX SINCE #614, and the denominator is the OWNER's mail. The corpus gained
+    # a second mailbox, whose cases are fixture and are never synced to the
+    # board this reads; counting them would make the line fail to close by
+    # exactly the size of that fixture.
+    _must = sum(1 for c in cases if c.must_be_addressed and c.user_slot == 0)
     print(
         f"  \u2500 of which        {bs.addressed_on_a_card} on a card + "
         f"{bs.addressed_in_the_queue} queued + {bs.suppressed_as_settled} suppressed + "
+        f"{bs.settled_by_a_standing_instruction} user-settled + "
         f"{bs.dropped} dropped + {bs.lost} lost = "
-        f"{bs.addressed_on_a_card + bs.addressed_in_the_queue + bs.suppressed_as_settled + bs.dropped + bs.lost}"
+        f"{bs.addressed_on_a_card + bs.addressed_in_the_queue + bs.suppressed_as_settled + bs.settled_by_a_standing_instruction + bs.dropped + bs.lost}"
         f"  (must equal {_must} messages that must be addressed)"
     )
     if bs.total:

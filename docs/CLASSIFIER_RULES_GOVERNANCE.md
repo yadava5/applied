@@ -152,6 +152,27 @@ is the sharper version of this issue's failure mode, because nobody finds out.
 That is not hypothetical — #260's anchoring fix left the same unanchored
 containment in three other ports until #651.
 
+### What this document does NOT cover, and how not to route around it
+
+Everything above governs `rules.py` — what matches, and what a match is worth.
+It does not govern **disposition**: which messages `cloud/pipeline.py` files,
+queues or drops. That is a real boundary and not a loophole, because the two
+have different failure modes and different instruments. A pattern edit moves
+verdicts nobody looked at; a disposition change moves who gets ASKED, and
+`_qualifies_for_hard_row` stands between it and the board either way.
+
+**A change to disposition is governed by the pipeline tests plus
+`docs/DECISIONS.md`, and adding vocabulary is a rule change wherever it lives.**
+The distinction is what the change READS, never which file it sits in. An
+admission arm that composes patterns which already shipped is a disposition
+change; one that introduces a new phrase family is a rule change and owes this
+document its narrower-than, its named near-miss and its corpus replay — even
+when it is written in `pipeline.py` and called a "floor exemption". DEC-010 is
+the worked example: #800's withdrawal reaches the queue by composing
+`_RETRACTION` (#417) and `references_an_application` (#447), authors no wording,
+and records in `DECISIONS.md` that the keyword patch was the rejected
+alternative and why.
+
 ## What is not evidence
 
 - **Wordings the author of the rules wrote.** A pattern family justified by

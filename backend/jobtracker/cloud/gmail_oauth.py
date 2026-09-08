@@ -2615,6 +2615,7 @@ async def gmail_sync(
     from jobtracker.cloud import pipeline
     from jobtracker.cloud.applications import (
         ScanCoverage,
+        employers_with_a_live_offer,
         employers_with_several_applications,
         purge_and_rebuild_gmail_pipeline,
         sync_gmail_pipeline_additive,
@@ -2791,10 +2792,17 @@ async def gmail_sync(
             # rebuild does.
             known_multi = await employers_with_several_applications(session, user_id)
             known_threads = await threads_naming_one_application(session, user_id)
+            # AND WHICH EMPLOYERS THE BOARD SAYS HAVE OFFERED (#800). Read here,
+            # beside its two neighbours and in the same session, because the
+            # pipeline does no I/O and a message that takes an offer back is
+            # only recognisable as a contradiction against the board's own
+            # claim. Rolling up does not need it — an offer withdrawal never
+            # files — so it is handed to the review pass alone.
+            contested = await employers_with_a_live_offer(session, user_id)
             rolled = pipeline.roll_up_applications(items, known_multi, known_threads)
             dropped_verdicts: list[pipeline.DroppedVerdict] = []
             review = pipeline.collect_review_items(
-                items, dropped_verdicts, known_multi, known_threads
+                items, dropped_verdicts, known_multi, known_threads, contested
             )
             if rebuild:
                 # What this scan can honestly be said to have READ. The rebuild

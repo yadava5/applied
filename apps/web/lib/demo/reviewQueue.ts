@@ -60,10 +60,19 @@ interface HeldSeed {
    * twin and quietly make the demo disagree with the signed-in queue.
    */
   holdReason: string;
+  /**
+   * The classifier's guess, which the queue renders NOWHERE (#517).
+   *
+   * Seeded only because it is the one thing deciding whether an employer GROUP
+   * opens collapsed: members that agree collapse, members that disagree open.
+   * Absent on every seed outside a group, which is also the honest state of an
+   * older backend that sends no category at all.
+   */
+  suggestedCategory?: string | null;
 }
 
 /**
- * TEN held messages, cycled to whatever length the harness asks for. Most sit
+ * THIRTEEN held messages, cycled to whatever length the harness asks for. Most sit
  * in the uncertain band under the gate; one cleared it and is held for a
  * missing employer name, which is the branch the amber/green split in the row's
  * confidence line exists to distinguish.
@@ -93,6 +102,10 @@ interface HeldSeed {
  * None is a repeat of the pair above: 6 and 7 differ by ROLE, which is what
  * stops them being one question asked twice, while 8, 9 and 10 name no role and
  * so cannot be placed without asking.
+ *
+ * SEEDS 11, 12 AND 13 are the only rows here that GROUP, added by #517 — see
+ * the block above them for why they name `Copperline`, why they are appended
+ * rather than inserted, and which two fresh `?review=` knobs reach them.
  */
 const HELD_SEEDS: HeldSeed[] = [
   {
@@ -255,6 +268,87 @@ const HELD_SEEDS: HeldSeed[] = [
     receivedDaysAgo: 12,
     holdReason: "which_application",
   },
+  // --- SEEDS 11, 12 AND 13: the only rows in this repo that GROUP (#517) ------
+  //
+  // The queue collapses held rows that name ONE employer into a single
+  // expandable line. Before these, NO value of `?review=N` produced a group at
+  // all: seeds 8, 9 and 10 each name a different board employer, and seeds 1-7
+  // name none the board holds, so every unit was a unit of one and the feature
+  // had no browser-reachable surface anywhere in the repo. That is exactly how
+  // the picker above shipped with "not one of these" pre-selected, and this
+  // file's header is about that class of omission in its first form.
+  //
+  // `Copperline` is the employer because it holds exactly ONE board row (`a13`)
+  // and had NO seed of its own. Naming the trio after Northstar, Quarry or
+  // Cedar would have joined that employer's existing seed — all three are
+  // already present by index 9 — making a group of three at the very knob
+  // written to show a group of two, and a MIXED one, which renders expanded and
+  // loses the collapsed surface entirely. A new employer would have meant a new
+  // board row and a re-dated board.
+  //
+  // APPENDED, never inserted, for the reason seeds 8-10 record: seeds cycle by
+  // index, so `?review=` 3, 4, 7 and 10 — every value the e2e specs drive —
+  // keep exactly the rows and dates they had. The two fresh knobs are:
+  //
+  //   ?review=12  seeds 11+12, one suggested_category between them  -> COLLAPSED
+  //   ?review=13  seeds 11+12+13, two of them                       -> EXPANDED
+  //
+  // Both arms of the gate, on a real screen. The expanded arm is not a
+  // concession: a group whose members disagree about the machine's guess spends
+  // that guess to demand MORE scrutiny, and #517's own four rows (three
+  // assessment, one applied) are that shape — which is why the trio reproduces
+  // it rather than inventing a tidier one.
+  //
+  // Dated newest so the group sorts to the top of the queue and is visible
+  // without opening the "show all N" expander, which slices UNITS.
+  //
+  // The relay domain is `.example` where seeds 6-10 use a routable one. That is
+  // `scripts/check_test_data.py` and not a distinction the code reads: every
+  // address ADDED to this repository has to sit on a domain that cannot route,
+  // and the alternative was moving the gate's baseline for three fixture rows
+  // that publish nothing new. Grouping keys on the SUBJECT here — the sender's
+  // domain label is "us" either way — so the choice costs the fixture nothing.
+  {
+    subject: "Your Copperline assessment expires in 24 hours",
+    senderName: null,
+    senderEmail: "no-reply@us.greenhouse-mail.example",
+    snippet:
+      "This is a reminder that your online assessment closes tomorrow. You can pick up where you left off from the link in our earlier note.",
+    confidence: 0.74,
+    receivedDaysAgo: 0,
+    holdReason: "below_gate",
+    suggestedCategory: "assessment",
+  },
+  {
+    // Same employer, no role on either — so they are ONE thing to read. A role
+    // on this row and not the one above would split them back into two units,
+    // which is the #454 protection the group key's second component carries.
+    subject: "Reminder from Copperline",
+    senderName: null,
+    senderEmail: "no-reply@us.greenhouse-mail.example",
+    snippet:
+      "A quick nudge about the next step in your application. Nothing else is needed from you until then.",
+    confidence: 0.71,
+    receivedDaysAgo: 1,
+    holdReason: "below_gate",
+    suggestedCategory: "assessment",
+  },
+  {
+    // THE DISAGREEING MEMBER. Same employer, same absent role, DIFFERENT guess
+    // — so at `?review=13` this trio renders expanded while the pair above
+    // renders collapsed. One seed is the whole difference between the two
+    // knobs, which is what makes them a control on each other rather than two
+    // unrelated screens.
+    subject: "Thank you for applying to Copperline",
+    senderName: null,
+    senderEmail: "no-reply@us.greenhouse-mail.example",
+    snippet:
+      "We have received your application and the team is taking a look. We will be in touch when there is news.",
+    confidence: 0.77,
+    receivedDaysAgo: 2,
+    holdReason: "below_gate",
+    suggestedCategory: "applied",
+  },
 ];
 
 /**
@@ -293,6 +387,7 @@ export function demoReviewQueueAsApi(
       gmail_link: null,
       role: seed.role ?? null,
       hold_reason: seed.holdReason,
+      suggested_category: seed.suggestedCategory ?? null,
     };
   });
 }

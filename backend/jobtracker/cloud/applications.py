@@ -1273,6 +1273,67 @@ async def employers_with_several_applications(
     )
 
 
+async def employers_with_a_live_offer(session, user_id: uuid.UUID) -> frozenset[str]:
+    """Normalized employer tokens whose board currently shows an OFFER.
+
+    ISSUE #800. The third thing a sync knows that ``cloud.pipeline`` cannot,
+    read in the same session and on the same line as its two neighbours above.
+    :func:`pipeline.collect_review_items` uses it to admit a message whose own
+    text retracts an offer the board still asserts — mail that scores ``other``
+    at 0.50 and was, until #800, discarded with no row and no queue entry while
+    the card it cancels stayed filed.
+
+    ``OFFERED`` AND NOTHING ELSE, and the boundary is deliberate rather than a
+    starting point. An offer is the one stage where the board makes a claim
+    about something the reader HOLDS, so a message taking it back contradicts a
+    fact on screen. Contradictions at the interview stages are rejection-shaped
+    mail: a lifecycle verdict, which the ``dropped`` counter already sees and
+    which can already be reasoned about from stored data. Widening to them is a
+    separate decision needing its own instrument, and this function is where a
+    later change would have to argue for it.
+
+    LIVE ROWS ONLY, for the same reason as
+    :func:`employers_with_several_applications`: a dismissed card is not on the
+    board, and a message cannot contradict a claim the product is no longer
+    making.
+
+    NOT :func:`_filed_on_an_application_that_answers`. That predicate asks "does
+    an application settle this mail?" and counts a hand-dismissed card, because
+    a human's "no" stands. This asks "is the product still telling the user they
+    have an offer here?", and a card they removed is not.
+
+    TOKENS, IN THE SPACE THE PIPELINE LOOKS THINGS UP IN. ``resolve_employer``
+    returns a domain brand or the LEADING WORD of a display name, so the set
+    carries the normalized name AND its leading word — the same two keys
+    :func:`employers_with_several_applications` makes candidates of, and for the
+    same measured reason: keying on the full name alone produced a set that
+    never contained the token being looked up, so the rule silently did nothing.
+    """
+
+    companies = [
+        company
+        for company in (
+            await session.exec(
+                select(Application.company).where(
+                    Application.user_id == user_id,
+                    Application.dismissed_at.is_(None),
+                    Application.status == ApplicationStatus.OFFERED,
+                )
+            )
+        ).all()
+        if company
+    ]
+
+    tokens: set[str] = set()
+    for company in companies:
+        token = pipeline.normalize_company_name(company)
+        if not token:
+            continue
+        tokens.add(token)
+        tokens.add(token.split()[0])
+    return frozenset(tokens)
+
+
 async def threads_naming_one_application(session, user_id: uuid.UUID) -> frozenset[str]:
     """Gmail thread ids whose filed mail sits on exactly ONE application.
 
@@ -2431,6 +2492,13 @@ async def _persist_message_refs(
                 existing.identity_role = ref.identity_role[:200]
             if ref.identity_req_id is not None:
                 existing.identity_req_id = ref.identity_req_id[:64]
+            # THE SAME RATCHET AGAIN, for why the queue holds this row (#800).
+            # ``None`` means this pass recorded no admission-time reason — every
+            # route but the contradiction arm — and must leave a stored value
+            # alone, so a re-scan that no longer sees the offer cannot erase the
+            # provenance of a row admitted while it stood.
+            if ref.hold_reason is not None:
+                existing.hold_reason = ref.hold_reason[:32]
             # A thread id, likewise: a metadata fetch that omits it must not
             # unlink a message from its conversation.
             if ref.thread_id:
@@ -2464,6 +2532,9 @@ async def _persist_message_refs(
                 ),
                 identity_req_id=(
                     None if ref.identity_req_id is None else ref.identity_req_id[:64]
+                ),
+                hold_reason=(
+                    None if ref.hold_reason is None else ref.hold_reason[:32]
                 ),
                 classified_as=category,
                 suggested_category=suggestion,
@@ -3356,6 +3427,8 @@ async def _persist_review_items(session, user_id: uuid.UUID, review) -> int:
             confidence=item.confidence,
             snippet=item.snippet,
             suggested_category=item.category,
+            # Carried, not re-derived: see ``pipeline.HOLD_REASONS``.
+            hold_reason=item.hold_reason,
         )
         for item in review
     ]
@@ -3399,6 +3472,49 @@ _REVIEW_KEY_COLUMNS = (
 )
 
 
+def _contradicts_what_settled_it(ref) -> bool:
+    """Is this ref exempt from the settled filter because it DISAGREES (#800)?
+
+    THE FILTER'S PREMISE IS FALSE FOR EXACTLY THIS CLASS. Settling means
+    "something already answers for this thread", and it is the right answer for
+    an uncertain UPDATE arriving on a decided conversation — being asked twice
+    about one application is the defect #630 and #454 are about. It is the wrong
+    answer when the arriving message contradicts the thing that answered. The
+    offer filed on this thread is precisely what the withdrawal is about, so the
+    stored row is not a reason to stay silent; it is the reason to speak.
+
+    Measured on this branch, with the admission arm landed and this carve-out not
+    yet written — the withdrawal delivered into the offer's own thread::
+
+        REVIEWED  : []
+        SUPPRESSED: ['r2-withdrawal']
+        STATUS    : {'row1:Kelvedon': 'offered'}
+        LOG: Settled filter refused 1 of 1 arriving review ref(s) ...
+             message_id/thread_id: r2-withdrawal/th-r2-kelvedon
+
+    So the floor fix alone reaches the queue and is then refused a row, and the
+    board still reads ``offered``. Shipping without this would have been green on
+    every unit assertion and silent on the case #800 was filed about.
+
+    EXEMPTED RATHER THAN KEYED APART, deliberately (DEC-010).
+    :func:`pipeline.review_dedup_key` is read at four sites and is the shared
+    definition of "one decision per conversation per application"; giving a
+    withdrawal a different key would drag #454's and #630's guarantees into this
+    change's blast radius to solve a problem that is not about identity at all.
+    The message names the same application on purpose. What differs is that it
+    argues with it.
+
+    NARROW BY CONSTRUCTION. It reads one field, set by one arm of
+    ``collect_review_items``, which is itself guarded on a sub-floor ``other``
+    verdict, an own-text retraction and a live ``OFFERED`` card. It cannot
+    exempt an ordinary update: those carry ``None`` here and take the filter
+    exactly as before, which is what
+    ``test_settled_filter_drops_an_uncertain_update.py`` continues to assert.
+    """
+
+    return ref.hold_reason == pipeline.HOLD_CONTRADICTS_FILED
+
+
 async def _persist_review_items_additive(session, user_id: uuid.UUID, review) -> int:
     """Additively surface uncertain verdicts to the needs-review queue.
 
@@ -3435,6 +3551,9 @@ async def _persist_review_items_additive(session, user_id: uuid.UUID, review) ->
             # :func:`_persist_review_items`: the queue state is the commitment,
             # the verdict is the proposal.
             suggested_category=item.category,
+            # Carried, not re-derived: see ``pipeline.HOLD_REASONS``. It is also
+            # what the settled filter below reads to exempt a contradiction.
+            hold_reason=item.hold_reason,
         )
         for item in review
     ]
@@ -3499,16 +3618,19 @@ async def _persist_review_items_additive(session, user_id: uuid.UUID, review) ->
         refs = [
             r
             for r in refs
-            if r.message_id not in settled_messages
-            and pipeline.review_dedup_key(
-                message_id=r.message_id,
-                thread_id=r.thread_id,
-                subject=r.subject or "",
-                snippet=r.snippet or "",
-                identity_role=r.identity_role,
-                identity_req_id=r.identity_req_id,
+            if _contradicts_what_settled_it(r)
+            or (
+                r.message_id not in settled_messages
+                and pipeline.review_dedup_key(
+                    message_id=r.message_id,
+                    thread_id=r.thread_id,
+                    subject=r.subject or "",
+                    snippet=r.snippet or "",
+                    identity_role=r.identity_role,
+                    identity_req_id=r.identity_req_id,
+                )
+                not in settled_applications
             )
-            not in settled_applications
         ]
         # THE ONLY PLACE THE REFUSAL IS OBSERVABLE (#630). A refused ref is
         # dropped before :func:`_persist_message_refs`, so it gets no row, no
@@ -5826,6 +5948,28 @@ def _hold_reason_for(
     typed null on every row here, so testing it would ask every row the same
     question and get the same answer.
     """
+
+    # RECORDED AT ADMISSION WINS, AND IS NOT CHECKED AGAINST A RE-DERIVATION
+    # (#800). ``contradicts_filed`` is the one reason this function cannot
+    # compute: its operands are the message AND an ``OFFERED`` card, and the card
+    # moves. Re-deriving it here would ask the board its present state about a
+    # decision made in the past, and answer "the classifier was unsure" for a row
+    # admitted because something else was certain — #507's defect, one layer
+    # down. NULL is every other row, including every row written before the
+    # column existed, and falls through to the derivation below unchanged.
+    #
+    # SCOPED TO THE ONE REASON, not to "anything stored". Testing membership of
+    # the whole vocabulary would read correctly today — nothing else writes the
+    # column — and would be a trap tomorrow: ``MessageRef.hold_reason`` is a
+    # general carrier now, so the first other arm to record a reason would take
+    # this early return and lose ``suggested_employer`` with it, degrading #512's
+    # "is this Kelvedon?" back to "confirm the employer to file it" on a row that
+    # had a name to show. An unknown or unexpected value still falls through to
+    # the derivation below, which is the safe direction.
+    if email.hold_reason == pipeline.HOLD_CONTRADICTS_FILED:
+        # No ``suggested_employer``: this reason never asks for a name, and the
+        # early return is what keeps the stored provenance authoritative.
+        return email.hold_reason, None
 
     subject = email.subject or ""
     sender_email = email.sender_email or ""
