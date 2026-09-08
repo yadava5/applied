@@ -312,36 +312,85 @@ export function OnerStage({
   useEffect(() => () => directorRef.current?.cancel(), []);
 
   /*
-   * `h-full` ON BOTH WRAPPERS, and it is a bug fix rather than a tidy-up.
+   * `min-h-full` ON BOTH WRAPPERS. It arrived as half of a bug fix, and what
+   * follows separates what it FIXED from what it is doing now, because those
+   * two stopped being the same thing and this comment used to claim they
+   * were.
    *
-   * `MarketingBoard`'s own root is `flex h-full flex-col gap-4`: it is written
-   * to fill whatever it is given. On this path it was given nothing. The chain
-   * ran frame (a real height, `calc(100dvh - 11rem)`) → camera div (auto) →
-   * this wrapper (auto), so the board's `h-full` resolved against an
-   * auto-height parent and collapsed to its content.
+   * #392, AS IT SHIPPED. `MarketingBoard`'s own root is `flex h-full
+   * flex-col gap-4`: it is written to fill whatever it is given. On this path
+   * it was given nothing — the chain ran frame (a real height,
+   * `calc(100dvh - 11rem)`) → camera div (auto) → stage div (auto) — so the
+   * board's `h-full` resolved against an auto-height parent and collapsed to
+   * its content. Nobody saw it while the board was full, because ten rows
+   * overflow the frame anyway. Filter the stage lens to anything but "all"
+   * and the board shrinks to its rows while the frame stays a viewport tall:
+   * measured on production at 1512x893, the assessment lens left 343px of the
+   * 717px camera as bare page background, 47.8% of the window.
    *
-   * Nobody saw it while the board was full, because ten rows overflow the
-   * frame anyway. Filter the stage lens to anything but "all" and the board
-   * shrinks to its rows while the frame stays a viewport tall: measured on
-   * production at 1512x893, the assessment lens left 343px of the 717px
-   * camera as bare page background, 47.8% of the window, and the whole
-   * composition read as broken. That is #392.
+   * WHAT ACTUALLY CLOSED THE VISIBLE HALF is the OTHER change in that same
+   * commit (2f47bfc7): the frame's paint went `bg-background` → `bg-surface`
+   * plus the dot grid (`WindowAct.tsx`). "Bare page background" was literally
+   * `bg-background` showing through where the board did not reach, and one
+   * paint site on the frame now covers the armed, disarmed and skeleton
+   * paths however tall the board lays out.
    *
-   * The skeleton path three files up already passes `h-full p-4 lg:p-5` for
-   * exactly this reason. The real path dropped it.
+   * WHAT `min-h-full` DOES HERE AT HEAD — a floor on the camera BOX, which
+   * nothing downstream reads. Re-derived 2026-09-08 (#919):
+   *   · the stage between this div and the board is `p-4 lg:p-5` with no
+   *     height of its own, so the board's `h-full` still resolves against an
+   *     auto-height parent either way. A definite height on the WRAPPER never
+   *     reaches the board, and it cannot bound the stage.
+   *   · the camera's own arithmetic never consults it: `Director` measures
+   *     `this.stage.offsetHeight` (`director.ts`, `camTargetFor`), and the
+   *     landing spec's watcher samples `camera.firstElementChild.offsetHeight`
+   *     — the stage in both cases, never this box.
+   *   · this div paints nothing and the frame above it carries the
+   *     `overflow-clip`, so a camera box shorter than its stage is not a
+   *     rendered difference either.
    *
-   * `min-h-full`, NOT `h-full`, AND THE DIFFERENCE IS THE WHOLE CAMERA. The
-   * first version of this fix used `h-full` and CI caught it: the camera's
-   * own gate went red with "the camera never panned at this viewport". A
-   * fixed height is a ceiling as well as a floor, so the full board stopped
-   * overflowing the frame, and a camera that pans over a board taller than
-   * its window has nothing to pan over once the board is exactly its window.
-   * The gate that caught it is the positive control added on 2026-08-21 for
-   * precisely this class of mistake: it requires the pan to be non-zero at
-   * 1512x949 before it will believe the bound on how far the pan may jump.
+   * SO `min-h-full` → `h-full` HERE IS CURRENTLY UNOBSERVABLE, AND NO GATE
+   * DISTINGUISHES THEM. Measured 2026-09-08, one production build per arm,
+   * the mutation confirmed in the shipped chunk (`className:"h-full",style:
+   * {transformOrigin`): stage height, frame height, headroom and travel are
+   * identical at all three walked viewports — 806/773/33/33.0 at 1512x949,
+   * 846/944/-98/0.0 at 1024x1120, 806/592/214/126.5 at 1512x768 — and all
+   * three camera tests pass under both arms. (`maxPanStep` reads 3.75 clean
+   * and 1.88 mutated at 1512x949, but it also reads 2.00 on a SECOND run of
+   * the clean tree: that is the rAF sampler's phase, not the mutation.)
    *
-   * A minimum is what the two cases actually want. Ten rows still overflow
-   * and the camera still travels; one row still fills the window.
+   * DO NOT RESTORE THE CITATION THIS PARAGRAPH REPLACES. It claimed CI had
+   * caught `h-full` here with "the camera never panned at this viewport",
+   * from a control requiring a non-zero pan at 1512x949. That assertion was
+   * deleted on purpose by #656 / #917 and must not come back: at 949 the
+   * clamp binds, so it read the stage's overhang rather than the camera and
+   * was a 9px text-metric lottery between platforms.
+   *
+   * WHAT IS GUARDED, AND WHERE. The #392 SHAPE — the composition ceasing to
+   * overflow its frame, so a camera that pans over a board taller than its
+   * window has nothing to pan over — is held by the `pans` contract at
+   * 1512x768 in `tests/e2e/landing.spec.ts`, by the premise assertion that
+   * runs BEFORE the travel bound: "the stage overhangs its frame by only
+   * Npx here" (`CAM_HEADROOM_FLOOR`, 150 against 214 measured). That file
+   * records it red at "0px" under the TWO-part mutation — `h-full` here
+   * PLUS `h-full overflow-hidden` on the stage — which is what reproduces
+   * the regression now. It is a live gate on the composition. It is not a
+   * gate on this one line.
+   *
+   * THIS LINE ITSELF IS UNGUARDED, DELIBERATELY. The only property that
+   * separates the two spellings is "the camera box is at least as tall as
+   * the stage it transforms", which is assertable and would red on `h-full`
+   * at both 1512 viewports. It was not added because violating it has no
+   * consequence — nothing measures that box and nothing paints it — so the
+   * gate would pin an inert class rather than a behaviour. If this div is
+   * ever given a background, an `overflow`, or a descendant whose height
+   * resolves against it, the property becomes load-bearing and is worth
+   * asserting then.
+   *
+   * KEEP `min-h-full` ANYWAY: a floor and never a ceiling is what the two
+   * cases mean — ten rows that overflow, one row that does not — and it
+   * costs nothing. It is simply not load-bearing at HEAD, and this comment
+   * no longer says it is.
    */
   if (disarmed) {
     return (
