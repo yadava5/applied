@@ -69,7 +69,12 @@ says the mask works is asserted, not assumed —
 pattern anywhere in the engine. It is the only place a corpus can find something
 the classifier does not already know, and every invented lifecycle family sits
 at **0.0%** by construction: they were written by the author of ``rules.py``, so
-their language is the language the engine was taught. All of the discovery power
+their language is the language the engine was taught. ONE EXCEPTION SINCE #521,
+and it is a fact about the ENGINE rather than about the corpus:
+``outreach-autoresponder``'s genuine confirmations are worded weakly enough that
+40 of them reach no strong rule at all, so the family measures 50.0%. Its
+wordings are the author's like every other invented family's, so it is not
+non-circular evidence and must not be read as reach. All of the discovery power
 in 17,260 messages lives in the ``observed-*`` families — 1,600 messages from
 36 transcribed templates. The four that carry an UPDATE run 19.3–52.5%;
 ``observed-confirmation`` is 6.7% because an acknowledgement is the shape the

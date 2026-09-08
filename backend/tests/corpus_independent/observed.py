@@ -37,7 +37,15 @@ agreement, not contamination.**
 What actually bounds what this file can find is the DISCOVERY RATE — the share
 of its messages matching no strong pattern at all, which is the only place a
 corpus can find something the engine does not already know. Every invented
-family is 0.0% by construction. The four families here that carry an UPDATE run
+family is 0.0% by construction, with ONE exception, recorded here when it
+arrived rather than left for a reader to trip over: ``outreach-autoresponder``
+(#521) runs 50.0%. Half of it is contact-form noise, which is where the other
+invented noise families already sit (``not-job-mail`` and ``ats-relay-noise``
+are both 100%); the other half is GENUINE confirmations worded so weakly that
+the engine reaches them through ``weak`` rules alone, which is the property that
+family exists to measure. It is not discovery in the sense this paragraph means
+— the wordings are still the author's — and it is not evidence about real mail.
+The four families here that carry an UPDATE run
 19.3-52.5%; the acknowledgements are 6.7%, which is not a counter-example — an
 acknowledgement is the shape the engine knows best. (Both bands moved up with
 #451's demotion of the `applied` reference pattern out of `strong`; it was
