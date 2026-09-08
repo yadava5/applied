@@ -38,6 +38,7 @@ import {
 } from "@/lib/demo/asApplications";
 import { demoDetailBody } from "@/lib/demo/demoDetail";
 import { datedById, redate } from "@/lib/demo/redate";
+import { reinsertByReference } from "@/lib/demo/restoreOrder";
 import { demoReviewQueueAsApi } from "@/lib/demo/reviewQueue";
 
 /**
@@ -308,9 +309,16 @@ export function DemoDashboard({
       // never moved past 100, and the visitor could continue forever.
       // Continuing after a restore now reads exactly like continuing
       // without one.
+      // BACK WHERE IT WAS, not onto the end (#904). This used to append, and
+      // the board renders in array order, so a restored row settled below every
+      // row filed after it — measured on /demo at 1024: a row dated Aug 27 came
+      // back under one dated Sep 7, and only a reload put it right. Which is
+      // the tell: a reload rebuilds the store from these same fixtures, so the
+      // fixtures already hold the answer and `reinsertByReference` reads it
+      // rather than inventing a comparator the board does not have.
       commit({
         ...s,
-        apps: [...s.apps, row],
+        apps: reinsertByReference(s.apps, row, original.current),
         touched: s.touched.includes(id) ? s.touched : [...s.touched, id],
       });
       return true;
