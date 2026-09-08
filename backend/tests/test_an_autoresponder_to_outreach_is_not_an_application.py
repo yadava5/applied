@@ -422,6 +422,13 @@ def test_the_contact_form_negative_costs_more_than_it_fixes_outside_it(
     )
 
     assert unfixed == 0, f"arm (c) left {unfixed} autoresponders scored as applications"
+    # 55 IS SEED-DEPENDENT AND THE ASSERTION BELOW IT IS NOT. 50 of the 55 are
+    # whole shapes; the other five are the long-role draws that lose the weak
+    # `application.{0,20}(for|to).{0,40}(position|role|job)` to its 40-character
+    # window and land at 0.60 rather than 0.50. A change to `ROLES` moves that
+    # five. If this line reds on its own, re-record it — it is the COMPARISON
+    # that carries the argument, and only that one should send a reader back to
+    # the decision in `rules.py`.
     assert dropped == 55, f"arm (c) dropped {dropped} genuine confirmations"
     assert dropped > 40 - unfixed, (
         "the rule would now silence fewer genuine confirmations than the "

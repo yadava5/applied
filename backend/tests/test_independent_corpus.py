@@ -18,6 +18,7 @@ number moves and this file has to say so.
 from __future__ import annotations
 
 import re
+from collections import Counter
 
 import pytest
 
@@ -124,16 +125,27 @@ RECORDED_AFTER_ANSWERING = {
     # (9569) and `minted_a_card` (421) are both unchanged, so all eleven filed
     # onto cards that already existed, and the only input that differs between
     # the two readings is those eleven answers.
-    # 71 -> 73 (#521), and the TWO are said honestly rather than absorbed.
-    # The family adds 50 answered cards and none of them is one of these:
-    # measured directly, `role_from_message` reads the title off every one
-    # of the 80 twins except the ten whose confirmation names no role at
-    # all, and those ten are `blank_required`, not `role_missing`. So the
-    # two are elsewhere on the board, moved by the answering phase now
-    # having 90 more rows to work through — 40 of them answered `other`,
-    # which is a path this corpus never took before. NOT ISOLATED to a
-    # message id; the assertion below now names the cards when it fails,
-    # which is what the next reader needs and this one did not have.
+    # 71 -> 73 (#521), and BOTH ARE THE NEW FAMILY'S OWN — attributed rather
+    # than assumed, because a first draft of this comment guessed they were
+    # elsewhere on the board and was wrong. Read off the assertion below with
+    # the pin deliberately set to 71: `Counter({'observed-pending': 60,
+    # 'observed-rejection': 11, 'outreach-autoresponder': 2})`, message ids
+    # c18372 and c18468.
+    #
+    # WHY THOSE TWO AND NOT THE OTHER 48. Both are the `hello` shape and both
+    # drew a job title over 70 characters. `role_from_message` reads the title
+    # off each of them correctly when it is handed the whole body — measured
+    # directly — but the ANSWERING path does not get the whole body:
+    # `cluster_stored_mail` reads `Email.body_snippet`, and the harness stores
+    # `SNIPPET_CHARS = 186` of it. In this shape the title starts 110
+    # characters in, so a long enough one pushes "position" past the cut and
+    # the card is minted blank.
+    #
+    # That is `rejection-past-the-snippet`'s defect one category over, reached
+    # from the answering path for the first time. It is an ABSENCE and not a
+    # lie — the card says nothing rather than something wrong — so it is
+    # pinned here at its size rather than fixed in a change about a genre
+    # negative.
     "role_missing": 73,
     # ZERO AGAINST A DENOMINATOR THAT HAS TO BE SAID OUT LOUD. #548 refuses to
     # stamp a title on a blind landing, and 421 of the 2,341 filed answers
@@ -1720,7 +1732,15 @@ async def test_the_board_is_clean(cases, verdicts, test_session) -> None:
     assert after_score.role_missing == RECORDED_AFTER_ANSWERING["role_missing"], (
         f"{after_score.role_missing} cards are blank where the mail named a "
         f"job, recorded {RECORDED_AFTER_ANSWERING['role_missing']}: "
-        + str([f.detail for f in after_score.failures if f.mode == "ROLE-MISSING"][:5])
+        + str(Counter(
+            f.family for f in after_score.failures if f.mode == "ROLE-MISSING"
+        ))
+        + " e.g. "
+        + str([
+            (f.family, f.message_ids, f.detail)
+            for f in after_score.failures
+            if f.mode == "ROLE-MISSING"
+        ][:3])
     )
     assert after_score.role_wrong == RECORDED_AFTER_ANSWERING["role_wrong"]
     assert after_score.wrong_review == RECORDED_AFTER_ANSWERING["held_cases_now_filed"]
