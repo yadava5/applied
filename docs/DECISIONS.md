@@ -325,3 +325,76 @@ Valid while: the employer map keys on bare registrable domains and is matched
   derived rather than written out, re-read this entry: the reason a reserved
   substitute asserts nothing is that the key is a real registration.
 Markers: docs/TEST_DATA_POLICY.md
+
+---
+
+## DEC-009 — fields of a band verdict are not decision inputs; render-layer use only
+
+Status: active (2026-09-08)
+Claim: for a message in the needs-review band, every field the classifier
+  produced — `suggested_category`, the suggested stage, `confidence` — is the
+  DOUBTED OBJECT, not evidence about it. `NEEDS_REVIEW` is the typed null. Such
+  a field may ORDER and GROUP the asking, and may never ANSWER it: no band
+  verdict's own field may decide whether a row is queued, suppressed, attached,
+  filed, merged or pre-answered. The one use this permits beyond ordering is a
+  gate that spends the field to demand MORE scrutiny — the review queue's
+  employer group opens EXPANDED when its members disagree about
+  `suggested_category` — because that direction cannot answer anything.
+Why: the alternative was measured, not argued. A predicate that declined to
+  queue (and instead attached) a held row whose suggested stage would not move
+  its card was built and replayed over 40 day-batches of the 18,320-message
+  independent corpus. Of the 137 rows it touched, 69 were ground-truth
+  REJECTIONS. The mechanism is why no conditioning rescues it: production
+  classifies from roughly the first 186 characters, and an ATS rejection spends
+  that entire budget on a polite preamble, so it scores the card's own stage at
+  around 0.70 — meaning "would not move anything" is true of exactly the message
+  that would move everything. Agreement with the card is the SIGNATURE of the
+  misread, not noise around it, so the errors are aligned rather than random and
+  a threshold cannot separate them. A confidence floor is sourced from the very
+  measurement it must survive; a category restriction reads another field of the
+  same doubted verdict, produced from the same prefix; and second-signal
+  corroboration only works with a signal the classifier did not produce, at
+  which point that signal is doing all the work. 69 of 137 is not a corner case
+  — it is the queue meeting the charter the ATS floor was built for (#166).
+Moved away from: three, and the first two are the attractive ones.
+  (1) SUPPRESSING a non-advancing row. Worse than it looks: filing and queueing
+  are mutually exclusive, so "do not queue it" is a route to nowhere and the
+  message is dropped outright.
+  (2) ATTACHING it to the employer's existing card without asking. This is the
+  one a competent person rebuilds, because it sounds conservative — nothing is
+  deleted and the mail stays visible on the card. It is a wrong-state hazard:
+  the question goes silent while the stage stays stale, and for 69 of those 137
+  rows the stale stage is "still in play" on an application that was rejected.
+  (3) Narrowing it to cards past `applied`. It removes 69 bad and 66 good,
+  leaving 2 of 137, and it is curve-fitting — the hazard is not the `applied`
+  stage, so the family reproduces one stage up as soon as a corpus family for it
+  exists.
+  What was chosen instead changes no data at all: collapse the PRESENTATION.
+  Rows about one employer render as one expandable group, every per-row answer
+  preserved. It is fail-soft where every attach is fail-hard — a wrong group
+  renders oddly and the reader answers the rows individually, while a wrong
+  attach leaves the board confidently wrong with no question pending.
+Enforced by: apps/web/tests/unit/review-queue-group-renders.test.mjs holds the
+  two halves that are mechanically checkable. Its header test EQUALITY-pins the
+  group header's full rendered text to a hand-written string of raw facts, so
+  any leak of a classifier-produced word reds it — an absence check would only
+  catch the words someone thought to list. Its bulk-answer test pins the header
+  subtree to exactly ONE interactive control by COUNT, which is what forbids a
+  group-level "these are all the assessment" affordance; that affordance is the
+  sharpest form of this decision's reversal, because a user answer outranks
+  machine evidence permanently and would launder a misread rejection into one.
+  apps/web/tests/unit/review-queue-groups-one-employer.test.mjs pins that the
+  grouping key derives from the BOARD and never from a band field.
+  For the general rule — that no future surface reads a band verdict's field to
+  decide anything — nothing enforces this; prose only. No scan can tell reading
+  a field for ordering from reading it for a decision.
+Valid while: production classifies band messages from the stored snippet rather
+  than the full body. That is the falsifier a reader can check in a minute, and
+  it is the one worth watching: this repository already records that the same
+  rejection family delivered WHOLE scores `rejection` at 0.95, above the
+  auto-file gate. If a full-text pass over band rows ships, the aligned-error
+  mechanism above weakens and the 69-of-137 figure must be re-measured before
+  anyone cites this entry as still binding. Note what does NOT falsify it: a
+  better model. The rule is about what a doubted field may be used for, not
+  about how often it is wrong.
+Markers: apps/web/lib/dashboard/review.ts, apps/web/components/dashboard/ReviewQueue.tsx
