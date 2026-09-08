@@ -316,3 +316,36 @@ async def test_the_tile_counts_rows_the_queue_page_cannot_show(
 
     assert len(await _queue_ids(client, headers, limit=QUEUE_PAGE)) == QUEUE_PAGE
     assert await _tile(client, headers) == EXPECTED_TILE > QUEUE_PAGE
+
+def test_the_shared_projection_keeps_the_order_its_positional_reader_expects() -> None:
+    """The one surface the plan assertions cannot see (#827's M5).
+
+    `_REVIEW_KEY_COLUMNS` feeds two readers and they are NOT symmetric.
+    `_review_key` takes a whole `Email` and reads it by ATTRIBUTE, so a column
+    reordering is invisible to it and harmless. The additive persist unpacks the
+    same projection POSITIONALLY and then passes the pieces as KEYWORD arguments
+    to `review_dedup_key` -- so swapping two columns binds the wrong value to
+    the right name, silently, and every existing gate stays green: a plan
+    assertion sees an access path, not a projection.
+
+    That was measured, not supposed: swapping two entries in the tuple left the
+    whole suite passing.
+
+    THE EXPECTED NAMES ARE WRITTEN OUT HERE, not derived from the tuple. Reading
+    them from `_REVIEW_KEY_COLUMNS` would compare it to itself and pass for
+    every ordering. They are transcribed from the unpack site's own target list
+    in `_persist_review_items_additive`, which is the thing that constrains the
+    order -- `snippet` is spelled `body_snippet` on the column and that
+    difference is exactly why the mapping has to be stated rather than inferred.
+    """
+
+    from jobtracker.cloud.applications import _REVIEW_KEY_COLUMNS
+
+    assert tuple(c.key for c in _REVIEW_KEY_COLUMNS) == (
+        "message_id",
+        "thread_id",
+        "subject",
+        "body_snippet",
+        "identity_role",
+        "identity_req_id",
+    )
