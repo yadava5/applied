@@ -536,3 +536,72 @@ Valid while: the browser demo is a static site with no build step. If it ever
   import outside its own directory — the copy loses its justification and
   alternative (1) becomes available; re-read this entry then.
 Markers: ml/browser/site/preprocess.js, scripts/cross_engine_differential.py, backend/tests/test_the_rules_tables_cannot_drift.py
+
+## DEC-013 — #768's defect is graded and deliberately not fixed, because every wording that could key the fix is our own
+
+Status: active (2026-09-08)
+Claim: the classifier cannot tell whether a lifecycle sentence is about the
+  reader or about somebody else, and there is deliberately no rule addressing
+  it. `backend/tests/corpus_independent/generate.py`'s `someone-elses-outcome`
+  family grades the defect at its size — 40 wrong verdicts, 30 of them
+  auto-filed — and those counts are pinned as a DEFECT, not blessed as a
+  baseline.
+Why: the fix that suggests itself is a `_THIRD_PARTY_SUBJECT` pattern family
+  beside `_RETRACTION`, capping rather than flipping, in the exact house idiom.
+  It is refused on provenance. Every third-party wording in this repository is
+  AUTHORED — the three original fixtures, the family's five pairs, its five
+  referral-bearing controls — and `corpus_independent/observed.py`, which holds
+  the transcribed-from-real-mail half, contains no referral or reference wording
+  at all. Shipping a regex derived from those sentences AND grading it with a
+  family built from the same sentences is a closed loop: the fix's loudest
+  number would be its author's fixtures agreeing with its author's regex. That
+  is the tautology `docs/CLASSIFIER_RULES_GOVERNANCE.md` refuses, and `9e013ff`
+  is the precedent for leaving the harder half open instead.
+  A survey of published ATS template text was run before deciding rather than
+  after: no vendor publishes the body of the mail its product actually emits
+  (Greenhouse lists 65 default emails by name and transcribes none), and of the
+  public template libraries that do carry text, exactly ONE third-party
+  REJECTION sentence exists — JobScore's — while three of the six apparent
+  reference-request sources share a placeholder phone number and are one lineage
+  wearing three logos. n=1 is not a vocabulary.
+Moved away from: three alternatives.
+  (1) The cap derived from the family's own wordings. Named explicitly because
+  the family's own second comment tells a future reader how to build it, and
+  someone will. It is refused for provenance, not for shape — the shape is
+  right.
+  (2) A blunt suppression keyed on `referr*` anywhere in the message. MEASURED
+  against the family: it fixes the third-party arm and takes 40 of 80 genuine
+  reader outcomes down to `other` at 0.50 with it. The family's third arm exists
+  to catch exactly this and does.
+  (3) Landing the fix and the family together so the published numbers never
+  move off zero. That is the most attractive and the worst: it would retire the
+  standing red that keeps the defect discoverable, and replace a measurement
+  with a self-graded claim.
+Enforced by: backend/tests/test_someone_elses_outcome_is_not_the_readers.py
+  asserts the one-slot property of the pairs, that every referral-bearing
+  control actually carries the token (a control that cannot fire is
+  decoration), that the third-party arm is still reachable and wrong, and that
+  ZERO reader-owned outcomes are lost. The last is the invariant; the first two
+  floors are defect pins a real fix is EXPECTED to red.
+  backend/tests/test_independent_corpus.py keys its re-sample ceiling and its
+  wrong-stage assertion on the COMPLEMENT of this family, so the zero that used
+  to mean "no wrong verdict is stated as fact" still means it for every other
+  family — measured 0 / 0 / 1 at the three seeds, exactly the numbers the old
+  ceiling of 3 was written against.
+  Nothing enforces the provenance requirement itself. It is prose, and this
+  entry is the only place it is written down.
+Valid while: no observed or published-template third-party wording of adequate
+  size exists in the tree. TWO CONDITIONS UNBLOCK THIS, either one sufficient:
+  a real instance arriving in the mailbox and being transcribed into
+  `observed.py` through its existing provenance pipeline; or enough published
+  ATS template text to key a family on without generalising from one sentence.
+  The survey above is dated 2026-09-08 and three sources were unreadable then
+  (SAP SuccessFactors' help SPA, Jobvite's help centre, Naukri's recruiter
+  pages) — SAP is the most likely place a product-emitted body exists, so that
+  is where to look first. If both conditions are still unmet when someone next
+  picks this up, the minimal two-phrase cap anchored on "the candidate you
+  referred" — with `_ELIGIBILITY_TWINS`' "unable to verify your references"
+  named as the near-miss that must not move — is the sanctioned least-bad, and
+  its commit must say plainly that its vocabulary is authored.
+Markers: backend/tests/corpus_independent/generate.py, backend/tests/test_someone_elses_outcome_is_not_the_readers.py,
+  backend/tests/test_independent_corpus.py, docs/CLASSIFIER_RULES_GOVERNANCE.md

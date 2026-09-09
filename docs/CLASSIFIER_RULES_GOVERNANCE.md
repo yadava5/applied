@@ -45,6 +45,18 @@ It has two recurring shapes:
   wordings the author of the rules wrote themselves. `9e013ff` refused to
   invent a withdrawal category "from three wordings written by the author of
   the rules", and left the issue's harder half open rather than guess at it.
+  **#768 is the second refusal and the more tempting one**, because the defect
+  it declines to fix is severe and measured: third-party lifecycle mail — "the
+  candidate you referred was not selected" — scores the reader's category at up
+  to 0.95, and through the real additive sync it joins the reader's own live
+  card and settles it with nobody asked. The mechanism is proven at board level
+  and a 240-message family now grades it. The VOCABULARY is what was refused:
+  every third-party wording in the tree is authored, `observed.py` holds none,
+  and a survey of published ATS template text found one — JobScore's — third
+  party *rejection* sentence in public, with three of six apparent
+  reference-request sources turning out to be a single lineage. A pattern family
+  keyed on that is n=1, and it would have been graded by a corpus family written
+  by the same person. Recorded as DEC-013 with the two conditions that unblock it.
 
 ## The rule
 
@@ -130,16 +142,25 @@ BEHAVIOUR, not pattern lists, so a pattern that drifted without changing any
 verdict in the corpus is still invisible. And `e2e-ci.yml` is path-filtered, so
 per #864 it cannot be a required check.
 
-**The port it cannot reach is the one already known to diverge**, which is worth
-stating next to the good news rather than under it. `ml/browser/site/app.js` is
-unloadable outside a browser — a top-level `https:` import (`:16`), no `export`
-statements at all, and `document` at `:22` — so covering it means Playwright or
-a fourth copy of the scorer. And identical data does not make identical
-behaviour: `app.js:60` matches every strong and weak pattern against the RAW
-body, with no `asserted_text` mask, no quoted-history strip and no reflow, where
-both engines the harness DOES compare mask first. `be in touch (soon|shortly|if)`
-is the confirmed instance — the `if` arm is dead in Python and TypeScript and
-live in the browser port. That belongs to #928.
+**This paragraph described a gap that is now closed, and is corrected rather
+than deleted** because the shape of the gap is the lesson. It read: the browser
+port cannot be reached, because `ml/browser/site/app.js` is unloadable outside a
+browser — a top-level `https:` import, no `export` statements, `document` at
+module scope — so covering it means Playwright or a fourth copy of the scorer;
+and identical data does not make identical behaviour, because `app.js` matched
+every pattern against the RAW body with no `asserted_text` mask, no
+quoted-history strip and no reflow, where both compared engines mask first.
+`be in touch (soon|shortly|if)` was the confirmed instance: the `if` arm dead in
+Python and TypeScript, live in the browser.
+
+#955 closed all of it. The preprocessing moved to `ml/browser/site/preprocess.js`,
+`app.js` gained exports and defers its CDN import into `boot()`, the differential
+runs the browser as a THIRD arm, and both `rules.json` copies had the `if` arm
+removed to match `rules.py`. The differential is 139 cases across three engines
+and the browser port diverges on none. What remains true is the general claim
+this paragraph was written to make: **the drift a port accumulates is not
+visible from the port's source.** Nothing was checking the comment that said
+"keep these in step", and it was wrong for as long as nobody looked.
 
 `6919e63` regenerated all of
 them and proved the generator faithful first, "by reproducing the committed
