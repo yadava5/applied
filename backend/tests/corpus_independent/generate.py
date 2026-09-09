@@ -2032,7 +2032,7 @@ def _update_from_another_domain(b: _Builder, n: int) -> None:
         b.add(
             family="update-from-another-domain",
             subject=subject.format(e=display),
-            sender=f"talent@{token}.example",
+            sender=f"talent@{token.split()[0]}.example",
             sender_name=f"{display} Talent",
             body=f"{body} Regarding your application for the {role} position.",
             expected_category=category,
@@ -3275,7 +3275,7 @@ def _outreach_autoresponders(b: _Builder, n: int) -> None:
         # ONE draw, used by both members. A pair whose employer or role moved
         # between its halves would vary two things and prove neither.
         subject = subject_t.format(d=display, r=role)
-        sender = sender_t.format(t=token)
+        sender = sender_t.format(t=token.split()[0])
         sender_name = f"{display} {suffix}"
 
         b.add(
