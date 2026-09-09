@@ -1714,7 +1714,7 @@ FACTS: dict[str, dict] = {
         "compute": lambda: corpus_recorded("update_held"),
         "sites": [
             r"because the classifier was unsure \| \*\*([\d,]+)\*\* \|",
-            r"held updates rose from [\d,]+ to\s+([\d,]+)\.",
+            r"held updates rose — [\d,]+\s+at the time of that change, ([\d,]+) on today.s corpus",
         ],
     },
     "corpusHeldWrong": {
@@ -3637,13 +3637,16 @@ UNCAPTURED_BY_DESIGN: dict[tuple[str, str, str], str] = {
     ("docs/DEPLOYMENT.md", "3.11", "E2E CI"): (
         "a Python minor in a workflow table row, not a corpus or suite figure"
     ),
-    ("README.md", "631", "held updates rose from"): (
-        "the BEFORE half of a 'rose from X to Y' sentence — a frozen prior "
-        "value, deliberately not tracking the current one. Y is captured by "
+    ("README.md", "631", "held updates rose"): (
+        "the BEFORE half of the sentence — a frozen prior value, "
+        "deliberately not tracking the current one. Y is captured by "
         "`corpusUpdateHeld`; capturing X too would rewrite the history the "
         "sentence exists to record. It appeared the moment that row stopped "
         "being hand-maintained, which is the point: the sentence was always "
-        "half-checkable and nobody could see which half"
+        "half-checkable and nobody could see which half. #523 made the two "
+        "halves say which is which: the sentence read 'rose from 631 to Y' "
+        "with Y tracking the live figure, so every corpus growth silently "
+        "re-attributed its own rise to a change that did not cause it"
     ),
 
     # ── no source exists, and that is the finding ────────────────────────

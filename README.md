@@ -169,10 +169,10 @@ That comparison is now a measurement rather than a citation. `scripts/cascade_ga
 
 What the v3 set is, exactly, from `classifier_eval_v3_spec.json` and the dataset itself: **96 examples, 12 per label across 8 labels**, grouped as 65 core-positive, 17 edge-noise, 8 historical-miss and 6 core-negative, with confusion-pair tagging. The rows carry `subject`, `body_text`, `label`, `sender_email`, `scenario_group` and `confusion_pair` — and **no provenance field**, so the dataset does not record how many examples came from a real inbox versus a generator. That is a real limit on how far 0.9896 generalizes, and 96 examples is a small sample under any reading.
 
-### The 19,220-message adversarial corpus
+### The 19,420-message adversarial corpus
 
-The answer to the paragraph above. `backend/tests/corpus_independent/` invents **19,220 messages
-across 46 families over 9,000 companies**, every employer invented — six of those
+The answer to the paragraph above. `backend/tests/corpus_independent/` invents **19,420 messages
+across 47 families over 9,200 companies**, every employer invented — six of those
 families phrased in wordings transcribed from mail that actually arrived, and one carrying job
 titles and locations copied byte-for-byte from public Greenhouse job boards, so the corpus is not
 graded only on the vocabulary the author of `rules.py` wrote. It drives them through the whole
@@ -199,7 +199,7 @@ went 139 to 119 with no confirmation family losing a single message
 ([#455](https://github.com/yadava5/applied/issues/455)).
 
 **And read it knowing it is a property of the mix, not of the engine.** It was 93.05% on
-2026-08-22 and is 92.35%
+2026-08-22 and is 92.43%
 on the same engine, and it has moved three times since without a rule changing. It went DOWN first,
 to 92.87%, because the corpus stopped being written entirely by the author of the classifier. It went
 back up to 93.24% because [#626](https://github.com/yadava5/applied/issues/626) added 760 messages
@@ -219,24 +219,25 @@ overstates by roughly the same 0.88 points.** Measured before the transcribed fa
 engine pattern verbatim**, and **123 of 160 engine patterns were never exercised at all**. A corpus
 in that state cannot find a gap — it can only confirm the pattern list against itself, and its
 headline describes the author's vocabulary rather than the product's reach. `observed.py` holds 36
-wordings transcribed from mail that actually arrived, from ten applicant tracking platforms, written
-by recruiting teams with no knowledge of this repository. 92.35% is the first number here that was
+wordings transcribed from mail that actually arrived, from six applicant tracking platforms and
+the employers' own mail systems, written
+by recruiting teams with no knowledge of this repository. 92.43% is the first number here that was
 not partly graded by the person who set the exam — a fact about who wrote the mail, and not the
 reason for the 0.88 points above, which was the instrument.
 
 | | measured 2026-09-06 |
 | --- | --- |
-| Correct | **17,750 of 19,220 — 92.35%** |
+| Correct | **17,950 of 19,420 — 92.43%** |
 | Wrong | **184** |
 | **Wrong AND stated to the user as fact** | **30** |
 | Abstained (below the 0.70 review floor, the product says nothing) | **1286** |
-| Board: cards / splits / merges / noise / misrouted review | **10,178 / 0 / 0 / 30 / 0** |
+| Board: cards / splits / merges / noise / misrouted review | **10,354 / 0 / 0 / 30 / 0** |
 | Updates that reached the wrong card | **0** |
-| Updates held for a person because the classifier was unsure | **685** |
+| Updates held for a person because the classifier was unsure | **712** |
 | Mail about a real application that reached nothing | **60 lost**, 0 dropped |
 
-**No message has ever landed on the wrong card.** Zero merges, zero misrouted updates over 19,220
-messages and 10,178 cards — the half that could destroy a record, because a rejection filed onto a
+**No message has ever landed on the wrong card.** Zero merges, zero misrouted updates over 19,420
+messages and 10,354 cards — the half that could destroy a record, because a rejection filed onto a
 sibling application settles it terminally and `advance_application_status` will never let it leave.
 That claim survived the corpus growing to include applications that share one Gmail thread: real
 applicant tracking systems send every acknowledgement for an employer under one subject from one
@@ -282,8 +283,8 @@ wording can still reach the auto-file gate wrongly.
 **It was not free, and the price is the part worth reading.** 107 messages left the auto-filed
 bucket: the wrong ones, and 35 *correct* ones that now wait in the review queue instead of arriving
 on the board by themselves. 104 applications moved from a card the product guessed at to a question
-it asks. Nothing became unreachable — messages lost did not move, and held updates rose from 631 to
-685. A product whose pitch is that it can be trusted with a job search should prefer asking to
+it asks. Nothing became unreachable — messages lost did not move, and held updates rose — 631
+at the time of that change, 712 on today's corpus. A product whose pitch is that it can be trusted with a job search should prefer asking to
 guessing, so that trade was taken deliberately.
 
 The last row is the one that stayed bad longest. Until 2026-08-22 the replay ran only the rollup and never
