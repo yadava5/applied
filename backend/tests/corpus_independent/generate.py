@@ -369,6 +369,24 @@ class Case:
                 f"enough, so the wrong value is now impossible. "
                 f"Known: {sorted(_CARD_STATUSES)}"
             )
+        if self.role_truth is not None:
+            # DERIVED, LIKE ``names_no_role`` BESIDE IT (#544). A passed value
+            # skips the branch below entirely, so a family that authored one
+            # would put a role on a card whose sub-key says something else —
+            # and `_settle_role_reachability` groups on exactly this field, so
+            # an identity with an authored value on SOME of its cases would be
+            # graded on a partial membership and renamed on a partial one too.
+            # One application, two keys, a ground-truth SPLIT nobody wrote.
+            #
+            # Measured before it was refused: zero occurrences of `role_truth=`
+            # anywhere under `backend/tests/`, so this closes a door rather than
+            # changing anything. The guard above says the same thing for
+            # ``names_no_role`` and says why.
+            raise ValueError(
+                "role_truth is derived from the identity sub-key, never "
+                f"passed. {self.role_truth!r} was handed in, which would make "
+                "the field and the key two answers to one question."
+            )
         if self.identity is not None and self.role_truth is None:
             sub_key = self.identity.partition("|")[2]
             if not sub_key:
@@ -4294,10 +4312,17 @@ def _settle_role_reachability(cases: list[Case]) -> None:
     could not possibly know, and the correct behaviour — a blank card — was
     scored as a ROLE-MISSING defect.
 
-    Measured at the recorded seed: **146 identities, 227 messages** —
+    Measured at the recorded seed when #533 shipped: 146 identities over 227
+    messages. RE-MEASURED FOR #544 AT 19,420 CASES: **260 identities over 341
+    messages**, 81 of them pairs — ``observed-confirmation-in-house`` 94,
     ``observed-confirmation`` 65, ``observed-closure`` 36,
-    ``observed-assessment`` 31, ``observed-pending`` 14.
-    ``role_from_message`` returns ``None`` for all 227, so every one of those
+    ``observed-assessment`` 31, ``observed-pending`` 14,
+    ``eligibility-verification`` 10, ``outreach-autoresponder`` 10. The growth is
+    families added since, not new instances of a defect; the 81 pairs are the
+    same 81. ``RECORDED_NO_ROLE`` in
+    ``tests/test_a_role_less_identity_says_so_544.py`` is where that population
+    is pinned, so this paragraph cannot go stale silently again.
+    ``role_from_message`` returns ``None`` for all of them, so every one of those
     cards is blank today and the counter was punishing the product for being
     right.
 
@@ -4342,13 +4367,16 @@ def _settle_role_reachability(cases: list[Case]) -> None:
     can fail. What used to be 146 cards scored as defects becomes 146 cards
     asserted to be blank.
 
-    KNOWN AND NOT FIXED HERE: the identity key still reads
-    ``employer|Machine Learning Engineer`` for these cards. 81 of the 146 hold
-    two messages, none of them threaded, so what actually joins them today is
-    employer plus an EMPTY role token — the identity assertion passes for a
-    reason unrelated to what it states. Filed separately rather than folded in,
-    because changing those sub-keys moves identities and is a different blast
-    radius.
+    THE KEY LOSES THE ROLE TOO, SINCE #544, and this paragraph used to say the
+    opposite. It read "KNOWN AND NOT FIXED HERE: the identity key still reads
+    ``employer|Machine Learning Engineer``" — true when #533 shipped, and false
+    from the moment the collapse below landed. 81 of these identities hold two
+    messages, none of them threaded, so what joined each pair was employer plus
+    an EMPTY role token: the identity assertion passed for a reason unrelated to
+    what it stated, and the day the extractor reads a role out of one of the two
+    the pair splits while the key that was meant to predict it had been
+    describing something else. The key is the sentinel now and the flag is read
+    off it.
     """
 
     by_identity: dict[str, list[Case]] = {}
@@ -4407,14 +4435,24 @@ def _settle_role_reachability(cases: list[Case]) -> None:
             # to stop a BUILDER asserting it, and no builder can reach here.
             object.__setattr__(case, "identity", collapsed)
             object.__setattr__(case, "role_truth", None)
-            # DERIVED FROM THE SUB-KEY, exactly as ``__post_init__`` derives it
-            # for every family that spells a sentinel by hand, rather than set
-            # beside it as a second rule that could disagree. After #544 there
-            # is one definition of "this mail names no job" — the sub-key — and
-            # this pass is what makes the key true rather than what works
-            # around it being false.
+            # DERIVED FROM THE KEY THIS PASS JUST WROTE, exactly as
+            # ``__post_init__`` derives it for every family that spells a
+            # sentinel by hand. After #544 there is one definition of "this mail
+            # names no job" — the sub-key — and this pass makes the key true
+            # rather than working around it being false.
+            #
+            # THE SUB-KEY IS READ, NOT SPELLED AGAIN. A first draft wrote
+            # ``_ROLE_SENTINEL.match("__norole__")``, which is a constant
+            # dressed as a derivation: it says nothing about the value actually
+            # stored, and under the one perturbation it responds to — a
+            # ``_ROLE_SENTINEL`` that stops matching this spelling — it would
+            # write ``False`` for every case while the gate comparing flag to
+            # sub-key stayed green, because both sides move together. Reading
+            # ``collapsed`` is what makes the line true to its own comment.
             object.__setattr__(
-                case, "names_no_role", bool(_ROLE_SENTINEL.match("__norole__"))
+                case,
+                "names_no_role",
+                bool(_ROLE_SENTINEL.match(collapsed.partition("|")[2])),
             )
 
 

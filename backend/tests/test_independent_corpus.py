@@ -49,13 +49,19 @@ from tests.corpus_independent.harness import (
 #: is 180 more messages and 60 more employers.
 #: 6753126bb7f4c48b since #522; 50f770359b07d783 since #521, which appends
 #: `outreach-autoresponder` — 160 more messages and 80 more employers.
+#: 2b3ff419180770f3 since #969 and #970, which append
+#: `observed-confirmation-in-house` and move 273 verdicts up a rung.
 #: 4127b97fb1ff03dd since #544, and this one moved for a reason none of the
 #: others did: NOT ONE MESSAGE CHANGED. The corpus is the same 19,420 mails; 341
 #: of them lost a job title from their identity KEY, which `digest()` has covered
-#: since #533 precisely so a truth-only edit cannot pass unseen. Every other
-#: recorded number in this file held — 44 of 45 tests green on the new corpus
-#: before this line was touched — which is what says the collapse renamed keys
-#: rather than merging applications.
+#: since #533 precisely so a truth-only edit cannot pass unseen.
+#:
+#: Every other recorded number in this file held — 44 of 45 tests green on the
+#: new corpus before this line was touched — which CORROBORATES the collapse
+#: being a rename rather than a merge. What SAYS it are the two things that can
+#: fail on the claim itself: the settler raises rather than collapsing two
+#: identities onto one key, and `test_a_role_less_identity_says_so_544.py` pins
+#: that no employer holds two of the identities it touches.
 CORPUS_DIGEST = "4127b97fb1ff03dd"
 CORPUS_SIZE = 19420
 
@@ -3563,6 +3569,22 @@ def test_a_role_the_mail_does_spell_survives_the_derivation() -> None:
         "a role spelled only past the body cap was called reachable — the "
         "window has drifted from what `role_from_message` is handed, which is "
         "#533's own defect moved past character 4,000 instead of fixed"
+    )
+    # AND THE KEY ITSELF, on known answers (#544). Everything above reads the
+    # two derived FIELDS, and both of them agreeing is exactly what a settler
+    # that renamed to the wrong spelling — or to nothing — would also produce.
+    # This is the only place in the tree that pins the sub-key against a hand-
+    # built case rather than against the generated corpus, so it is the one
+    # assertion the corpus-wide gate cannot be a twin of.
+    assert silent.identity == "arcgrove|__norole__", (
+        f"the collapsed key is {silent.identity!r}; a sub-key that is not a "
+        "sentinel sets neither `role_truth` nor `names_no_role` on any case "
+        "built from it afterwards, which is the 960-card hole one spelling over"
+    )
+    assert past_the_cap.identity == "kestrelan|__norole__"
+    assert spelled.identity == "northwind|Backend Engineer", (
+        "a card whose mail DOES spell its role lost its key; the collapse is "
+        "supposed to touch only the identities the settler flags"
     )
 
 
