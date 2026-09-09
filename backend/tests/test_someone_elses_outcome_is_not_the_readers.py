@@ -13,7 +13,8 @@ holds the transcribed-from-real-mail half of the corpus and not one of its
 wordings mentions a referral or a reference. So this family proves the
 classifier cannot see attribution, and it does NOT establish how often real
 mail asks it to. See :mod:`tests.corpus_independent.generate`'s family
-docstring and ``docs/CLASSIFIER_RULES_GOVERNANCE.md`` on invented vocabulary.
+docstring, DEC-013 in ``docs/DECISIONS.md``, and
+``docs/CLASSIFIER_RULES_GOVERNANCE.md`` on invented vocabulary.
 """
 
 import re

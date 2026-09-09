@@ -3945,6 +3945,12 @@ def _someone_elses_outcome(b: _Builder, n: int) -> None:
     keyed on one; a control that cannot fail is decoration. Each twin here is
     one slot from its case, so any rule that separates them has to do it on who
     the sentence is about rather than on which words appear.
+
+    THERE IS NO FIX, ON PURPOSE, and DEC-013 is where that is argued. Every
+    wording here is AUTHORED — ``observed.py`` holds no referral or reference
+    mail at all — so this family can show that the classifier is blind to
+    attribution and it CANNOT say how often real mail asks it not to be. Its
+    counts are a defect pinned at its size, never a baseline to be defended.
     """
 
     for i in range(n):
