@@ -406,6 +406,15 @@ RECORDED_EMPLOYER_SPELLINGS = {
     # UNMOVED, and that is the assertion. 150 is documented above as entirely the
     # `employer-spelling` family; a family that added one would be #532 returning.
     "tokens_with_several_spellings": 150,
+    # THE NUMBER THAT SEPARATES A MERGE FROM A LOSS, recorded here rather than
+    # left in the paragraph above because the other three cannot tell them
+    # apart: a token that merges and a token whose cases stop resolving both
+    # remove exactly one token and one display from the sums. Only this one
+    # says which happened, and #967's whole re-record turns on it being
+    # unchanged. Every case that could flip was resolving before, so a loss can
+    # only raise it — an unmoved 403 is zero losses, and a comment cannot
+    # enforce that.
+    "unresolved": 403,
 }
 
 RECORDED = {
@@ -2525,7 +2534,23 @@ def test_one_employer_gets_one_spelling(cases) -> None:
         "tokens": len(by),
         "distinct_displays": sum(len(v) for v in by.values()),
         "tokens_with_several_spellings": len(several),
+        # Counted from the same pass, so it cannot describe a different corpus
+        # than the three above it.
+        "unresolved": sum(
+            1
+            for case in cases
+            if pipeline.resolve_employer(case.sender, case.subject, case.sender_name)
+            is None
+        ),
     }
+    assert got["unresolved"] == RECORDED_EMPLOYER_SPELLINGS["unresolved"], (
+        f"{got['unresolved']} cases resolve no employer at all, recorded "
+        f"{RECORDED_EMPLOYER_SPELLINGS['unresolved']}. THIS IS THE LINE THAT "
+        "TELLS A MERGE FROM A LOSS. A RISE beside a falling `tokens` means "
+        "messages stopped resolving an employer — the token did not merge into "
+        "a neighbour, it went nowhere — and re-recording `tokens` without "
+        "reading this number is how that gets published as an improvement."
+    )
     assert got["tokens"] == RECORDED_EMPLOYER_SPELLINGS["tokens"], (
         f"the employer TOKEN count moved to {got['tokens']}. Two different "
         "causes reach this line and they want opposite responses. A RISE is "
