@@ -48,6 +48,16 @@ on:
       # `readme_facts.py` and ran no backend job at all. Edit BOTH blocks.
       - "scripts/check_test_data.py"
       - "scripts/readme_facts.py"
+      # THE TWO PATTERN TABLES, by the same argument again (#955).
+      # `test_the_rules_tables_cannot_drift.py` is a backend test and its whole
+      # subject is these two files: it asserts they ARE `rules.py`'s pattern
+      # table. Neither is under `backend/**`, and `ml/browser/site/` is under no
+      # path list in this repository at all, so without these two lines the PR
+      # most likely to reintroduce the drift the gate exists for -- one that
+      # edits only a table -- is exactly the PR that would not run it. That is
+      # the shape the three notes above are about, arriving a fifth time.
+      - "apps/web/lib/demo/rules.json"
+      - "ml/browser/site/rules.json"
       # `apps/web/lib/gmail/types.ts`, by the same argument a fourth time.
       # `test_the_page_size_fits_gmails_minute.py` reads that file to check the
       # web client asks for the page size the server is tuned for — the client
@@ -103,6 +113,16 @@ on:
       - "scripts/schema_fingerprint.sql"
       - "scripts/check_test_data.py"
       - "scripts/readme_facts.py"
+      # THE TWO PATTERN TABLES, by the same argument again (#955).
+      # `test_the_rules_tables_cannot_drift.py` is a backend test and its whole
+      # subject is these two files: it asserts they ARE `rules.py`'s pattern
+      # table. Neither is under `backend/**`, and `ml/browser/site/` is under no
+      # path list in this repository at all, so without these two lines the PR
+      # most likely to reintroduce the drift the gate exists for -- one that
+      # edits only a table -- is exactly the PR that would not run it. That is
+      # the shape the three notes above are about, arriving a fifth time.
+      - "apps/web/lib/demo/rules.json"
+      - "ml/browser/site/rules.json"
       # `apps/web/lib/gmail/types.ts`, by the same argument a fourth time.
       # `test_the_page_size_fits_gmails_minute.py` reads that file to check the
       # web client asks for the page size the server is tuned for — the client

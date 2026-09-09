@@ -351,14 +351,46 @@ RECORDED_FAMILIES: dict[str, tuple[int, int, int]] = {
     "repeat-anonymous": (600, 1, 0),
     "req-id-same-title": (400, 1, 0),
     "requisition-inside-the-bound": (120, 2, 0),
-    "rescinded-offer": (520, 4, 0),
+    # 0 -> 260 (#934). NOT a corpus change: the census used to search the raw
+    # delivered text, and the only `strong` match on the 260 rescind halves was
+    # inside the offer they QUOTE. `classify` strips quoted history before any
+    # pattern sees a body, so the engine reaches nothing on them — its verdict
+    # is `other` at 0.50 against a ground truth of `rejection`. The zero was a
+    # claim about text no shipped classifier reads.
+    "rescinded-offer": (520, 4, 260),
     "update-before-confirmation": (600, 5, 0),
     "update-from-another-domain": (600, 5, 0),
     "update-in-thread": (600, 2, 0),
     "update-joins-one-application": (1200, 5, 0),
     "update-outside-the-thread": (600, 5, 0),
     "update-picks-between-two": (750, 5, 0),
-    "verdict-past-the-body-cap": (320, 2, 0),
+    # 0 -> 160 (#934), and by a different mechanism from `rescinded-offer`
+    # above: the census used to read past the 4,000-character cap
+    # `normalise_body_text` applies. #767 fixed exactly that for the classifier
+    # half — `harness.as_classified` — and the census never got it, so the one
+    # family built to measure the cap was the one family the census read past.
+    # The 160 are the same 160 #767 measured.
+    "verdict-past-the-body-cap": (320, 2, 160),
+    # #768. 240 messages, 16 wordings, no_strong 0. Its third arm is why the
+    # wording count is 16 rather than 10: five one-slot PAIRS plus five
+    # referral-bearing reader controls, and the pairs contribute both members.
+    #
+    # IT IS THE FAMILY THAT MADE `decided not to proceed` REACHABLE. Diffed
+    # against a pristine-tree run: `fired` goes 54 -> 55 and that strong
+    # `rejection` pattern is the single addition — a phrase in the shipped
+    # rules that no case in the corpus had ever exercised. Nothing is lost.
+    "someone-elses-outcome": (240, 16, 0),
+    # #523. 200 messages, 10 wordings, no_strong 0 — and it is the FIRST
+    # observed family recorded at zero, so the zero needs its reason said
+    # rather than assumed. It is not circular: every wording is one of the
+    # ten acknowledgements `observed.py` provenances `in-house`, transcribed
+    # like the rest of that file. What is zero is the DISCOVERY, and that is
+    # a fact about the engine — an acknowledgement is the shape it knows
+    # best, which the header of `observed.py` already records at 6.7% for
+    # the whole set. The ten in-house ones are the half of that set with no
+    # weak-only member in it. What this family varies is the SENDER, which
+    # this metric does not see at all.
+    "observed-confirmation-in-house": (200, 10, 0),
     # #626, and it is invented in the same sense as everything above it: the
     # BODIES are the author's, so its discovery rate is 0.0% by construction and
     # it belongs in this block. What is real about it is the half this metric
@@ -427,6 +459,13 @@ OBSERVED_TEMPLATES: dict[str, tuple[tuple, ...]] = {
     "observed-closure": (observed.OBSERVED_CONFIRMATIONS, observed.OBSERVED_CLOSURES),
     "observed-pending": (observed.OBSERVED_CONFIRMATIONS, observed.OBSERVED_PENDING),
     "observed-not-application": (observed.OBSERVED_NOT_APPLICATIONS,),
+    # #523. The same ten acknowledgements `observed-confirmation` draws,
+    # minus the thirteen it draws that came over a relay: this family exists
+    # to deliver the in-house ones from an in-house sender, and its wording
+    # count is therefore the size of that subset and not of the whole set.
+    "observed-confirmation-in-house": (
+        observed.in_house(observed.OBSERVED_CONFIRMATIONS),
+    ),
 }
 
 OBSERVED_FAMILIES = tuple(sorted(OBSERVED_TEMPLATES))
@@ -876,7 +915,7 @@ def test_the_corpus_keeps_the_discovery_power_it_has(measured) -> None:
     )
 
 
-def test_the_invented_families_still_discover_nothing(measured) -> None:
+def test_the_families_recorded_at_zero_still_discover_nothing(measured) -> None:
     """DIRECTION: a recorded ZERO is an EQUALITY, not a floor.
 
     27 families, 13,760 messages, and not one sentence in them that the
@@ -920,7 +959,25 @@ def test_the_invented_families_still_discover_nothing(measured) -> None:
     # not see sequences. Its three sibling families are NOT here: their
     # `no_strong` is non-zero by construction, because the uncertain updates
     # they turn on are mail the classifier is supposed to be unsure about.
-    assert len(zeros) == 31, "the recorded set of circular families"
+    # 31 -> 29 (#934). `rescinded-offer` and `verdict-past-the-body-cap` leave
+    # this set, and neither leaves it by gaining a wording: the census started
+    # searching what `classify` searches, and both families turned out to hold
+    # messages the engine reaches nothing on. See their entries in
+    # RECORDED_FAMILIES for which mechanism hid which.
+    # 30 -> 31 (#523). The 31st is `observed-confirmation-in-house` and it
+    # is the FIRST member of this set that is NOT circular — its wordings
+    # are transcriptions, not the author's. It is here because its measured
+    # `no_strong` is 0, which is what this set is keyed on, and the reason
+    # is recorded beside its entry in RECORDED_FAMILIES: every in-house
+    # acknowledgement matches a strong pattern, so the gap it exists to fill
+    # is the sender rather than the vocabulary. The direction this test
+    # enforces is unchanged for it: going non-zero would mean a transcribed
+    # wording stopped matching the engine, which is as much a finding as an
+    # invented one starting to.
+    assert len(zeros) == 31, (
+        "the recorded set of families whose discovery rate is zero — every "
+        "one of them circular but `observed-confirmation-in-house`"
+    )
     moved = {
         family: measured.families[family].no_strong
         for family in sorted(zeros)
@@ -1058,7 +1115,7 @@ def test_copying_an_engine_pattern_into_an_observed_wording_reds_this_gate(
 
     assert _MUTATION in mutated.fired
     assert mutated.fired == measured.fired | {_MUTATION}
-    assert len(mutated.fired) == len(measured.fired) + 1 == 55
+    assert len(mutated.fired) == len(measured.fired) + 1 == 56
     assert mutated.never_fired_by_category["interview"] == 25
 
     closure = mutated.families["observed-closure"]

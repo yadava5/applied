@@ -45,6 +45,18 @@ It has two recurring shapes:
   wordings the author of the rules wrote themselves. `9e013ff` refused to
   invent a withdrawal category "from three wordings written by the author of
   the rules", and left the issue's harder half open rather than guess at it.
+  **#768 is the second refusal and the more tempting one**, because the defect
+  it declines to fix is severe and measured: third-party lifecycle mail — "the
+  candidate you referred was not selected" — scores the reader's category at up
+  to 0.95, and through the real additive sync it joins the reader's own live
+  card and settles it with nobody asked. The mechanism is proven at board level
+  and a 240-message family now grades it. The VOCABULARY is what was refused:
+  every third-party wording in the tree is authored, `observed.py` holds none,
+  and a survey of published ATS template text found one — JobScore's — third
+  party *rejection* sentence in public, with three of six apparent
+  reference-request sources turning out to be a single lineage. A pattern family
+  keyed on that is n=1, and it would have been graded by a corpus family written
+  by the same person. Recorded as DEC-013 with the two conditions that unblock it.
 
 ## The rule
 
@@ -130,16 +142,25 @@ BEHAVIOUR, not pattern lists, so a pattern that drifted without changing any
 verdict in the corpus is still invisible. And `e2e-ci.yml` is path-filtered, so
 per #864 it cannot be a required check.
 
-**The port it cannot reach is the one already known to diverge**, which is worth
-stating next to the good news rather than under it. `ml/browser/site/app.js` is
-unloadable outside a browser — a top-level `https:` import (`:16`), no `export`
-statements at all, and `document` at `:22` — so covering it means Playwright or
-a fourth copy of the scorer. And identical data does not make identical
-behaviour: `app.js:60` matches every strong and weak pattern against the RAW
-body, with no `asserted_text` mask, no quoted-history strip and no reflow, where
-both engines the harness DOES compare mask first. `be in touch (soon|shortly|if)`
-is the confirmed instance — the `if` arm is dead in Python and TypeScript and
-live in the browser port. That belongs to #928.
+**This paragraph described a gap that is now closed, and is corrected rather
+than deleted** because the shape of the gap is the lesson. It read: the browser
+port cannot be reached, because `ml/browser/site/app.js` is unloadable outside a
+browser — a top-level `https:` import, no `export` statements, `document` at
+module scope — so covering it means Playwright or a fourth copy of the scorer;
+and identical data does not make identical behaviour, because `app.js` matched
+every pattern against the RAW body with no `asserted_text` mask, no
+quoted-history strip and no reflow, where both compared engines mask first.
+`be in touch (soon|shortly|if)` was the confirmed instance: the `if` arm dead in
+Python and TypeScript, live in the browser.
+
+#955 closed all of it. The preprocessing moved to `ml/browser/site/preprocess.js`,
+`app.js` gained exports and defers its CDN import into `boot()`, the differential
+runs the browser as a THIRD arm, and both `rules.json` copies had the `if` arm
+removed to match `rules.py`. The differential is 139 cases across three engines
+and the browser port diverges on none. What remains true is the general claim
+this paragraph was written to make: **the drift a port accumulates is not
+visible from the port's source.** Nothing was checking the comment that said
+"keep these in step", and it was wrong for as long as nobody looked.
 
 `6919e63` regenerated all of
 them and proved the generator faithful first, "by reproducing the committed
@@ -151,6 +172,57 @@ Either is acceptable. Silence is not: a corrected rule that fails to propagate
 is the sharper version of this issue's failure mode, because nobody finds out.
 That is not hypothetical — #260's anchoring fix left the same unanchored
 containment in three other ports until #651.
+
+### A scoring-model change owes a production replay, not only a corpus one
+
+`4c68e1a` and `6919e63` are pattern changes: they move what MATCHES. #523 is the
+other kind — it moves what a match is WORTH — and the section above says such a
+change "needs the corpus evidence in the next section rather than a review
+argument". That is necessary and it was not sufficient, for a reason worth
+recording.
+
+The corpus's complement is authored. "249 move and none is wrong" is a claim
+about what WRONG mail sits at the shape, and the only wrong mail the corpus
+holds at any shape was written by the author of `rules.py`. `observed.py` holds
+one non-application wording, a verification code. So a corpus-only argument for
+a threshold can show the rung is REACHED by real mail and cannot show it is
+SAFE.
+
+The instrument that can is the owner's mailbox, read-only. #523 replayed the 68
+distinct wordings of the 96 stored rows through the shipped classifier with and
+without the rung, and reported the `(winner, runner-up)` histogram, every row the
+rung moves, and the nearest row it does not. That is what made "nothing that must
+not file sits at `w>=5, ru<=0`" a measurement rather than an absence of evidence.
+
+**So: a change to the ladder, a gate, or any threshold that decides routing
+replays the production mailbox and names every row whose disposition changes.**
+It is 96 rows and it takes seconds. A pattern addition does not owe this — its
+blast radius is bounded by the pattern.
+
+### A scoring-model change is graded by the SUITE, not by a chosen file set
+
+#523 is the worked example and it is here because the first attempt got it
+wrong. The rung was measured against the independent corpus (273 verdicts move,
+all correct), against both committed eval corpora, and against the owner's
+production board, and every one of those said it was safe. It was then verified
+by running the corpus tests, the reach tests and four neighbours — a file set
+chosen by the person who wrote the change.
+
+Three tests outside that set were red. `test_ingestion_hole_166.py` classifies a
+real `interview` row with NO sender at 5/0 and asserts 0.80, under the gate,
+because that is what #260's lookalike anchoring is worth; the rung handed it 0.90
+from any sender and the protection became moot. Both of #775's short-circuit
+ratchet tests failed too, including the ratchet's own negative control.
+
+The corpus could not see any of it: `harness.classify_all` buckets on CATEGORY,
+so a right-category verdict that should have waited for a human scores CORRECT,
+and the only non-application wordings in `observed.py` number one.
+
+**So a change to the ladder, a gate, or any threshold that decides routing runs
+the whole backend suite before it is believed, and replays the production
+mailbox as well as the corpora.** Those are 96 rows and take seconds. A pattern
+addition does not owe the production replay — its blast radius is bounded by the
+pattern — but it owes the same suite.
 
 ### What this document does NOT cover, and how not to route around it
 
@@ -256,3 +328,20 @@ Scope it to the ports that ship. `README.md:489` records that the Hugging Face
 Space and `ml/browser/site/` were withdrawn on 2026-08-15, so two of the four
 copies are dormant — which does not weaken the argument for the check, it
 sharpens it: four copies of one predicate is the debt this issue names.
+
+## A gate change is a scoring-model change, and one of them is already decided
+
+`pipeline.AUTO_FILE_GATE` is one number applied to every lifecycle verdict, and
+**DEC-014** records why it stays that way: #527's claim-type split — 0.85 to
+mint, 0.75 for a non-terminal update onto a card the board already holds — is
+refused until the corpus holds offer or interview mail that somebody other than
+this repository wrote, or until the production queue actually fills with held
+offers.
+
+The general rule the entry is an instance of: **a threshold may not be lowered
+on the strength of a population with no negatives in it.** The 0.75 rung read
+100% precise for offer and interview for as long as no family had been built
+that could put a wrong verdict there. One was (#768), and both cells moved off
+100% immediately — into exactly the arm the split discounts. A cell with no
+negatives has no test power, and a gate policy tuned against one is measuring
+its own corpus's silence.

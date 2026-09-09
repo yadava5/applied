@@ -29,6 +29,14 @@ every occurrence to be claimed makes that loud. Where a file names an id to
 explain why the decision does **not** apply to it, list it anyway and say so in
 a parenthetical — the gate reads the paths and ignores the prose.
 
+Because that reading makes the lists grow, **a field value may wrap**: it
+continues onto every following line that is indented and not blank, and ends at
+a blank line or at anything starting in column one. That is the shape every
+entry below already uses for its prose fields, and until #958 the parser read
+only the first physical line of each — so a wrapped `Markers:` list lost its
+continuation and the completeness check then reported a file as unlisted while
+a reader could see it listed directly above.
+
 **Three things it cannot see, stated so nobody mistakes this file for cover:**
 
 1. A decision nobody wrote down. This file cannot notice its own gaps.
@@ -487,3 +495,250 @@ Valid while: `withdrawn` remains unreachable from mail. It is in
   Also revisit if `contested` is ever widened past `OFFERED` — the scope is
   argued in `applications.employers_with_a_live_offer`, not here.
 Markers: backend/jobtracker/cloud/pipeline.py, backend/jobtracker/cloud/applications.py, backend/tests/test_a_withdrawal_reaches_the_queue.py, docs/CLASSIFIER_RULES_GOVERNANCE.md
+
+## DEC-011 — the browser port keeps its own copy of the preprocessing, and a gate keeps it honest
+
+Status: active (2026-09-08)
+Claim: `ml/browser/site/preprocess.js` is a third hand-maintained copy of the
+  body preprocessing and the three scoring mechanisms that are not in
+  `rules.json` — the quote strip, the conditional mask, the reflow, the
+  reply-subject demotion, the genre-filter outranking and the refutation cap.
+  It is not extracted into a module the other engines share. What keeps it in
+  step is the cross-engine differential scoring all three ports against the
+  Python reference case by case, plus a gate asserting both `rules.json` tables
+  ARE `rules.py`'s pattern table.
+Why: `ml/browser/site` is a static site with no build step. It is opened over
+  `file:` or served flat, so every import it makes has to resolve inside that
+  directory; a module under `apps/web` cannot be reached from it at runtime,
+  and one placed outside both cannot be reached from a Next build without
+  crossing a workspace boundary. The same constraint already settled the same
+  question for `rules.json`, which is duplicated for exactly this reason.
+Moved away from: two alternatives, and the first is what #955 asked for.
+  (1) A shared artifact both engines load the way both already load
+  `rules.json`. It is the shape that cannot drift and it is unreachable here
+  for the deployment reason above: what can be shared as DATA already is, and
+  the rest is control flow, which a JSON file cannot carry.
+  (2) Porting the functions with a comment saying "keep these in step". That
+  is what `rules.json` had, and #955 is the bill: #928 deleted a pattern arm
+  from `rules.py` and both tables kept the three-arm form, so the engine that
+  ships and the two ports copied from it were running different pattern sets
+  in the one place this repository asserts they are the same. The comment did
+  not fail; nothing was checking it.
+Enforced by: scripts/cross_engine_differential.py runs the browser port as a
+  third arm over 139 cases and reports any case it answers differently from
+  the reference, and backend/tests/test_the_rules_tables_cannot_drift.py
+  asserts both tables equal `rules.py`. The differential is invoked from
+  `.github/workflows/e2e-ci.yml`, which is path-filtered and so cannot be a
+  required status check — that gap is #864's and is stated in the script's own
+  header rather than left to be discovered.
+Valid while: the browser demo is a static site with no build step. If it ever
+  gains one — a bundler, a workspace package, anything that can resolve an
+  import outside its own directory — the copy loses its justification and
+  alternative (1) becomes available; re-read this entry then.
+Markers: ml/browser/site/preprocess.js, scripts/cross_engine_differential.py, backend/tests/test_the_rules_tables_cannot_drift.py
+
+## DEC-012 — a thread spanning a hand-dismissed card splits, and each answer mints its own card
+
+Status: active (2026-09-08)
+Claim: when a message linked to a card the user dismissed BY HAND is
+  reclassified from `/inbox`, the answer mints a new card and the message's
+  unreviewed thread siblings stay where they are. Answering a second sibling
+  mints a second card. n per-message answers yield n cards, and that is the
+  chosen behaviour rather than a defect awaiting a fix.
+Why: the two principles that look like they collide have disjoint
+  jurisdictions. "One decision settles the whole conversation" is the QUEUE's
+  contract and derives from the queue's own mechanism — it shows one entry per
+  conversation, so answering that entry has to settle everything behind it.
+  Here the queue never offered the conversation at all: both messages are
+  answered-for by the hand-dismissed card under #597, and the review queue is
+  empty before any answer. Where the queue never asked, its settlement contract
+  owes nothing. What the user actually exercised is `/inbox`'s per-MESSAGE
+  reclassify control, and one card per per-message command is that surface
+  answering literally. The live-card mirror confirms it is not a special case:
+  an unreviewed sibling on a LIVE card is excluded from every settle by the
+  same predicate and sits at NEEDS_REVIEW indefinitely, and nobody calls that
+  a defect, because the card answers for it.
+Moved away from: three alternatives, and two of them are actively dangerous.
+  (1) "Carry the thread to the mint" — relink the answered message's unreviewed
+  siblings to the minted row. It breaks the settle's real invariant, which is
+  that it converts open questions into filings and never re-homes mail that is
+  already settled.
+  (2) "Land on an existing open card at the employer instead of minting." This
+  is byte-for-byte the mutation the refusal branch in
+  `_resolve_application_for_email` exists to forbid, and its 35-line comment is
+  addressed to exactly this idea: at an employer holding the dismissed row and
+  a live one, the cascade hands the message to the live row by rule 3 or rule 4
+  (`rows[0]`, live-first), `_adopt_mail_identity` then stamps the dismissed
+  application's `req_id` and `role_token` onto a row it was never about, and
+  rule 1 routes all future mail there. Two applications wearing one identity,
+  undone only by `POST /{id}/split`. Rejections are anonymous in the common
+  case — DEC-009 records that an ATS rejection spends its whole snippet on
+  preamble — so role-Y mail landing on a role-X card is the EXPECTED outcome
+  of employer matching, not a corner. The repository's cost model, stated three
+  times in the code this would amend: a spurious card is one dismiss click,
+  where a silent merge is not reversible from any screen.
+  (3) "Reuse the mint within the request." The endpoint is per-message, so two
+  sequential answers still yield two cards; its own acceptance test would
+  demonstrate a non-fix.
+  If the n-mint behaviour ever must die, the sound shape is neither of the
+  above: before minting after a refusal, ask whether another message of this
+  user's with the SAME `review_dedup_key` is already reviewed and sitting on
+  exactly one live card, and land there. That consumes only the key the product
+  already trusts as "same application", can never select the anonymous live
+  sibling, and needs no provenance column — the mint writes none.
+Enforced by: backend/tests/test_a_split_thread_is_the_decision_622.py, which
+  asserts the row count reaches 3 at the employer after both answers rather
+  than treating it as a defect, and carries the `dismissed_reason='resync'`
+  arm as its control — same probe, one column different, one row and a settled
+  sibling. Its fixture also asserts both messages share a `review_dedup_key`
+  and that the queue is empty before any answer; without those the test passes
+  while proving nothing.
+Valid while: `/inbox`'s reclassify stays a per-MESSAGE control and the queue
+  keeps offering one entry per conversation. If reclassify ever becomes a
+  per-conversation action, the jurisdiction argument above dissolves and this
+  entry must be re-read. Note also that the shape has never occurred in
+  production: `dismissed_reason` is null for all 76 rows, so no card has ever
+  been hand-dismissed there and the frequency is UNMEASURED rather than zero.
+Markers: backend/tests/test_a_split_thread_is_the_decision_622.py
+
+## DEC-013 — #768's defect is graded and deliberately not fixed, because every wording that could key the fix is our own
+
+Status: active (2026-09-08)
+Claim: the classifier cannot tell whether a lifecycle sentence is about the
+  reader or about somebody else, and there is deliberately no rule addressing
+  it. `backend/tests/corpus_independent/generate.py`'s `someone-elses-outcome`
+  family grades the defect at its size — 40 wrong verdicts, 30 of them
+  auto-filed — and those counts are pinned as a DEFECT, not blessed as a
+  baseline.
+Why: the fix that suggests itself is a `_THIRD_PARTY_SUBJECT` pattern family
+  beside `_RETRACTION`, capping rather than flipping, in the exact house idiom.
+  It is refused on provenance. Every third-party wording in this repository is
+  AUTHORED — the three original fixtures, the family's five pairs, its five
+  referral-bearing controls — and `corpus_independent/observed.py`, which holds
+  the transcribed-from-real-mail half, contains no referral or reference wording
+  at all. Shipping a regex derived from those sentences AND grading it with a
+  family built from the same sentences is a closed loop: the fix's loudest
+  number would be its author's fixtures agreeing with its author's regex. That
+  is the tautology `docs/CLASSIFIER_RULES_GOVERNANCE.md` refuses, and `9e013ff`
+  is the precedent for leaving the harder half open instead.
+  A survey of published ATS template text was run before deciding rather than
+  after: no vendor publishes the body of the mail its product actually emits
+  (Greenhouse lists 65 default emails by name and transcribes none), and of the
+  public template libraries that do carry text, exactly ONE third-party
+  REJECTION sentence exists — JobScore's — while three of the six apparent
+  reference-request sources share a placeholder phone number and are one lineage
+  wearing three logos. n=1 is not a vocabulary.
+Moved away from: three alternatives.
+  (1) The cap derived from the family's own wordings. Named explicitly because
+  the family's own second comment tells a future reader how to build it, and
+  someone will. It is refused for provenance, not for shape — the shape is
+  right.
+  (2) A blunt suppression keyed on `referr*` anywhere in the message. MEASURED
+  against the family: it fixes the third-party arm and takes 40 of 80 genuine
+  reader outcomes down to `other` at 0.50 with it. The family's third arm exists
+  to catch exactly this and does.
+  (3) Landing the fix and the family together so the published numbers never
+  move off zero. That is the most attractive and the worst: it would retire the
+  standing red that keeps the defect discoverable, and replace a measurement
+  with a self-graded claim.
+Enforced by: backend/tests/test_someone_elses_outcome_is_not_the_readers.py
+  asserts the one-slot property of the pairs, that every referral-bearing
+  control actually carries the token (a control that cannot fire is
+  decoration), that the third-party arm is still reachable and wrong, and that
+  ZERO reader-owned outcomes are lost. The last is the invariant; the first two
+  floors are defect pins a real fix is EXPECTED to red.
+  backend/tests/test_independent_corpus.py keys its re-sample ceiling and its
+  wrong-stage assertion on the COMPLEMENT of this family, so the zero that used
+  to mean "no wrong verdict is stated as fact" still means it for every other
+  family — measured 0 / 0 / 1 at the three seeds, exactly the numbers the old
+  ceiling of 3 was written against.
+  Nothing enforces the provenance requirement itself. It is prose, and this
+  entry is the only place it is written down.
+Valid while: no observed or published-template third-party wording of adequate
+  size exists in the tree. TWO CONDITIONS UNBLOCK THIS, either one sufficient:
+  a real instance arriving in the mailbox and being transcribed into
+  `observed.py` through its existing provenance pipeline; or enough published
+  ATS template text to key a family on without generalising from one sentence.
+  The survey above is dated 2026-09-08 and three sources were unreadable then
+  (SAP SuccessFactors' help SPA, Jobvite's help centre, Naukri's recruiter
+  pages) — SAP is the most likely place a product-emitted body exists, so that
+  is where to look first. If both conditions are still unmet when someone next
+  picks this up, the minimal two-phrase cap anchored on "the candidate you
+  referred" — with `_ELIGIBILITY_TWINS`' "unable to verify your references"
+  named as the near-miss that must not move — is the sanctioned least-bad, and
+  its commit must say plainly that its vocabulary is authored.
+Markers: backend/tests/corpus_independent/generate.py, backend/tests/test_someone_elses_outcome_is_not_the_readers.py,
+  backend/tests/test_independent_corpus.py, docs/CLASSIFIER_RULES_GOVERNANCE.md,
+  backend/tests/test_the_ladder_reads_margin_when_nothing_competes_523.py,
+  backend/jobtracker/cloud/pipeline.py
+
+## DEC-014 — the auto-file gate stays ONE number; the claim-type split is refused until real offer or interview mail exists
+
+Status: active (2026-09-09)
+Claim: `pipeline.AUTO_FILE_GATE` is a single threshold applied to every
+  lifecycle verdict, and `_qualifies_for_hard_row` takes no board state. #527's
+  proposal — mint 0.85, non-terminal update onto an application the board
+  already holds 0.75, terminal update 0.85 — is refused for now, not deferred
+  for want of effort.
+Why: the design rests on the 0.75 rung's offer, interview and rejection cells
+  being 100% precise, and its own first comment already discounted that as an
+  absence-of-negatives artefact: "there are no negative examples at that rung at
+  all… any gate policy looks perfect in it". The negatives have since arrived
+  and they land exactly in the arm the split discounts. Measured at `b75f7909`
+  over 19,420 cases, the rung answers `offer` 447/5 and `interview` 216/5, and
+  all ten wrong verdicts are `someone-elses-outcome` — DEC-013's family, which
+  seeds the reader's own live card and then delivers a third-party message from
+  the SAME relay, naming the SAME role, at the SAME employer. Its identity
+  resolves onto that card, so a 0.75 update gate files it and the card silently
+  reads `interviewing` or `offered`. DEC-013 pins that family's counts as a
+  DEFECT rather than a baseline; spending them to buy a filing win inverts that
+  entry.
+  The benefit does not carry the cost. `update_held_on_its_own_confidence` is
+  documented on `BoardScore` as THE DESIGNED ANSWER and is excluded from
+  `total`, while `auto_filed_wrong`, `noise_on_card` and `card_overstates` are
+  defect counters — so the split trades a counter the grader refuses to call a
+  failure for three that it does. In production, read-only on 2026-09-09, the
+  unplaced queue is nine rows: APPLIED 4, REJECTION 3, PENDING_APPLICATION 1,
+  ASSESSMENT 1. There is not one held offer or interview, and the single
+  assessment sits at 0.700, which a 0.75 gate does not reach. The split moves
+  zero production rows today.
+Moved away from: four alternatives, three of them measured.
+  (1) Lowering `AUTO_FILE_GATE` itself to 0.75. Auto-files the 93 wrong
+  `applied` verdicts on that rung as fact — the failure `auto_filed_wrong`
+  exists to bound, and the one a user cannot recover from because nothing asked
+  them.
+  (2) A scoped confidence rung for `offer`, in #970's shape. Attractive because
+  #970 has just shown the move works — 273 verdicts, 0 new wrong — and refused
+  on the same provenance ground as DEC-013: `observed.py` holds no offer or
+  interview wording at all (#531), `reach` fires 3 of 20 offer and 5 of 31
+  interview patterns, and the corpus's 447 offers are 447 copies of ONE authored
+  sentence. A pattern derived from that sentence and graded by those copies is
+  the closed loop `docs/CLASSIFIER_RULES_GOVERNANCE.md` refuses.
+  (3) Thread corroboration — "file it if it arrives in a thread the board
+  already knows". MEASURED in the owner's real mailbox for #447: zero of four
+  real rejections share a thread with their confirmation, because ATS platforms
+  send each notification as a new message with a new subject. The fix scored
+  610-0 on the corpus and 0-0 in production.
+  (4) Inverting on role presence — file only the role-less updates. It goes
+  green, and only because #768's family names a role while the benefit
+  population does not. That is teaching to the generator: in production it would
+  hold the mail naming your exact role and file the vaguer mail. Named because
+  the shape is tempting and someone will re-derive it.
+Enforced by: backend/tests/test_independent_corpus.py, whose `RECORDED`
+  pins `auto_filed_wrong` at 30 and `wrong` at 184 over the whole corpus. The
+  split cannot land without moving both, so it cannot land quietly; a PR that
+  re-records them is announcing the trade this entry declines.
+  backend/tests/test_confidence_gate_lockstep.py keeps `hold_reason`'s
+  precedence and `_qualifies_for_hard_row` reading the same constant, which is
+  the mirror a state-dependent gate would break first.
+  Nothing enforces the provenance half. It is prose, and this entry plus DEC-013
+  are the only places it is written down.
+Valid while: the corpus's offer and interview populations remain authored, and
+  the production queue holds no offer or interview row between `REVIEW_FLOOR`
+  and `AUTO_FILE_GATE`. EITHER ONE UNBLOCKS THIS. Transcribed offer or interview
+  wordings reaching `observed.py` through its provenance pipeline make both the
+  rung promotion and the split gradeable against something other than their own
+  fixtures; a real queue that fills with held offers gives the split a benefit
+  to weigh, which today it does not have. #531 is where the first condition
+  lives and #527 stays open for the second.
+Markers: backend/jobtracker/cloud/pipeline.py, docs/CLASSIFIER_RULES_GOVERNANCE.md

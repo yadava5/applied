@@ -83,13 +83,13 @@
       "count": 1,
       "digest": "8c490f89ffd2eb11"
     },
+    "apps/web/public/system-card/assets/index-DRShqV6Q.js": {
+      "count": 5,
+      "digest": "aeaee4ce69a35a44"
+    },
     "apps/web/public/system-card/assets/index-NxexRUsn.css": {
       "count": 11,
       "digest": "9d674729fd166a77"
-    },
-    "apps/web/public/system-card/assets/index-b6-RdcA0.js": {
-      "count": 5,
-      "digest": "aeaee4ce69a35a44"
     },
     "apps/web/scripts/footage/README.md": {
       "count": 1,
@@ -407,6 +407,14 @@
       "count": 36,
       "digest": "cb62b66ed20aacbb"
     },
+    "backend/tests/test_the_auto_file_gate_is_a_boundary_814.py": {
+      "count": 1,
+      "digest": "b82cb84b855caa42"
+    },
+    "backend/tests/test_the_ladder_reads_margin_when_nothing_competes_523.py": {
+      "count": 1,
+      "digest": "b82cb84b855caa42"
+    },
     "backend/tests/test_the_review_answer_keeps_the_title.py": {
       "count": 2,
       "digest": "595b6c9df4cae9d7"
@@ -477,6 +485,10 @@
       "count": 4,
       "digest": "cca24b02f6ecd20b"
     },
+    "backend/data/evaluation/cross_engine_bait.jsonl": {
+      "count": 1,
+      "digest": "7e8b1e04f88a77e8"
+    },
     "backend/jobtracker/classifier/rules.py": {
       "count": 5,
       "digest": "c8c17fceadfe2ece"
@@ -490,11 +502,11 @@
       "digest": "c96c7b347ac2ebd6"
     },
     "backend/tests/corpus_independent/generate.py": {
-      "count": 4,
-      "digest": "69a4775fd96e92f9"
+      "count": 5,
+      "digest": "bd16b56c7e4d4274"
     },
     "backend/tests/corpus_independent/observed.py": {
-      "count": 36,
+      "count": 37,
       "digest": "2e4fd7abd4158692"
     },
     "backend/tests/test_a_reply_speaks_for_itself.py": {
@@ -535,7 +547,7 @@
     },
     "backend/tests/test_independent_corpus.py": {
       "count": 5,
-      "digest": "17e7154a92e3def3"
+      "digest": "cd14f1d59ce280ef"
     },
     "backend/tests/test_ingestion_hole_166.py": {
       "count": 4,
@@ -560,6 +572,10 @@
     "backend/tests/test_test_data_gate.py": {
       "count": 6,
       "digest": "eb7914efab6c5083"
+    },
+    "backend/tests/test_the_ladder_reads_margin_when_nothing_competes_523.py": {
+      "count": 2,
+      "digest": "7e8b1e04f88a77e8"
     },
     "backend/tests/test_thread_id_survives_a_metadata_refetch.py": {
       "count": 7,

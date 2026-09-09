@@ -49,8 +49,8 @@ from tests.corpus_independent.harness import (
 #: is 180 more messages and 60 more employers.
 #: 6753126bb7f4c48b since #522; 50f770359b07d783 since #521, which appends
 #: `outreach-autoresponder` — 160 more messages and 80 more employers.
-CORPUS_DIGEST = "8cc2a35b2f877169"
-CORPUS_SIZE = 18980
+CORPUS_DIGEST = "2b3ff419180770f3"
+CORPUS_SIZE = 19420
 
 #: THE RECORDED RUN, in one place, because the README quotes it.
 #:
@@ -95,9 +95,9 @@ RECORDED_AFTER_ANSWERING = {
     # +60 (#522), the `eligibility-verification` twins, the same move the
     # sync phase reports. Answering the queue adds nothing for this family:
     # its twins auto-file and its refusals never reach the queue at all.
-    "cards": 10589,
+    "cards": 10909,
     "update_opened_a_card": 19,
-    "noise_on_card": 0,
+    "noise_on_card": 30,
     # 62 BEFORE, 75 AFTER — and the interesting number is the one that is not
     # here. On the tree immediately before #548 the after-answering figure read
     # 106. #548 recovers exactly 26 of them, which is the figure #546 claimed
@@ -187,10 +187,10 @@ RECORDED_AFTER_ANSWERING = {
     # queued twins a person settles, every one of which spells a role. The
     # populations still close: 8864 + 1186 + 400 == 10450, against 10469
     # cards.
-    "roles_graded": 8864,
-    "blank_required": 1306,
+    "roles_graded": 9090,
+    "blank_required": 1400,
     "role_unsettleable": 400,
-    "titles_graded": 10570,
+    "titles_graded": 10890,
     # `score_board`'s `wrong_review`, READ UNDER A NAME THAT IS TRUE HERE. That
     # counter means "the product guessed instead of asking". After the phase the
     # product DID ask and was answered, so 150 is not 150 failures — it is 150
@@ -224,8 +224,8 @@ RECORDED_ANSWERS = {
     # confirmations worded too weakly to auto-file. BOTH halves of the
     # family reach the queue, which is exactly the shape #520 complained
     # about.
-    "queued": 3183,
-    "answered": 3183,
+    "queued": 3213,
+    "answered": 3213,
     # THE GUARD THAT NEVER FIRES, said plainly rather than left to read as
     # coverage. `_settle_thread_siblings` can remove a queue entry when a
     # sibling is answered, and `classify_review_item` has no `is_reviewed`
@@ -248,19 +248,19 @@ RECORDED_ANSWERS = {
     # 2092 -> 2252 (#626). All 160 land on a card their employer already had —
     # which is what answering "this is a rejection of that application" does —
     # so `minted_a_card` does not move.
-    "filed_on_an_existing_card": 2252,
+    "filed_on_an_existing_card": 2279,
     # 317 -> 421 (#451), and +104 is EXACTLY the number of cards the board no
     # longer produces on its own (`RECORDED["cards"]` 9252 -> 9148). The cards
     # are not lost; a person mints them by answering the question the product
     # now asks instead of guessing. `RECORDED_AFTER_ANSWERING["cards"]` is
     # unchanged at 9569, which is the same fact stated as a total.
-    "minted_a_card": 531,
+    "minted_a_card": 524,
     # 0 -> 40 (#521), AND IT IS THE FIRST TIME THIS BRANCH IS REACHED.
     # Answering "this is not job mail" settles a queue row without touching
     # the board, and until this family nothing in the corpus both reached
     # the queue AND carried `other` as its truth. A zero that had never
     # been non-zero is the shape #536 is about.
-    "not_a_lifecycle_answer": 40,
+    "not_a_lifecycle_answer": 50,
     # HOW MUCH CHOICE THERE WAS. A landing at an employer holding one live card
     # is right by cardinality, not by understanding; folding the two together
     # would hide rule 4's coin toss inside a healthy headline.
@@ -293,7 +293,7 @@ RECORDED_ANSWERS = {
     # 2079 -> 2090 (#458): all eleven recovered messages land at an employer
     # holding exactly one live card, so none of them exercises rule 4's choice
     # and `landed_where_several_did` is unchanged at 423.
-    "landed_where_one_card_existed": 2200,
+    "landed_where_one_card_existed": 2220,
     # 423 -> 583 (#626), and this is the counter that says the family is built
     # correctly rather than merely large. All 160 refusals land at an employer
     # holding SEVERAL cards; `landed_where_one_card_existed` is unmoved at
@@ -351,10 +351,10 @@ RECORDED_SYNC = {
     # refusals, and at `other` 0.50 they are under `REVIEW_FLOOR`, so they
     # reach neither the board nor the queue. Before the filter they were
     # `rejection` 0.70 and this number would have read 3093.
-    "created": 10118,
-    "updated": 4019,
+    "created": 10445,
+    "updated": 4102,
     "purged": 0,
-    "needs_review": 3243,
+    "needs_review": 3273,
 }
 
 #: How many spellings the resolver gives one employer, over the whole corpus.
@@ -401,8 +401,8 @@ RECORDED_EMPLOYER_SPELLINGS = {
     # its twin share a sender and a display name. That sharing is what makes
     # the pair a control, and the fact that it adds a token and a display
     # APIECE rather than two of either is the number that says it held.
-    "tokens": 9499,
-    "distinct_displays": 9739,
+    "tokens": 9819,
+    "distinct_displays": 10059,
     # UNMOVED, and that is the assertion. 150 is documented above as entirely the
     # `employer-spelling` family; a family that added one would be #532 returning.
     "tokens_with_several_spellings": 150,
@@ -418,13 +418,13 @@ RECORDED = {
 #: segment, 320 sibling confirmations that give those refusals somewhere to be
 #: ambiguous, 160 role-less updates the reader declines, and 40 messages of the
 #: both-placements pair. See the family's docstring in `generate.py`.
-    "size": 18980,
+    "size": 19420,
     # DISTINCT FAMILY LABELS in the generated corpus, which is 37 and not the
     # 35 generators in ``_FAMILIES``: two generators emit a second label of
     # their own (``hostile-zero-width``, ``hostile-homoglyph``). The README and
     # the System Card both print a family count and both had drifted — 32 and
     # 24 against a real 35 — because nothing recomputed it. Now something does.
-    "families": 45,
+    "families": 47,
     # DISTINCT EMPLOYER TOKENS, and this entry was decoration until 2026-08-23.
     # It read 9,180 and `readme_facts.py` published it to the README and the
     # Booklet, but no test recomputed it and it matched NO measure of the
@@ -436,7 +436,7 @@ RECORDED = {
     # there were ZERO such employers out of 8,440, which is why a fix to #641
     # moved no number here and the bug could have been reinstated against a
     # green board.
-    "companies": 8880,
+    "companies": 9200,
     # ── #451 MOVED EVERY NUMBER BELOW THAT CARRIES A "451" NOTE ─────────────
     #
     # Two changes in one commit: the reference pattern
@@ -481,7 +481,7 @@ RECORDED = {
     # which is the property that lets the family grade a regression. A twin
     # that abstained here would be a case with a number on it and nothing to
     # say.
-    "correct": 17550,
+    "correct": 17950,
     # 361 -> 304 (#451).
     # 304 -> 104 (#878): -200, the other side of the note above. The family was
     # never measuring the quote-strip it exists for -- the case was wrong with
@@ -499,7 +499,13 @@ RECORDED = {
     # asserts, so the exposure is queue noise and never a wrong card. The
     # measurement that says the available fix costs more than the defect is
     # in `_outreach_autoresponders`' docstring.
-    "wrong": 144,
+    # 144 -> 184 (#768): the whole of the third-party arm of
+    # `someone-elses-outcome`. 30 of the 40 are auto-filed and 10 are held; see
+    # `auto_filed_wrong` below for why the split is the part that matters. The
+    # family's other 200 messages are its two CONTROL arms and every one of them
+    # is correct — a family of third-party mail alone would go green for a rule
+    # that suppressed the lifecycle vocabulary outright.
+    "wrong": 184,
     # 1013 -> 926 (#451). It FELL, which is not what a demotion is supposed
     # to do and is worth saying plainly: the tie-break half moves messages
     # OUT of abstention by giving a tied report the verdict, and that more
@@ -552,7 +558,34 @@ RECORDED = {
     # deliberately — a product whose pitch is that it can be trusted with a
     # job search should prefer asking to guessing — and it is recorded here
     # rather than left for someone to rediscover from `cards`.
-    "auto_filed_wrong": 0,
+    #
+    # 0 -> 30 (#768). A DEFECT PINNED AT ITS SIZE, not a regression, and the
+    # distinction is the whole of this entry. Nothing about the product changed.
+    # What changed is that the corpus can now construct the shape: mail about
+    # SOMEBODY ELSE's outcome — "the candidate you referred was not selected" —
+    # scores the lifecycle category at up to 0.95, and replayed through the real
+    # additive sync it joins the reader's own live card and settles it. The card
+    # reads `rejected`, the review queue is empty, and nobody is asked.
+    #
+    # SO THE OLD ZERO WAS A MEASUREMENT THAT COULD NOT RETURN POSITIVE. Read the
+    # sentence four blocks above — "0 of the wrong verdicts sit above the gate" —
+    # against a corpus in which no third-party shape existed. It was true of the
+    # population and said nothing about the product. This file already concedes
+    # the principle: "Nothing here is blessed by being pinned."
+    #
+    # WHAT KEEPS THE ALARM. The re-sample ceiling now reads the COMPLEMENT —
+    # `auto_filed_wrong` summed over every family EXCEPT this one — and measures
+    # 0 / 0 / 1 at the three seeds, which are exactly the numbers the old ceiling
+    # of 3 was written against. Any OTHER family reaching this counter is the
+    # same instant red it has always been.
+    #
+    # WHAT A FALL TO 0 MUST COME WITH. Not a fix graded by this family: every
+    # third-party wording in the tree is AUTHORED, `observed.py` holds none, and
+    # a survey of published ATS template text found exactly ONE third-party
+    # rejection sentence in public (JobScore's) — three of the six apparent
+    # reference-request sources are one lineage wearing three logos. A pattern
+    # family built from that is n=1. See the family docstring and DEC-013.
+    "auto_filed_wrong": 30,
     # WRONG VERDICTS A PERSON IS ACTUALLY SHOWN: confidence in
     # [REVIEW_FLOOR, AUTO_FILE_GATE) = [0.70, 0.85). The third bucket, and the
     # one the Booklet has been publishing without a check (#878).
@@ -571,7 +604,11 @@ RECORDED = {
     # HELD, never asserted: `auto_filed_wrong` stays 0, so the whole of the
     # new defect is a question the product asks rather than an answer it
     # gives.
-    "held_wrong": 144,
+    # 144 -> 154 (#768). The ten are the third-party lifecycle verdicts that
+    # land between the floor and the gate rather than over it. The other 30 of
+    # that family's 40 went to `auto_filed_wrong` above, which is where the harm
+    # is: these ten are shown to a person, those thirty are not.
+    "held_wrong": 154,
     # 9252 -> 9148 (#451). 104 applications that used to appear on the board
     # by themselves now wait for the user. Fully accounted for and nothing
     # became unreachable: `lost` does not move, `dropped` goes 54 -> 0, and
@@ -594,7 +631,7 @@ RECORDED = {
     # are minted by the answering phase. Its 80 autoresponders mint NOTHING
     # — `noise_on_card` stays 0 — although `resolve_employer` names a
     # company off every one of their senders.
-    "cards": 10058,
+    "cards": 10385,
     # Mail about a real application that the product did nothing with. Two
     # numbers because both are unaddressed and only one is invisible; see #447.
     #
@@ -676,12 +713,12 @@ RECORDED = {
     # +30 (#521): the twins that clear AUTO_FILE_GATE on their own. The other
     # 50 twins and all 40 queued autoresponders are addressed IN THE QUEUE,
     # which is the counter below, and `lost` and `dropped` stay 0.
-    "addressed_on_a_card": 14137,
+    "addressed_on_a_card": 14517,
     # +50 (#521): the family's twins that do NOT clear AUTO_FILE_GATE. With
     # the +30 on `addressed_on_a_card` that is all 80 twins accounted for,
     # and `lost` and `dropped` stay 0 — nothing the family adds falls out
     # of the product entirely.
-    "addressed_in_the_queue": 2943,
+    "addressed_in_the_queue": 2963,
     # THE ADDITIVE PERSIST'S OWN OUTCOME, and it is zero. `replay` calls
     # `_persist_review_items_additive` since #624, so an arriving item can now
     # be refused a row because the sync already settled its (thread,
@@ -741,14 +778,14 @@ RECORDED = {
     # the reader nothing for.
     # +80 (#521): the family's twins. Its 80 autoresponders are `nowhere`
     # mail and nothing is required to address them.
-    "must_be_addressed": 17400,
+    "must_be_addressed": 17800,
     # Noise that MINTED A CARD. Went 0 -> 2 on 2026-08-22, when the corpus first
     # contained ATS mail that is not about the user at all (a profile-completion
     # nudge scoring `assessment` at 0.90), and back to 0 once the reference
     # signal stopped reading it as an application. Pinned at 0 rather than
     # deleted: this is the counter that says a stranger's mail never becomes
     # somebody's card. See `ats-relay-noise`.
-    "noise_on_card": 0,
+    "noise_on_card": 30,
     # One application over several cards. Was 0, then 7 when the observed
     # families landed, then 5 after #455, and is 0 again now that #459 is fixed.
     #
@@ -771,7 +808,7 @@ RECORDED = {
     # they belonged to.
     # 631 -> 685 (#451). +54, which is exactly the `dropped` family above:
     # those updates are now ASKED ABOUT rather than counted and discarded.
-    "update_held": 685,
+    "update_held": 712,
     # THE CARD IS AHEAD OF THE USER'S LIFE. A KNOWN, OPEN DEFECT, pinned so a
     # fix moves it; it is not blessed by being here.
     #
@@ -808,7 +845,7 @@ RECORDED = {
     # 9148 -> 9728 (#626): the denominator follows `cards` exactly, as ever.
     # 9728 -> 9908 (#641): the denominator follows `cards` exactly, as ever.
     # +60 (#522), tracking `cards` exactly.
-    "titles_graded": 10058,
+    "titles_graded": 10385,
     # Smaller, because a card whose ground truth keys on a requisition id, or
     # whose mail names no job at all, has a title this corpus either cannot
     # settle or must assert BLANK. See ``Case.role_truth``.
@@ -829,7 +866,7 @@ RECORDED = {
     # of the 30 twins that reach the board on their own, 20 spell a role
     # and 10 name none at all, so `blank_required` takes the other 10 and
     # the three populations still close — 8412 + 1186 + 400 == 9998.
-    "roles_graded": 8412,
+    "roles_graded": 8645,
     # The card names an employer nobody applied to. This is what a user would
     # call hallucinating, and the live filing path can do it: while fixing #512
     # the subject "Senior Software Engineer Interview | <name>" resolved to a
@@ -992,7 +1029,7 @@ RECORDED = {
     # +10 (#521): the one twin shape whose confirmation names no role at
     # all — "Your application has been received and a member of the team
     # will be in touch shortly".
-    "blank_required": 1246,
+    "blank_required": 1340,
     # The third population: the corpus knows WHICH application the card is, by
     # requisition id, and does not know what the job is called. Not a defect and
     # not an assertion — the term that makes "every card is accounted for"
@@ -1432,11 +1469,31 @@ def test_the_defects_are_not_a_seed_artefact(seed: int) -> None:
     # still produces one. So the honest reading is "this defect no longer has a
     # population", not "it is impossible". The ceiling carries slack for the
     # same reason every band here does — the width is which title a case drew.
-    assert score.auto_filed_wrong <= 3, (
-        f"{score.auto_filed_wrong} wrong verdict(s) were stated as fact at this "
-        "seed, above the measured ceiling of 3 (0 / 0 / 1 at the three seeds). "
-        "The number that reaches the board without anyone being asked is the "
-        "one worth watching across a re-sample."
+    # THE CEILING NOW READS THE COMPLEMENT, and the sentence above survives
+    # word for word because of it. #768's family gave this counter a population
+    # (23 / 25 / 30 across the three seeds), so the old ceiling of 3 would have
+    # gone red on a defect that was always there and had simply never been
+    # constructible. Measured over every OTHER family the value is 0 / 0 / 1 —
+    # EXACTLY the three numbers the ceiling of 3 was written against. So the
+    # alarm is unchanged, it is merely keyed on the population it was always
+    # describing.
+    others = sum(
+        n
+        for fam, buckets in score.by_family.items()
+        if fam != "someone-elses-outcome"
+        for name, n in buckets.items()
+        if name == "auto_filed_wrong"
+    )
+    assert others <= 3, (
+        f"{others} wrong verdict(s) OUTSIDE the #768 family were stated as fact at "
+        "this seed, above the measured ceiling of 3 (0 / 0 / 1 at the three seeds). "
+        "The number that reaches the board without anyone being asked is the one "
+        "worth watching across a re-sample."
+    )
+    assert score.auto_filed_wrong <= 33, (
+        f"{score.auto_filed_wrong} including the #768 family, above its measured "
+        "band of 23..30. That family is the only population this counter has; a "
+        "rise means its wordings got MORE confidently wrong, which is news."
     )
     # ``correct`` WAS exactly equal at every seed, and stopped being so when the
     # update-routing families landed. That is honest rather than a regression:
@@ -1768,7 +1825,19 @@ async def test_the_board_is_clean(cases, verdicts, test_session) -> None:
     assert score.noise_on_card == RECORDED["noise_on_card"], [
         f.detail for f in score.failures if f.mode == "NOISE-ON-CARD"
     ][:3]
-    assert {f.family for f in score.failures if f.mode == "NOISE-ON-CARD"} == set(), (
+    # AND IT IS 30 AGAIN, from one family, for the same reason the 2 above
+    # existed: the corpus had no mail of this shape, so the product's behaviour
+    # on it was unmeasured rather than good. #768's third-party arm is mail that
+    # must mint nothing — a referral notification about somebody else — and 30
+    # of the 40 land on the reader's own live card and settle it.
+    #
+    # THE SET IS NAMED RATHER THAN THE ASSERTION RELAXED. Pinning the family
+    # keeps this loud for every OTHER family: anything else reaching a card it
+    # must never touch still reds instantly. Read the two together — the count
+    # above says how big, this says who, and neither is blessed by being here.
+    assert {f.family for f in score.failures if f.mode == "NOISE-ON-CARD"} == {
+        "someone-elses-outcome"
+    }, (
         "noise reached a card. This was 2 — an `ats-relay-noise` profile nudge "
         "scoring `assessment` at 0.90 — and is 0 since #466 re-drew every job "
         "title, so the nudge no longer draws the wording that got it onto a "
@@ -2033,6 +2102,13 @@ async def test_an_update_updates_the_card_it_belongs_to(
         # it leaves the card claiming the offer still stands; see
         # `card_overstates` and `test_a_held_message_may_still_leave_a_lying_card`.
         "rescinded-offer",
+        # #768. Its reader arms carry genuine lifecycle mail that lands between
+        # `REVIEW_FLOOR` and `AUTO_FILE_GATE`, so the product asks rather than
+        # asserts and the message is held. That is the RIGHT behaviour for it
+        # and the family deliberately makes no card-stage claim about those
+        # arms; an earlier draft did, and pinned 27 of the product's own
+        # questions as WRONG-STAGE.
+        "someone-elses-outcome",
     }, dict(held)
     # THE THREE CAUSES, ASSERTED AGAINST THE FAMILIES THAT PRODUCE THEM. Two
     # independent readings of the same 685: the counters are derived from each
@@ -2040,11 +2116,32 @@ async def test_an_update_updates_the_card_it_belongs_to(
     # from the family the generator wrote. They agree today. A family that
     # started reaching the queue by one of the other two mechanisms would make
     # them disagree, which is exactly the thing one number could never say.
-    assert score.update_held_on_a_non_offer_verdict == held["rescinded-offer"], (
+    # #768'S FAMILY BREAKS THE ONE-FAMILY-ONE-CAUSE ASSUMPTION, and this
+    # assertion is what caught it. Its 27 held messages split across TWO of the
+    # three causes: 16 interviews held because the verdict is not an offer, and
+    # 11 offers held on their own confidence. A first attempt added the whole 27
+    # to the sum below and overshot by exactly those 11 — the check said so, in
+    # the terms it was written in.
+    #
+    # SUBTRACTED, NOT ADDED, so the cross-check keeps meaning what it meant for
+    # the families it was written for: `rescinded-offer` is still asserted
+    # EXACTLY against #417's mechanism, and a third family arriving by it still
+    # makes the two readings disagree. The 16 is measured and pinned rather than
+    # derived from the family's size, because how many of its reader arms are
+    # held at all depends on their confidence, which is the product's business
+    # and not the generator's.
+    SOMEONE_ELSE_NON_OFFER_HELD = 16
+    assert (
+        score.update_held_on_a_non_offer_verdict - SOMEONE_ELSE_NON_OFFER_HELD
+        == held["rescinded-offer"]
+    ), (
         f"{score.update_held_on_a_non_offer_verdict} updates are in the queue "
-        f"on a verdict that is not an offer, but {held['rescinded-offer']} are "
-        "`rescinded-offer`. #417's population and #448's have stopped being "
-        "the same set, so one of them is being counted under the other's name."
+        f"on a verdict that is not an offer; minus #768's pinned "
+        f"{SOMEONE_ELSE_NON_OFFER_HELD} that leaves "
+        f"{score.update_held_on_a_non_offer_verdict - SOMEONE_ELSE_NON_OFFER_HELD} "
+        f"against {held['rescinded-offer']} `rescinded-offer`. #417's population "
+        "and #448's have stopped being the same set, so one of them is being "
+        "counted under the other's name."
     )
     assert score.update_held_on_its_anchor == held["update-before-confirmation"], (
         f"{score.update_held_on_its_anchor} updates are held because their "
@@ -2139,9 +2236,29 @@ async def test_the_card_says_what_the_mail_said(
     replayed = await replay(test_session, verdicts)
     score = score_board(replayed, cases)
 
-    assert score.wrong_status == 0, [
-        f.detail for f in score.failures if f.mode == "WRONG-STAGE"
-    ][:5]
+    # SPLIT ON THE FAMILY, so the zero that meant something keeps meaning it.
+    #
+    # This was `== 0` and is now two assertions, because #768's family gave the
+    # counter a population for the first time. THE COMPLEMENT IS STILL ZERO and
+    # is still the loud one: any OTHER family moving a card to a stage its mail
+    # does not support is the same instant red it always was. The family's own
+    # 30 is a DEFECT PINNED AT ITS SIZE, not a regression — the mail was always
+    # doing this and nothing in the corpus could construct it. A rise above 30
+    # is new news; a fall to 0 must arrive with non-authored vocabulary, or it
+    # is a fix graded by the fixtures of the person who wrote it.
+    family_of = {c.message_id: c.family for c in cases}
+    wrong_stage = [f for f in score.failures if f.mode == "WRONG-STAGE"]
+    theirs = [
+        f
+        for f in wrong_stage
+        if not all(family_of.get(m) == "someone-elses-outcome" for m in f.message_ids)
+    ]
+    assert not theirs, [f.detail for f in theirs][:5]
+    assert score.wrong_status == 30, (
+        f"the #768 family's wrong-stage count moved to {score.wrong_status}. It is "
+        "pinned at the size of the defect, not blessed: every one of these is a "
+        "card reading a stage set by mail about somebody else."
+    )
 
 
 @pytest.mark.asyncio
@@ -3280,7 +3397,7 @@ def test_the_readable_window_is_the_product_s_window() -> None:
 # whose title this file grades. The other three families #614/#630 add key
 # on a sentinel and contribute nothing here — they are counted by
 # `RECORDED_BLANK_IDENTITIES` instead.
-RECORDED_ROLE_IDENTITIES = 8904
+RECORDED_ROLE_IDENTITIES = 9130
 
 #: Ground-truth identities whose mail names NO job, so the only correct
 #: card is a blank one.
@@ -3292,7 +3409,7 @@ RECORDED_ROLE_IDENTITIES = 8904
 #: mailbox, so 120 identities here have no card on this board at all.
 #: Reading the card figure here would silently make the assertion it is the
 #: denominator for worth 120 fewer identities than it actually checks.
-RECORDED_BLANK_IDENTITIES = 1366
+RECORDED_BLANK_IDENTITIES = 1460
 
 
 def test_ground_truth_never_asserts_a_title_no_message_spells(cases) -> None:

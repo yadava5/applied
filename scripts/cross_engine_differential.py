@@ -47,23 +47,19 @@ engine and is still not required. That is ``#864``'s gap rather than this
 one's, and it is stated here so the differential is not mistaken for a gate it
 is not.
 
-THE THIRD IMPLEMENTATION IS OUT OF REACH, AND IT IS ALREADY KNOWN TO DIVERGE.
-This is the honest headline of this file's coverage: it differences TWO of the
-three ports, and the one it cannot reach is the one #427 names as untested.
+ALL THREE PORTS ARE IN REACH NOW, and the paragraph that used to stand here
+said the opposite. It listed three measured blockers on ``ml/browser/site/
+app.js`` -- a top-level ``https:`` import Node's ESM loader refuses, zero
+``export`` statements, and ``document.getElementById`` at module scope -- and
+concluded that reaching it meant a browser or a fourth copy of its scorer.
+#955 removed all three in the file itself rather than working around them:
+the model runtime is fetched lazily, the rules layer is exported, and the DOM
+lookups moved inside ``boot``. So the port that had no test anywhere is now
+scored case by case, and the recorded divergence below is keyed on WHICH port
+diverges, because the two ports are no longer missing the same things.
 
-``ml/browser/site/app.js`` cannot be loaded by this harness. Three independent
-blockers, measured rather than assumed -- ``node -e "await import('./app.js')"``
-from ``ml/browser/site`` fails on the first of them:
-
-  * ``app.js:16`` imports from ``https://cdn.jsdelivr.net/...`` at the top
-    level, and Node's ESM loader refuses a non-``file:``/``data:`` scheme
-    (``ERR_UNSUPPORTED_ESM_URL_SCHEME``).
-  * The file has ZERO ``export`` statements. ``rulesClassify`` (``:49``) is
-    module-local, so there is nothing to import even with a loader that could.
-  * ``app.js:22`` calls ``document.getElementById`` at the top level.
-
-Reaching it means a browser -- Playwright -- or extracting its scorer into a
-FOURTH copy, which is the defect this file exists to detect.
+Why the browser port keeps its own copy of the preprocessing rather than
+sharing one: DEC-011.
 
 AND THE DATA BEING IDENTICAL DOES NOT MAKE THE BEHAVIOUR IDENTICAL, which is
 the trap in the obvious reading. ``ml/browser/site/rules.json`` and
@@ -158,6 +154,17 @@ BAIT_CORPUS = BACKEND / "data" / "evaluation" / "cross_engine_bait.jsonl"
 #: The node worker, run with `apps/web` as its working directory.
 TS_WORKER = WEB / "tests" / "unit" / "helpers" / "crossEngineWorker.mjs"
 
+#: The browser port's worker, run from its own directory. It needs no
+#: `node_modules` at all -- `ml/browser/site` is a static site and its only
+#: imports are its own files -- which is why this one is not under `apps/web`.
+#:
+#: THE THIRD ENGINE WAS OUT OF REACH UNTIL #955, and the paragraph above
+#: that said so is now history: `app.js` had a top-level `https:` import,
+#: zero exports and a top-level `document.getElementById`. All three are
+#: gone, so the port with no test anywhere is now the port this harness
+#: scores case by case against the engine that ships.
+BROWSER_WORKER = REPO_ROOT / "ml" / "browser" / "site" / "crossEngineWorker.mjs"
+
 #: Per-corpus floors. A corpus smaller than its floor is a wrong path, not a
 #: small corpus: one bad path in a multi-file load yields zero rows, exits 0,
 #: and reads exactly like a clean run. The floors sit under the two files'
@@ -189,29 +196,41 @@ class HarnessError(Exception):
 
 @dataclass(frozen=True)
 class Divergence:
-    """One case the two engines answered differently."""
+    """One case the reference and ONE port answered differently.
 
+    ``port`` is part of the identity, not a label. There are three
+    implementations of this rule set and this harness now runs two ports
+    against the reference, so "case X diverges" is only half a statement: the
+    TypeScript port is missing ``reflow_paragraphs`` and the browser port is
+    not, and a record keyed on the case alone would have to be true of both.
+    """
+
+    port: str
     case_id: str
     family: str
     py_category: str
     py_confidence: float
-    ts_category: str
-    ts_confidence: float
+    port_category: str
+    port_confidence: float
+
+    @property
+    def key(self) -> tuple[str, str]:
+        return (self.port, self.case_id)
 
     @property
     def axis(self) -> str:
         axes = []
-        if self.py_category != self.ts_category:
+        if self.py_category != self.port_category:
             axes.append("category")
-        if self.py_confidence != self.ts_confidence:
+        if self.py_confidence != self.port_confidence:
             axes.append("confidence")
         return "+".join(axes)
 
     def render(self) -> str:
         return (
             f"  {self.case_id}  [{self.family}]  ({self.axis})\n"
-            f"      python     {self.py_category} {self.py_confidence}\n"
-            f"      typescript {self.ts_category} {self.ts_confidence}"
+            f"      python  {self.py_category} {self.py_confidence}\n"
+            f"      {self.port:<7} {self.port_category} {self.port_confidence}"
         )
 
 
@@ -236,14 +255,14 @@ class Recorded:
 
     py_category: str
     py_confidence: float
-    ts_category: str
-    ts_confidence: float
+    port_category: str
+    port_confidence: float
     reason: str
 
 
 #: Divergences that are real, understood, and deliberately not fixed in the
 #: commit that added this harness.
-RECORDED_DIVERGENCES: dict[str, Recorded] = {
+RECORDED_DIVERGENCES: dict[tuple[str, str], Recorded] = {
     # ------------------------------------------------------------------
     # THE PORT HAS NO `reflow_paragraphs`. Found by this harness on its
     # first run, and it is not the divergence #427 predicted.
@@ -298,12 +317,12 @@ RECORDED_DIVERGENCES: dict[str, Recorded] = {
     # The entries below pin the
     # MEASURED values, so the day someone ports the reflow, this harness goes
     # red and tells them to delete these lines.
-    "wrap/rejection-hard-wrapped": Recorded(
+    ("typescript", "wrap/rejection-hard-wrapped"): Recorded(
         "rejection", 0.95, "rejection", 0.9,
         "rulesLayer.ts has no reflow_paragraphs; the wrap point breaks a bounded "
         "gap, costing 0.05 of confidence",
     ),
-    "wrap/assessment-hard-wrapped": Recorded(
+    ("typescript", "wrap/assessment-hard-wrapped"): Recorded(
         "assessment", 0.6, "applied", 0.7,
         "rulesLayer.ts has no reflow_paragraphs; the wrap point breaks "
         "`next step.{0,30}(assessment|test)` and the CATEGORY changes",
@@ -386,10 +405,15 @@ def python_verdicts(cases: list[dict[str, Any]]) -> dict[str, tuple[str, float]]
     return out
 
 
-def typescript_verdicts(cases: list[dict[str, Any]]) -> dict[str, tuple[str, float]]:
-    """Classify every case with the TypeScript port, in one spawned node process."""
-    if not TS_WORKER.exists():
-        raise HarnessError(f"[harness] the node worker is not at {TS_WORKER}")
+def _node_verdicts(worker: Path, cwd: Path, port: str, cases: list[dict[str, Any]]) -> dict[str, tuple[str, float]]:
+    """Classify every case in one spawned node process, for one port.
+
+    ONE FUNCTION FOR BOTH PORTS. It was two, and the second would have been a
+    copy of the first differing in a path -- which is the defect this whole
+    file exists to detect, arriving in the file itself.
+    """
+    if not worker.exists():
+        raise HarnessError(f"[harness] the {port} worker is not at {worker}")
 
     payload = json.dumps(
         [
@@ -398,16 +422,16 @@ def typescript_verdicts(cases: list[dict[str, Any]]) -> dict[str, tuple[str, flo
         ]
     )
     proc = subprocess.run(
-        ["node", str(TS_WORKER)],
+        ["node", str(worker)],
         input=payload,
         capture_output=True,
         text=True,
-        cwd=str(WEB),
+        cwd=str(cwd),
         check=False,
     )
     if proc.returncode != 0:
         raise HarnessError(
-            f"[harness] the node worker exited {proc.returncode}. This is fatal: a "
+            f"[harness] the {port} worker exited {proc.returncode}. This is fatal: a "
             f"worker that cannot classify must not report a verdict, because "
             f"`other`/0.5 -- what an error would most naturally degrade to -- is "
             f"also what the Python engine answers for anything that does not "
@@ -423,6 +447,23 @@ def typescript_verdicts(cases: list[dict[str, Any]]) -> dict[str, tuple[str, flo
         row = json.loads(line)
         out[row["id"]] = (row["category"], row["confidence"])
     return out
+
+
+def typescript_verdicts(cases: list[dict[str, Any]]) -> dict[str, tuple[str, float]]:
+    """Classify every case with the TypeScript port."""
+    return _node_verdicts(TS_WORKER, WEB, "typescript", cases)
+
+
+def browser_verdicts(cases: list[dict[str, Any]]) -> dict[str, tuple[str, float]]:
+    """Classify every case with the in-browser port, out of a browser."""
+    return _node_verdicts(BROWSER_WORKER, BROWSER_WORKER.parent, "browser", cases)
+
+
+#: The ports this harness scores against the reference, in report order.
+PORTS: dict[str, Any] = {
+    "typescript": typescript_verdicts,
+    "browser": browser_verdicts,
+}
 
 
 def assert_vocabularies_match() -> None:
@@ -444,18 +485,27 @@ def assert_vocabularies_match() -> None:
     from jobtracker.classifier.rules import PATTERNS
 
     python_scoring = {c.value for c in PATTERNS}
-    ts_scoring = set(json.loads((WEB / "lib" / "demo" / "rules.json").read_text())["categories"])
-
-    if python_scoring != ts_scoring:
-        only_py = sorted(python_scoring - ts_scoring)
-        only_ts = sorted(ts_scoring - python_scoring)
-        raise HarnessError(
-            "[harness] the engines do not share a category vocabulary, so a "
-            "per-case comparison could not see a divergence in the categories "
-            "that differ.\n"
-            f"          only in rules.py:    {only_py}\n"
-            f"          only in rules.json:  {only_ts}"
-        )
+    tables = {
+        "typescript": WEB / "lib" / "demo" / "rules.json",
+        "browser": BROWSER_WORKER.parent / "rules.json",
+    }
+    # BOTH TABLES, not one. They are byte-identical today and the harness said
+    # so in prose while reading only one of them -- a claim about a file it
+    # never opened. Asserted here instead, and asserted per port, because a
+    # vocabulary present in one table and absent from another is a divergence
+    # no per-case comparison can see.
+    for port, path in tables.items():
+        port_scoring = set(json.loads(path.read_text())["categories"])
+        if python_scoring != port_scoring:
+            only_py = sorted(python_scoring - port_scoring)
+            only_port = sorted(port_scoring - python_scoring)
+            raise HarnessError(
+                f"[harness] the reference and the {port} port do not share a "
+                "category vocabulary, so a per-case comparison could not see a "
+                "divergence in the categories that differ.\n"
+                f"          only in rules.py:  {only_py}\n"
+                f"          only in {path.name}: {only_port}"
+            )
 
 
 def main() -> int:
@@ -506,23 +556,10 @@ def main() -> int:
     )
 
     py = python_verdicts(cases)
-    ts = typescript_verdicts(cases)
 
-    # COUNT AND IDENTITY EQUALITY, not `>=`. A worker that dropped a case would
-    # otherwise shrink the population being graded without changing the verdict.
-    if set(py) != set(ts) or len(ts) != len(cases):
-        missing = sorted(set(py) - set(ts))
-        extra = sorted(set(ts) - set(py))
-        raise HarnessError(
-            f"[harness] the two engines answered different case sets: "
-            f"{len(py)} python, {len(ts)} typescript, {len(cases)} sent.\n"
-            f"          missing from typescript: {missing[:10]}\n"
-            f"          unexpected from typescript: {extra[:10]}"
-        )
-
-    # PROVE THE INSTRUMENT RAN. "Everything is `other`" is what a dead engine,
-    # a failed pattern compile and a stubbed worker all produce, and `other` on
-    # both sides is perfect agreement.
+    # PROVE THE INSTRUMENT RAN, before any port is consulted. "Everything is
+    # `other`" is what a dead engine, a failed pattern compile and a stubbed
+    # worker all produce, and `other` on both sides is perfect agreement.
     distinct = {cat for cat, _ in py.values()}
     if len(distinct) < MIN_DISTINCT_CATEGORIES:
         raise HarnessError(
@@ -533,57 +570,79 @@ def main() -> int:
         )
 
     divergences: list[Divergence] = []
-    for case in cases:
-        cid = case["id"]
-        py_cat, py_conf = py[cid]
-        ts_cat, ts_conf = ts[cid]
-        if args.verbose:
-            print(f"  {cid:<44} py={py_cat}/{py_conf}  ts={ts_cat}/{ts_conf}")
-        # EXACT COMPARISON, ON BOTH AXES. Neither engine rounds: both read the
-        # same five literals off the same tier table, both add 0.05 and clamp
-        # with min(), and JSON round-trips an IEEE double without loss. There is
-        # therefore no allowance to grant and none is granted. The engines'
-        # own granularity is 0.05; any difference this finds is a real one.
-        if py_cat != ts_cat or py_conf != ts_conf:
-            divergences.append(
-                Divergence(cid, case["family"], py_cat, py_conf, ts_cat, ts_conf)
+    per_port: dict[str, int] = {}
+    for port, verdicts_of in PORTS.items():
+        answers = verdicts_of(cases)
+
+        # COUNT AND IDENTITY EQUALITY, not `>=`. A worker that dropped a case
+        # would otherwise shrink the population being graded without changing
+        # the verdict.
+        if set(py) != set(answers) or len(answers) != len(cases):
+            missing = sorted(set(py) - set(answers))
+            extra = sorted(set(answers) - set(py))
+            raise HarnessError(
+                f"[harness] the reference and the {port} port answered different "
+                f"case sets: {len(py)} python, {len(answers)} {port}, "
+                f"{len(cases)} sent.\n"
+                f"          missing from {port}: {missing[:10]}\n"
+                f"          unexpected from {port}: {extra[:10]}"
             )
 
-    diverged_ids = {d.case_id for d in divergences}
+        found = 0
+        for case in cases:
+            cid = case["id"]
+            py_cat, py_conf = py[cid]
+            port_cat, port_conf = answers[cid]
+            if args.verbose:
+                print(f"  {cid:<44} py={py_cat}/{py_conf}  {port}={port_cat}/{port_conf}")
+            # EXACT COMPARISON, ON BOTH AXES. No engine rounds: all three read
+            # the same five literals off the same tier table, all add 0.05 and
+            # clamp with min(), and JSON round-trips an IEEE double without
+            # loss. There is therefore no allowance to grant and none is
+            # granted. The engines' own granularity is 0.05; any difference
+            # this finds is a real one.
+            if py_cat != port_cat or py_conf != port_conf:
+                divergences.append(
+                    Divergence(port, cid, case["family"], py_cat, py_conf, port_cat, port_conf)
+                )
+                found += 1
+        per_port[port] = found
+
+    diverged_keys = {d.key for d in divergences}
     unexpected: list[Divergence] = []
     matched_records: list[Divergence] = []
     failures: list[str] = []
 
     for d in divergences:
-        rec = RECORDED_DIVERGENCES.get(d.case_id)
+        rec = RECORDED_DIVERGENCES.get(d.key)
         if rec is None:
             unexpected.append(d)
-        elif (rec.py_category, rec.py_confidence, rec.ts_category, rec.ts_confidence) == (
+        elif (rec.py_category, rec.py_confidence, rec.port_category, rec.port_confidence) == (
             d.py_category,
             d.py_confidence,
-            d.ts_category,
-            d.ts_confidence,
+            d.port_category,
+            d.port_confidence,
         ):
             matched_records.append(d)
         else:
             failures.append(
-                f"  {d.case_id}: a RECORDED divergence moved.\n"
+                f"  {d.port}/{d.case_id}: a RECORDED divergence moved.\n"
                 f"      recorded  python {rec.py_category} {rec.py_confidence} / "
-                f"typescript {rec.ts_category} {rec.ts_confidence}\n"
+                f"{d.port} {rec.port_category} {rec.port_confidence}\n"
                 f"      measured  python {d.py_category} {d.py_confidence} / "
-                f"typescript {d.ts_category} {d.ts_confidence}\n"
+                f"{d.port} {d.port_category} {d.port_confidence}\n"
                 f"      Update the entry in RECORDED_DIVERGENCES, or fix the port."
             )
 
     present = {c["id"] for c in cases}
-    for cid, rec in RECORDED_DIVERGENCES.items():
+    for (port, cid), rec in RECORDED_DIVERGENCES.items():
         # A recorded case the current selection does not contain is not
         # evidence that it stopped diverging. Only reachable under --corpus.
         if cid not in present:
             continue
-        if cid not in diverged_ids:
+        if (port, cid) not in diverged_keys:
             failures.append(
-                f"  {cid}: recorded as diverging, and it no longer does.\n"
+                f"  {port}/{cid}: recorded as diverging, and it no longer does.\n"
                 f"      Recorded reason: {rec.reason}\n"
                 f"      DELETE the entry from RECORDED_DIVERGENCES. Leaving it is "
                 f"how a pin rots into a permanent exemption."
@@ -596,7 +655,9 @@ def main() -> int:
     print("  corpus         "
           + " + ".join(f"{kind} ({len(per_corpus[kind])})" for kind in selected))
     print(f"  categories     {sorted(distinct)}")
-    print(f"  agreed         {len(cases) - len(divergences)}")
+    print(f"  ports          " + ", ".join(f"{p} ({n} diverged)" for p, n in per_port.items()))
+    print(f"  comparisons    {len(cases) * len(PORTS)}")
+    print(f"  agreed         {len(cases) * len(PORTS) - len(divergences)}")
     print(f"  diverged       {len(divergences)} "
           f"({len(matched_records)} recorded, {len(unexpected)} unexpected)")
 
@@ -604,11 +665,11 @@ def main() -> int:
         print("\nRECORDED divergences (known, owned, pinned to exact values):")
         for d in matched_records:
             print(d.render())
-            print(f"      recorded: {RECORDED_DIVERGENCES[d.case_id].reason}")
+            print(f"      recorded: {RECORDED_DIVERGENCES[d.key].reason}")
 
     if unexpected:
         print("\nUNEXPECTED divergences:")
-        for d in sorted(unexpected, key=lambda d: d.case_id):
+        for d in sorted(unexpected, key=lambda d: (d.port, d.case_id)):
             print(d.render())
 
     if failures:
@@ -618,7 +679,8 @@ def main() -> int:
 
     if unexpected or failures:
         print(
-            "\nFAILED. The two engines are one classifier written twice; a case "
+            "\nFAILED. These engines are one classifier written three times; a "
+            "case they answer differently is a defect in one of them.\n"
             "they answer differently is a defect in one of them.\n"
             "Do not widen a comparison or add a tolerance to make this pass. "
             "Either fix the engine that is wrong, or record the divergence in "

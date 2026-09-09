@@ -3777,6 +3777,371 @@ def _another_mailbox_cannot_settle_mine(b: _Builder, n: int) -> None:
         )
 
 
+# ── a lifecycle outcome that belongs to SOMEBODY ELSE, both ways round ───────
+
+
+#: One SHAPE per pair, and the pair is the point. Fields:
+#: ``(subject, body, third_party_object, reader_object, reader_category)``.
+#:
+#: ``{obj}`` is the ONLY slot that differs between the two members of a pair.
+#: Subject, sender, sender display name and every other character of the body
+#: are identical; the left member says the sentence is about a person the
+#: reader REFERRED, the right member says it is about the reader. A pair that
+#: moved the subject as well would prove neither half — the attribute under
+#: test is who the sentence is ABOUT, and nothing else may travel with it.
+#: ``test_someone_elses_outcome_is_not_the_readers.py`` asserts that one-slot
+#: property rather than trusting this comment.
+#:
+#: EVERY PAIR HERE WAS MEASURED BEFORE IT WAS WRITTEN DOWN, on main @ 2b49a2e7,
+#: and a sixth was DISCARDED for failing the screen: "invite {obj} to the next
+#: round" scores ``other`` 0.50 for the third party, which buckets ``correct``
+#: and would have pinned a case that cannot fail. That is the defect this
+#: family is named after, and building the family out of unscreened wordings
+#: would have rebuilt it inside its own fix. The five below all score a
+#: lifecycle category for the third party today; three of them do it at 0.90,
+#: above the 0.85 auto-file gate.
+#:
+#: ``{d}`` is the employer display, ``{r}`` the role. Every wording is INVENTED
+#: and names no person: the policy slot for a human name is a placeholder, and
+#: "the candidate you referred" needs none.
+_SOMEONE_ELSE_PAIRS: tuple[tuple[str, str, str, str, str], ...] = (
+    # The auto-filed core of the issue: a referral rejection carries a
+    # rejection's whole vocabulary and nothing asks who was not selected.
+    (
+        "Update on the {r} position at {d}",
+        "Hi Ayush, We wanted to let you know {obj} not selected for the "
+        "position. We have decided to move forward with other candidates.",
+        "the candidate you referred was",
+        "you were",
+        "rejection",
+    ),
+    (
+        "An update from {d}",
+        "Hi Ayush, Unfortunately we will not be moving forward with {obj} "
+        "application at this time. We appreciate the interest in the {r} role.",
+        "your referral's",
+        "your",
+        "rejection",
+    ),
+    # The tightest pair in the family: both members score `rejection` at the
+    # SAME 0.90. The classifier is not weighing this evidence and losing, it
+    # cannot see the distinction at all.
+    (
+        "After careful consideration",
+        "Hi Ayush, After careful consideration we have decided not to proceed "
+        "with {obj} at this time. Thank you for the time invested in the {r} "
+        "process.",
+        "the candidate you referred",
+        "your application",
+        "rejection",
+    ),
+    # Not rejection-specific. The same blindness files a stage ADVANCE.
+    (
+        "Scheduling for the {r} position at {d}",
+        "Hi Ayush, We have scheduled an interview with {obj} for next Tuesday. "
+        "Please let us know if that time works.",
+        "the candidate you referred",
+        "you",
+        "interview",
+    ),
+    (
+        "News about the {r} position at {d}",
+        "Hi Ayush, We are pleased to extend an offer to {obj}. Thank you for "
+        "the time invested throughout this process.",
+        "the candidate you referred",
+        "you",
+        "offer",
+    ),
+)
+
+#: ARM THREE: the reader's OWN outcome in mail that ALSO says "referral".
+#:
+#: THE ONLY CONTROL HERE THAT CAN BITE A REFERRAL-KEYED RULE, and the reason it
+#: exists separately from the twins above. A twin says "you were not selected"
+#: and carries no referral token at all, so a rule keyed on ``referr*`` cannot
+#: move it however badly that rule is written — a control that cannot fail is
+#: decoration. These five carry the token and are genuinely about the reader,
+#: so they are the mail a careless suppression breaks. All five score their
+#: category correctly today (three of them above the auto-file gate), measured
+#: on main @ 2b49a2e7; if any of them ever scores ``other``, a fix has bought
+#: its third-party accuracy by dropping real outcomes on the floor.
+_REFERRAL_BEARING_OWN: tuple[tuple[str, str, str], ...] = (
+    (
+        "News about the {r} position at {d}",
+        "Hi Ayush, Thank you for the referral from a member of our team, which "
+        "is how your name reached us. We are pleased to extend an offer to you "
+        "for the {r} role.",
+        "offer",
+    ),
+    (
+        "Update on the {r} position at {d}",
+        "Hi Ayush, You came to us through a referral. Unfortunately we have "
+        "decided to move forward with other candidates and will not be "
+        "proceeding with your application.",
+        "rejection",
+    ),
+    (
+        "Scheduling for the {r} position at {d}",
+        "Hi Ayush, Your referral from a teammate was a strong signal. We have "
+        "scheduled an interview with you for next Tuesday.",
+        "interview",
+    ),
+    (
+        "After careful consideration",
+        "Hi Ayush, We appreciate the referral that introduced you to us. After "
+        "careful consideration we have decided not to proceed with your "
+        "application at this time.",
+        "rejection",
+    ),
+    (
+        "Next steps at {d}",
+        "Hi Ayush, Thanks for referring a colleague to us as well. Separately, "
+        "we would like to schedule an interview with you for the {r} role.",
+        "interview",
+    ),
+)
+
+#: The stage a card must read once its own lifecycle mail has been filed.
+_SOMEONE_ELSE_STAGE = {
+    "rejection": "rejected",
+    "interview": "interviewing",
+    "offer": "offered",
+}
+
+
+def _someone_elses_outcome(b: _Builder, n: int) -> None:
+    """A lifecycle phrase about SOMEBODY ELSE, scored as the reader's own (#768).
+
+    "The candidate you referred was not selected" scores ``rejection`` 0.90 —
+    above the auto-file gate — and there is no mechanism anywhere in
+    ``classifier/rules.py`` that asks who a sentence is about. Searched for
+    ``referr*``, ``third party``, ``another candidate`` and ``on behalf``; the
+    only adjacent thing is ``\\breferral bonus\\b`` in ``hybrid.py``'s
+    ``NON_APPLICATION_PATTERNS``, which needs two content hits and is not in
+    the loop for the rules layer at all.
+
+    WHY THE FAMILY IS ABOUT THE BOARD AND NOT ONLY THE VERDICT. Measured
+    through ``harness.replay``: a referral notification from a company the
+    reader HAS applied to joins the reader's own card and settles it. The card
+    reads ``rejected`` and ``reviewed`` is empty — nobody is asked. That is the
+    failure ``test_the_board_is_clean`` calls the strictly worse one, "a
+    rejection landing on the wrong card settles a live application terminally",
+    and it read green because no family constructed the shape. So every group
+    here seeds the reader's OWN live card first and the third-party message
+    arrives at that same employer, where the damage is.
+
+    BUILT BOTH WAYS ROUND, which is the whole of the discipline. Even indices
+    are the CASE: a confirmation for the reader's own application, then a
+    third-party message (``identity=None``) that must never reach the card and
+    must leave the stage at ``applied``. Odd indices are the TWINS: the same
+    confirmation, then the reader's OWN lifecycle mail, which must keep its
+    verdict and must carry the card to its stage. A family of third-party mail
+    alone would go green for a rule that suppressed the whole lifecycle
+    vocabulary near the word "referral" — and that rule is one bad
+    generalisation away, because the twins are the mail it would break.
+
+    THE TWINS ARE ADVERSARIALLY CLOSE ON PURPOSE. "We are pleased to extend you
+    an offer" contains no referral token and so cannot fail against a rule
+    keyed on one; a control that cannot fail is decoration. Each twin here is
+    one slot from its case, so any rule that separates them has to do it on who
+    the sentence is about rather than on which words appear.
+
+    THERE IS NO FIX, ON PURPOSE, and DEC-013 is where that is argued. Every
+    wording here is AUTHORED — ``observed.py`` holds no referral or reference
+    mail at all — so this family can show that the classifier is blind to
+    attribution and it CANNOT say how often real mail asks it not to be. Its
+    counts are a defect pinned at its size, never a baseline to be defended.
+    """
+
+    for i in range(n):
+        display, token = b.employer()
+        role = b.role(i)
+        arm = i % 3
+        if arm == 2:
+            subject, body, category = b.pick(_REFERRAL_BEARING_OWN)
+            third = reader = ""
+        else:
+            subject, body, third, reader, category = b.pick(_SOMEONE_ELSE_PAIRS)
+        sender = b.ats(i)
+        case_arm = arm == 0
+        # ONLY THE CASE ARM MAKES A BOARD CLAIM, and the claim is that nothing
+        # happened: the card must still read `applied` after the third-party
+        # message has been through the sync.
+        #
+        # The reader arms deliberately assert NO stage. Their lifecycle mail is
+        # graded on its VERDICT, and several of those verdicts land between
+        # `REVIEW_FLOOR` and `AUTO_FILE_GATE` — held for review, not filed —
+        # so the card correctly stays `applied` and a `card_status` here would
+        # pin the product's own "ask rather than assert" as a WRONG-STAGE.
+        # Measured before it was removed: it cost 27 false WRONG-STAGE rows
+        # against 30 real ones, which is a fixture over-claim of nearly half.
+        stage = "applied" if case_arm else None
+        anchor = f"c{b._n + 1:05d}"
+        b.add(
+            family="someone-elses-outcome",
+            subject=f"Thank you for applying to {display}",
+            sender=sender,
+            sender_name=f"{display} Talent",
+            body=(
+                f"Hi Ayush, Thank you for applying to the {role} role at "
+                f"{display}. We have received your application and the team is "
+                f"reviewing it."
+            ),
+            expected_category="applied",
+            identity=f"{token}|{role}",
+            employer=token,
+            day=i % 60,
+            # The stage the card must READ once this group's second message has
+            # been handled. On the case arm that is still `applied`: the
+            # third-party message below must not have moved it.
+            card_status=stage,
+        )
+        if case_arm:
+            b.add(
+                family="someone-elses-outcome",
+                subject=subject.format(r=role, d=display),
+                sender=sender,
+                sender_name=f"{display} Talent",
+                body=body.format(obj=third, r=role, d=display),
+                # NOT job mail for this reader. `identity=None` is the whole
+                # claim: it must never become an application and must never
+                # land on one.
+                expected_category="other",
+                identity=None,
+                employer=None,
+                day=i % 60 + 4,
+                adversarial=True,
+                note="a lifecycle outcome belonging to a person the reader referred",
+            )
+        else:
+            b.add(
+                family="someone-elses-outcome",
+                subject=subject.format(r=role, d=display),
+                sender=sender,
+                sender_name=f"{display} Talent",
+                body=(
+                    body.format(r=role, d=display)
+                    if arm == 2
+                    else body.format(obj=reader, r=role, d=display)
+                ),
+                expected_category=category,
+                identity=f"{token}|{role}",
+                employer=token,
+                day=i % 60 + 4,
+                joins=anchor,
+                note=(
+                    "carries the referral token and is STILL the reader's own"
+                    if arm == 2
+                    else "one slot from the case above it, and genuinely the reader's own"
+                ),
+            )
+
+
+#: An employer's OWN mail addresses, on the reserved ``.example`` TLD (#523).
+#:
+#: ``{t}`` IS THE LEADING WORD OF THE EMPLOYER TOKEN, NOT THE WHOLE TOKEN, and
+#: that is load-bearing twice over.
+#:
+#:   * **It is the only spelling that can route.** Two thirds of the invented
+#:     pool carry a suffix ("Copperthwaitegate Labs"), so the whole token has a
+#:     space in it and ``careers@{token}.example`` is an address no mail system
+#:     could deliver. 281 cases already in this corpus carry one —
+#:     ``outreach-autoresponder`` 110 and ``update-from-another-domain`` 171 —
+#:     and they resolve correctly only BECAUSE of it: ``_domain_brand`` splits
+#:     on dots, so the space survives into the brand and the brand happens to
+#:     equal the token. Filed separately; not repeated here.
+#:   * **It still resolves to the right employer**, by the product's own rule
+#:     rather than by a harness convenience. ``pipeline.matches_company_token``
+#:     accepts a match on the LEADING WORD — the same grouping
+#:     ``roll_up_applications`` applies — so ``careers@copperthwaitegate.example``
+#:     identifies "Copperthwaitegate Labs". Verified against that function
+#:     rather than asserted here.
+#:
+#: SO THE IDENTITY OUTCOME IS HELD FIXED WHILE THE SENDER CLASS VARIES.
+#: ``company_key`` takes the sender-domain brand first whenever that brand is
+#: not a relay, so this arm resolves its employer off the DOMAIN while the relay
+#: arm (``observed-confirmation``) resolves the same employer off the subject
+#: and the display name. Same answer, different path. A domain whose brand did
+#: NOT match the employer — the real message is ``makenotion.com`` for "Notion"
+#: — would vary two things at once, and is filed as its own issue rather than
+#: smuggled in here.
+_IN_HOUSE_SENDERS: tuple[str, ...] = (
+    "careers@{t}.example",
+    "recruiting@{t}.example",
+    "talent@{t}.example",
+    "no-reply@{t}.example",
+    "jobs@{t}.example",
+)
+
+#: The acknowledgements the owner received from an employer's own mail system.
+_IN_HOUSE_CONFIRMATIONS = observed.in_house(observed.OBSERVED_CONFIRMATIONS)
+
+
+def _observed_confirmations_in_house(b: _Builder, n: int) -> None:
+    """Real acknowledgements delivered from the sender that actually sent them.
+
+    ``observed.py`` records, per template, where the message came from, and ten
+    of the twenty-three acknowledgements say ``in-house`` — the employer's own
+    mail system, not an ATS relay. Every family above hands all twenty-three to
+    ``b.ats(i)``. So the corpus's only non-circular evidence arrived over a
+    sender it never had, and ``rules.classify``'s +0.05 relay bonus was applied
+    to every one of them.
+
+    WHAT THAT ERASED. #523 reports a production message held at ``applied``
+    0.80 — one point of score under the 0.90 rung, and no relay bonus to carry
+    it over ``AUTO_FILE_GATE``. Measured before this family existed, across
+    19,220 cases: the base-0.80 rung holds 816 verdicts, 806 of them from a
+    relay and auto-filed, 10 from an employer's own domain and held. All ten
+    were ``outreach-autoresponder``, whose own docstring says every wording in
+    it is synthetic. The corpus could neither justify nor refuse a fix, and
+    two issues (#523, #448) recorded "the shape has zero witnesses" as though
+    that were a fact about mail rather than about this generator.
+
+    THE WITNESS IS ONE TEMPLATE AND IT IS NAMED. Scored under both sender
+    classes, exactly one of the thirty-six observed templates changes side of
+    the gate: ``OBSERVED_CONFIRMATIONS[6]``, provenance ``in-house, thread
+    19ff97772e932c0f``, which is the transcription of the message #523 quotes.
+    Relay 0.85 and files; in-house 0.80 and waits for a person. The other nine
+    in-house acknowledgements score six or more and land at 0.90 either way,
+    which is why this family is a THIN witness rather than a broad one and is
+    described as one. It is not thin in the way that matters: the one wording
+    it turns on is the one the owner actually received.
+
+    WHAT IT DELIBERATELY DOES NOT CARRY. Four observed templates — one
+    assessment, the closure, one pending notice and the not-an-application —
+    score under ``REVIEW_FLOOR``. Over a relay, ``pipeline``'s ATS floor puts
+    three of them in the review queue; from an employer's own domain they reach
+    nothing at all. That is a second defect this generator hides and it is
+    filed on its own rather than buried in a family about the ladder, because
+    it needs a fix this issue has no answer for.
+
+    Its relay twin is ``observed-confirmation`` (300 cases, the same twenty-
+    three templates), so the pair is across families and not inside this one.
+    The exact one-slot claim — identical rendered text, relay sender against
+    in-house sender — is asserted against ``RulesClassifier`` directly in
+    ``test_the_ladder_reads_margin_when_nothing_competes_523.py``, where it is
+    exact and cannot be moved by anything the board does.
+    """
+
+    for i in range(n):
+        display, token = b.employer()
+        role = b.role(i)
+        subject, body, _ = b.pick(_IN_HOUSE_CONFIRMATIONS)
+        fill = {"display": display, "role": role, "req": f"R-{800000 + i}"}
+        b.add(
+            family="observed-confirmation-in-house",
+            subject=subject.format(**fill),
+            sender=b.pick(_IN_HOUSE_SENDERS).format(t=token.split()[0]),
+            sender_name=f"{display} Recruiting",
+            body=body.format(**fill),
+            expected_category="applied",
+            identity=f"{token}|{role}",
+            employer=token,
+            day=i % 60,
+            note="a real acknowledgement, from the employer's own mail system",
+        )
+
+
 _FAMILIES: tuple[tuple[str, object, int], ...] = (
     ("confirmation", _confirmations, 1100),
     ("rejection-plain", _rejections_plain, 550),
@@ -3861,6 +4226,24 @@ _FAMILIES: tuple[tuple[str, object, int], ...] = (
     ("hand-dismissal-swallows-later-mail", _hand_dismissal_swallows_later_mail, 60),
     ("answered-then-more-mail", _answered_then_more_mail, 60),
     ("another-mailbox-cannot-settle-mine", _another_mailbox_cannot_settle_mine, 60),
+    # #768. Appended last for the reason every entry above states — the
+    # builder shares one seeded RNG, so a family anywhere else re-draws every
+    # employer, role and wording after it and the whole recorded run moves at
+    # once. 240 messages in 120 groups: each group seeds the reader's OWN live
+    # card, then 60 groups add a third-party outcome (`identity=None`) and 60
+    # add the reader's own, one slot away from it. It is the first family here
+    # whose refusal and its twin differ by a single NOUN PHRASE inside an
+    # otherwise character-identical message.
+    ("someone-elses-outcome", _someone_elses_outcome, 120),
+    # #523. Appended last for the reason every entry above states — the
+    # builder shares one seeded RNG, so a family anywhere else re-draws every
+    # employer, role and wording after it and the whole recorded run moves at
+    # once. 200 messages over the ten acknowledgements `observed.py`
+    # provenances `in-house`, delivered from the employer's own domain
+    # instead of the ATS relay every other observed family hands them to.
+    # It is the first family here whose subject and body are drawn from the
+    # transcribed set while the SENDER is what it varies.
+    ("observed-confirmation-in-house", _observed_confirmations_in_house, 200),
 )
 
 

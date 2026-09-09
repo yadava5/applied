@@ -169,10 +169,10 @@ That comparison is now a measurement rather than a citation. `scripts/cascade_ga
 
 What the v3 set is, exactly, from `classifier_eval_v3_spec.json` and the dataset itself: **96 examples, 12 per label across 8 labels**, grouped as 65 core-positive, 17 edge-noise, 8 historical-miss and 6 core-negative, with confusion-pair tagging. The rows carry `subject`, `body_text`, `label`, `sender_email`, `scenario_group` and `confusion_pair` — and **no provenance field**, so the dataset does not record how many examples came from a real inbox versus a generator. That is a real limit on how far 0.9896 generalizes, and 96 examples is a small sample under any reading.
 
-### The 18,980-message adversarial corpus
+### The 19,420-message adversarial corpus
 
-The answer to the paragraph above. `backend/tests/corpus_independent/` invents **18,980 messages
-across 45 families over 8,880 companies**, every employer invented — six of those
+The answer to the paragraph above. `backend/tests/corpus_independent/` invents **19,420 messages
+across 47 families over 9,200 companies**, every employer invented — six of those
 families phrased in wordings transcribed from mail that actually arrived, and one carrying job
 titles and locations copied byte-for-byte from public Greenhouse job boards, so the corpus is not
 graded only on the vocabulary the author of `rules.py` wrote. It drives them through the whole
@@ -199,7 +199,7 @@ went 139 to 119 with no confirmation family losing a single message
 ([#455](https://github.com/yadava5/applied/issues/455)).
 
 **And read it knowing it is a property of the mix, not of the engine.** It was 93.05% on
-2026-08-22 and is 92.47%
+2026-08-22 and is 92.43%
 on the same engine, and it has moved three times since without a rule changing. It went DOWN first,
 to 92.87%, because the corpus stopped being written entirely by the author of the classifier. It went
 back up to 93.24% because [#626](https://github.com/yadava5/applied/issues/626) added 760 messages
@@ -219,24 +219,25 @@ overstates by roughly the same 0.88 points.** Measured before the transcribed fa
 engine pattern verbatim**, and **123 of 160 engine patterns were never exercised at all**. A corpus
 in that state cannot find a gap — it can only confirm the pattern list against itself, and its
 headline describes the author's vocabulary rather than the product's reach. `observed.py` holds 36
-wordings transcribed from mail that actually arrived, from ten applicant tracking platforms, written
-by recruiting teams with no knowledge of this repository. 92.47% is the first number here that was
+wordings transcribed from mail that actually arrived, from six applicant tracking platforms and
+the employers' own mail systems, written
+by recruiting teams with no knowledge of this repository. 92.43% is the first number here that was
 not partly graded by the person who set the exam — a fact about who wrote the mail, and not the
 reason for the 0.88 points above, which was the instrument.
 
 | | measured 2026-09-06 |
 | --- | --- |
-| Correct | **17,550 of 18,980 — 92.47%** |
-| Wrong | **144** |
-| **Wrong AND stated to the user as fact** | **0** |
+| Correct | **17,950 of 19,420 — 92.43%** |
+| Wrong | **184** |
+| **Wrong AND stated to the user as fact** | **30** |
 | Abstained (below the 0.70 review floor, the product says nothing) | **1286** |
-| Board: cards / splits / merges / noise / misrouted review | **10,058 / 0 / 0 / 0 / 0** |
+| Board: cards / splits / merges / noise / misrouted review | **10,385 / 0 / 0 / 30 / 0** |
 | Updates that reached the wrong card | **0** |
-| Updates held for a person because the classifier was unsure | **685** |
+| Updates held for a person because the classifier was unsure | **712** |
 | Mail about a real application that reached nothing | **60 lost**, 0 dropped |
 
-**No message has ever landed on the wrong card.** Zero merges, zero misrouted updates over 18,980
-messages and 10,058 cards — the half that could destroy a record, because a rejection filed onto a
+**No message has ever landed on the wrong card.** Zero merges, zero misrouted updates over 19,420
+messages and 10,385 cards — the half that could destroy a record, because a rejection filed onto a
 sibling application settles it terminally and `advance_application_status` will never let it leave.
 That claim survived the corpus growing to include applications that share one Gmail thread: real
 applicant tracking systems send every acknowledgement for an employer under one subject from one
@@ -254,7 +255,7 @@ excluded the "(" that a real title like "Software Engineer I, Entry-Level (Gradu
 failure — the user sees one application twice and can act on it, where a merge loses a record
 silently. [#466](https://github.com/yadava5/applied/issues/466).
 
-**0 messages did MINT a card that should not exist**, and that number is not a fix — read it with the
+**30 messages did MINT a card that should not exist**, and that number is not a fix — read it with the
 caveat rather than without. It was 2, both a profile-completion nudge relayed by an ATS and scored
 `assessment` at 0.90, and it reached 0 when the corpus began drawing realistic job titles and every
 case re-drew its wording. The nudge no longer draws what got it onto a card; nothing about the
@@ -262,7 +263,7 @@ product changed. They come from `ats-relay-noise`, a family added on 2026-08-22 
 review floor — the product's behaviour on ATS mail that is not about you was not good before and
 simply was not measured. It stays pinned at 0, so anything minting a card here is loud.
 
-**Wrong verdicts stated as fact went 464 to 0.** There was no such thing as a wrong-but-hedged
+**Wrong verdicts stated as fact went 464 to 30.** There was no such thing as a wrong-but-hedged
 verdict on the morning of 2026-08-22: the review queue caught the classifier being *unsure* and had
 never once caught it being *wrong*, so every mistake it made it made confidently, and a user read it
 as a fact about their own job search. Two thirds of them now land in the queue instead, because the
@@ -282,8 +283,8 @@ wording can still reach the auto-file gate wrongly.
 **It was not free, and the price is the part worth reading.** 107 messages left the auto-filed
 bucket: the wrong ones, and 35 *correct* ones that now wait in the review queue instead of arriving
 on the board by themselves. 104 applications moved from a card the product guessed at to a question
-it asks. Nothing became unreachable — messages lost did not move, and held updates rose from 631 to
-685. A product whose pitch is that it can be trusted with a job search should prefer asking to
+it asks. Nothing became unreachable — messages lost did not move, and held updates rose — 631
+at the time of that change, 712 on today's corpus. A product whose pitch is that it can be trusted with a job search should prefer asking to
 guessing, so that trade was taken deliberately.
 
 The last row is the one that stayed bad longest. Until 2026-08-22 the replay ran only the rollup and never
@@ -760,7 +761,7 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 
 ### Testing
 
-**3163 tests collected, 0 skipped.** These figures were recorded on 2026-09-05 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. `--record` refuses to write at all unless that run was whole — Docker reachable, nothing skipped, suite green — because skipped tests are still *collected*, so a recording taken without the Postgres extras used to publish "0 skipped" while five modules sat out (#351). The artifact names the interpreter that ran the suite rather than the one that ran the script; those differ here, and a Python 3.14 run is exactly what produced the wrong coverage figures corrected below. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 2035 `test_*` functions across 179 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 3163 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
+**3163 tests collected, 0 skipped.** These figures were recorded on 2026-09-05 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. `--record` refuses to write at all unless that run was whole — Docker reachable, nothing skipped, suite green — because skipped tests are still *collected*, so a recording taken without the Postgres extras used to publish "0 skipped" while five modules sat out (#351). The artifact names the interpreter that ran the suite rather than the one that ran the script; those differ here, and a Python 3.14 run is exactly what produced the wrong coverage figures corrected below. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 2087 `test_*` functions across 187 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 3163 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
 
 The Postgres row-level-security module is the only thing in the repo that can demonstrate the isolation the product claims, and **25 tests** now exercise it. It has not always run: its tests waited on a database URL no workflow set, and a skip is green, so the 10 it held on 2026-08-02 had **never executed anywhere**. Two fixes: `test_rls_postgres.py` now starts its own `postgres:16` via testcontainers when `JOBTRACKER_TEST_PG_ADMIN_URL` is absent and Docker is available, and the `rls-postgres` CI job supplies its own service container. That job then parses the JUnit XML and **fails the build if the suite reports zero tests or any skip**, because a skipped security test and a passing one produce the same green tick.
 
@@ -895,7 +896,7 @@ applied/
 │   │   └── scripts/         # evaluator, latency benchmark, ML-ops tooling
 │   ├── alembic/versions/    # 25 revisions incl. the RLS + InitPlan-hoist migrations
 │   ├── data/evaluation/     # eval sets, committed baselines, benchmark + monitoring history
-│   └── tests/               # 179 modules
+│   └── tests/               # 187 modules
 │
 ├── ml/                      # the classifier as a deployable service
 │   ├── browser/             # ONNX export + the in-browser site (Transformers.js)

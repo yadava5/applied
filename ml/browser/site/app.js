@@ -13,20 +13,46 @@
  * verified output-identical to the Python pipeline (6/6 suite).
  */
 
-import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.2';
+import {
+  NOISE_NEGATIVES,
+  REFUTED_CONFIDENCE,
+  ownTextRefutes,
+  ownTextSpan,
+  quoteSpokeForIt,
+  reflowParagraphs,
+  retractable,
+  scoredBody,
+  semanticRefutations,
+  subjectWeights,
+} from './preprocess.js';
 
-env.allowRemoteModels = false;
-env.allowLocalModels = true;
-env.localModelPath = './';
+/* THIS MODULE IS IMPORTABLE OUTSIDE A BROWSER, and that is a requirement
+ * rather than a tidy-up (#955). Three things used to make `import('./app.js')`
+ * impossible from Node, so the one port of this classifier with no test
+ * anywhere was also the one the cross-engine differential could not add:
+ *
+ *   1. a top-level `import` from an `https:` URL, which Node's ESM loader
+ *      refuses outright (`ERR_UNSUPPORTED_ESM_URL_SCHEME`);
+ *   2. zero `export` statements, so there was nothing to import even with a
+ *      loader that could reach it;
+ *   3. `document.getElementById` at the top level.
+ *
+ * All three are gone: the model runtime is fetched lazily inside `boot`, the
+ * rules layer is exported, and every DOM lookup happens inside `boot` — which
+ * only runs when there is a document. `scripts/cross_engine_differential.py`
+ * imports this file directly and scores it against the Python engine.
+ */
 
 const $ = (id) => document.getElementById(id);
-const state = $('state'), dot = $('dot'), go = $('go');
-const prog = $('prog'), progbar = $('progbar');
+
+/* Declared here and BOUND IN `boot`, never at module scope. Reading the
+ * document while this file is being evaluated is blocker 3 above. */
+let state = null, dot = null, go = null, prog = null, progbar = null;
 
 let extractor = null, rules = null, head = null, examples = null;
 
 /* ---------- layer 1: rules ---------- */
-function compileRules(raw) {
+export function compileRules(raw) {
   const cats = {};
   for (const [cat, g] of Object.entries(raw.categories)) {
     cats[cat] = {
@@ -46,7 +72,48 @@ function compileRules(raw) {
  * report entails the assertion and the entailment does not run back. */
 const REPORTS_ON_AN_APPLICATION = new Set(['rejection', 'interview', 'assessment', 'offer', 'pending_application']);
 
-function rulesClassify(subject, body, sender) {
+/* Compile a `rules.json` and install it as the one this module scores with.
+ *
+ * The browser calls this from `boot`; the differential calls it after reading
+ * the same file off disk. Exported so an out-of-browser caller has a way in
+ * that is not "reach into a module-local variable" — the compiled form is
+ * what `rulesClassify` reads, and there must be exactly one of it. */
+export function useRules(raw) {
+  rules = compileRules(raw);
+  // Derived from the compiled table rather than listed, so the split between a
+  // genre filter and a semantic negative cannot rot away from the rules the
+  // walk actually scores with.
+  rules.refutations = semanticRefutations(rules.cats);
+  rules.retractable = retractable(rules.cats);
+  return rules;
+}
+
+export function rulesClassify(subject, rawBody, sender) {
+  // THE BODY IS MASKED BEFORE ANY PATTERN SEES IT, exactly as
+  // `RulesClassifier.classify` does it: quoted history removed, every
+  // conditional clause cut from its marker to the end of its sentence, then
+  // paragraphs reflowed. Until #955 this function scored the raw argument,
+  // so a `rules.json` shared byte for byte with two engines that mask still
+  // produced a different classifier here -- and the pattern arm #928 deleted
+  // for being unreachable was reachable in this file alone.
+  //
+  // THE SUBJECT IS NOT MASKED, and that matches too: the engine transforms
+  // the body and leaves the subject alone.
+  const body = scoredBody(rawBody);
+
+  // #441. A REPLY'S SUBJECT IS ABOUT THE THREAD, NOT ABOUT THIS MESSAGE. The
+  // client copied that headline from a message someone else wrote weeks ago,
+  // so "Re: Thank you for applying to X" is what the interview invitation, the
+  // rejection and the scheduling note in that thread ALL look like. Demoted
+  // below body weight rather than discarded.
+  const [strongSubject, weakSubject] = subjectWeights(subject);
+
+  // #417. The span above the quote, whether or not it clears the floor. When
+  // it does not, the whole body -- quote included -- is what scored, so the
+  // winner is the QUOTE's verdict rather than the sender's.
+  const ownText = ownTextSpan(rawBody ?? '');
+  const quoteSpoke = quoteSpokeForIt(ownText);
+
   const scores = {};
   let isAts = false;
   if (sender && sender.includes('@')) {
@@ -57,9 +124,30 @@ function rulesClassify(subject, body, sender) {
   }
   for (const [cat, g] of Object.entries(rules.cats)) {
     let s = 0;
-    for (const re of g.strong) { if (re.test(subject)) s += 6; else if (re.test(body)) s += 3; }
-    for (const re of g.weak) { if (re.test(subject)) s += 2; else if (re.test(body)) s += 1; }
-    for (const re of g.negative) { if (re.test(subject) || re.test(body)) s -= 5; }
+    // Tracked separately from the score on purpose -- see the negative pass
+    // below. A subject is a headline and is the cheapest part of a message to
+    // make look like job mail; the body is what the message actually is.
+    let hasStrongBody = false;
+    for (const re of g.strong) {
+      const inSubject = re.test(subject);
+      const inBody = re.test(body);
+      if (inBody) hasStrongBody = true;
+      if (inSubject) s += strongSubject;
+      else if (inBody) s += 3;
+    }
+    for (const re of g.weak) {
+      if (re.test(subject)) s += weakSubject;
+      else if (re.test(body)) s += 1;
+    }
+    for (const re of g.negative) {
+      if (!(re.test(subject) || re.test(body))) continue;
+      // #451. A GENRE FILTER MAY NOT OUTRANK A STRONG MATCH IN THE BODY. An
+      // ATS confirmation that carries "manage preferences or unsubscribe" in
+      // its footer is still a confirmation; a SEMANTIC negative -- job mail
+      // saying otherwise -- still subtracts.
+      if (hasStrongBody && NOISE_NEGATIVES.has(re.source)) continue;
+      s -= 5;
+    }
     for (const re of g.veto) { if (re.test(subject) || re.test(body)) s = Math.min(s, 0); }
     scores[cat] = s;
   }
@@ -79,10 +167,20 @@ function rulesClassify(subject, body, sender) {
   let conf = 0.6;
   if (ws >= 10 && margin >= 5) conf = 0.95;
   else if (ws >= 6 && margin >= 3) conf = 0.9;
+  // #523. Nothing else scored above zero — ported from `rules.py`'s ladder.
+  else if (ws >= 5 && runner <= 0 && winner === 'applied') conf = 0.9;
   else if (ws >= 4 && margin >= 2) conf = 0.8;
   else if (ws >= 2 && margin >= 1) conf = 0.7;
   if (isAts && ['applied', 'rejection', 'interview', 'offer'].includes(winner))
     conf = Math.min(conf + 0.05, 0.95);
+  // #417, last: when the quote did the talking and the sender's own words
+  // argue against what it won with, the verdict is capped rather than
+  // overturned. "We must withdraw the offer." over a quoted offer letter.
+  if (quoteSpoke && ownTextRefutes(
+        reflowParagraphs(ownText ?? ''), winner, rules.refutations, rules.retractable,
+      ).length > 0) {
+    conf = Math.min(conf, REFUTED_CONFIDENCE);
+  }
   return { category: winner, confidence: conf };
 }
 
@@ -192,6 +290,8 @@ function showTotal(ms) {
 }
 
 async function boot() {
+  state = $('state'); dot = $('dot'); go = $('go');
+  prog = $('prog'); progbar = $('progbar');
   renderTrace([
     // No number until rules.json is actually loaded, and then the number is
     // COUNTED from it (see the re-render below). This line used to hard-code
@@ -218,7 +318,7 @@ async function boot() {
     fetch('./head.json').then((r) => r.json()),
     fetch('./examples.json').then((r) => r.json()),
   ]);
-  rules = compileRules(rulesRaw); head = headRaw; examples = exRaw;
+  useRules(rulesRaw); head = headRaw; examples = exRaw;
 
   // The scored count, derived from the file the page just compiled — the same
   // definition scripts/readme_facts.py uses (strong + weak + negative; vetoes
@@ -232,6 +332,15 @@ async function boot() {
   ]);
 
   prog.hidden = false;
+  // Fetched here rather than at the top of the file: a top-level `https:`
+  // import makes this module unloadable outside a browser, and the rules layer
+  // above needs no model at all.
+  const { pipeline, env } = await import(
+    'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.2'
+  );
+  env.allowRemoteModels = false;
+  env.allowLocalModels = true;
+  env.localModelPath = './';
   extractor = await pipeline('feature-extraction', 'model', {
     dtype: 'fp32',
     progress_callback: (p) => {
@@ -247,7 +356,10 @@ async function boot() {
   go.disabled = false;
 }
 
-boot().catch((err) => {
-  state.textContent = 'failed to load';
-  console.error(err);
-});
+if (typeof document !== 'undefined') {
+  boot().catch((err) => {
+    const state = $('state');
+    if (state) state.textContent = 'failed to load';
+    console.error(err);
+  });
+}

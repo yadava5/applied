@@ -400,3 +400,36 @@ OBSERVED_NOT_APPLICATIONS: tuple[Template, ...] = (
         "in-house, thread 19ff828f23c57701 — says Career three times, is not one",
     ),
 )
+
+
+#: The platform each template's provenance names, up to the first comma.
+#:
+#: Every entry above records where the message actually came from — an ATS
+#: relay by name (``Greenhouse``, ``Ashby``, ``iCIMS``, ``Lever``,
+#: ``SmartRecruiters``, ``Rippling``) or ``in-house``, meaning the employer's
+#: own mail system. That field is transcribed evidence in exactly the sense
+#: the wordings are, and until #523 nothing read it: every generator family
+#: hands all of them to an ATS relay sender — 18 of the 36 templates in the
+#: six sets above are in-house — so the +0.05 relay bonus was
+#: applied to mail that never came over a relay and the corpus had no witness
+#: for the shape #523 reports.
+#:
+#: SPLIT ON THE PREFIX AND NOT ON THE WHOLE STRING, because the provenance
+#: carries a thread id and often a note after it ("in-house, thread
+#: 19ff97772e932c0f") and both of those are free text by design.
+def platform(template: Template) -> str:
+    """Where this template's message came from: ``in-house`` or the ATS's name."""
+
+    return template[2].split(",")[0].strip()
+
+
+def in_house(templates: tuple[Template, ...]) -> tuple[Template, ...]:
+    """The subset an employer sent from its OWN mail system.
+
+    Ten of the twenty-three acknowledgements, one of the six rejections, all
+    three assessments, the closure, both pending notices and the
+    not-an-application. A caller that delivers these over a relay is modelling
+    a message the owner never received.
+    """
+
+    return tuple(t for t in templates if platform(t) == "in-house")

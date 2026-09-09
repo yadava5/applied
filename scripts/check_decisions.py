@@ -71,9 +71,16 @@ FIELDS = (
     "Markers",
 )
 
-ENTRY = re.compile(r"^## (DEC-\d{3})\b(.*)$", re.MULTILINE)
-STATUS = re.compile(r"^(active|superseded by DEC-\d{3}) \(\d{4}-\d{2}-\d{2}\)$")
-MARKER = re.compile(r"\bDEC-\d{3}\b")
+#: THREE DIGITS OR MORE, and the `,` is the whole point (#958). `\b` does
+#: not match between two digits, so `\d{3}` did not merely fail to match
+#: `DEC-1000` — it made a four-digit id INVISIBLE to the entry scanner, the
+#: status check and the marker scanner alike, silently and all at once. That
+#: is 991 entries away and costs one character to prevent, and it is the same
+#: class as the defect above: a pattern that stops matching rather than
+#: failing loudly.
+ENTRY = re.compile(r"^## (DEC-\d{3,})\b(.*)$", re.MULTILINE)
+STATUS = re.compile(r"^(active|superseded by DEC-\d{3,}) \(\d{4}-\d{2}-\d{2}\)$")
+MARKER = re.compile(r"\bDEC-\d{3,}\b")
 
 #: A path-shaped token: at least one `/`, a dot in the last segment, and an
 #: optional `:NNN` line suffix that is stripped before the tree is consulted.
@@ -103,10 +110,33 @@ def parse(text: str) -> list[dict[str, object]]:
         end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
         body = text[m.end() : end]
         fields: dict[str, list[str]] = {}
+        # A FIELD VALUE IS EVERY LINE OF IT, not the first one (#958).
+        #
+        # This read `line.startswith(f + ":")` and nothing else, so a value that
+        # wrapped lost every continuation line. Harmless while `Markers:` held
+        # one or two paths; #950 widened it to every tracked file naming the id,
+        # so those lists grow monotonically and a wrap is now routine. The
+        # failure it produced was worse than a silent loss: the REVERSE
+        # completeness check reported that an entry "does not list" a path a
+        # reader can see listed, while the forward check skipped the same path
+        # and stayed green — the two halves disagreeing about one line, with the
+        # one that spoke being the one that was wrong.
+        #
+        # A value continues while the following lines are INDENTED and non-blank.
+        # That is the shape every entry in the document already uses; a blank
+        # line or a line at column zero ends it. Joined with a single space, so
+        # a path broken across the wrap is still one token to `PATH`.
+        current: str | None = None
         for line in body.splitlines():
-            for f in FIELDS:
-                if line.startswith(f + ":"):
-                    fields.setdefault(f, []).append(line[len(f) + 1 :].strip())
+            started = next((f for f in FIELDS if line.startswith(f + ":")), None)
+            if started is not None:
+                current = started
+                fields.setdefault(current, []).append(line[len(current) + 1 :].strip())
+                continue
+            if current is not None and line.strip() and line[:1].isspace():
+                fields[current][-1] = f"{fields[current][-1]} {line.strip()}".strip()
+                continue
+            current = None
         entries.append(
             {
                 "id": m.group(1),
