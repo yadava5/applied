@@ -371,6 +371,15 @@ RECORDED_FAMILIES: dict[str, tuple[int, int, int]] = {
     # family built to measure the cap was the one family the census read past.
     # The 160 are the same 160 #767 measured.
     "verdict-past-the-body-cap": (320, 2, 160),
+    # #768. 240 messages, 16 wordings, no_strong 0. Its third arm is why the
+    # wording count is 16 rather than 10: five one-slot PAIRS plus five
+    # referral-bearing reader controls, and the pairs contribute both members.
+    #
+    # IT IS THE FAMILY THAT MADE `decided not to proceed` REACHABLE. Diffed
+    # against a pristine-tree run: `fired` goes 54 -> 55 and that strong
+    # `rejection` pattern is the single addition — a phrase in the shipped
+    # rules that no case in the corpus had ever exercised. Nothing is lost.
+    "someone-elses-outcome": (240, 16, 0),
     # #626, and it is invented in the same sense as everything above it: the
     # BODIES are the author's, so its discovery rate is 0.0% by construction and
     # it belongs in this block. What is real about it is the half this metric
@@ -937,7 +946,7 @@ def test_the_invented_families_still_discover_nothing(measured) -> None:
     # searching what `classify` searches, and both families turned out to hold
     # messages the engine reaches nothing on. See their entries in
     # RECORDED_FAMILIES for which mechanism hid which.
-    assert len(zeros) == 29, "the recorded set of circular families"
+    assert len(zeros) == 30, "the recorded set of circular families"
     moved = {
         family: measured.families[family].no_strong
         for family in sorted(zeros)
@@ -1075,7 +1084,7 @@ def test_copying_an_engine_pattern_into_an_observed_wording_reds_this_gate(
 
     assert _MUTATION in mutated.fired
     assert mutated.fired == measured.fired | {_MUTATION}
-    assert len(mutated.fired) == len(measured.fired) + 1 == 55
+    assert len(mutated.fired) == len(measured.fired) + 1 == 56
     assert mutated.never_fired_by_category["interview"] == 25
 
     closure = mutated.families["observed-closure"]
