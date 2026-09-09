@@ -1318,6 +1318,57 @@ _ROLE_FILLER: frozenset[str] = frozenset(
      "invitation", "opportunity", "rejection", "confirmation"}
 )
 
+#: Words that cannot BEGIN a job title (#962). A subject's role capture is prose
+#: when it starts with one of these, and a job title never does.
+#:
+#: WHY A LEADING-WORD TEST AND NOT A FILLER TEST. :data:`_ROLE_FILLER` above is
+#: applied only when EVERY word is filler, which is right for "your update" and
+#: useless for "DECISION ON YOUR APPLICATION" — four words, one of them filler.
+#: The head of a noun phrase is what decides whether it is one.
+#:
+#: WHY NOT :data:`_COMPANY_STOPWORDS`, which is the same idea on the EMPLOYER
+#: half. That set carries `software`, `engineer`, `developer`, `intern` — words
+#: that are not companies and ARE how half of all job titles start. Reusing it
+#: here would refuse "Software Engineer" and "Engineer, Trust and Safety". The
+#: two halves need opposite vocabularies, which is why this is its own set and
+#: not a shared one.
+#:
+#: THE DEFECT IT CLOSES. `_ROLE_PATTERNS[3]` reads the `<Role> - <Employer>`
+#: shape and its leading run is `[A-Z][\w/&.\-]*`, which matches a fully
+#: upper-case word as readily as a Title-Case one. So an ALL-CAPS subject hands
+#: back its greeting:
+#:
+#:     "WE REGRET TO INFORM YOU - NORTHWIND LABS"      -> "WE REGRET TO INFORM YOU"
+#:     "DECISION ON YOUR APPLICATION - NORTHWIND LABS" -> "DECISION ON YOUR APPLICATION"
+#:
+#: and `application_sub_key` is half an application's IDENTITY, so that phrase
+#: becomes the card's title and captures that application's later mail. It is
+#: the class #525 and #537 fixed on the employer half, where `resolve_employer`
+#: was minting companies called Invitation, Decision and Sorry; the role half
+#: was never given the same treatment.
+#:
+#: NOT A CASE TEST, deliberately. "BACKEND ENGINEER - NORTHWIND LABS" is an
+#: all-caps subject naming a real title, and it must still resolve — refusing
+#: upper case would trade this defect for a worse one.
+_NOT_A_ROLE_HEAD: frozenset[str] = frozenset(
+    {
+        # greetings and the reader
+        "hi", "hello", "hey", "dear", "greetings", "we", "you", "i",
+        # courtesies
+        "thank", "thanks", "congratulations", "congrats", "welcome", "sorry",
+        "unfortunately", "regretfully", "please",
+        # the message, not the job — the vocabulary #535 refused on the other
+        # half, plus what a subject line puts in front of it
+        "regret", "decision", "update", "reminder", "invitation", "invite",
+        "notice", "notification", "important", "action", "response",
+        "acknowledgement", "acknowledgment", "confirmation", "receipt",
+        "status", "application", "following", "next", "re", "fw", "fwd",
+        # bare determiners and prepositions
+        "the", "a", "an", "your", "our", "my", "this", "that", "these",
+        "those", "about", "regarding", "from", "for", "to", "on", "of", "with",
+    }
+)
+
 # Legal-notice phrases whose OWN next word is one of the role keywords, so the
 # body patterns terminate on it and hand back the notice as a job title.
 #
@@ -4230,6 +4281,11 @@ def _role_from_subject(subject: str) -> str | None:
             continue
         # Reject a capture that is only filler (e.g. "the", "your update").
         if all(_normalize_token(w) in _ROLE_FILLER for w in words):
+            continue
+        # AND ONE THAT BEGINS LIKE PROSE (#962). The head of a noun phrase is
+        # what decides whether it is one, and the filler test above cannot see
+        # a four-word greeting with one filler word in it.
+        if _normalize_token(words[0]) in _NOT_A_ROLE_HEAD:
             continue
         if len(role) < 3:
             continue
