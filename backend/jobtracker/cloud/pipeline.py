@@ -2598,13 +2598,63 @@ def _rank_to_status(rank: int) -> str:
 _REQ_CODE_TOKEN = re.compile(r"(?:r|jr|req)\s?\d{4,10}")
 
 
+#: Nouns that name a MESSAGE, not the company that sent it. #535 refused this
+#: vocabulary on the SUBJECT path — it is the issue that mints "Invitation",
+#: "Decision" and "Reminder" as employers — and the sender DISPLAY NAME is a
+#: second door onto the same board, which those words walked back in through.
+#: Measured on `main` at `b75f7909`, sender `no-reply@sendgrid.example` (the
+#: relay test keys on the domain BRAND, so the reserved TLD behaves exactly as
+#: `sendgrid.net` does):
+#:
+#:     display "Reminder"        -> ('reminder', 'Reminder')
+#:     display "Invitation"      -> ('invitation', 'Invitation')
+#:     display "Assessments"     -> ('assessments', 'Assessments')
+#:     display "Decision"        -> ('decision', 'Decision')
+#:     display "Congratulations" -> ('congratulations', 'Congratulations')
+#:
+#: Two of those five are named in #535's own title.
+#:
+#: WHAT THIS COSTS, stated rather than buried: on the display-name path the
+#: token reaching :func:`_valid_company_token` is the LEADING WORD, not the
+#: whole name — traced, not assumed — so refusing this vocabulary refuses an
+#: employer whose name BEGINS with one of these words. "Assessment Systems
+#: Corporation" resolved `('assessment', 'Assessment Systems Corporation')`
+#: before this and resolves `None` after. That is the trade #535 already made
+#: for the same words on the other path, and it is the cheap direction: a
+#: refusal sends the message to the REVIEW QUEUE rather than nowhere. Measured
+#: through :func:`hold_reason` on the same sender: `no_employer`, and
+#: `confirm_employer` with the company already read out of the body when the
+#: body names it in a shape `employer_named_in_body` can see ("You have been
+#: invited by <Employer> to complete an assessment" does; "Thank you for
+#: applying to <Employer>" does not). A mint, by contrast, files a card named
+#: "Reminder" and asks nobody.
+#:
+#: KEPT OUT OF :data:`_COMPANY_STOPWORDS` even so, because that set is read a
+#: SECOND time by callers that hold the whole name, and a word in it refuses
+#: every company whose name merely begins with it on those paths too. Here the
+#: refusal is confined to the every-word test below.
+_MESSAGE_NOUNS: frozenset[str] = frozenset(
+    {
+        "assessment", "assessments", "screening", "screenings",
+        "invitation", "invitations", "invite", "invites",
+        "reminder", "reminders", "alert", "alerts",
+        "decision", "decisions", "scheduling", "congratulations",
+        "response", "responses", "acknowledgement", "acknowledgment",
+        "submission", "submissions", "receipt", "next", "steps",
+    }
+)
+
+
 def _valid_company_token(token: str) -> bool:
     """A token is a usable company only if it is not a stopword, number or req id."""
 
     if not token or len(token) < 2:
         return False
     words = token.split()
-    if all(w in _COMPANY_STOPWORDS for w in words):
+    # EVERY WORD, so a name that is nothing but message vocabulary is refused
+    # and a company that merely starts with one of those words is not. See
+    # :data:`_MESSAGE_NOUNS` for why the two sets are separate.
+    if all(w in _COMPANY_STOPWORDS or w in _MESSAGE_NOUNS for w in words):
         return False
     if words[0] in _COMPANY_STOPWORDS:
         return False
