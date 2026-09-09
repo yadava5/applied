@@ -637,6 +637,11 @@ function score(
   let confidence = 0.6;
   if (winnerScore >= 10 && margin >= 5) confidence = 0.95;
   else if (winnerScore >= 6 && margin >= 3) confidence = 0.9;
+  // #523. Nothing else scored above zero. Ported from `rules.py`'s ladder,
+  // where the argument and the measurement live; reaching this branch with a
+  // non-positive runner-up implies `winnerScore === 5`, because 6 or more with
+  // no competitor has a margin of at least 6 and took the line above.
+  else if (winnerScore >= 5 && runnerUp <= 0 && winner === "applied") confidence = 0.9;
   else if (winnerScore >= 4 && margin >= 2) confidence = 0.8;
   else if (winnerScore >= 2 && margin >= 1) confidence = 0.7;
 

@@ -232,7 +232,7 @@ prominent, user-facing feature the data serves; there is no other use.
   and the email is flagged reviewed, so the answer is durable and a later sync
   will not overwrite it. It does **not** change any future classification.
   There is no per-user model and no per-user classifier state of any kind —
-  `get_rules_classifier()` (`backend/jobtracker/classifier/rules.py:2192`) is a
+  `get_rules_classifier()` (`backend/jobtracker/classifier/rules.py:2268`) is a
   process-wide singleton that takes no user argument, so the same message
   classifies identically before and after any correction, for every account.
 
@@ -433,7 +433,7 @@ prominent, user-facing feature the data serves; there is no other use.
 | Stored snippet equals Gmail's own — `emails.body_snippet` by equality | `backend/tests/test_body_is_never_persisted.py:627` |
 | Body truncation | `_MAX_BODY_CHARS`, `backend/jobtracker/cloud/gmail_client.py:206` |
 | The hosted classifier is rules-only (the `_cloud_rules_only` short-circuit itself) | `backend/jobtracker/classifier/hybrid.py:355-372` |
-| No per-user classifier state — a process-wide singleton, no user argument | `get_rules_classifier`, `backend/jobtracker/classifier/rules.py:2192` |
+| No per-user classifier state — a process-wide singleton, no user argument | `get_rules_classifier`, `backend/jobtracker/classifier/rules.py:2268` |
 | Training is default-deny: allowlist empty, nothing in the deployment sets it | `backend/jobtracker/classifier/setfit_model.py:39-75` |
 | A training corpus spanning two users raises rather than trains | `backend/tests/test_training_is_single_user.py` |
 | One user's corpus still refuses unless that user is allowlisted | `backend/tests/test_training_is_owner_only.py` |

@@ -668,4 +668,5 @@ Valid while: no observed or published-template third-party wording of adequate
   named as the near-miss that must not move — is the sanctioned least-bad, and
   its commit must say plainly that its vocabulary is authored.
 Markers: backend/tests/corpus_independent/generate.py, backend/tests/test_someone_elses_outcome_is_not_the_readers.py,
-  backend/tests/test_independent_corpus.py, docs/CLASSIFIER_RULES_GOVERNANCE.md
+  backend/tests/test_independent_corpus.py, docs/CLASSIFIER_RULES_GOVERNANCE.md,
+  backend/tests/test_the_ladder_reads_margin_when_nothing_competes_523.py

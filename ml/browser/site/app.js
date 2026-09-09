@@ -167,6 +167,8 @@ export function rulesClassify(subject, rawBody, sender) {
   let conf = 0.6;
   if (ws >= 10 && margin >= 5) conf = 0.95;
   else if (ws >= 6 && margin >= 3) conf = 0.9;
+  // #523. Nothing else scored above zero — ported from `rules.py`'s ladder.
+  else if (ws >= 5 && runner <= 0 && winner === 'applied') conf = 0.9;
   else if (ws >= 4 && margin >= 2) conf = 0.8;
   else if (ws >= 2 && margin >= 1) conf = 0.7;
   if (isAts && ['applied', 'rejection', 'interview', 'offer'].includes(winner))
