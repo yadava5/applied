@@ -779,6 +779,23 @@ RECORDED = {
     # folded the update onto the right card instead of collapsing two
     # applications into one.
     "splits": 0,
+    # ZERO, AND RECORDED HERE RATHER THAN ONLY ASSERTED (#700). Both of these
+    # were pinned as literal `0` inside their assertions, which gates them
+    # perfectly well — and makes them invisible to `scripts/readme_facts.py`,
+    # which reads THIS dict. So `README.md`'s board row and the system card's
+    # copy of it published "0 merges" and "0 misrouted review" as prose no
+    # check could reach: two of the five figures on that row were measured by
+    # nothing. They are keys now, the assertions read them, and the two
+    # `UNCAPTURED_BY_DESIGN` waivers that said so are gone.
+    #
+    # MERGE is the strictly worse failure and does not share an assertion with
+    # `splits` — a split shows one application twice and a user can fix it; a
+    # merge destroys a record silently and nothing on the board says a second
+    # application ever existed.
+    "merges": 0,
+    # A review item routed to the wrong application. Same shape: the board's
+    # fifth figure, published and unchecked.
+    "wrong_review": 0,
     # Updates that never reached the card they belong to; see #448.
     "update_stranded": 0,
     # Updates the pipeline was not confident enough to file, so it ASKED. The
@@ -1736,7 +1753,7 @@ async def test_the_board_is_clean(cases, verdicts, test_session) -> None:
     replayed = await replay(test_session, verdicts)
     score = score_board(replayed, cases)
 
-    assert score.merges == 0, (
+    assert score.merges == RECORDED["merges"], (
         "MERGE is the strictly worse failure: it destroys a record silently, and "
         "a rejection landing on the wrong card settles a live application "
         f"terminally. {[f.detail for f in score.failures if f.mode == 'MERGE'][:3]}"
@@ -1818,7 +1835,7 @@ async def test_the_board_is_clean(cases, verdicts, test_session) -> None:
         "defect is out of this sample, not demonstrably gone. Any family here "
         "is mail that must mint nothing, on a card."
     )
-    assert score.wrong_review == 0, [
+    assert score.wrong_review == RECORDED["wrong_review"], [
         f.detail for f in score.failures if "REVIEW" in f.mode
     ][:3]
     assert score.cards == RECORDED["cards"], f"the board came out at {score.cards} cards"
