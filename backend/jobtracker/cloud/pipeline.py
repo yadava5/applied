@@ -673,6 +673,20 @@ def flag_follow_ups(
 # copy from components/viz/GateMeter.tsx, so the invariant claimed here could
 # hold while the number a user actually sees drifted (#229). The second copy is
 # gone; the pointer is a check now, not a promise.
+#
+# ONE NUMBER, APPLIED TO EVERY LIFECYCLE VERDICT — DEC-014. #527 proposes
+# splitting it by claim type and board state: 0.85 to MINT an application, 0.75
+# for a non-terminal UPDATE onto one the board already holds, 0.85 again for a
+# terminal one, on the argument that a wrong update is bounded and reversible
+# while a wrong mint is a phantom. The argument is good and the evidence is not
+# there yet. Measured over the 19,420-case corpus, the 0.75 rung's offer and
+# interview cells are 447/5 and 216/5, and all ten wrong verdicts are
+# `someone-elses-outcome` — DEC-013's family, whose third-party message arrives
+# from the same relay, naming the same role, at the same employer as the
+# reader's own card, so the lowered gate would file it onto that card. The
+# corpus benefit is 277 held updates and the PRODUCTION benefit is zero rows:
+# the live queue holds no offer and no interview at all. Read DEC-014 before
+# proposing it again; it names what unblocks it.
 AUTO_FILE_GATE = 0.85  # >= → may assert a hard status
 REVIEW_FLOOR = 0.70  # [floor, gate) → needs human review; below → dropped
 
