@@ -370,23 +370,40 @@ class Case:
                 f"Known: {sorted(_CARD_STATUSES)}"
             )
         if self.role_truth is not None:
-            # DERIVED, LIKE ``names_no_role`` BESIDE IT (#544). A passed value
-            # skips the branch below entirely, so a family that authored one
+            # DERIVED, LIKE ``names_no_role`` BESIDE IT (#544). An authored
+            # value skips the branch below entirely, so a family that wrote one
             # would put a role on a card whose sub-key says something else —
             # and `_settle_role_reachability` groups on exactly this field, so
             # an identity with an authored value on SOME of its cases would be
             # graded on a partial membership and renamed on a partial one too.
             # One application, two keys, a ground-truth SPLIT nobody wrote.
             #
-            # Measured before it was refused: zero occurrences of `role_truth=`
-            # anywhere under `backend/tests/`, so this closes a door rather than
-            # changing anything. The guard above says the same thing for
-            # ``names_no_role`` and says why.
-            raise ValueError(
-                "role_truth is derived from the identity sub-key, never "
-                f"passed. {self.role_truth!r} was handed in, which would make "
-                "the field and the key two answers to one question."
+            # A DISAGREEING VALUE, NOT ANY VALUE, AND THE FIRST DRAFT REFUSED
+            # ANY. It was justified with "zero occurrences of `role_truth=`
+            # anywhere under `backend/tests/`" — a grep for a literal, which is
+            # the wrong instrument for this question. `dataclasses.replace`
+            # passes EVERY field back through `__init__`, writing no such
+            # literal anywhere, and #967's blinding control does exactly that
+            # to one generated case. The refusal shipped green on its own
+            # branch and went red the moment the two landed together.
+            #
+            # So the rule is the one the docstring always meant: the field and
+            # the sub-key may not be two DIFFERENT answers to one question. A
+            # value that agrees with the key is the key, restated.
+            derived = (
+                self.identity.partition("|")[2]
+                if self.identity is not None
+                else None
             )
+            if derived is None or _ROLE_SENTINEL.match(derived) or (
+                self.role_truth != derived
+            ):
+                raise ValueError(
+                    "role_truth is derived from the identity sub-key, never "
+                    f"authored. {self.role_truth!r} was handed in against a "
+                    f"sub-key of {derived!r}, which would make the field and "
+                    "the key two answers to one question."
+                )
         if self.identity is not None and self.role_truth is None:
             sub_key = self.identity.partition("|")[2]
             if not sub_key:

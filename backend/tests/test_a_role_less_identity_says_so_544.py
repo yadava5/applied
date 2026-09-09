@@ -34,11 +34,13 @@ That is checked below at the current seed and refused outright in
 from __future__ import annotations
 
 import collections
+import dataclasses
+from datetime import datetime
 
 import pytest
 
 from tests.corpus_independent import generate as G
-from tests.corpus_independent.generate import _ROLE_SENTINEL, generate
+from tests.corpus_independent.generate import _ROLE_SENTINEL, Case, generate
 
 #: What the settler moves at seed 20260822: 260 identities over 341 messages,
 #: 81 of them pairs. Recorded so that a family which quietly stops naming its
@@ -182,3 +184,62 @@ def test_the_settler_refuses_a_collapse_that_would_merge() -> None:
         )
     with pytest.raises(ValueError, match="would merge it with"):
         G._settle_role_reachability(b.cases)
+
+
+def test_the_role_truth_guard_refuses_a_DISAGREEING_value_and_only_that() -> None:
+    """The guard's boundary, both sides, because its first draft was too wide.
+
+    `role_truth` is derived from the identity sub-key, and the reason it may
+    not ALSO be authored is that `_settle_role_reachability` groups on this
+    field: an identity carrying an authored value on some of its cases would be
+    graded on a partial membership and renamed on a partial one.
+
+    THE FIRST DRAFT REFUSED ANY PASSED VALUE, and justified it with "zero
+    occurrences of `role_truth=` anywhere under `backend/tests/`". That is a
+    grep for a literal, and it is the wrong instrument: `dataclasses.replace`
+    passes every field back through `__init__` and writes no such literal.
+    #967's blinding control does exactly that to one generated case, so the
+    refusal was green on this branch, green on that one, and red the moment
+    they were assembled. `test_a_generated_sender_can_route_967.py` is the case
+    that found it and the first assertion here is that shape, kept close.
+    """
+
+    base = dict(
+        message_id="m1",
+        thread_id=None,
+        subject="s",
+        sender="someone@relay.example",
+        sender_name=None,
+        body="b",
+        delivered="b",
+        received_at=datetime(2026, 1, 1),
+        family="f",
+        expected_category="applied",
+        identity="acme|Backend Engineer",
+        employer="acme",
+    )
+
+    ok = Case(**base)
+    assert ok.role_truth == "Backend Engineer", "the derivation itself moved"
+
+    # ACCEPTED: the field and the key are ONE answer.
+    assert dataclasses.replace(ok, subject="hello").role_truth == "Backend Engineer"
+    assert Case(**{**base, "role_truth": "Backend Engineer"}).role_truth == (
+        "Backend Engineer"
+    )
+
+    # REFUSED: three ways for them to be TWO answers.
+    for label, override in (
+        ("a different role", {"role_truth": "Data Scientist"}),
+        (
+            "a role against a sentinel key",
+            {"identity": "acme|__norole__", "role_truth": "Backend Engineer"},
+        ),
+        (
+            "a role with no key at all",
+            {"identity": None, "employer": None, "role_truth": "Backend Engineer"},
+        ),
+    ):
+        with pytest.raises(ValueError, match="two answers to one question"):
+            Case(**{**base, **override})
+            raise AssertionError(f"{label} was not refused")
