@@ -40,7 +40,8 @@ import pytest
 
 from jobtracker.cloud import pipeline
 
-#: A generic ESP on a RESERVED domain, which needs no DEC-008 carve-out and was
+#: A generic ESP on a RESERVED domain, so `docs/TEST_DATA_POLICY.md`'s real-domain
+#: carve-out is not needed here — which was
 #: checked rather than assumed: `resolve_employer` keys the relay test on the
 #: domain BRAND, not the registrable domain, so `sendgrid.example` and
 #: `sendgrid.net` behave identically here — both refuse to read an employer out
