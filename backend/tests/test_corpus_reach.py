@@ -380,6 +380,17 @@ RECORDED_FAMILIES: dict[str, tuple[int, int, int]] = {
     # `rejection` pattern is the single addition — a phrase in the shipped
     # rules that no case in the corpus had ever exercised. Nothing is lost.
     "someone-elses-outcome": (240, 16, 0),
+    # #523. 200 messages, 10 wordings, no_strong 0 — and it is the FIRST
+    # observed family recorded at zero, so the zero needs its reason said
+    # rather than assumed. It is not circular: every wording is one of the
+    # ten acknowledgements `observed.py` provenances `in-house`, transcribed
+    # like the rest of that file. What is zero is the DISCOVERY, and that is
+    # a fact about the engine — an acknowledgement is the shape it knows
+    # best, which the header of `observed.py` already records at 6.7% for
+    # the whole set. The ten in-house ones are the half of that set with no
+    # weak-only member in it. What this family varies is the SENDER, which
+    # this metric does not see at all.
+    "observed-confirmation-in-house": (200, 10, 0),
     # #626, and it is invented in the same sense as everything above it: the
     # BODIES are the author's, so its discovery rate is 0.0% by construction and
     # it belongs in this block. What is real about it is the half this metric
@@ -448,6 +459,13 @@ OBSERVED_TEMPLATES: dict[str, tuple[tuple, ...]] = {
     "observed-closure": (observed.OBSERVED_CONFIRMATIONS, observed.OBSERVED_CLOSURES),
     "observed-pending": (observed.OBSERVED_CONFIRMATIONS, observed.OBSERVED_PENDING),
     "observed-not-application": (observed.OBSERVED_NOT_APPLICATIONS,),
+    # #523. The same ten acknowledgements `observed-confirmation` draws,
+    # minus the thirteen it draws that came over a relay: this family exists
+    # to deliver the in-house ones from an in-house sender, and its wording
+    # count is therefore the size of that subset and not of the whole set.
+    "observed-confirmation-in-house": (
+        observed.in_house(observed.OBSERVED_CONFIRMATIONS),
+    ),
 }
 
 OBSERVED_FAMILIES = tuple(sorted(OBSERVED_TEMPLATES))
@@ -897,7 +915,7 @@ def test_the_corpus_keeps_the_discovery_power_it_has(measured) -> None:
     )
 
 
-def test_the_invented_families_still_discover_nothing(measured) -> None:
+def test_the_families_recorded_at_zero_still_discover_nothing(measured) -> None:
     """DIRECTION: a recorded ZERO is an EQUALITY, not a floor.
 
     27 families, 13,760 messages, and not one sentence in them that the
@@ -946,7 +964,20 @@ def test_the_invented_families_still_discover_nothing(measured) -> None:
     # searching what `classify` searches, and both families turned out to hold
     # messages the engine reaches nothing on. See their entries in
     # RECORDED_FAMILIES for which mechanism hid which.
-    assert len(zeros) == 30, "the recorded set of circular families"
+    # 30 -> 31 (#523). The 31st is `observed-confirmation-in-house` and it
+    # is the FIRST member of this set that is NOT circular — its wordings
+    # are transcriptions, not the author's. It is here because its measured
+    # `no_strong` is 0, which is what this set is keyed on, and the reason
+    # is recorded beside its entry in RECORDED_FAMILIES: every in-house
+    # acknowledgement matches a strong pattern, so the gap it exists to fill
+    # is the sender rather than the vocabulary. The direction this test
+    # enforces is unchanged for it: going non-zero would mean a transcribed
+    # wording stopped matching the engine, which is as much a finding as an
+    # invented one starting to.
+    assert len(zeros) == 31, (
+        "the recorded set of families whose discovery rate is zero — every "
+        "one of them circular but `observed-confirmation-in-house`"
+    )
     moved = {
         family: measured.families[family].no_strong
         for family in sorted(zeros)

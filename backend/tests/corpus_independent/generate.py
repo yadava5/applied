@@ -4037,6 +4037,111 @@ def _someone_elses_outcome(b: _Builder, n: int) -> None:
             )
 
 
+#: An employer's OWN mail addresses, on the reserved ``.example`` TLD (#523).
+#:
+#: ``{t}`` IS THE LEADING WORD OF THE EMPLOYER TOKEN, NOT THE WHOLE TOKEN, and
+#: that is load-bearing twice over.
+#:
+#:   * **It is the only spelling that can route.** Two thirds of the invented
+#:     pool carry a suffix ("Copperthwaitegate Labs"), so the whole token has a
+#:     space in it and ``careers@{token}.example`` is an address no mail system
+#:     could deliver. 281 cases already in this corpus carry one —
+#:     ``outreach-autoresponder`` 110 and ``update-from-another-domain`` 171 —
+#:     and they resolve correctly only BECAUSE of it: ``_domain_brand`` splits
+#:     on dots, so the space survives into the brand and the brand happens to
+#:     equal the token. Filed separately; not repeated here.
+#:   * **It still resolves to the right employer**, by the product's own rule
+#:     rather than by a harness convenience. ``pipeline.matches_company_token``
+#:     accepts a match on the LEADING WORD — the same grouping
+#:     ``roll_up_applications`` applies — so ``careers@copperthwaitegate.example``
+#:     identifies "Copperthwaitegate Labs". Verified against that function
+#:     rather than asserted here.
+#:
+#: SO THE IDENTITY OUTCOME IS HELD FIXED WHILE THE SENDER CLASS VARIES.
+#: ``company_key`` takes the sender-domain brand first whenever that brand is
+#: not a relay, so this arm resolves its employer off the DOMAIN while the relay
+#: arm (``observed-confirmation``) resolves the same employer off the subject
+#: and the display name. Same answer, different path. A domain whose brand did
+#: NOT match the employer — the real message is ``makenotion.com`` for "Notion"
+#: — would vary two things at once, and is filed as its own issue rather than
+#: smuggled in here.
+_IN_HOUSE_SENDERS: tuple[str, ...] = (
+    "careers@{t}.example",
+    "recruiting@{t}.example",
+    "talent@{t}.example",
+    "no-reply@{t}.example",
+    "jobs@{t}.example",
+)
+
+#: The acknowledgements the owner received from an employer's own mail system.
+_IN_HOUSE_CONFIRMATIONS = observed.in_house(observed.OBSERVED_CONFIRMATIONS)
+
+
+def _observed_confirmations_in_house(b: _Builder, n: int) -> None:
+    """Real acknowledgements delivered from the sender that actually sent them.
+
+    ``observed.py`` records, per template, where the message came from, and ten
+    of the twenty-three acknowledgements say ``in-house`` — the employer's own
+    mail system, not an ATS relay. Every family above hands all twenty-three to
+    ``b.ats(i)``. So the corpus's only non-circular evidence arrived over a
+    sender it never had, and ``rules.classify``'s +0.05 relay bonus was applied
+    to every one of them.
+
+    WHAT THAT ERASED. #523 reports a production message held at ``applied``
+    0.80 — one point of score under the 0.90 rung, and no relay bonus to carry
+    it over ``AUTO_FILE_GATE``. Measured before this family existed, across
+    19,220 cases: the base-0.80 rung holds 816 verdicts, 806 of them from a
+    relay and auto-filed, 10 from an employer's own domain and held. All ten
+    were ``outreach-autoresponder``, whose own docstring says every wording in
+    it is synthetic. The corpus could neither justify nor refuse a fix, and
+    two issues (#523, #448) recorded "the shape has zero witnesses" as though
+    that were a fact about mail rather than about this generator.
+
+    THE WITNESS IS ONE TEMPLATE AND IT IS NAMED. Scored under both sender
+    classes, exactly one of the thirty-six observed templates changes side of
+    the gate: ``OBSERVED_CONFIRMATIONS[6]``, provenance ``in-house, thread
+    19ff97772e932c0f``, which is the transcription of the message #523 quotes.
+    Relay 0.85 and files; in-house 0.80 and waits for a person. The other nine
+    in-house acknowledgements score six or more and land at 0.90 either way,
+    which is why this family is a THIN witness rather than a broad one and is
+    described as one. It is not thin in the way that matters: the one wording
+    it turns on is the one the owner actually received.
+
+    WHAT IT DELIBERATELY DOES NOT CARRY. Four observed templates — one
+    assessment, the closure, one pending notice and the not-an-application —
+    score under ``REVIEW_FLOOR``. Over a relay, ``pipeline``'s ATS floor puts
+    three of them in the review queue; from an employer's own domain they reach
+    nothing at all. That is a second defect this generator hides and it is
+    filed on its own rather than buried in a family about the ladder, because
+    it needs a fix this issue has no answer for.
+
+    Its relay twin is ``observed-confirmation`` (300 cases, the same twenty-
+    three templates), so the pair is across families and not inside this one.
+    The exact one-slot claim — identical rendered text, relay sender against
+    in-house sender — is asserted against ``RulesClassifier`` directly in
+    ``test_the_ladder_reads_margin_when_nothing_competes_523.py``, where it is
+    exact and cannot be moved by anything the board does.
+    """
+
+    for i in range(n):
+        display, token = b.employer()
+        role = b.role(i)
+        subject, body, _ = b.pick(_IN_HOUSE_CONFIRMATIONS)
+        fill = {"display": display, "role": role, "req": f"R-{800000 + i}"}
+        b.add(
+            family="observed-confirmation-in-house",
+            subject=subject.format(**fill),
+            sender=b.pick(_IN_HOUSE_SENDERS).format(t=token.split()[0]),
+            sender_name=f"{display} Recruiting",
+            body=body.format(**fill),
+            expected_category="applied",
+            identity=f"{token}|{role}",
+            employer=token,
+            day=i % 60,
+            note="a real acknowledgement, from the employer's own mail system",
+        )
+
+
 _FAMILIES: tuple[tuple[str, object, int], ...] = (
     ("confirmation", _confirmations, 1100),
     ("rejection-plain", _rejections_plain, 550),
@@ -4130,6 +4235,15 @@ _FAMILIES: tuple[tuple[str, object, int], ...] = (
     # whose refusal and its twin differ by a single NOUN PHRASE inside an
     # otherwise character-identical message.
     ("someone-elses-outcome", _someone_elses_outcome, 120),
+    # #523. Appended last for the reason every entry above states — the
+    # builder shares one seeded RNG, so a family anywhere else re-draws every
+    # employer, role and wording after it and the whole recorded run moves at
+    # once. 200 messages over the ten acknowledgements `observed.py`
+    # provenances `in-house`, delivered from the employer's own domain
+    # instead of the ATS relay every other observed family hands them to.
+    # It is the first family here whose subject and body are drawn from the
+    # transcribed set while the SENDER is what it varies.
+    ("observed-confirmation-in-house", _observed_confirmations_in_house, 200),
 )
 
 
