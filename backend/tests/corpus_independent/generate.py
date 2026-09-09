@@ -4356,18 +4356,66 @@ def _settle_role_reachability(cases: list[Case]) -> None:
         if case.identity is not None and case.role_truth is not None:
             by_identity.setdefault(case.identity, []).append(case)
 
-    for group in by_identity.values():
+    keys = {case.identity for case in cases if case.identity is not None}
+    for identity, group in by_identity.items():
         role = " ".join(group[0].role_truth.split()).lower()
         if any(role in _readable_text(case) for case in group):
             continue
+        # THE KEY LOSES THE ROLE TOO (#544). Nulling ``role_truth`` and leaving
+        # the identity reading `marshburyshore|Software Development Engineer I`
+        # for mail whose entire text is "your details have been added to our
+        # database" left the corpus asserting one thing and grading another.
+        # ``identity`` is not decoration: it is ground truth for SPLIT and
+        # MERGE, so two cases sharing it MUST land on one card and two with
+        # different keys MUST NOT. 81 of these identities hold two messages,
+        # none of them threaded, so what actually joined those pairs was
+        # employer plus an EMPTY role token — the assertion passed for a reason
+        # unrelated to what it stated, and the day the extractor learned to read
+        # a role out of one of the two, the pair would split while the key that
+        # was supposed to predict it had been describing something else.
+        #
+        # ``__norole__`` is the spelling the sentinel families already use
+        # (`__apply0__`, `__third__`, `__submission__`), and #544's own text
+        # proposed `__noRole__`, which ``_ROLE_SENTINEL`` — `^__[a-z0-9]+__$` —
+        # does not match. A sub-key that matched no sentinel would set neither
+        # ``role_truth`` nor ``names_no_role``, which is the 960-card hole the
+        # empty-sub-key guard above refuses by name.
+        token = identity.partition("|")[0]
+        collapsed = f"{token}|__norole__"
+        if collapsed in keys and collapsed != identity:
+            # A MERGE, NOT A RENAME, and it must not happen quietly. Two
+            # distinct applications at one employer collapsing onto one key
+            # would assert that the product must put them on ONE card — a
+            # ground-truth claim nobody wrote, arriving as a side effect of a
+            # role being unreadable. Measured at seed 20260822 this cannot
+            # fire: 0 of the 260 identities the rule touches shares an employer
+            # token with any other identity, touched or not. It is refused
+            # rather than left to become reachable when a family is added.
+            raise ValueError(
+                f"collapsing {identity!r} to {collapsed!r} would merge it with "
+                f"an identity that already exists. Two applications at one "
+                f"employer would then be asserted to share a card because "
+                f"neither message spelled its role — a claim no family made."
+            )
+        keys.discard(identity)
+        keys.add(collapsed)
         for case in group:
             # ``object.__setattr__`` because ``Case`` is frozen and because
             # ``dataclasses.replace`` would re-run ``__post_init__``, whose
             # guard refuses a PASSED ``names_no_role`` — correctly. This is a
             # derivation, the same as the guard's own branch; the guard exists
             # to stop a BUILDER asserting it, and no builder can reach here.
+            object.__setattr__(case, "identity", collapsed)
             object.__setattr__(case, "role_truth", None)
-            object.__setattr__(case, "names_no_role", True)
+            # DERIVED FROM THE SUB-KEY, exactly as ``__post_init__`` derives it
+            # for every family that spells a sentinel by hand, rather than set
+            # beside it as a second rule that could disagree. After #544 there
+            # is one definition of "this mail names no job" — the sub-key — and
+            # this pass is what makes the key true rather than what works
+            # around it being false.
+            object.__setattr__(
+                case, "names_no_role", bool(_ROLE_SENTINEL.match("__norole__"))
+            )
 
 
 def generate(seed: int = 20260822) -> list[Case]:

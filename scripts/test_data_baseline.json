@@ -546,8 +546,8 @@
       "digest": "92ff56094cbce50d"
     },
     "backend/tests/test_independent_corpus.py": {
-      "count": 5,
-      "digest": "cd14f1d59ce280ef"
+      "count": 6,
+      "digest": "a206e2df5481067e"
     },
     "backend/tests/test_ingestion_hole_166.py": {
       "count": 4,

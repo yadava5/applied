@@ -49,7 +49,14 @@ from tests.corpus_independent.harness import (
 #: is 180 more messages and 60 more employers.
 #: 6753126bb7f4c48b since #522; 50f770359b07d783 since #521, which appends
 #: `outreach-autoresponder` — 160 more messages and 80 more employers.
-CORPUS_DIGEST = "2b3ff419180770f3"
+#: 4127b97fb1ff03dd since #544, and this one moved for a reason none of the
+#: others did: NOT ONE MESSAGE CHANGED. The corpus is the same 19,420 mails; 341
+#: of them lost a job title from their identity KEY, which `digest()` has covered
+#: since #533 precisely so a truth-only edit cannot pass unseen. Every other
+#: recorded number in this file held — 44 of 45 tests green on the new corpus
+#: before this line was touched — which is what says the collapse renamed keys
+#: rather than merging applications.
+CORPUS_DIGEST = "4127b97fb1ff03dd"
 CORPUS_SIZE = 19420
 
 #: THE RECORDED RUN, in one place, because the README quotes it.
