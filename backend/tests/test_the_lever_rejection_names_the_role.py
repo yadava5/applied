@@ -41,16 +41,26 @@ real title. `test_a_name_that_looks_like_a_title_is_the_known_residual` asserts
 the current behaviour so the limitation is visible in the suite instead of
 discovered later.
 
-PLACEMENT WAS MEASURED, NOT REASONED ABOUT. `_may_join` returns False when a
-cluster's `role_token` is None and an item's is not, so a captured role can in
-principle mint a rival cluster beside a card the board already has — the
-failure that would make this change worse than the defect. Measured over the
-whole corpus by building the pipeline items both ways: clusters 10,215 both
-ways, unplaced 370 both ways, and exactly nine clusters swap `role_token=None`
-for the correct role. The role-carrying rejection mints in pass 1 and the
-anonymous confirmation joins it, so the card acquires its title rather than
-gaining a sibling. Those nine are the `role_missing` movement re-recorded in
-`test_independent_corpus.py`.
+PLACEMENT IS NOT GRADED HERE AND THE CORPUS COULD NOT GRADE IT EITHER. That
+sentence used to read the other way round, and the correction is the whole
+reason this file has a sibling. `_may_join` returns False when a cluster's
+`role_token` is None and an item's is not, so a captured role can mint a rival
+cluster beside a card the board already has. Measured over the whole corpus by
+building the pipeline items both ways, that never happened: clusters 10,215
+both ways, unplaced 370 both ways, nine clusters swapping `role_token=None` for
+the correct role and nothing else moving. Equal counts across 18,980 cases were
+read as "the reader is safe" and they were not — `_observed_rejections` draws a
+fresh employer per case and pairs one confirmation with one rejection, so the
+corpus holds NO employer with two anonymous rows, which is precisely the
+composition #485 opens with. A measurement that cannot return positive for a
+defect is not evidence about it. Constructed directly, the reader alone mints
+the rival card and silences the queue row.
+
+So the reader ships with a placement ladder, and that ladder is asserted in
+`test_an_identified_update_does_not_mint_a_rival_485.py` against eight
+compositions plus its own boundaries — including the five that the ladder's
+FIRST version, which was a measured net regression, answered differently from
+`main` for the worse.
 """
 
 from __future__ import annotations

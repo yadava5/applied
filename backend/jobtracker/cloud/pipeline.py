@@ -4953,24 +4953,61 @@ def partition_applications(
                 else:
                     unplaced.extend(unclaimed)
 
-        # THE UPDATES HELD BACK IN PASS 1, placed by the rule pass 2 uses for
-        # the anonymous ones — with one addition it earns by carrying an
-        # identity: landing on a single cluster STAMPS the title.
+        # THE UPDATES HELD BACK IN PASS 1, placed once pass 2 has built the
+        # employer's clusters — #485.
         #
-        # Four outcomes, and the last is the one #485 is about:
+        # THE LADDER IS WRITTEN AS A DIFF AGAINST MINTING, and that is the only
+        # way to read it safely. Before the deferral existed every one of these
+        # items minted a cluster right here in pass 1, and a minted cluster is
+        # not the end of the story: :func:`roll_up_applications` keys the
+        # resolver on ``(employer, req_id or role_token)`` and matches terminal
+        # rows too, so an identified item that mints gets carried onto the
+        # stored card its token names. Cutting it off from that resolver is what
+        # the first version of this guard did, and it cost 196 messages their
+        # card across the corpus while 62 cards were left reading `offered`
+        # with their correction in the queue. So every arm below that MINTS is
+        # main's behaviour unchanged, and only two arms diverge.
         #
-        #   * a cluster it may JOIN                -> join, and stamp
-        #   * the employer has no cluster at all   -> mint, exactly as before.
-        #     A rejection from an employer whose other mail never arrived is a
-        #     real application and a card is the right answer.
-        #   * exactly one cluster, and the board is not already holding several
-        #     -> join it and stamp. This is the shape #485's own subjects have,
-        #     and it is where the nine blank cards get their titles.
-        #   * anything else                        -> the review queue, which
-        #     is where it went before a role could be read out of the subject.
-        #     `known_multi` is consulted for the same reason pass 2 consults
-        #     it: a single cluster in THIS batch is not "the employer's only
-        #     application" when the board already holds several.
+        #   1. a cluster it may JOIN            -> join and stamp. Not a
+        #      divergence: pass 1 joins on `_may_join` too, and this loop is
+        #      only reached when it found nothing there.
+        #   2. exactly ONE cluster, that cluster names NOTHING, and the board
+        #      is not already holding several -> join it and stamp the title.
+        #      DIVERGENCE. This is #485's own composition at an employer with a
+        #      single application, and it is where a blank card gets its name.
+        #      `known_multi` gates it for the reason this function's docstring
+        #      already gives about role-less mail: one cluster in THIS batch is
+        #      not "the employer's only application" when the board holds four,
+        #      and stamping a title onto whichever one arrived today is the
+        #      guess that freezes a live row.
+        #   3. TWO OR MORE clusters and EVERY ONE of them names nothing -> the
+        #      review queue. DIVERGENCE, and the whole of what #485 buys. The
+        #      rival card this prevents is the failure the issue opens with:
+        #      reading the role out of a Lever rejection at an employer holding
+        #      two anonymous rows would mint a third, rejected, card beside
+        #      them AND silence the queue row that had been asking which
+        #      application the mail was about.
+        #   4. anything else -> mint, exactly as before.
+        #
+        # WHY 4 IS THE DEFAULT AND NOT THE QUEUE. At an employer whose clusters
+        # are identified, the item's own token is a better answer than a
+        # question: it either names one of them (arm 1) or it names a different
+        # application, and the resolver keys on that token downstream. The
+        # first version of this guard queued those and that is where the 196
+        # went.
+        #
+        # THE RESIDUAL, stated rather than left to be discovered: arm 3 cannot
+        # see the BOARD. It fires on two anonymous clusters IN THIS BATCH, and
+        # if the board separately holds an identified card at that employer
+        # whose token this item matches, minting would have reached it and this
+        # queues instead. `partition_applications` is given `known_multi` — a
+        # set of employer TOKENS — and never the stored identities, so the
+        # question cannot be asked here. A queue row is recoverable; a rejection
+        # filed onto the wrong one of two anonymous rows is not, because
+        # `advance_application_status` treats a terminal status as final.
+        def _names_nothing(cluster: _Cluster) -> bool:
+            return cluster.req_id is None and cluster.role_token is None
+
         for item, req_id, role_token, role in deferred:
             match = next(
                 (
@@ -4980,23 +5017,34 @@ def partition_applications(
                 ),
                 None,
             )
-            if match is None and not keyed and token not in known_multi:
-                keyed.append(
-                    _Cluster(
-                        company_token=token,
-                        company_display=display,
-                        req_id=req_id,
-                        role_token=role_token,
-                        role=role,
-                        items=[item],
-                    )
-                )
-                continue
-            if match is None and len(keyed) == 1 and token not in known_multi:
-                match = keyed[0]
             if match is None:
-                unplaced.append(item)
-                continue
+                if (
+                    len(keyed) == 1
+                    and _names_nothing(keyed[0])
+                    and token not in known_multi
+                ):
+                    match = keyed[0]
+                elif len(keyed) > 1 and all(_names_nothing(c) for c in keyed):
+                    unplaced.append(item)
+                    continue
+                else:
+                    # ARM 4. `_may_join` said no to every cluster here, so this
+                    # is a DIFFERENT application at an employer whose other
+                    # applications are named — including the single-cluster
+                    # contradiction, where the one cluster carries a token and
+                    # it is not this one. Joining that would file a rejection
+                    # for one job onto the card of another and settle it.
+                    keyed.append(
+                        _Cluster(
+                            company_token=token,
+                            company_display=display,
+                            req_id=req_id,
+                            role_token=role_token,
+                            role=role,
+                            items=[item],
+                        )
+                    )
+                    continue
             index = keyed.index(match)
             keyed[index] = replace(
                 match,
