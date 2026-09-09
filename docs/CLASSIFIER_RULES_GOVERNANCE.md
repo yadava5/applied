@@ -173,6 +173,57 @@ is the sharper version of this issue's failure mode, because nobody finds out.
 That is not hypothetical — #260's anchoring fix left the same unanchored
 containment in three other ports until #651.
 
+### A scoring-model change owes a production replay, not only a corpus one
+
+`4c68e1a` and `6919e63` are pattern changes: they move what MATCHES. #523 is the
+other kind — it moves what a match is WORTH — and the section above says such a
+change "needs the corpus evidence in the next section rather than a review
+argument". That is necessary and it was not sufficient, for a reason worth
+recording.
+
+The corpus's complement is authored. "249 move and none is wrong" is a claim
+about what WRONG mail sits at the shape, and the only wrong mail the corpus
+holds at any shape was written by the author of `rules.py`. `observed.py` holds
+one non-application wording, a verification code. So a corpus-only argument for
+a threshold can show the rung is REACHED by real mail and cannot show it is
+SAFE.
+
+The instrument that can is the owner's mailbox, read-only. #523 replayed the 68
+distinct wordings of the 96 stored rows through the shipped classifier with and
+without the rung, and reported the `(winner, runner-up)` histogram, every row the
+rung moves, and the nearest row it does not. That is what made "nothing that must
+not file sits at `w>=5, ru<=0`" a measurement rather than an absence of evidence.
+
+**So: a change to the ladder, a gate, or any threshold that decides routing
+replays the production mailbox and names every row whose disposition changes.**
+It is 96 rows and it takes seconds. A pattern addition does not owe this — its
+blast radius is bounded by the pattern.
+
+### A scoring-model change is graded by the SUITE, not by a chosen file set
+
+#523 is the worked example and it is here because the first attempt got it
+wrong. The rung was measured against the independent corpus (273 verdicts move,
+all correct), against both committed eval corpora, and against the owner's
+production board, and every one of those said it was safe. It was then verified
+by running the corpus tests, the reach tests and four neighbours — a file set
+chosen by the person who wrote the change.
+
+Three tests outside that set were red. `test_ingestion_hole_166.py` classifies a
+real `interview` row with NO sender at 5/0 and asserts 0.80, under the gate,
+because that is what #260's lookalike anchoring is worth; the rung handed it 0.90
+from any sender and the protection became moot. Both of #775's short-circuit
+ratchet tests failed too, including the ratchet's own negative control.
+
+The corpus could not see any of it: `harness.classify_all` buckets on CATEGORY,
+so a right-category verdict that should have waited for a human scores CORRECT,
+and the only non-application wordings in `observed.py` number one.
+
+**So a change to the ladder, a gate, or any threshold that decides routing runs
+the whole backend suite before it is believed, and replays the production
+mailbox as well as the corpora.** Those are 96 rows and take seconds. A pattern
+addition does not owe the production replay — its blast radius is bounded by the
+pattern — but it owes the same suite.
+
 ### What this document does NOT cover, and how not to route around it
 
 Everything above governs `rules.py` — what matches, and what a match is worth.

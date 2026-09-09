@@ -1848,6 +1848,7 @@ class RulesClassifier:
     over the second-best category:
     - score >= 10 and margin >= 5: 0.95
     - score >= 6 and margin >= 3: 0.90
+    - score >= 5 and runner-up <= 0, winner applied: 0.90
     - score >= 4 and margin >= 2: 0.80
     - score >= 2 and margin >= 1: 0.70
     - otherwise: 0.60
@@ -2137,6 +2138,81 @@ class RulesClassifier:
         if winner_score >= 10 and margin >= 5:
             confidence = 0.95
         elif winner_score >= 6 and margin >= 3:
+            confidence = 0.90
+        # #523. NOTHING ELSE SCORED ABOVE ZERO, which neither neighbouring rung
+        # can express. They read absolute score first and margin second, so a
+        # winner of 5 with no competing category at all was rated LESS confident
+        # than a winner of 6 against a runner-up of 3 — and on the 0.80 rung the
+        # +0.05 relay bonus is the whole difference between filing a card and
+        # asking a person. The reported message is an ordinary acknowledgement
+        # from an employer's own domain: `applied` 5, runner-up 0, 0.80, held.
+        # Over Greenhouse the same words are 0.85, which is `AUTO_FILE_GATE`
+        # exactly, and file themselves.
+        #
+        # REACHING THIS LINE WITH `runner_up_score <= 0` IMPLIES `winner_score
+        # == 5`. Anything at 6 or more with a non-positive runner-up has a
+        # margin of at least 6 and already took the rung above. So the set this
+        # moves is exactly `w == 5, ru <= 0` — 273 of the 19,420 independent
+        # corpus cases, every one correct, and 31 of them held before this
+        # line existed — 24 of those 31 are transcribed wordings
+        # (`observed-confirmation-in-house`, #969) and 7 are invented.
+        # Measured over the whole corpus: 273 move, 0 verdicts go from filed
+        # to held, and `auto_filed_wrong` does not change.
+        #
+        # BOUNDED AT 5 BECAUSE OF WHAT SITS AT 4. `w == 4, ru <= 0` is 567
+        # corpus cases and 480 of them are `offer` and `rescinded-offer` — the
+        # 260 cards #814 is about, which file one ULP over the gate today.
+        # Widening this to `>= 4` raises exactly those, and
+        # `test_the_auto_file_gate_is_a_boundary_814.py` reds when it happens.
+        #
+        # 0.90 AND NOT 0.85, which is what #523 proposes. 0.85 is a literal
+        # sitting ON `AUTO_FILE_GATE` and #814 is the whole argument against
+        # putting one there. 0.90 introduces no new value into the ladder.
+        # It is a CHOICE and not a calibration: 273/0 says this rung does not
+        # misfile on this corpus, not that a 5/0 verdict is right nine times in
+        # ten, and nobody should cite it as the second thing.
+        #
+        # `runner_up_score <= 0` AND NOT `margin >= 5`. They are the same
+        # predicate at this position and the first one says why. It is also
+        # UNGRADED IN ITS BEHAVIOUR, and that is stated rather than left to be
+        # discovered: every corpus case whose winner scores 4 or 5 has a
+        # runner-up of exactly 0, so mutating it to `<= 3` moves no verdict
+        # anywhere — corpus, the four committed eval corpora, or the owner's
+        # board. What DOES red on that mutation is
+        # `test_the_documented_ladder_is_the_ladder_in_the_code`, because the
+        # docstring above says `<= 0`: the STATEMENT is gated and the behaviour
+        # is not, and those are different things. It is kept because a winner of
+        # 5 against a runner-up of 4 is a margin of 1, which this ladder rates
+        # 0.70, and it must not reach 0.90.
+        #
+        # UNCONTESTED, MEASURED, NOT MERELY UNOPPOSED. A 5 is reachable as
+        # 6 + 3 + 1 - 5 — two strong hits and a NEGATIVE against the winner —
+        # and the ladder cannot see the composition. Of the 273, 43 carry a
+        # negative and every one belongs to `offer` or `pending_application`,
+        # which is WHY the runner-up is at zero. Zero carry a negative against
+        # their own winning category.
+        # `test_no_verdict_the_rung_raises_had_evidence_against_it` holds it.
+        #
+        # SCOPED TO `applied`, AND THE SCOPE IS THE PART THAT WAS MEASURED
+        # WRONG FIRST. Every one of the 273 corpus cases this moves wins
+        # `applied`, and the first version of this rung was left
+        # category-agnostic on the strength of that. "The corpus does not
+        # exercise the generalisation" was true, and it was the wrong thing to
+        # check: the repository's own fixtures do.
+        # `test_ingestion_hole_166.py` classifies a real `interview` row from
+        # `classifier_eval_v*.jsonl` with NO sender at all — 5/0 — and asserts
+        # 0.80, UNDER the gate, because that is what makes #260's lookalike
+        # anchoring worth having. Unscoped, this rung handed that message 0.90
+        # from any sender, and the protection became moot. Two further rows in
+        # `classifier_eval_v2.jsonl` sit at 5/0 as `pending_application` and
+        # `interview`.
+        #
+        # So the fence is the evidence's own edge. `applied` is where the 273
+        # are, where both production rows are, and where filing too eagerly
+        # costs a duplicate acknowledgement rather than an interview or an
+        # offer asserted on five points. The three ports carry the category
+        # test; that is the price, and it is smaller than the thing it buys.
+        elif winner_score >= 5 and runner_up_score <= 0 and winner_name == "applied":
             confidence = 0.90
         elif winner_score >= 4 and margin >= 2:
             confidence = 0.80
