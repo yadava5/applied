@@ -328,3 +328,20 @@ Scope it to the ports that ship. `README.md:489` records that the Hugging Face
 Space and `ml/browser/site/` were withdrawn on 2026-08-15, so two of the four
 copies are dormant — which does not weaken the argument for the check, it
 sharpens it: four copies of one predicate is the debt this issue names.
+
+## A gate change is a scoring-model change, and one of them is already decided
+
+`pipeline.AUTO_FILE_GATE` is one number applied to every lifecycle verdict, and
+**DEC-014** records why it stays that way: #527's claim-type split — 0.85 to
+mint, 0.75 for a non-terminal update onto a card the board already holds — is
+refused until the corpus holds offer or interview mail that somebody other than
+this repository wrote, or until the production queue actually fills with held
+offers.
+
+The general rule the entry is an instance of: **a threshold may not be lowered
+on the strength of a population with no negatives in it.** The 0.75 rung read
+100% precise for offer and interview for as long as no family had been built
+that could put a wrong verdict there. One was (#768), and both cells moved off
+100% immediately — into exactly the arm the split discounts. A cell with no
+negatives has no test power, and a gate policy tuned against one is measuring
+its own corpus's silence.
