@@ -243,3 +243,45 @@ def test_the_role_truth_guard_refuses_a_DISAGREEING_value_and_only_that() -> Non
         with pytest.raises(ValueError, match="two answers to one question"):
             Case(**{**base, **override})
             raise AssertionError(f"{label} was not refused")
+
+
+def test_the_names_no_role_guard_refuses_a_CONTRADICTING_value_and_only_that() -> None:
+    """The same boundary, one field over — and the reason it is here.
+
+    `names_no_role` carried the identical blanket refusal, and fixing only
+    `role_truth` would have been closing the instance rather than the class.
+    The exposure is larger, not smaller: `role_truth` is None on the role-less
+    cases while `names_no_role` is TRUE on all 260 of them, so a blanket
+    refusal makes exactly the cases this branch creates un-`replace`-able.
+    """
+
+    base = dict(
+        message_id="m1",
+        thread_id=None,
+        subject="s",
+        sender="someone@relay.example",
+        sender_name=None,
+        body="b",
+        delivered="b",
+        received_at=datetime(2026, 1, 1),
+        family="f",
+        expected_category="applied",
+        identity="acme|__norole__",
+        employer="acme",
+    )
+
+    ok = Case(**base)
+    assert ok.names_no_role is True, "the derivation itself moved"
+
+    # ACCEPTED: `replace` round-trips a role-less case, and an agreeing value
+    # is the sentinel restated.
+    assert dataclasses.replace(ok, subject="hello").names_no_role is True
+    assert Case(**{**base, "names_no_role": True}).names_no_role is True
+
+    # REFUSED: True against a key that names a real job, and True with no key.
+    for override in (
+        {"identity": "acme|Backend Engineer", "names_no_role": True},
+        {"identity": None, "employer": None, "names_no_role": True},
+    ):
+        with pytest.raises(ValueError, match="two answers to one question"):
+            Case(**{**base, **override})

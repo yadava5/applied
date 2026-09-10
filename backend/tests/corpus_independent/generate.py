@@ -346,14 +346,31 @@ class Case:
                 self.identity is not None or self.expect_review,
             )
         if self.names_no_role:
-            raise ValueError(
-                "names_no_role is derived — from the identity sub-key here, "
-                "and from the corpus text in `_settle_role_reachability` — "
-                "never passed. Set by hand it can contradict the identity it "
-                "is supposed to describe: `northwind|R-40080` with "
-                "names_no_role=True asserts a blank card for mail that names a "
-                "real job."
+            # DERIVED — from the identity sub-key here, and from the corpus
+            # text in `_settle_role_reachability`. Set by hand it can
+            # contradict the identity it is supposed to describe:
+            # `northwind|R-40080` with names_no_role=True asserts a blank card
+            # for mail that names a real job.
+            #
+            # A CONTRADICTING VALUE, NOT ANY VALUE, for the reason recorded
+            # beside `role_truth` below. `dataclasses.replace` passes every
+            # field back through `__init__`, so refusing any True made every
+            # role-less case — 260 of them after #544 — un-replaceable, and
+            # `role_truth`'s identical refusal is what actually broke when
+            # #967's blinding control landed. Closing that one and leaving this
+            # one would be closing the instance and not the class.
+            sub_key = (
+                self.identity.partition("|")[2]
+                if self.identity is not None
+                else ""
             )
+            if not sub_key or not _ROLE_SENTINEL.match(sub_key):
+                raise ValueError(
+                    "names_no_role is derived from the identity sub-key, never "
+                    f"authored. True was handed in against a sub-key of "
+                    f"{sub_key!r}, which is not a sentinel, so the field and "
+                    "the key are two answers to one question."
+                )
         if self.card_status is not None and self.card_status not in _CARD_STATUSES:
             raise ValueError(
                 f"card_status={self.card_status!r} is not a status any board "
