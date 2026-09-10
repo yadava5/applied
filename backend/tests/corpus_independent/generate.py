@@ -346,14 +346,31 @@ class Case:
                 self.identity is not None or self.expect_review,
             )
         if self.names_no_role:
-            raise ValueError(
-                "names_no_role is derived — from the identity sub-key here, "
-                "and from the corpus text in `_settle_role_reachability` — "
-                "never passed. Set by hand it can contradict the identity it "
-                "is supposed to describe: `northwind|R-40080` with "
-                "names_no_role=True asserts a blank card for mail that names a "
-                "real job."
+            # DERIVED — from the identity sub-key here, and from the corpus
+            # text in `_settle_role_reachability`. Set by hand it can
+            # contradict the identity it is supposed to describe:
+            # `northwind|R-40080` with names_no_role=True asserts a blank card
+            # for mail that names a real job.
+            #
+            # A CONTRADICTING VALUE, NOT ANY VALUE, for the reason recorded
+            # beside `role_truth` below. `dataclasses.replace` passes every
+            # field back through `__init__`, so refusing any True made every
+            # role-less case — 260 of them after #544 — un-replaceable, and
+            # `role_truth`'s identical refusal is what actually broke when
+            # #967's blinding control landed. Closing that one and leaving this
+            # one would be closing the instance and not the class.
+            sub_key = (
+                self.identity.partition("|")[2]
+                if self.identity is not None
+                else ""
             )
+            if not sub_key or not _ROLE_SENTINEL.match(sub_key):
+                raise ValueError(
+                    "names_no_role is derived from the identity sub-key, never "
+                    f"authored. True was handed in against a sub-key of "
+                    f"{sub_key!r}, which is not a sentinel, so the field and "
+                    "the key are two answers to one question."
+                )
         if self.card_status is not None and self.card_status not in _CARD_STATUSES:
             raise ValueError(
                 f"card_status={self.card_status!r} is not a status any board "
@@ -369,6 +386,41 @@ class Case:
                 f"enough, so the wrong value is now impossible. "
                 f"Known: {sorted(_CARD_STATUSES)}"
             )
+        if self.role_truth is not None:
+            # DERIVED, LIKE ``names_no_role`` BESIDE IT (#544). An authored
+            # value skips the branch below entirely, so a family that wrote one
+            # would put a role on a card whose sub-key says something else —
+            # and `_settle_role_reachability` groups on exactly this field, so
+            # an identity with an authored value on SOME of its cases would be
+            # graded on a partial membership and renamed on a partial one too.
+            # One application, two keys, a ground-truth SPLIT nobody wrote.
+            #
+            # A DISAGREEING VALUE, NOT ANY VALUE, AND THE FIRST DRAFT REFUSED
+            # ANY. It was justified with "zero occurrences of `role_truth=`
+            # anywhere under `backend/tests/`" — a grep for a literal, which is
+            # the wrong instrument for this question. `dataclasses.replace`
+            # passes EVERY field back through `__init__`, writing no such
+            # literal anywhere, and #967's blinding control does exactly that
+            # to one generated case. The refusal shipped green on its own
+            # branch and went red the moment the two landed together.
+            #
+            # So the rule is the one the docstring always meant: the field and
+            # the sub-key may not be two DIFFERENT answers to one question. A
+            # value that agrees with the key is the key, restated.
+            derived = (
+                self.identity.partition("|")[2]
+                if self.identity is not None
+                else None
+            )
+            if derived is None or _ROLE_SENTINEL.match(derived) or (
+                self.role_truth != derived
+            ):
+                raise ValueError(
+                    "role_truth is derived from the identity sub-key, never "
+                    f"authored. {self.role_truth!r} was handed in against a "
+                    f"sub-key of {derived!r}, which would make the field and "
+                    "the key two answers to one question."
+                )
         if self.identity is not None and self.role_truth is None:
             sub_key = self.identity.partition("|")[2]
             if not sub_key:
@@ -2032,7 +2084,7 @@ def _update_from_another_domain(b: _Builder, n: int) -> None:
         b.add(
             family="update-from-another-domain",
             subject=subject.format(e=display),
-            sender=f"talent@{token}.example",
+            sender=f"talent@{token.split()[0]}.example",
             sender_name=f"{display} Talent",
             body=f"{body} Regarding your application for the {role} position.",
             expected_category=category,
@@ -3275,7 +3327,7 @@ def _outreach_autoresponders(b: _Builder, n: int) -> None:
         # ONE draw, used by both members. A pair whose employer or role moved
         # between its halves would vary two things and prove neither.
         subject = subject_t.format(d=display, r=role)
-        sender = sender_t.format(t=token)
+        sender = sender_t.format(t=token.split()[0])
         sender_name = f"{display} {suffix}"
 
         b.add(
@@ -4294,10 +4346,17 @@ def _settle_role_reachability(cases: list[Case]) -> None:
     could not possibly know, and the correct behaviour — a blank card — was
     scored as a ROLE-MISSING defect.
 
-    Measured at the recorded seed: **146 identities, 227 messages** —
+    Measured at the recorded seed when #533 shipped: 146 identities over 227
+    messages. RE-MEASURED FOR #544 AT 19,420 CASES: **260 identities over 341
+    messages**, 81 of them pairs — ``observed-confirmation-in-house`` 94,
     ``observed-confirmation`` 65, ``observed-closure`` 36,
-    ``observed-assessment`` 31, ``observed-pending`` 14.
-    ``role_from_message`` returns ``None`` for all 227, so every one of those
+    ``observed-assessment`` 31, ``observed-pending`` 14,
+    ``eligibility-verification`` 10, ``outreach-autoresponder`` 10. The growth is
+    families added since, not new instances of a defect; the 81 pairs are the
+    same 81. ``RECORDED_NO_ROLE`` in
+    ``tests/test_a_role_less_identity_says_so_544.py`` is where that population
+    is pinned, so this paragraph cannot go stale silently again.
+    ``role_from_message`` returns ``None`` for all of them, so every one of those
     cards is blank today and the counter was punishing the product for being
     right.
 
@@ -4342,13 +4401,16 @@ def _settle_role_reachability(cases: list[Case]) -> None:
     can fail. What used to be 146 cards scored as defects becomes 146 cards
     asserted to be blank.
 
-    KNOWN AND NOT FIXED HERE: the identity key still reads
-    ``employer|Machine Learning Engineer`` for these cards. 81 of the 146 hold
-    two messages, none of them threaded, so what actually joins them today is
-    employer plus an EMPTY role token — the identity assertion passes for a
-    reason unrelated to what it states. Filed separately rather than folded in,
-    because changing those sub-keys moves identities and is a different blast
-    radius.
+    THE KEY LOSES THE ROLE TOO, SINCE #544, and this paragraph used to say the
+    opposite. It read "KNOWN AND NOT FIXED HERE: the identity key still reads
+    ``employer|Machine Learning Engineer``" — true when #533 shipped, and false
+    from the moment the collapse below landed. 81 of these identities hold two
+    messages, none of them threaded, so what joined each pair was employer plus
+    an EMPTY role token: the identity assertion passed for a reason unrelated to
+    what it stated, and the day the extractor reads a role out of one of the two
+    the pair splits while the key that was meant to predict it had been
+    describing something else. The key is the sentinel now and the flag is read
+    off it.
     """
 
     by_identity: dict[str, list[Case]] = {}
@@ -4356,18 +4418,76 @@ def _settle_role_reachability(cases: list[Case]) -> None:
         if case.identity is not None and case.role_truth is not None:
             by_identity.setdefault(case.identity, []).append(case)
 
-    for group in by_identity.values():
+    keys = {case.identity for case in cases if case.identity is not None}
+    for identity, group in by_identity.items():
         role = " ".join(group[0].role_truth.split()).lower()
         if any(role in _readable_text(case) for case in group):
             continue
+        # THE KEY LOSES THE ROLE TOO (#544). Nulling ``role_truth`` and leaving
+        # the identity reading `marshburyshore|Software Development Engineer I`
+        # for mail whose entire text is "your details have been added to our
+        # database" left the corpus asserting one thing and grading another.
+        # ``identity`` is not decoration: it is ground truth for SPLIT and
+        # MERGE, so two cases sharing it MUST land on one card and two with
+        # different keys MUST NOT. 81 of these identities hold two messages,
+        # none of them threaded, so what actually joined those pairs was
+        # employer plus an EMPTY role token — the assertion passed for a reason
+        # unrelated to what it stated, and the day the extractor learned to read
+        # a role out of one of the two, the pair would split while the key that
+        # was supposed to predict it had been describing something else.
+        #
+        # ``__norole__`` is the spelling the sentinel families already use
+        # (`__apply0__`, `__third__`, `__submission__`), and #544's own text
+        # proposed `__noRole__`, which ``_ROLE_SENTINEL`` — `^__[a-z0-9]+__$` —
+        # does not match. A sub-key that matched no sentinel would set neither
+        # ``role_truth`` nor ``names_no_role``, which is the 960-card hole the
+        # empty-sub-key guard above refuses by name.
+        token = identity.partition("|")[0]
+        collapsed = f"{token}|__norole__"
+        if collapsed in keys and collapsed != identity:
+            # A MERGE, NOT A RENAME, and it must not happen quietly. Two
+            # distinct applications at one employer collapsing onto one key
+            # would assert that the product must put them on ONE card — a
+            # ground-truth claim nobody wrote, arriving as a side effect of a
+            # role being unreadable. Measured at seed 20260822 this cannot
+            # fire: 0 of the 260 identities the rule touches shares an employer
+            # token with any other identity, touched or not. It is refused
+            # rather than left to become reachable when a family is added.
+            raise ValueError(
+                f"collapsing {identity!r} to {collapsed!r} would merge it with "
+                f"an identity that already exists. Two applications at one "
+                f"employer would then be asserted to share a card because "
+                f"neither message spelled its role — a claim no family made."
+            )
+        keys.discard(identity)
+        keys.add(collapsed)
         for case in group:
             # ``object.__setattr__`` because ``Case`` is frozen and because
             # ``dataclasses.replace`` would re-run ``__post_init__``, whose
             # guard refuses a PASSED ``names_no_role`` — correctly. This is a
             # derivation, the same as the guard's own branch; the guard exists
             # to stop a BUILDER asserting it, and no builder can reach here.
+            object.__setattr__(case, "identity", collapsed)
             object.__setattr__(case, "role_truth", None)
-            object.__setattr__(case, "names_no_role", True)
+            # DERIVED FROM THE KEY THIS PASS JUST WROTE, exactly as
+            # ``__post_init__`` derives it for every family that spells a
+            # sentinel by hand. After #544 there is one definition of "this mail
+            # names no job" — the sub-key — and this pass makes the key true
+            # rather than working around it being false.
+            #
+            # THE SUB-KEY IS READ, NOT SPELLED AGAIN. A first draft wrote
+            # ``_ROLE_SENTINEL.match("__norole__")``, which is a constant
+            # dressed as a derivation: it says nothing about the value actually
+            # stored, and under the one perturbation it responds to — a
+            # ``_ROLE_SENTINEL`` that stops matching this spelling — it would
+            # write ``False`` for every case while the gate comparing flag to
+            # sub-key stayed green, because both sides move together. Reading
+            # ``collapsed`` is what makes the line true to its own comment.
+            object.__setattr__(
+                case,
+                "names_no_role",
+                bool(_ROLE_SENTINEL.match(collapsed.partition("|")[2])),
+            )
 
 
 def generate(seed: int = 20260822) -> list[Case]:

@@ -49,7 +49,29 @@ from tests.corpus_independent.harness import (
 #: is 180 more messages and 60 more employers.
 #: 6753126bb7f4c48b since #522; 50f770359b07d783 since #521, which appends
 #: `outreach-autoresponder` — 160 more messages and 80 more employers.
-CORPUS_DIGEST = "2b3ff419180770f3"
+#: 2b3ff419180770f3 since #969 and #970, which append
+#: `observed-confirmation-in-house` and move 273 verdicts up a rung.
+#: 0bee6a832d47170e since #967, which builds the in-house sender from the
+#: employer's LEADING WORD rather than the whole token — 281 messages change
+#: address and nothing else about them moves. Recorded here because #971 landed
+#: the value without a line, and a chain with a gap in it stops being a chain.
+#: 4127b97fb1ff03dd since #544, measured on top of 2b3ff419 rather than of
+#: 0bee6a83 because the two branches were open at once. That one moved for a
+#: reason none of the others did: NOT ONE MESSAGE CHANGED. The corpus is the
+#: same 19,420 mails; 341 of them lost a job title from their identity KEY,
+#: which `digest()` has covered since #533 precisely so a truth-only edit
+#: cannot pass unseen.
+#:
+#: Every other recorded number in this file held — 44 of 45 tests green on the
+#: new corpus before this line was touched — which CORROBORATES the collapse
+#: being a rename rather than a merge. What SAYS it are the two things that can
+#: fail on the claim itself: the settler raises rather than collapsing two
+#: identities onto one key, and `test_a_role_less_identity_says_so_544.py` pins
+#: that no employer holds two of the identities it touches.
+#:
+#: The value below is the two changes composed, and it is the FIRST time either
+#: has been measured with the other present.
+CORPUS_DIGEST = "f662f5e266416b6e"
 CORPUS_SIZE = 19420
 
 #: THE RECORDED RUN, in one place, because the README quotes it.
@@ -383,11 +405,38 @@ RECORDED_EMPLOYER_SPELLINGS = {
     # its twin share a sender and a display name. That sharing is what makes
     # the pair a control, and the fact that it adds a token and a display
     # APIECE rather than two of either is the number that says it held.
-    "tokens": 9819,
-    "distinct_displays": 10059,
+    # 9819 -> 9648 (#967), and this is the DROP the assertion below calls an
+    # improvement rather than the RISE it was written to catch. Two families
+    # built an in-house sender by interpolating the whole employer token into a
+    # domain, so a suffixed employer arrived as `careers@copperthwaitegate
+    # labs.example` — an address that cannot route, and one whose brand
+    # `_domain_brand` reads back WITH the space. `resolve_employer` therefore
+    # minted `copperthwaitegate labs` for that message and `copperthwaitegate`
+    # for the same employer's other mail: one employer, two tokens, 171 times.
+    #
+    # Measured rather than inferred. 226 suffixed tokens leave and 55
+    # leading-word tokens arrive; 171 of the 226 already had their leading word
+    # as a separate token, which is the merge. `unresolved` is 403 before and
+    # 403 after — no message stopped resolving an employer, which is the
+    # question this gate's failure message tells you to ask first — and
+    # `tokens_with_several_spellings` is the SAME 150 tokens either way, so the
+    # naming did not fracture. The board is untouched: cards, splits, merges,
+    # company_wrong, company_drift and every other figure in the instrument are
+    # identical before and after.
+    "tokens": 9648,
+    "distinct_displays": 9888,
     # UNMOVED, and that is the assertion. 150 is documented above as entirely the
     # `employer-spelling` family; a family that added one would be #532 returning.
     "tokens_with_several_spellings": 150,
+    # THE NUMBER THAT SEPARATES A MERGE FROM A LOSS, recorded here rather than
+    # left in the paragraph above because the other three cannot tell them
+    # apart: a token that merges and a token whose cases stop resolving both
+    # remove exactly one token and one display from the sums. Only this one
+    # says which happened, and #967's whole re-record turns on it being
+    # unchanged. Every case that could flip was resolving before, so a loss can
+    # only raise it — an unmoved 403 is zero losses, and a comment cannot
+    # enforce that.
+    "unresolved": 403,
 }
 
 RECORDED = {
@@ -2524,7 +2573,23 @@ def test_one_employer_gets_one_spelling(cases) -> None:
         "tokens": len(by),
         "distinct_displays": sum(len(v) for v in by.values()),
         "tokens_with_several_spellings": len(several),
+        # Counted from the same pass, so it cannot describe a different corpus
+        # than the three above it.
+        "unresolved": sum(
+            1
+            for case in cases
+            if pipeline.resolve_employer(case.sender, case.subject, case.sender_name)
+            is None
+        ),
     }
+    assert got["unresolved"] == RECORDED_EMPLOYER_SPELLINGS["unresolved"], (
+        f"{got['unresolved']} cases resolve no employer at all, recorded "
+        f"{RECORDED_EMPLOYER_SPELLINGS['unresolved']}. THIS IS THE LINE THAT "
+        "TELLS A MERGE FROM A LOSS. A RISE beside a falling `tokens` means "
+        "messages stopped resolving an employer — the token did not merge into "
+        "a neighbour, it went nowhere — and re-recording `tokens` without "
+        "reading this number is how that gets published as an improvement."
+    )
     assert got["tokens"] == RECORDED_EMPLOYER_SPELLINGS["tokens"], (
         f"the employer TOKEN count moved to {got['tokens']}. Two different "
         "causes reach this line and they want opposite responses. A RISE is "
@@ -3573,6 +3638,22 @@ def test_a_role_the_mail_does_spell_survives_the_derivation() -> None:
         "a role spelled only past the body cap was called reachable — the "
         "window has drifted from what `role_from_message` is handed, which is "
         "#533's own defect moved past character 4,000 instead of fixed"
+    )
+    # AND THE KEY ITSELF, on known answers (#544). Everything above reads the
+    # two derived FIELDS, and both of them agreeing is exactly what a settler
+    # that renamed to the wrong spelling — or to nothing — would also produce.
+    # This is the only place in the tree that pins the sub-key against a hand-
+    # built case rather than against the generated corpus, so it is the one
+    # assertion the corpus-wide gate cannot be a twin of.
+    assert silent.identity == "arcgrove|__norole__", (
+        f"the collapsed key is {silent.identity!r}; a sub-key that is not a "
+        "sentinel sets neither `role_truth` nor `names_no_role` on any case "
+        "built from it afterwards, which is the 960-card hole one spelling over"
+    )
+    assert past_the_cap.identity == "kestrelan|__norole__"
+    assert spelled.identity == "northwind|Backend Engineer", (
+        "a card whose mail DOES spell its role lost its key; the collapse is "
+        "supposed to touch only the identities the settler flags"
     )
 
 
