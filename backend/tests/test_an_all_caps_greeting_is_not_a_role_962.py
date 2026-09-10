@@ -105,21 +105,47 @@ def test_a_real_title_still_resolves(subject: str, expected: str) -> None:
     assert pipeline._role_from_subject(subject) == expected
 
 
-def test_the_title_case_spelling_was_never_the_defect() -> None:
+@pytest.mark.parametrize(
+    "caps, title",
+    [
+        (
+            "DECISION ON YOUR APPLICATION - NORTHWIND LABS",
+            "Decision on your application - Northwind Labs",
+        ),
+        (
+            "WE REGRET TO INFORM YOU - NORTHWIND LABS",
+            "We regret to inform you - Northwind Labs",
+        ),
+        (
+            "UPDATE ON YOUR CANDIDACY - NORTHWIND LABS",
+            "Update on your candidacy - Northwind Labs",
+        ),
+    ],
+)
+def test_the_title_case_spelling_was_never_the_defect(caps: str, title: str) -> None:
     """The case control that separates the mechanism from the vocabulary.
 
-    Title-Case prose already returned None before the fix, because the pattern's
-    continuation run requires `[A-Z0-9]` on every word. So the defect is what an
-    ALL-CAPS spelling reaches, and this asserts the other spelling's answer is
-    unchanged rather than newly correct.
+    Title-Case prose already returned None before this fix, because the
+    pattern's continuation run requires `[A-Z0-9]` on every word. So the defect
+    is what an ALL-CAPS spelling reaches, and this asserts the other spelling's
+    answer is unchanged rather than newly correct.
+
+    THE PAIRS ARE TWO-SEGMENT ON PURPOSE, and the first draft was not. It used
+    "Thank you from <Employer> - <Candidate> - <Role>" and asserted None for
+    the Title-Case half — true when written, and false the moment #485's
+    `_role_from_dash_run` lands, because that subject is EXACTLY the shape that
+    reader exists for. Measured on a tree carrying both branches: this file was
+    green alone, #485 was green alone, and assembled the Title-Case half
+    returned "Backend Engineer". A control whose answer depends on which OTHER
+    branch has landed is not a control.
+
+    So the pairs here carry no trailing role segment at all. Neither spelling
+    reaches any reader in either tree, which is the claim the case is actually
+    making.
     """
 
-    assert (
-        pipeline._role_from_subject(
-            "Thank you from Northwind Labs - Jane Doe - Backend Engineer"
-        )
-        is None
-    )
+    assert pipeline._role_from_subject(caps) is None
+    assert pipeline._role_from_subject(title) is None
 
 
 def test_the_refusal_is_the_head_set_and_not_something_else() -> None:
