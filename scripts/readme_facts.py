@@ -284,6 +284,33 @@ def _assigned(rel: str, name: str) -> ast.expr:
     raise SystemExit(f"  ✗ {rel}: no module-level assignment to `{name}`")
 
 
+def _class_attr(rel: str, cls: str, name: str) -> ast.expr:
+    """The value node of `name = ...` inside `class cls:` at module level.
+
+    :func:`_assigned` reads module-level names only, and the embedding
+    dimension is not one — it is `EmbeddingModel.EMBEDDING_DIM`. Reading it by
+    AST rather than by regex is the same choice made everywhere else in this
+    file: a regex over source finds the number in a comment too, and a comment
+    is exactly what this fact exists to stop being the source of truth.
+    """
+
+    for node in _module(rel).body:
+        if isinstance(node, ast.ClassDef) and node.name == cls:
+            for stmt in node.body:
+                if isinstance(stmt, ast.Assign):
+                    for t in stmt.targets:
+                        if isinstance(t, ast.Name) and t.id == name:
+                            return stmt.value
+                elif isinstance(stmt, ast.AnnAssign):
+                    if (
+                        isinstance(stmt.target, ast.Name)
+                        and stmt.target.id == name
+                        and stmt.value
+                    ):
+                        return stmt.value
+    raise SystemExit(f"  ✗ {rel}: no `{cls}.{name}` assignment")
+
+
 def rules_pattern_counts(rel: str) -> dict[str, int]:
     """
     The `PATTERNS` dict literal in a rules.py, counted by AST.
@@ -1616,6 +1643,75 @@ FACTS: dict[str, dict] = {
                 "re": r'value: "([\d,]+)", label: "messages · adversarial corpus"',
                 "file": BOOKLET_CONTENT,
             },
+            # §04's HEADLINE, which used to read "3,163 tests, and 14,540
+            # messages written to break the classifier" and was waived because
+            # an anchor may name only the number it waives (#725) and that line
+            # embedded two numbers that both move. It shipped in the built
+            # bundle 4,880 messages and 583 tests out of date, contradicted four
+            # lines below by its own body. Splitting the numbers is what made it
+            # checkable: the test count already has its own site in `stats`, so
+            # the headline keeps the one fact it is about and this reads it.
+            {"re": r'headline: "([\d,]+) messages written to break', "file": BOOKLET_CONTENT},
+        ],
+    },
+    # #700 item 1. The embedding dimension was stated in three files and read
+    # by no fact, so two of the three carried a waiver saying exactly that.
+    # Three copies of one number with no source of truth between them is the
+    # shape this script exists to close, and the source of truth is the class
+    # attribute the model actually encodes with.
+    "embeddingDim": {
+        "kind": "static",
+        "describe": "EmbeddingModel.EMBEDDING_DIM in backend/jobtracker/classifier/embeddings.py",
+        "compute": lambda: int(
+            ast.literal_eval(
+                _class_attr(
+                    "backend/jobtracker/classifier/embeddings.py",
+                    "EmbeddingModel",
+                    "EMBEDDING_DIM",
+                )
+            )
+        ),
+        "sites": [
+            {
+                "re": r"(\d+)-d · cosine",
+                "file": "apps/web/components/landing/Cascade.tsx",
+            },
+            {"re": r"e5-small-v2 · (\d+)-dim", "file": BOOKLET_CONTENT},
+            # The third copy, in §02's prose. Anchored on the noun so it cannot
+            # also match the `-dim` site above, and so it cannot match the bare
+            # `384` four lines earlier — which is a LINE NUMBER in a source
+            # citation (`hybrid.py:167-168, 292, 384, 424`) and not this fact at
+            # all. A looser regex would have bound a published dimension to a
+            # line number that moves whenever hybrid.py is edited.
+            {"re": r"(\d+)-dimension embedding lookup", "file": BOOKLET_CONTENT},
+        ],
+    },
+    # #700 item 5. The board row prints FIVE figures and only three of them had
+    # a fact: `cards`, `splits` and `noise_on_card`. `merges` and
+    # `misrouted review` were pinned as literal zeros INSIDE the gate's
+    # assertions, which gates the product perfectly well and leaves the
+    # PUBLISHED zeros unchecked — the two `UNCAPTURED_BY_DESIGN` waivers that
+    # used to sit below said exactly that. The gate records them now, so these
+    # read them like every other figure on the row.
+    #
+    # A zero is the hardest number to notice going stale: nothing about "0
+    # merges" looks wrong once merges are 3.
+    "boardMerges": {
+        "kind": "static",
+        "describe": f"RECORDED['merges'] in {CORPUS_GATE}",
+        "compute": lambda: corpus_recorded("merges"),
+        "sites": [
+            r"merges / noise / misrouted review \| \*\*[\d,]+ / \d+ / (\d+) / \d+ / \d+\*\*",
+            {"re": r"card: [\d,]+ cards, (\d+) merges", "file": BOOKLET_CONTENT},
+        ],
+    },
+    "boardMisroutedReview": {
+        "kind": "static",
+        "describe": f"RECORDED['wrong_review'] in {CORPUS_GATE}",
+        "compute": lambda: corpus_recorded("wrong_review"),
+        "sites": [
+            r"merges / noise / misrouted review \| \*\*[\d,]+ / \d+ / \d+ / \d+ / (\d+)\*\*",
+            {"re": r"(\d+) misrouted review", "file": BOOKLET_CONTENT},
         ],
     },
     "corpusFamilies": {
@@ -2744,7 +2840,15 @@ FACTS: dict[str, dict] = {
             # a mislabelled one, which is why #473 did not simply edit the
             # digits. The card now names the recorded command, so the sentence
             # and the source agree.
-            {"re": r'headline: "([\d,]+) tests, and [\d,]+ messages', "file": BOOKLET_CONTENT},
+            # THE HEADLINE SITE IS GONE (#700), and the fact did not stop being
+            # checked there. That line read "3,163 tests, and 14,540 messages",
+            # which embedded a SECOND number no fact captured — the corpus size
+            # — so the line shipped 4,880 messages out of date while its own
+            # body four lines below said 19,420, and no waiver could fix it
+            # because an anchor may name only the number it waives (#725). The
+            # headline now carries the corpus size alone and `corpusSize` reads
+            # it. This count is still published on the same page and still
+            # checked, by the `stats` site immediately below.
             # REWORDED BY #833, and the site moved with it. The sentence used
             # to read "runs 3,163 tests, all passing", which was wrong by the
             # ten strict xfails -- a checked number inside an unchecked claim.
@@ -3650,31 +3754,6 @@ UNCAPTURED_BY_DESIGN: dict[tuple[str, str, str], str] = {
     ),
 
     # ── no source exists, and that is the finding ────────────────────────
-    ("README.md", "0", "cards / splits / merges / noise"): (
-        "the board row prints FIVE figures and the corpus gate records three "
-        "of them in RECORDED: cards, splits, noise_on_card. The other two are "
-        "prose, but for DIFFERENT reasons and they want different work. "
-        "`merges` IS measured — `score.merges == 0` is asserted for the sync "
-        "board at test_independent_corpus.py:1458 and again at :1681, and "
-        "RECORDED_AFTER_ANSWERING carries a `merges` of 19 for the "
-        "after-answering board — it simply is not in RECORDED, which is the "
-        "only dict `corpus_recorded()` reads, so capturing it needs a RECORDED "
-        "entry and NOT a counter. `misrouted review` has no counter anywhere "
-        "in the tree; that one does need writing. This entry used to say both "
-        "lacked a counter, which sent a reader to build one that already "
-        "exists — see #700"
-    ),
-    ("booklet/src/content.ts", "0", "No message lands on another application's card"): (
-        "the `merges` figure again, on the booklet's copy of the board "
-        "sentence. Same reason as the README entry above — measured, but not "
-        "in RECORDED, so `corpus_recorded()` cannot reach it. This entry has "
-        "now carried TWO plausible wrong reasons: it first claimed to be the "
-        "skipped count, which is not what the number is, and then said the "
-        "gate has no `merges` key, which stopped being true. A waiver with a "
-        "plausible wrong reason is the failure this list exists to prevent, "
-        "and it is worth noticing that the failure recurred here rather than "
-        "somewhere new; see #700"
-    ),
     ("README.md", "464", "Wrong verdicts stated as fact"): (
         "464 is the value BEFORE the fix and the gate records only the after; "
         "capturing it would mean inventing a source for a sentence about the "
@@ -3685,25 +3764,24 @@ UNCAPTURED_BY_DESIGN: dict[tuple[str, str, str], str] = {
         "paragraph that the artifact does not break out"
     ),
 
-    # ── tracked: should be captured, is not yet (#700) ───────────────────
-    ("apps/web/components/landing/Cascade.tsx", "384", "384-d · cosine"): (
-        "the embedding dimension is stated in three files and no fact reads "
-        "it anywhere; #700"
-    ),
-    ("booklet/src/content.ts", "384", "384-dim"): (
-        "the embedding dimension is stated in three files and no fact reads "
-        "it anywhere; #700"
-    ),
-    # ANCHORED ON THE STABLE HALF OF THE LINE, DELIBERATELY. This waiver used to
-    # read "1,783 tests, and 14,540 messages", which embedded the test count —
-    # a number `--write` rewrites on every `--record`. The 2026-09-03 recording
-    # moved it to 2,939, the anchor stopped matching the excerpt, the waiver
-    # silently expired, and this check failed on a line nobody had edited. An
-    # anchor may name the number it waives and nothing else that moves.
-    ("booklet/src/content.ts", "14,540", "14,540 messages written to break the classifier"): (
-        "corpusSize is checked elsewhere and this site captures the test count "
-        "instead; #700"
-    ),
+    # THE §04 HEADLINE WAIVER IS GONE, and #700 is why rather than an oversight.
+    # It read:
+    #
+    #   ("booklet/src/content.ts", "14,540",
+    #    "14,540 messages written to break the classifier")
+    #
+    # and it was doing its job: an anchor may name only the number it waives
+    # (#725), that line embedded two numbers that both move, so no anchor over
+    # it could be stable. What the waiver could not do is keep the line TRUE.
+    # Measured on 2026-09-09 it shipped in the built bundle 4,880 messages and
+    # 583 tests out of date, and its own body four lines below already said
+    # 19,420 because `--write` rewrites the body and not the headline.
+    #
+    # Splitting the numbers is the fix the waiver's own comment pointed at: the
+    # test count already has a site in `stats`, so the headline now carries the
+    # one fact it is about and `corpusSize` reads it at a normal site. A waiver
+    # is for a number nothing can check; this one was for a number that could be
+    # checked as soon as it stopped sharing a line.
 }
 
 
