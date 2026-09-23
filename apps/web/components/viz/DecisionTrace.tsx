@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { DEMO_REVIEW_QUEUE, type DemoReviewItem } from "@/lib/demo/demoData";
 
 const LAYERS = [
-  { id: "rules", label: "rules", note: "201 regex rules — instant, deterministic", color: "var(--viz-rules)" },
+  { id: "rules", label: "rules", note: "220 regex rules — instant, deterministic", color: "var(--viz-rules)" },
   { id: "embeddings", label: "e5", note: "e5 embedding similarity — semantic match", color: "var(--viz-embeddings)" },
   { id: "setfit", label: "SetFit", note: "SetFit few-shot head — the learned call", color: "var(--viz-setfit)" },
 ] as const;

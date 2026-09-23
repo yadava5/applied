@@ -54,7 +54,7 @@ export const TocPage: React.FC<{
           <div style={{ marginTop: 14 }}>
             <LabelValue label="Author" value={`${BRAND.author} · ${BRAND.year}`} />
             <LabelValue label="Live" value={BRAND.liveUrl} />
-            <LabelValue label="Model" value="int8 ONNX · runs in-browser" />
+            <LabelValue label="Model" value="int8 ONNX export · ran in-browser" />
           </div>
         </div>
 

@@ -309,7 +309,7 @@ export const HOW = {
     lede:
       "One email enters the top. Each layer tries to decide; if it clears its accept threshold, the cascade stops and files. If not, it falls through to a smarter, costlier layer — and finally to a gate.",
     body:
-      "The order is deliberate: a free, deterministic regex is tried before a 384-dimension embedding lookup, which is tried before the trained SetFit head. Most email is decided by the cheap layers; only the genuinely ambiguous message reaches the model — and only a confident model auto-files. Scope: the hosted deployment runs layer 1 alone — the serverless entrypoint pins cloud mode, and cloud mode never constructs layers 2 and 3. The full cascade is the desktop and evaluation path.",
+      "The order is deliberate: a free, deterministic regex is tried before a 384-dimension embedding lookup, which is tried before the trained SetFit head. Most email is decided by the cheap layers; only the genuinely ambiguous message reaches the model — and only a confident model auto-files. Scope: the hosted deployment runs layer 1 alone — the serverless entrypoint pins cloud mode, and cloud mode never constructs layers 2 and 3. The full cascade is the local and evaluation path.",
     steps: [
       { n: "1", label: "Rules", detail: "regex + ATS domains", accept: "≥ 0.90", accentKey: "02_HOW" },
       { n: "2", label: "e5 similarity", detail: "cosine 1-NN", accept: "≥ 0.85", accentKey: "03_INSIDE" },
@@ -384,7 +384,7 @@ export const INSIDE = {
     eyebrow: "§03 · ARCHITECTURE",
     headline: "One pipeline, and what it records.",
     body:
-      "The classifier is a hybrid pipeline in backend/jobtracker/classifier: a content guard, then rules, then embedding similarity, then SetFit, then a fallback that is always safe (needs_review rather than a wrong guess). Corrections write to training_data and flag the email user_corrected; embeddings persist in email_embeddings. The hosted deployment runs the guard and the rules only; layers 2 and 3 are never constructed under cloud mode, so the drawing below is the desktop and evaluation path. Nothing retrains on corrections automatically — retraining is an operator command, not a loop, and it is default-deny: refused unless the corpus is entirely synthetic or its single owner is explicitly allowlisted. Your mail is never pooled with anyone else's. Every training entry point requires a user id, the corpus is filtered by it, and the loaded rows are re-checked, so a corpus spanning two users raises instead of training.",
+      "The classifier is a hybrid pipeline in backend/jobtracker/classifier: a content guard, then rules, then embedding similarity, then SetFit, then a fallback that is always safe (needs_review rather than a wrong guess). Corrections write to training_data and flag the email user_corrected; embeddings persist in email_embeddings. The hosted deployment runs the guard and the rules only; layers 2 and 3 are never constructed under cloud mode, so the drawing below is the local and evaluation path. Nothing retrains on corrections automatically — retraining is an operator command, not a loop, and it is default-deny: refused unless the corpus is entirely synthetic or its single owner is explicitly allowlisted. Your mail is never pooled with anyone else's. Every training entry point requires a user id, the corpus is filtered by it, and the loaded rows are re-checked, so a corpus spanning two users raises instead of training.",
     flow: [
       { stage: "guard", detail: "force non-job → other" },
       { stage: "rules", detail: "220 regex · ≥ 0.90" },
@@ -655,7 +655,7 @@ export const BUILD = {
       { area: "IN-BROWSER ML", tech: "Transformers.js 3.5.2 · onnxruntime-web", note: "int8 ONNX on the client — withdrawn 2026-08-15" },
       { area: "CLASSIFIER", tech: "e5-small-v2 · SetFit / MiniLM-L6 · 220 regex", note: "the 3-layer hybrid cascade — hosted runs layer 1" },
       { area: "TRAINING", tech: "MLflow registry · CI-gated ≥ 0.95", note: "log, register, promote to production" },
-      { area: "BACKEND", tech: "FastAPI · SQLModel · Postgres", note: "sync, classify, review queue — SQLite on desktop" },
+      { area: "BACKEND", tech: "FastAPI · SQLModel · Postgres", note: "sync, classify, review queue — SQLite when run locally" },
       { area: "DESKTOP", tech: "SwiftUI macOS app", note: "the original native client — de-scoped 2026-08-12" },
     ],
     source: "source · apps/web/package.json:27 · ml/browser/site/app.js:16 · ml/track_run.py · backend/pyproject.toml",
