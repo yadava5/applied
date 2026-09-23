@@ -56,7 +56,7 @@ export function ClassF1Bars() {
   return (
     <Reveal className="rounded-xl border border-line-soft bg-surface p-4 sm:p-5">
       <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
-        <span className="label-mono">per-class F1 · held-out eval · v3</span>
+        <span className="label-mono">per-class F1 · v3 eval · 96 emails</span>
         <span className="font-mono text-[11px] text-dim">8 learned classes · all clear 0.95</span>
       </div>
 
