@@ -629,6 +629,7 @@ LANDING_CASCADE = "apps/web/components/landing/Cascade.tsx"
 LANDING_SIGNATURE = "apps/web/components/landing/SignatureEnding.tsx"
 WEB_SAMPLE_INBOX = "apps/web/components/demo/SampleInbox.tsx"
 WEB_IMPORT_MAIL = "apps/web/components/import/ImportMail.tsx"
+WEB_DECISION_TRACE = "apps/web/components/viz/DecisionTrace.tsx"
 # The browser demo's own README. Registered 2026-09-04: it said "the 201 rules"
 # while every other surface said 218, INCLUDING `app.js` in the same directory,
 # which is already a claim site. Corrected in one file and not the other is the
@@ -2001,6 +2002,17 @@ FACTS: dict[str, dict] = {
             {"re": r"MB, (\d+)\)\. Label sits", "file": BOOKLET_STAT_BIG},
             {"re": r"RULES\s+(\d+) regex rules", "file": BOOKLET_HOW_CASCADE},
             {"re": r"· (\d+) regex rules", "file": BOOKLET_THEME},
+            # ── printed on the LANDING PAGE, at four sites ──
+            #
+            # These carried 201, the count from before the pattern lists grew,
+            # and they were named by no fact either -- the same hole as the
+            # booklet's, in the surface a visitor actually sees. Cascade.tsx's
+            # docblock claims to verify every figure against the repo, which is
+            # how a stale number reads as a checked one.
+            {"re": r"· (\d+) regex rules \(rules\.py:", "file": LANDING_CASCADE},
+            {"re": r'model: "(\d+) patterns · ', "file": LANDING_CASCADE},
+            {"re": r'blurb: "(\d+) regex rules — instant', "file": WEB_SAMPLE_INBOX},
+            {"re": r'note: "(\d+) regex rules — instant', "file": WEB_DECISION_TRACE},
         ],
     },
     "rulesStrong": {
@@ -2010,6 +2022,7 @@ FACTS: dict[str, dict] = {
         "sites": [
             r"(\d+) strong · \d+ weak · \d+ negative",
             r"\((\d+) strong, \d+ weak, \d+ negative\)",
+            {"re": r"rules\.py: (\d+) strong", "file": LANDING_CASCADE},
         ],
     },
     "rulesWeak": {
@@ -2019,6 +2032,7 @@ FACTS: dict[str, dict] = {
         "sites": [
             r"\d+ strong · (\d+) weak · \d+ negative",
             r"\(\d+ strong, (\d+) weak, \d+ negative\)",
+            {"re": r"strong \+ (\d+) weak", "file": LANDING_CASCADE},
         ],
     },
     "rulesNegative": {
@@ -2028,6 +2042,7 @@ FACTS: dict[str, dict] = {
         "sites": [
             r"\d+ strong · \d+ weak · (\d+) negative",
             r"\(\d+ strong, \d+ weak, (\d+) negative\)",
+            {"re": r"weak \+ (\d+) negative", "file": LANDING_CASCADE},
         ],
     },
     "rulesVeto": {

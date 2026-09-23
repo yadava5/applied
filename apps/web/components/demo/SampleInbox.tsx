@@ -23,7 +23,7 @@ import { MAX_BODY_CHARS } from "@/lib/import/parseMail";
  */
 
 const LAYER_META: Record<LayerId, { n: number; label: string; color: string; blurb: string }> = {
-  rules: { n: 1, label: "rules", color: "var(--viz-rules)", blurb: "201 regex rules — instant, deterministic" },
+  rules: { n: 1, label: "rules", color: "var(--viz-rules)", blurb: "220 regex rules — instant, deterministic" },
   embeddings: { n: 2, label: "e5", color: "var(--viz-embeddings)", blurb: "e5 embedding similarity — semantic match" },
   setfit: { n: 3, label: "SetFit", color: "var(--viz-setfit)", blurb: "SetFit few-shot head — the learned call" },
 };

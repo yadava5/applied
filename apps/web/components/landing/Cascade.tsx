@@ -6,7 +6,7 @@ import type { CSSProperties } from "react";
  * it falls through to a smarter, costlier layer — and finally to the gate.
  *
  * Every figure here is verified against the repo:
- *   · 201 regex rules (rules.py: 106 strong + 26 weak + 69 negative), 14 ATS
+ *   · 220 regex rules (rules.py: 129 strong + 31 weak + 60 negative), 15 ATS
  *     domains, accept ≥ 0.90.
  *   · pretrained intfloat/e5-small-v2, 384-dim, cosine 1-NN, accept ≥ 0.85
  *     (embeddings.py:36 — loaded off the shelf, not fine-tuned).
@@ -19,7 +19,7 @@ const LAYERS = [
   {
     n: "1",
     label: "Regex rules",
-    model: "201 patterns · 14 ATS domains",
+    model: "220 patterns · 15 ATS domains",
     note: "Instant, deterministic, fully auditable — the phrases a hiring pipeline actually uses.",
     accept: "accept ≥ 0.90",
     color: "var(--viz-rules)",
