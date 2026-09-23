@@ -3,7 +3,7 @@ import { COLORS } from "../../theme";
 import { SceneFrame, iso } from "./primitives";
 
 /**
- * PROOF — the verdict. A vertical instrument gauge reads the held-out
+ * PROOF — the verdict. A vertical instrument gauge reads the v3
  * macro-F1 (0.9896): a green needle pegged near the top, a ring of ticks,
  * and one amber tick pinning the 0.95 confidence-interval floor below it.
  * The gauge stands on a small isometric plinth carrying nine short bars —
@@ -166,7 +166,7 @@ export const ProofPodium: React.FC = () => {
             </text>
             <g style={{ color: GREEN }}>
               <text x={cx} y={138} fontFamily="ui-monospace, monospace" fontSize={4.4} letterSpacing="0.6" fill="currentColor">
-                rules stage · held-out
+                rules stage · v3 eval
               </text>
             </g>
             {/* CI-floor legend, kept on the open left half (no edge clip) */}

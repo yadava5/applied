@@ -644,6 +644,27 @@ BROWSER_SITE_README = "ml/browser/site/README.md"
 BROWSER_SITE_INDEX = "ml/browser/site/index.html"
 BROWSER_DEMO_JS = "ml/browser/site/app.js"
 BOOKLET_CONTENT = "booklet/src/content.ts"
+BOOKLET_LAYER_SIGNATURES = "booklet/src/visuals/LayerSignatures.tsx"
+BOOKLET_STAT_BIG = "booklet/src/primitives/StatBig.tsx"
+BOOKLET_HOW_CASCADE = "booklet/src/visuals/diorama/HowCascade.tsx"
+BOOKLET_THEME = "booklet/src/theme.ts"
+
+
+def booklet_category_rules() -> list[int]:
+    """The per-category scored counts in the booklet's `CATEGORIES` array.
+
+    A SUM IS NOT A SITE. `rulesPatterns` can only gate a place that prints the
+    whole number, and the card also prints the split -- `RulesDistribution`
+    plots one dot per category off this array, so a reader can add it up. The
+    array said 35/47/27 for applied/rejection/assessment against 36/46/28 at
+    the definition site: three errors that cancelled to a total only one away
+    from the truth, which is exactly the shape no total-only check can see.
+
+    Anchored on `predicted:` so it reads the array and not the two zeros'
+    neighbours or any later `rules:` key.
+    """
+    return [int(n) for n in re.findall(r"rules: (\d+), predicted:", read(BOOKLET_CONTENT))]
+
 
 # The three documents carrying the published route arithmetic (#838).
 ARCHITECTURE = "docs/ARCHITECTURE.md"
@@ -1948,6 +1969,38 @@ FACTS: dict[str, dict] = {
             {"re": r"the (\d+) rules and the tokenizer", "file": BROWSER_SITE_README},
             {"re": r"Same (\d+) patterns,", "file": "apps/web/lib/demo/rulesLayer.ts"},
             {"re": r"same (\d+) regexes,", "file": "ml/browser/site/app.js"},
+            # ── printed in the System Card booklet, at eighteen sites ──
+            #
+            # THIS FACT REGISTERED NO BOOKLET SITE AT ALL until now, and the
+            # card published 219 at every one of them -- the headline of §02,
+            # the TOC line, the spec table -- while this file computed 220 from
+            # PATTERNS and `--check` printed "all agree".
+            # `booklet/src` is in TS_GATE_ROOTS, but that gate is about
+            # literals in TypeScript; a fact is only checked where it declares
+            # a site, and a file being scanned by a different gate is not one.
+            #
+            # The five sites outside content.ts, in four files, are doc
+            # comments rather than rendered copy. They are registered anyway:
+            # each one drifted to 219 with the rest, and a comment that states
+            # a count is the source the next author copies from.
+            {"re": r"cascade — (\d+) regex rules", "file": BOOKLET_CONTENT},
+            {"re": r'val: "(\d+) rules · e5 similarity', "file": BOOKLET_CONTENT},
+            {"re": r'model: "(\d+) regex patterns · ', "file": BOOKLET_CONTENT},
+            {"re": r"\(sum = (\d+) scoring patterns\)", "file": BOOKLET_CONTENT},
+            {"re": r"ruleTotal: (\d+),", "file": BOOKLET_CONTENT},
+            {"re": r"rules\.json \((\d+) scoring patterns", "file": BOOKLET_CONTENT},
+            {"re": r'headline: "(\d+) rules that never guess\."', "file": BOOKLET_CONTENT},
+            {"re": r"The first layer is (\d+) scoring regular expressions", "file": BOOKLET_CONTENT},
+            {"re": r'value: "(\d+)", label: "regex patterns', "file": BOOKLET_CONTENT},
+            {"re": r'stage: "rules", detail: "(\d+) regex', "file": BOOKLET_CONTENT},
+            {"re": r"in this repo: (\d+) regex rules", "file": BOOKLET_CONTENT},
+            {"re": r'MiniLM-L6 · (\d+) regex"', "file": BOOKLET_CONTENT},
+            {"re": r'spaceNote: "(\d+) rules · zero servers', "file": BOOKLET_CONTENT},
+            {"re": r"how the (\d+) patterns split across categories", "file": BOOKLET_LAYER_SIGNATURES},
+            {"re": r"negative, sum = (\d+);", "file": BOOKLET_LAYER_SIGNATURES},
+            {"re": r"MB, (\d+)\)\. Label sits", "file": BOOKLET_STAT_BIG},
+            {"re": r"RULES\s+(\d+) regex rules", "file": BOOKLET_HOW_CASCADE},
+            {"re": r"· (\d+) regex rules", "file": BOOKLET_THEME},
         ],
     },
     "rulesStrong": {
@@ -1983,6 +2036,13 @@ FACTS: dict[str, dict] = {
         "compute": lambda: _rules()["veto"],
         "sites": [
             r"A further (\d+) \*\*veto\*\* patterns",
+            # ── printed in the System Card booklet ──
+            #
+            # Both sat at 40 while PATTERNS carried 48, beside the 219 above:
+            # one edit registered neither number, so the card's own
+            # explanation of what it does NOT count was wrong too.
+            {"re": r"The (\d+) `veto` patterns are not scored", "file": BOOKLET_CONTENT},
+            {"re": r"sum = \d+; the (\d+) veto", "file": BOOKLET_LAYER_SIGNATURES},
         ],
     },
     "assessmentVeto": {
@@ -3217,6 +3277,20 @@ INVARIANTS = [
         "explain": lambda f: (
             f"{f['rulesStrong']} + {f['rulesWeak']} + {f['rulesNegative']} = "
             f"{f['rulesStrong'] + f['rulesWeak'] + f['rulesNegative']}, not {f['rulesPatterns']}."
+        ),
+    },
+    {
+        # See :func:`booklet_category_rules`. The card plots the split as well
+        # as the total, and three of its seven categories were wrong in two
+        # directions at once -- so the array can disagree with PATTERNS while
+        # every site that prints the total agrees with it.
+        "name": "the booklet's per-category rule counts sum to the scored total",
+        "holds": lambda f: sum(booklet_category_rules()) == f["rulesPatterns"],
+        "explain": lambda f: (
+            f"{BOOKLET_CONTENT} CATEGORIES sums to {sum(booklet_category_rules())} "
+            f"across {len(booklet_category_rules())} entries, not {f['rulesPatterns']}. "
+            f"The System Card's rule-distribution chart is plotting a different "
+            f"layer 1 from the one in {BACKEND_RULES}."
         ),
     },
     {

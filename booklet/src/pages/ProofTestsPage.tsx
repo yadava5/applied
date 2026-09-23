@@ -5,7 +5,7 @@ import { PROOF } from "../content";
 import { PullQuote } from "../primitives/PullQuote";
 
 /** Page 22 — the backend suite and the adversarial corpus, plus a
- *  merge-blocking CI gate. Every COUNT on this page lives in content.ts
+ *  build-failing CI gate. Every COUNT on this page lives in content.ts
  *  (PROOF.tests) and nowhere else: the test figure has moved three times since
  *  2026-08-06, and a number duplicated into a comment is a number that goes
  *  stale silently — this comment used to carry one. */

@@ -63,7 +63,7 @@ export const MASTHEAD = {
 export const ABSTRACT = {
   greeting: "Welcome.",
   body:
-    "Every job application resolves in your inbox — a rejection, an interview, an offer, an assessment link. The verdict already exists; it is just buried. Applied reads it at the source with a three-layer cascade — 219 regex rules, e5 embedding similarity, a SetFit few-shot head — behind a 0.85 confidence gate. Below the gate, a human decides. The hosted app runs layer 1; the learned head was exported to int8 ONNX and ran in a browser tab.",
+    "Every job application resolves in your inbox — a rejection, an interview, an offer, an assessment link. The verdict already exists; it is just buried. Applied reads it at the source with a three-layer cascade — 220 regex rules, e5 embedding similarity, a SetFit few-shot head — behind a 0.85 confidence gate. Below the gate, a human decides. The hosted app runs layer 1; the learned head was exported to int8 ONNX and ran in a browser tab.",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -87,7 +87,7 @@ export const TOC = {
     HOW: "rules → e5 → SetFit → the gate",
     INSIDE: "int8 ONNX, zero servers — withdrawn",
     PROOF: "0.9896 macro-F1 (rules stage), CI-gated",
-    SECURITY: "no LLM · on-device · least-privilege",
+    SECURITY: "no LLM · in-tab /import · least-privilege",
     BUILD: "train · register · export · ship",
   } as Record<string, string>,
   chapterGlyphs: {
@@ -109,7 +109,7 @@ export const TOC = {
     { key: "Diagrams only", val: "the cascade (p.09), the trace (p.21)." },
   ],
   atAGlance: [
-    { key: "3 layers", val: "219 rules · e5 similarity · SetFit head." },
+    { key: "3 layers", val: "220 rules · e5 similarity · SetFit head." },
     { key: "0.85 gate", val: "below it, a human decides — not the model." },
     { key: "22.8 MB", val: "int8 ONNX — ran in the browser, withdrawn." },
   ],
@@ -149,7 +149,7 @@ export const LAYERS = [
     n: "1",
     label: "Rules",
     accentKey: "02_HOW" as SectionKey, // cyan
-    model: "219 regex patterns · 15 ATS domains",
+    model: "220 regex patterns · 15 ATS domains",
     note: "instant, deterministic",
     accept: "accept ≥ 0.90",
     blurb:
@@ -196,18 +196,19 @@ export const THRESHOLDS = {
 
 // ---------------------------------------------------------------------------
 // The 9 categories — 8 model-predicted + needs_review (human-review bucket).
-// Rule counts from ml/browser/site/rules.json: strong + weak + negative
-// (sum = 219 scoring patterns). The 40 `veto` patterns are not scored —
+// Rule counts from backend/jobtracker/classifier/rules.py PATTERNS, counted
+// at their definition site by scripts/readme_facts.py: strong + weak + negative
+// (sum = 220 scoring patterns). The 48 `veto` patterns are not scored —
 // they cap a category at zero — so they are deliberately not in this sum.
 // ---------------------------------------------------------------------------
 
 export const CATEGORIES = [
-  { id: "applied", label: "applied", rules: 35, predicted: true, gloss: "confirmation your application landed." },
+  { id: "applied", label: "applied", rules: 36, predicted: true, gloss: "confirmation your application landed." },
   { id: "pending_application", label: "pending_application", rules: 21, predicted: true, gloss: "saved / in-progress, not yet submitted." },
   { id: "interview", label: "interview", rules: 40, predicted: true, gloss: "a recruiter wants to talk." },
-  { id: "rejection", label: "rejection", rules: 47, predicted: true, gloss: "“we’ve decided to move forward with…”" },
+  { id: "rejection", label: "rejection", rules: 46, predicted: true, gloss: "“we’ve decided to move forward with…”" },
   { id: "offer", label: "offer", rules: 31, predicted: true, gloss: "the email you were waiting for." },
-  { id: "assessment", label: "assessment", rules: 27, predicted: true, gloss: "a take-home or coding screen." },
+  { id: "assessment", label: "assessment", rules: 28, predicted: true, gloss: "a take-home or coding screen." },
   { id: "follow_up", label: "follow_up", rules: 18, predicted: true, gloss: "nudges, scheduling, status pings." },
   { id: "other", label: "other", rules: 0, predicted: true, gloss: "not job-related — filtered out." },
   { id: "needs_review", label: "needs_review", rules: 0, predicted: false, gloss: "below the gate — routed to a human." },
@@ -221,10 +222,10 @@ export const CATEGORIES = [
 export const CATEGORIES_META = {
   total: 9,
   predicted: 8,
-  ruleTotal: 219,
+  ruleTotal: 220,
   ruleCategories: 7,
   note: "8 categories are model-predicted; needs_review is a routing bucket, not a trained label — it is the confidence gate's output.",
-  source: "source · database/models.py:126–138 · rules.json (219 scoring patterns / 7 categories)",
+  source: "source · database/models.py:126–138 · rules.json (220 scoring patterns / 7 categories)",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -322,12 +323,12 @@ export const HOW = {
   // LayerDetailPages imports { HOW, LAYERS } only; see the note on THRESHOLDS).
   rules: {
     eyebrow: "§02 · LAYER 1",
-    headline: "219 rules that never guess.",
+    headline: "220 rules that never guess.",
     body: [
-      "The first layer is 219 scoring regular expressions across seven outcome categories, plus 15 known applicant-tracking-system sender domains. It is free, instant, and completely auditable — you can read exactly why any email was filed.",
+      "The first layer is 220 scoring regular expressions across seven outcome categories, plus 15 known applicant-tracking-system sender domains. It is free, instant, and completely auditable — you can read exactly why any email was filed.",
       "Rules only auto-accept above 0.90 confidence. A rule that is merely plausible defers to the layers below rather than risk a wrong, silent file.",
     ],
-    stat: { value: "219", label: "regex patterns · 7 categories" },
+    stat: { value: "220", label: "regex patterns · 7 categories" },
     stat2: { value: "0.90", label: "auto-accept threshold" },
     note: "A regex is a promise you can inspect. That is why it goes first.",
   },
@@ -360,11 +361,11 @@ export const HOW = {
     lede:
       "The cascade never auto-files a guess. A confidence gate at 0.85 is the first thing standing between “file it” and “ask a person” — and not the only one.",
     body:
-      "Clearing the gate is necessary to file, not sufficient. Applied must also name the employer and place the mail against a single application; a verdict at 1.0 with no nameable employer is not filed — it joins the review queue alongside everything below 0.85. A human’s answer there is recorded on the email, and no later sync overwrites it.",
+      "Clearing the gate is necessary to file, not sufficient. Applied must also name the employer and place the mail against a single application; a verdict at 1.0 with no nameable employer is not filed — it joins the review queue alongside everything from 0.70 to 0.85. A human’s answer there is recorded on the email, and no later sync overwrites it.",
     bands: [
       { range: "≥ 0.85", verb: "AUTO-FILE", tone: "setfit", detail: "confident — filed, if the employer can be named." },
       { range: "0.70 – 0.84", verb: "FLAG", tone: "gate", detail: "uncertain — queued for a human." },
-      { range: "< 0.70", verb: "FALL BACK", tone: "danger", detail: "no confident layer — needs_review." },
+      { range: "< 0.70", verb: "FALL BACK", tone: "danger", detail: "no confident layer — needs_review in the cascade; hosted, this mail is dropped unless a known ATS relayed it or it retracts an offer already filed." },
     ],
     recordNote:
       "Every correction is stored in training_data — every category, other included — and flags the email user_corrected, so a later sync leaves the human’s answer alone. Nothing retrains on it: the deployed classifier is rules-only, the row is scoped to the one account that made it, and it is never pooled with another user’s.",
@@ -386,7 +387,7 @@ export const INSIDE = {
       "The classifier is a hybrid pipeline in backend/jobtracker/classifier: a content guard, then rules, then embedding similarity, then SetFit, then a fallback that is always safe (needs_review rather than a wrong guess). Corrections write to training_data and flag the email user_corrected; embeddings persist in email_embeddings. The hosted deployment runs the guard and the rules only; layers 2 and 3 are never constructed under cloud mode, so the drawing below is the desktop and evaluation path. Nothing retrains on corrections automatically — retraining is an operator command, not a loop, and it is default-deny: refused unless the corpus is entirely synthetic or its single owner is explicitly allowlisted. Your mail is never pooled with anyone else's. Every training entry point requires a user id, the corpus is filtered by it, and the loaded rows are re-checked, so a corpus spanning two users raises instead of training.",
     flow: [
       { stage: "guard", detail: "force non-job → other" },
-      { stage: "rules", detail: "219 regex · ≥ 0.90" },
+      { stage: "rules", detail: "220 regex · ≥ 0.90" },
       { stage: "e5", detail: "cosine 1-NN · ≥ 0.85" },
       { stage: "setfit", detail: "few-shot · ≥ 0.70" },
       { stage: "gate", detail: "0.85 → auto / human" },
@@ -445,10 +446,10 @@ export const PROOF = {
     hero: "0.9896",
     heroLabel: "macro-F1 · rules stage",
     body:
-      "Macro-F1 averages the per-class F1 so no category can hide behind the frequent ones. On the held-out evaluation the RULES stage scores 0.9896 — accuracy 0.9896, 1 misclassified out of 96. Not the full cascade, which scores 0.9686 on the same set: the evaluation runs under the `deterministic` hybrid profile, which disables SetFit and blanks the embedding examples, so the file named baseline_hybrid_v3.json measures the regexes alone. It is not a cherry-picked accuracy headline; it is the metric that punishes a weak class.",
+      "Macro-F1 averages the per-class F1 so no category can hide behind the frequent ones. On the 96-email v3 evaluation set the RULES stage scores 0.9896 — accuracy 0.9896, 1 misclassified out of 96. Not the full cascade, which scores 0.9686 on the same set: the evaluation runs under the `deterministic` hybrid profile, which disables SetFit and blanks the embedding examples, so the file named baseline_hybrid_v3.json measures the regexes alone. It is not a cherry-picked accuracy headline; it is the metric that punishes a weak class.",
     exact: "0.9895652 macro-F1 · 0.9896 accuracy · 1 misclassified",
     ciValue: "0.95",
-    ciLabel: "CI floor — the merge blocks below it",
+    ciLabel: "CI floor — the build fails below it",
     ciBody:
       "The score is not a one-time screenshot. Two GitHub Actions gates re-run the evaluation on every backend change and fail the build if macro-F1 drops below 0.95. The number is load-bearing.",
     source: "source · baseline_hybrid_v3.json:123–124 · backend-ci.yml:244,257 (--min-macro-f1 0.95)",
@@ -489,7 +490,7 @@ export const PROOF = {
     eyebrow: "§04 · THE GUARANTEE",
     headline: "19,420 messages written to break the classifier.",
     body:
-      "Correctness is not asserted, it is enforced. The backend suite runs 3,163 tests, 3,153 of them passing and 10 expected failures — including the 25 Postgres row-level-security tests, which provision their own postgres:16 through testcontainers instead of skipping — and two CI gates re-run the classifier evaluation on every change, refusing to merge if macro-F1 falls below 0.95. A suite only checks what somebody thought to check, so there is a second instrument: 19,420 generated messages across 47 families over 9,200 companies — every employer invented, six of those families phrased in wordings transcribed from mail that actually arrived and one carrying job titles and locations taken from public Greenhouse job boards, six of its eight titles and all five locations byte-for-byte and the other two titles trimmed of a queue marker and a trailing space — 18% of them adversarial by construction, driven through the whole sync end to end — classify, roll up, upsert, persist the review queue, then read the board back out of the tables, replayed in day-sized batches because a real sync is a delta and not a whole mailbox. 17,950 come out correct (92.43%), 184 wrong, 1286 abstained. No message lands on another application's card: 10,385 cards, 0 merges, 0 misrouted review, 0 updates on a card that was not theirs. 0 applications are split across two cards; that number is kept separate from merges because a split is the milder failure, visible to the user rather than silent. 30 messages that should mint nothing do mint a card, and that is the exception rather than a rounding of it. 60 messages about real applications reach no card, no queue and no counter at all, and every one of them arrives on a card the user has dismissed by hand — a dismissal is final by design, so the sync skips the row before it stores anything. That figure read 0 until the generator learned to dismiss an application at all, which is the difference between a guarantee and a state no fixture could construct.",
+      "Correctness is not asserted, it is enforced. The backend suite runs 3,163 tests, 3,153 of them passing and 10 expected failures — including the 25 Postgres row-level-security tests, which provision their own postgres:16 through testcontainers instead of skipping — and two CI gates re-run the classifier evaluation on every change, failing the build if macro-F1 falls below 0.95. A suite only checks what somebody thought to check, so there is a second instrument: 19,420 generated messages across 47 families over 9,200 companies — every employer invented, six of those families phrased in wordings transcribed from mail that actually arrived and one carrying job titles and locations taken from public Greenhouse job boards, six of its eight titles and all five locations byte-for-byte and the other two titles trimmed of a queue marker and a trailing space — 18% of them adversarial by construction, driven through the whole sync end to end — classify, roll up, upsert, persist the review queue, then read the board back out of the tables, replayed in day-sized batches because a real sync is a delta and not a whole mailbox. 17,950 come out correct (92.43%), 184 wrong, 1286 abstained. No message lands on another application's card: 10,385 cards, 0 merges, 0 misrouted review, 0 updates on a card that was not theirs. 0 applications are split across two cards; that number is kept separate from merges because a split is the milder failure, visible to the user rather than silent. 30 messages that should mint nothing do mint a card, and that is the exception rather than a rounding of it. 60 messages about real applications reach no card, no queue and no counter at all, and every one of them arrives on a card the user has dismissed by hand — a dismissal is final by design, so the sync skips the row before it stores anything. That figure read 0 until the generator learned to dismiss an application at all, which is the difference between a guarantee and a state no fixture could construct.",
     stats: [
       { value: "3,163", label: "tests · backend suite", note: "0 failed · 2026-09-05" },
       { value: "19,420", label: "messages · adversarial corpus", note: "47 families · 9,200 companies" },
@@ -531,7 +532,7 @@ export const SECURITY = {
     lede:
       "The classifier is not a prompt to somebody else's model. It is a three-layer cascade you can read line by line — no third-party LLM ever sees the inbox.",
     body:
-      "Classification runs entirely on code that ships in this repo: 219 regex rules, then cosine similarity against a pretrained e5 embedding, then the fine-tuned SetFit head — and the hosted deployment runs the rules alone. There is no OpenAI, Anthropic, or Gemini call anywhere in the classify path — the classifier module imports no LLM API at all.",
+      "Classification runs entirely on code that ships in this repo: 220 regex rules, then cosine similarity against a pretrained e5 embedding, then the fine-tuned SetFit head — and the hosted deployment runs the rules alone. There is no OpenAI, Anthropic, or Gemini call anywhere in the classify path — the classifier module imports no LLM API at all.",
     path: [
       { n: "1", label: "regex rules", note: "deterministic · auditable", accentKey: "02_HOW" as SectionKey },
       { n: "2", label: "e5 similarity", note: "cosine 1-NN · pretrained", accentKey: "03_INSIDE" as SectionKey },
@@ -652,7 +653,7 @@ export const BUILD = {
     rows: [
       { area: "WEB", tech: "Next.js 16.3.0 · React 19 · Vercel", note: "the hosted product + live demo" },
       { area: "IN-BROWSER ML", tech: "Transformers.js 3.5.2 · onnxruntime-web", note: "int8 ONNX on the client — withdrawn 2026-08-15" },
-      { area: "CLASSIFIER", tech: "e5-small-v2 · SetFit / MiniLM-L6 · 219 regex", note: "the 3-layer hybrid cascade — hosted runs layer 1" },
+      { area: "CLASSIFIER", tech: "e5-small-v2 · SetFit / MiniLM-L6 · 220 regex", note: "the 3-layer hybrid cascade — hosted runs layer 1" },
       { area: "TRAINING", tech: "MLflow registry · CI-gated ≥ 0.95", note: "log, register, promote to production" },
       { area: "BACKEND", tech: "FastAPI · SQLModel · Postgres", note: "sync, classify, review queue — SQLite on desktop" },
       { area: "DESKTOP", tech: "SwiftUI macOS app", note: "the original native client — de-scoped 2026-08-12" },
@@ -672,7 +673,7 @@ export const BUILD = {
     liveUrl: "getapplied.vercel.app",
     spaceLabel: "IN-BROWSER CLASSIFIER",
     spaceUrl: "getapplied.vercel.app/import",
-    spaceNote: "219 rules · zero servers · runs entirely in the tab",
+    spaceNote: "220 rules · zero servers · runs entirely in the tab",
     leftArrowLabel: "open it",
     rightArrowLabel: "classify",
     microNote: "three layers · one gate · zero servers",
