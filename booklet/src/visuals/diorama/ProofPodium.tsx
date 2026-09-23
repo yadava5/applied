@@ -6,8 +6,14 @@ import { SceneFrame, iso } from "./primitives";
  * PROOF — the verdict. A vertical instrument gauge reads the v3
  * macro-F1 (0.9896): a green needle pegged near the top, a ring of ticks,
  * and one amber tick pinning the 0.95 confidence-interval floor below it.
- * The gauge stands on a small isometric plinth carrying nine short bars —
- * the nine classes, every one clearing the amber floor.
+ * The gauge stands on a small isometric plinth carrying eight short bars —
+ * the eight labels of the v3 set, every one clearing the amber floor. That
+ * last clause is measured, not assumed: the lowest per-class F1 in
+ * backend/data/evaluation/baseline_rules_v3.json is follow_up at 0.9565, and
+ * assessment at 0.96 is the only other one under 1.0, so both clear the 0.95
+ * floor this scene pins. The BAR HEIGHTS below are indicative styling, not
+ * those figures — six of the eight are exactly 1.0 and a truthful plot would
+ * be six flat bars.
  *
  * Near-white linework on the dark ground; green is the verdict, amber the
  * single floor it must clear.
@@ -48,7 +54,7 @@ export const ProofPodium: React.FC = () => {
   return (
     <SceneFrame
       lineColor={LINE}
-      cornerLabels={{ topLeft: "HELD-OUT EVAL", bottomRight: "CI FLOOR 0.95" }}
+      cornerLabels={{ topLeft: "V3 EVAL · 96 EMAILS", bottomRight: "CI FLOOR 0.95" }}
     >
       {/* ---- Iso plinth --------------------------------------------- */}
       {(() => {
@@ -74,16 +80,16 @@ export const ProofPodium: React.FC = () => {
         );
       })()}
 
-      {/* ---- Nine class bars on the plinth (all clear the floor) ----- */}
+      {/* ---- Eight class bars on the plinth (all clear the floor) ---- */}
       {(() => {
-        const n = 9;
+        const n = 8;
         const bw = 3.4;
         const gap = 2.2;
         const total = n * bw + (n - 1) * gap;
         const x0 = GX - total / 2;
         const baseY = 210;
         const floorY = baseY - 9;
-        const heights = [13, 15, 12, 14, 13, 15, 12, 14, 13];
+        const heights = [13, 15, 12, 14, 13, 15, 12, 14];
         return (
           <g>
             {heights.map((hv, i) => {
@@ -101,7 +107,7 @@ export const ProofPodium: React.FC = () => {
             {/* caption below the plinth (was y 218 — crossed by the plinth's
                 front-top edge) */}
             <text x={GX} y={252} textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize={3.8} letterSpacing="1" fill="currentColor" opacity={0.7}>
-              9 CLASSES · ALL PASS
+              8 CLASSES · ALL PASS
             </text>
           </g>
         );

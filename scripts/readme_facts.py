@@ -630,6 +630,8 @@ LANDING_SIGNATURE = "apps/web/components/landing/SignatureEnding.tsx"
 WEB_SAMPLE_INBOX = "apps/web/components/demo/SampleInbox.tsx"
 WEB_IMPORT_MAIL = "apps/web/components/import/ImportMail.tsx"
 WEB_DECISION_TRACE = "apps/web/components/viz/DecisionTrace.tsx"
+WEB_CLASS_F1_BARS = "apps/web/components/landing/ClassF1Bars.tsx"
+BOOKLET_PROOF_PODIUM = "booklet/src/visuals/diorama/ProofPodium.tsx"
 # The browser demo's own README. Registered 2026-09-04: it said "the 201 rules"
 # while every other surface said 218, INCLUDING `app.js` in the same directory,
 # which is already a claim site. Corrected in one file and not the other is the
@@ -2141,6 +2143,11 @@ FACTS: dict[str, dict] = {
             r"of (\d+) misclassified\)",
             r"\*\*(\d+) examples, \d+ per label across \d+ labels\*\*",
             r"and (\d+) examples is a small sample",
+            # The §04 diorama's corner label. It read "HELD-OUT EVAL" and named
+            # no size at all, so the set's one checkable property was absent
+            # from the scene that grades it.
+            {"re": r"V3 EVAL · (\d+) EMAILS", "file": BOOKLET_PROOF_PODIUM},
+            {"re": r"v3 eval · (\d+) emails", "file": WEB_CLASS_F1_BARS},
             r"(\d+)-example v3 set, warm",
             r"the (\d+) examples and the coverage contract",
         ],
@@ -2155,6 +2162,18 @@ FACTS: dict[str, dict] = {
             r"over (\d+) labels, with a provenance",
             r"<br/>(\d+) labels · accepts at",
             {"re": r"(\w+) of the \w+ are predicted labels", "word": True},
+            # ── the class COUNT, where it is a claim about the EVAL SET ──
+            #
+            # The §04 diorama said "9 CLASSES · ALL PASS" and drew nine bars.
+            # Nine is the EmailCategory enum -- eight predicted plus
+            # needs_review -- and needs_review is not a label the eval set
+            # contains, so the scene grading the v3 run counted a class that
+            # cannot appear in it. `emailCategories` (9) and this fact (8) are
+            # a deliberate pair; the invariant below keeps them one apart. The
+            # card's "Nine categories, eight learned" is about the enum and is
+            # correct; only the eval scene was wrong.
+            {"re": r"(\d+) CLASSES · ALL PASS", "file": BOOKLET_PROOF_PODIUM},
+            {"re": r"(\d+) learned classes", "file": WEB_CLASS_F1_BARS},
         ],
     },
     "evalPerLabel": {
@@ -3339,6 +3358,27 @@ INVARIANTS = [
         "explain": lambda f: (
             f"{f['evalLabels']} labels x {f['evalPerLabel']} = "
             f"{f['evalLabels'] * f['evalPerLabel']}, not {f['evalRows']} rows."
+        ),
+    },
+    {
+        # "ALL PASS" on the §04 diorama and "all clear 0.95" on the landing's
+        # per-class panel are the only claims on either surface that assert
+        # something about EVERY class, and neither carries a digit a site could
+        # read -- so both were unfalsifiable by construction while sitting
+        # beside numbers that were gated. They are true at this pin: the lowest
+        # per-class F1 is follow_up at 0.9565 and assessment at 0.96 is the
+        # only other one under 1.0. This is what says so when a re-record moves
+        # one of them under the floor.
+        "name": "every per-class F1 in the rules baseline clears the CI floor",
+        "holds": lambda f: min(
+            v["f1"] for v in baseline("baseline_rules_v3.json")["per_label"].values()
+        ) >= f["macroF1Floor"],
+        "explain": lambda f: (
+            "the weakest class in baseline_rules_v3.json scores "
+            + str(min(v["f1"] for v in baseline("baseline_rules_v3.json")["per_label"].values()))
+            + f", under the {f['macroF1Floor']} CI floor. The System Card's "
+            "\"ALL PASS\" and the landing panel's \"all clear\" are false now; "
+            "a macro average can stay above a floor that one class is under."
         ),
     },
     {
