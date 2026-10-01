@@ -91,5 +91,5 @@ python-dateutil>=2.9.0.post0
 # python-dotenv arrives via pydantic-settings. These floors force the
 # patched releases without any major-version change.
 requests>=2.34.2        # PYSEC-2026-2275
-urllib3>=2.7.0          # PYSEC-2026-141, PYSEC-2026-142
+urllib3>=2.8.0          # PYSEC-2026-141, PYSEC-2026-142
 python-dotenv>=1.2.3    # PYSEC-2026-2270
