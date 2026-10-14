@@ -299,6 +299,52 @@ class SyncStatus(str, Enum):
 
 
 # =============================================================================
+# Timestamp storage — why every datetime field below says `sa_type`
+# =============================================================================
+#
+# EVERY `datetime` field on a table class in this module declares its storage
+# explicitly, and the ones that are naive say `sa.DateTime(timezone=False)`
+# rather than leaving it to the default. The default is what changed under us.
+#
+# Up to sqlmodel 0.0.44 a plain `datetime` annotation compiled to
+# `DateTime(timezone=False)` — `timestamp without time zone`, which is what
+# every column in `backend/alembic/versions/` except the four below actually
+# IS in Postgres. From 0.0.45 the same annotation compiles to `UTCDateTime`,
+# sqlmodel's own `TypeDecorator` over `DateTime(timezone=True)`, which REFUSES
+# a naive value on write: SQLAlchemy raises a `StatementError` wrapping a
+# `ValueError`. This codebase writes `datetime.utcnow()` — naive, by
+# convention, in ~46 producer sites — so on 0.0.45+ a bare annotation makes
+# every insert on these tables raise, against columns the upgrade does not
+# migrate (sqlmodel's own docs: upgrading changes model metadata only).
+#
+# `Field(sa_type=DateTime(timezone=False))` is sqlmodel's documented
+# "Keep Naive Storage" escape (https://sqlmodel.tiangolo.com/advanced/datetime/)
+# and it pins the behaviour on BOTH sides of 0.0.45: the compiled DDL and the
+# plain-`datetime` validation are byte-identical to what 0.0.42 produced, so
+# there is no migration here and no `backend/alembic/` change.
+#
+# Two rules for anything added below:
+#
+#   * `sa_type` and `sa_column_kwargs` coexist (see `updated_at`'s `onupdate`),
+#     but `sa_type` and `sa_column` do NOT — a field already carrying an
+#     explicit `sa_column` names its type inside that `Column`, and the four
+#     that do (`user_credentials.{revoked_at,created_at,updated_at}` and
+#     `gmail_sync_enrollment.enrolled_at`) are `timestamptz` in production and
+#     are deliberately left that way.
+#   * On a MIXIN, `sa_type` is the only correct spelling. One `Column` object
+#     cannot attach to the four tables that inherit `TimestampMixin`; a type
+#     instance can.
+#
+# `backend/tests/test_every_datetime_field_declares_its_storage.py` is what
+# keeps this true for fields added later. It reads the FIELD DEFINITIONS and
+# not the compiled metadata, because below 0.0.45 the annotated and bare forms
+# compile identically — a metadata test could not fail.
+#
+# The real tz-aware migration (ALTER ... TYPE timestamptz on 16 columns, plus
+# every producer and ~190 test sites) is a separate piece of work; the pins in
+# the root `requirements.txt` hold the version until then.
+#
+# =============================================================================
 # Base Models
 # =============================================================================
 
@@ -308,11 +354,13 @@ class TimestampMixin(SQLModel):
 
     created_at: datetime = Field(
         default_factory=datetime.utcnow,
+        sa_type=sa.DateTime(timezone=False),
         description="Record creation timestamp",
     )
     updated_at: Optional[datetime] = Field(
         default=None,
         description="Record last update timestamp",
+        sa_type=sa.DateTime(timezone=False),
         sa_column_kwargs={"onupdate": datetime.utcnow},
     )
 
@@ -430,6 +478,7 @@ class Application(TimestampMixin, table=True):
     # fresh mail may resurrect an automated removal, but never a human's.
     dismissed_at: Optional[datetime] = Field(
         default=None,
+        sa_type=sa.DateTime(timezone=False),
         description="When the row was removed from the board (NULL = live)",
     )
     dismissed_reason: Optional[str] = Field(
@@ -482,6 +531,7 @@ class Application(TimestampMixin, table=True):
     due_at: Optional[datetime] = Field(
         default=None,
         index=True,
+        sa_type=sa.DateTime(timezone=False),
         description="When this application's next obligation is due (UTC)",
     )
     # Who put it there: 'mail' (extracted from an explicit statement) or 'user'.
@@ -547,7 +597,11 @@ class Email(TimestampMixin, table=True):
     subject: Optional[str] = Field(default=None, description="Email subject")
     sender_name: Optional[str] = Field(default=None, description="Sender display name")
     sender_email: Optional[str] = Field(default=None, description="Sender email address")
-    received_at: datetime = Field(index=True, description="Email receive timestamp")
+    received_at: datetime = Field(
+        index=True,
+        sa_type=sa.DateTime(timezone=False),
+        description="Email receive timestamp",
+    )
     body_text: Optional[str] = Field(default=None, description="Plain text body")
     body_html: Optional[str] = Field(
         default=None,
@@ -793,7 +847,11 @@ class Interview(TimestampMixin, table=True):
 
     # Interview details
     type: Optional[InterviewType] = Field(default=None, description="Interview type")
-    scheduled_at: Optional[datetime] = Field(default=None, description="Scheduled time")
+    scheduled_at: Optional[datetime] = Field(
+        default=None,
+        sa_type=sa.DateTime(timezone=False),
+        description="Scheduled time",
+    )
     duration_minutes: Optional[int] = Field(default=None, description="Expected duration")
     location: Optional[str] = Field(default=None, description="Location or video link")
     notes: Optional[str] = Field(default=None, description="Interview notes")
@@ -854,6 +912,7 @@ class TrainingData(SQLModel, table=True):
     # Metadata
     created_at: datetime = Field(
         default_factory=datetime.utcnow,
+        sa_type=sa.DateTime(timezone=False),
         description="When correction was made",
     )
 
@@ -900,6 +959,7 @@ class EmailEmbedding(SQLModel, table=True):
     # Metadata
     created_at: datetime = Field(
         default_factory=datetime.utcnow,
+        sa_type=sa.DateTime(timezone=False),
         description="When embedding was created",
     )
 
@@ -944,7 +1004,11 @@ class SyncState(SQLModel, table=True):
     account_email: str = Field(description="Account email address")
 
     # Sync state
-    last_sync_at: Optional[datetime] = Field(default=None, description="Last sync timestamp")
+    last_sync_at: Optional[datetime] = Field(
+        default=None,
+        sa_type=sa.DateTime(timezone=False),
+        description="Last sync timestamp",
+    )
     gmail_history_id: Optional[str] = Field(
         default=None,
         description="Gmail historyId for incremental sync",
@@ -965,7 +1029,9 @@ class SyncState(SQLModel, table=True):
     # ``cloud/sync_state.acquire_gmail_sync_lease`` — because a read-then-write
     # in Python is exactly the race this exists to close.
     sync_started_at: Optional[datetime] = Field(
-        default=None, description="When the in-flight sync started (lease); NULL if idle"
+        default=None,
+        sa_type=sa.DateTime(timezone=False),
+        description="When the in-flight sync started (lease); NULL if idle",
     )
 
     # Status - use string column to store enum values
