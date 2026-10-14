@@ -5,10 +5,20 @@ This document describes the CI workflows that gate merges into
 surfaces each workflow protects.
 
 The workflows live under [`.github/workflows/`](../.github/workflows/).
-Most are path-filtered so unrelated changes don't trigger noisy runs;
-**six carry no path filter at all** — `readme-facts.yml`, `codeql.yml`,
-`gitleaks.yml`, `scorecard.yml`, `learning-gate.yml` and
-`ml-monitoring-weekly.yml`. See Triggers below.
+Some are path-filtered so unrelated changes don't trigger noisy runs;
+**eleven carry no path filter at all** — `citations.yml`, `codeql.yml`,
+`decisions.yml`, `gitleaks.yml`, `keepalive.yml`, `learning-gate.yml`,
+`ml-monitoring-weekly.yml`, `readme-facts.yml`, `scorecard.yml`,
+`sync-cron.yml` and `test-data.yml`. See Triggers below.
+
+> This list said **six** until 2026-10-14 and named only `readme-facts.yml`,
+> `codeql.yml`, `gitleaks.yml`, `scorecard.yml`, `learning-gate.yml` and
+> `ml-monitoring-weekly.yml`. Three were already missing from it —
+> `citations.yml`, `decisions.yml` and `test-data.yml`, the last of which is a
+> **required** check whose own header explains at length why it is deliberately
+> unfiltered — and `keepalive.yml` and `sync-cron.yml` are the two added with
+> the cron move. The current set is derived by parsing every workflow's `on:`
+> block for a `paths:` or `paths-ignore:` key, not by reading this sentence.
 
 ## CI workflows
 
@@ -19,6 +29,8 @@ Most are path-filtered so unrelated changes don't trigger noisy runs;
 | **E2E CI** | `e2e-ci.yml` | `apps/web/**`, `backend/**`, `api/**`, `scripts/generate_api_schema.sh`, itself | ubuntu-latest, Node 22 + Python 3.11 | API schema drift gate, then Playwright against a Next.js dev server **and** a real production build; uploads `playwright-report` + `test-results` (videos, traces) as artifacts |
 | **ML monitoring (weekly)** | `ml-monitoring-weekly.yml` | cron | ubuntu-latest | Rolling classifier drift check |
 | **README facts** | `readme-facts.yml` | **no path filter** | ubuntu-latest, stdlib only | Every number the README asserts still agrees with the code |
+| **Sync cron** | `sync-cron.yml` | cron (`*/15 * * * *`) + dispatch | ubuntu-latest, `curl` only | Calls `/cron/sync` with the `CRON_SECRET` bearer token. Gates nothing — it is a scheduler, not a check — and is listed here because it is the thing that actually drives the scheduled sync. See [Schedule](#schedule) |
+| **Keep-alive** | `keepalive.yml` | cron (`0 */6 * * *`) + dispatch | ubuntu-latest, Python 3.11 + psycopg | `SELECT 1` against production Postgres on the `DIRECT_URL` secret. Fails the job if it cannot connect or the answer is not `1`, which emails the owner — the only thing in this repository that can see a paused database, since `/health` never touches one |
 
 `macos-ci.yml` is gone. It built the SwiftUI app in `apps/macos/`, which was
 de-scoped on 2026-08-12 and deleted.

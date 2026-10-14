@@ -79,9 +79,16 @@ email-validator>=2.3.0
 # whole rewrite. Until that work is done and verified, the resolved version is
 # a decision rather than a side effect.
 #
-# SQLAlchemy is capped at `<2.1` with it, because 2.1 is the major sqlmodel
-# 0.0.45+ is built against and letting it move alone pairs an untested
-# combination under the deployed function.
+# SQLAlchemy IS CAPPED AT `<2.1` WITH IT, AND NOT FOR THE REASON IT IS TEMPTING
+# TO WRITE. sqlmodel does not require 2.1: 0.0.48 declares
+# `SQLAlchemy<2.2.0,>=2.0.14` (`importlib.metadata.requires('sqlmodel')`), so
+# it resolves happily against 2.0.x, and 2.1 is a minor of SQLAlchemy 2 rather
+# than a major. The cap is here because the uncapped pair is what shipped the
+# surprise — a fresh resolve took sqlmodel 0.0.48 AND SQLAlchemy 2.1.4
+# together, and 2.1 is the release line 0.0.45+ is developed and tested
+# against. Pinning one and letting the other roam would leave the deployed
+# function on a combination nothing here has exercised. They move together or
+# not at all.
 #
 # To lift: do the tz-aware migration, then raise both bounds in one change
 # together with `.github/dependabot.yml`'s matching `ignore` entries, which
