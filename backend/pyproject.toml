@@ -54,8 +54,15 @@ dependencies = [
     "pydantic-settings>=2.1.0",
     "websockets>=17.1",
     "aiosqlite>=0.22.1",
-    "sqlmodel>=0.0.14",
-    "sqlalchemy[asyncio]>=2.0.25",
+    # The upper bounds mirror the root requirements.txt, where the reason is
+    # written out in full: sqlmodel 0.0.45 makes a plain `datetime` field
+    # compile to a tz-aware `UTCDateTime` that refuses naive writes, against
+    # columns the upgrade does not migrate. The floors here stay where they
+    # were — the shared FLOOR is declared in the root manifest (#704) and this
+    # file is the packaged app's own metadata, not a second place to raise one.
+    # Both bounds lift together with that file's, after the tz migration.
+    "sqlmodel>=0.0.14,<0.0.45",
+    "sqlalchemy[asyncio]>=2.0.25,<2.1",
     "google-api-python-client>=2.198.0",
     "google-auth-httplib2>=0.1.1",
     "google-auth-oauthlib>=1.1.0",

@@ -22,10 +22,15 @@
 # anything here — a floor raised in backend/requirements.txt protects the
 # laptop and the test runner and nothing a user can reach. On 2026-08-15 five
 # shared packages had drifted below their backend counterparts, two of them
-# (pyjwt, pydantic-settings) below a published advisory. Every constraint in
-# this file is `>=` with no upper bound, so pip had been resolving to the
-# patched releases anyway; that is luck, not a floor, and it stops being true
-# the day a transitive cap pulls one of them back down.
+# (pyjwt, pydantic-settings) below a published advisory. Almost every
+# constraint in this file is `>=` with no upper bound, so pip had been
+# resolving to the patched releases anyway; that is luck, not a floor, and it
+# stops being true the day a transitive cap pulls one of them back down.
+#
+# THE TWO EXCEPTIONS ARE sqlmodel AND sqlalchemy, and they are capped on
+# purpose — see the note on them in the Database block below. An unbounded
+# floor is normally the right default here and the caps are not a new
+# preference; they are a dated hold on one breaking change.
 #
 # THIS FILE IS NOW THE ONLY PLACE A SHARED FLOOR IS DECLARED (#704).
 # backend/requirements.txt no longer restates these packages; it starts with
@@ -50,8 +55,41 @@ email-validator>=2.3.0
 # -----------------------------------------------------------------------------
 # Database (Postgres via Supabase)
 # -----------------------------------------------------------------------------
-sqlmodel>=0.0.42
-sqlalchemy[asyncio]>=2.0.52
+# THE TWO UPPER BOUNDS IN THIS FILE, AND WHAT LIFTS THEM.
+#
+# sqlmodel 0.0.45 changed what a plain `datetime` field means. Up to 0.0.44 it
+# compiled to `DateTime(timezone=False)` — `timestamp without time zone`, which
+# is what 16 of this schema's 20 datetime columns are in Postgres. From 0.0.45
+# it compiles to `UTCDateTime`, sqlmodel's `TypeDecorator` over
+# `DateTime(timezone=True)`, and that type REFUSES a naive value on write
+# (`StatementError` wrapping a `ValueError`). The upgrade migrates no columns,
+# so the model stops matching the database it is pointed at.
+#
+# This file is why that mattered: with only `sqlmodel>=0.0.42` here, a fresh
+# install of this manifest resolved 0.0.48 + SQLAlchemy 2.1.4 — so the version
+# production and CI ran was "whatever PyPI published last", and the breaking
+# release arrived without anyone choosing it.
+#
+# `models.py` now declares `sa_type=sa.DateTime(timezone=False)` on every naive
+# field, which is sqlmodel's documented "Keep Naive Storage" escape and is
+# correct on both sides of 0.0.45 — the compiled DDL is byte-identical. So the
+# cap is NOT load-bearing for correctness. It is a hold: ~46 producer sites and
+# ~190 test sites still construct naive datetimes, and moving the columns to
+# `timestamptz` is an Alembic contract step on 16 production columns plus that
+# whole rewrite. Until that work is done and verified, the resolved version is
+# a decision rather than a side effect.
+#
+# SQLAlchemy is capped at `<2.1` with it, because 2.1 is the major sqlmodel
+# 0.0.45+ is built against and letting it move alone pairs an untested
+# combination under the deployed function.
+#
+# To lift: do the tz-aware migration, then raise both bounds in one change
+# together with `.github/dependabot.yml`'s matching `ignore` entries, which
+# exist only to stop Dependabot refiling a bump that cannot land. The gate that
+# keeps the declarations honest in the meantime is
+# `backend/tests/test_every_datetime_field_declares_its_storage.py`.
+sqlmodel>=0.0.42,<0.0.45
+sqlalchemy[asyncio]>=2.0.52,<2.1
 asyncpg>=0.31.0
 
 # -----------------------------------------------------------------------------
