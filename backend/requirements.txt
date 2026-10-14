@@ -81,7 +81,7 @@ keyring>=25.7.0               # Secure credential storage (macOS Keychain)
 # constructs a `HybridClassifier`. It imports it; it does not grade it. The
 # original "never imports" was wider than the truth, which is the more useful
 # statement: a green suite is not evidence about these three pins.
-sentence-transformers>=6.0.0  # Sentence embeddings (loads e5-small-v2)
+sentence-transformers>=6.1.0  # Sentence embeddings (loads e5-small-v2)
 transformers>=5.10.0          # HuggingFace transformers (see the note above)
 setfit>=1.2.0                 # Few-shot text classification; 1.1.3 breaks on 5.x
 scikit-learn>=1.9.0           # ML utilities (cosine similarity, etc.)
