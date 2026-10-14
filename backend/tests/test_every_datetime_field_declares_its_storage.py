@@ -42,14 +42,36 @@ sqlmodel's default happens to be this month.
 Proven able to fail
 -------------------
 
-Deleting ``sa_type=sa.DateTime(timezone=False)`` from
-``Application.due_at`` (an ``Optional[datetime]`` field) reds
-``test_every_datetime_field_declares_its_storage`` naming
-``Application.due_at``; the same deletion on ``Email.received_at`` (a plain
-``datetime`` field) reds it naming ``Email.received_at``. Restoring either
-returns the file to green. Both mutations were run on sqlmodel 0.0.44 and on
-0.0.48, because a gate that only reds on one side of the break would not be
-guarding the thing that broke.
+ALL FOUR assertions here, because three of them would otherwise be the
+"green from birth" shape this repository keeps finding. Two take a source
+mutation and two can only be mutated at runtime, since nothing an author can
+write in ``models.py`` reaches them.
+
+``test_every_datetime_field_declares_its_storage`` — source. Deleting
+``sa_type=sa.DateTime(timezone=False)`` from ``Application.due_at`` (an
+``Optional[datetime]`` field) reds it naming ``Application.due_at``; the same
+deletion on ``Email.received_at`` (a plain ``datetime`` field) reds it naming
+``Email.received_at``. Both were run on sqlmodel 0.0.44 AND 0.0.48 — a gate
+that only reds on one side of the break would not be guarding what broke — and
+each deletion was confirmed to have actually applied (``git diff --numstat``
+non-empty) rather than assumed, because a mutation that silently no-ops prints
+exactly like a gate that survived it.
+
+``test_the_discovery_finds_the_fields_it_is_supposed_to_find`` — source.
+Pointing ``_MUST_BE_FOUND`` at a field that does not exist reds it, naming the
+missing pair and listing all 20 it did find.
+
+``test_every_table_class_is_reachable_from_the_registry`` — runtime. Adding a
+bare ``sa.Table`` to ``SQLModel.metadata`` reds it: "9 mapped classes against
+10 tables in the metadata".
+
+``test_the_declared_storage_matches_the_column_it_compiles_to`` — runtime, two
+ways. Repointing ``Application.__table__.c.due_at.type`` at
+``DateTime(timezone=True)`` reds it with "declared timezone=False but the
+column compiled to timezone=True"; repointing it at ``String()`` reds it with
+"declared DateTime() but the column compiled to String()", which is the
+not-a-DateTime case a ``UTCDateTime`` would present as. Reverting either
+returns it to green.
 """
 
 from __future__ import annotations
@@ -204,10 +226,20 @@ def test_the_declared_storage_matches_the_column_it_compiles_to():
     """The declaration and the compiled column must not disagree.
 
     A second assertion rather than part of the one above, because it checks the
-    other direction: the first says a human chose a type, this says the choice
-    is the one that reached the table. They have failed independently in this
-    repository's history — a `sa_column` on a mixin compiles for one table and
-    silently loses the others.
+    other direction: the first says a human chose a type, this one says the
+    choice is what reached the table.
+
+    NO EDIT TO ``models.py`` CAN MAKE THIS FAIL, and that is not a defect in
+    it — it is what the test is for. The column is BUILT from the declaration,
+    so under a sqlmodel that honours ``sa_type`` the two agree by construction.
+    What it guards is the library: a future sqlmodel release that ignores
+    ``sa_type``, or honours it differently, would leave `models.py` looking
+    correct while the compiled column moved underneath it. That is exactly the
+    shape of the 0.0.45 change this whole file exists because of, and the one
+    thing the declaration-side assertion above cannot see.
+
+    Because of that it is mutated at RUNTIME rather than in source — see
+    "Proven able to fail" in the module docstring.
     """
 
     disagreements = []
