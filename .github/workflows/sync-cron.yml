@@ -99,6 +99,12 @@ jobs:
           # `-H "Authorization: Bearer ${CRON_SECRET}"` is also one `set -x`
           # away from the log. curl reads `--config -` before connecting.
           call() {
+            # Clear the body file FIRST. curl does not truncate `--output` when
+            # it fails to connect, so without this the retry's `report` reads
+            # the FIRST attempt's body and prints last attempt's counts under
+            # this one's status code. Found by running this script against a
+            # stub, not by reading it.
+            rm -f /tmp/cron-sync-body.json
             printf 'header = "Authorization: Bearer %s"\n' "${CRON_SECRET}" \
               | curl --silent --show-error --config - \
                      --request GET \
@@ -109,14 +115,45 @@ jobs:
           }
 
           report() {
-            # The response body is the run's own report — candidates, synced,
-            # skipped, stopped_by. Worth having in the log on every outcome:
-            # a 200 that synced nobody is a different fault from a 200 that
-            # synced everybody, and neither is visible in the status code.
-            echo "--- response body ---"
-            head -c 2000 /tmp/cron-sync-body.json || true
-            echo
-            echo "---------------------"
+            # COUNTS ONLY. NEVER THE BODY.
+            #
+            # The run's own report is worth having in the log — a 200 that
+            # synced nobody is a different fault from a 200 that synced
+            # everybody, and neither is visible in the status code. But
+            # `CronSyncResponse.errors` is a `list[str]` whose entries are
+            # built as f"{user_id}: TimeoutError" and f"{user_id}: HTTP{code}"
+            # (`cloud/cron.py`), so the body carries RAW SUPABASE USER IDS —
+            # and THIS REPOSITORY IS PUBLIC, which makes an Actions log a
+            # world-readable surface.
+            #
+            # That matters more here than it looks. `gmail_sync_enrollment`'s
+            # docstring records the exposure of user-id membership as a
+            # deliberate trade, and it is scoped to anything connecting as
+            # `jobtracker_app`. Printing the same fact into a public log is a
+            # very much wider audience than the one that trade was made for,
+            # and it would happen every fifteen minutes.
+            #
+            # So the counts are extracted by name and `errors` is reduced to
+            # its LENGTH. An operator who needs to know which user failed has
+            # the function's runtime logs, which are not public.
+            # stderr discarded: when curl never wrote a body this would print a
+            # FileNotFoundError traceback into the log on a path that is
+            # already reporting its own error properly. Noise, on the exact
+            # runs someone is reading.
+            python3 - 2>/dev/null <<'REPORT' || echo "  (no response body to summarise)"
+          import json
+          with open("/tmp/cron-sync-body.json", encoding="utf-8") as fh:
+              body = json.load(fh)
+          print(
+              "  users_synced={} candidates={} skipped={} stopped_by={} errors={}".format(
+                  body.get("users_synced"),
+                  body.get("candidates"),
+                  body.get("skipped"),
+                  body.get("stopped_by"),
+                  len(body.get("errors") or []),
+              )
+          )
+          REPORT
           }
 
           code="$(call)" || code="000"
@@ -180,7 +217,7 @@ jobs:
               exit 1
               ;;
             *)
-              echo "::error::/cron/sync answered HTTP ${code} twice. The scheduled sync did not run; the body is above."
+              echo "::error::/cron/sync answered HTTP ${code} twice. The scheduled sync did not run. The body is NOT logged (it can carry user ids and this repo is public) - read the function's runtime logs in Vercel."
               exit 1
               ;;
           esac
