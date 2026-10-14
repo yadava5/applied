@@ -195,7 +195,7 @@ follow-up change can point the smoke suite at a real Vercel Preview
 deployment instead of a locally-booted dev server. That wiring is
 out-of-scope for C17 and tracked separately.
 
-## Scheduled sync (Vercel Cron)
+## Scheduled sync
 
 `GET|POST /cron/sync` (`backend/jobtracker/cloud/cron.py`, issue #23 / C7)
 syncs a bounded batch of users' mailboxes on a schedule. It is the only
@@ -211,24 +211,44 @@ notification signal has nothing to fire on.
 
 ### Schedule
 
-```json
-"crons": [{ "path": "/cron/sync", "schedule": "*/15 * * * *" }]
-```
+**Two schedulers call `/cron/sync`, and the fifteen-minute one is not
+Vercel's.**
 
-Declared in the **repo-root** `vercel.json`, which is the config for the
-`jobtracker-api` project (Root Directory = repo root). `apps/web` has its
-own `vercel.json`, so this does not install a cron on the web project.
+| Who | Expression | Declared in | Character |
+|---|---|---|---|
+| GitHub Actions | `*/15 * * * *` | `.github/workflows/sync-cron.yml` | **best effort** — the actual cadence |
+| Vercel Cron | `0 7 * * *` | `vercel.json` (repo root) | **backstop** — the guaranteed floor |
 
-`*/15 * * * *` needs a paid plan, and this account is on **Pro**, where
-"cron jobs will be invoked within the minute specified".
+`vercel.json` is the config for the `jobtracker-api` project (Root
+Directory = repo root). `apps/web` has its own `vercel.json`, so neither
+of these installs a cron on the web project.
 
-Issue #23 offers `0 * * * *` as the "Hobby hourly" fallback. That is not
-available: on Hobby, "cron jobs can only run once per day. Expressions
-that run more frequently **will fail deployment**", and Vercel may fire
-the job anywhere inside the specified hour. A Hobby fallback would have
-to be once-daily (e.g. `0 6 * * *`), which is a different product — a
-daily digest, not a background refresh. Noted so nobody "restores" the
-hourly expression believing it is a safe downgrade.
+**Why the cadence is not on Vercel.** This account is on the **Hobby**
+plan, where "cron jobs can only run once per day. Expressions that run
+more frequently **will fail deployment**" — so `*/15 * * * *` in
+`vercel.json` is not coarsened, it is *refused*, and the deploy fails.
+`0 7 * * *` is a shape that deploys on any plan. (Vercel may fire a
+Hobby cron anywhere inside the specified hour, which is fine for a
+backstop and is why it is not the cadence.)
+
+**Why the backstop is kept rather than deleting the platform cron.**
+GitHub queues scheduled workflows rather than guaranteeing them, delays
+them under load, and **disables them entirely after 60 days with no
+commit activity** on the repository. A product behaviour resting on that
+alone fails silently on a repo that goes quiet. The daily Vercel cron is
+the one schedule the platform itself guarantees, so the floor on "mail
+gets filed while nobody is looking" is a day even if the workflow is
+suspended.
+
+The two colliding at 07:00 costs nothing: `/cron/sync` takes a per-user
+lease (`cloud/sync_state.acquire_gmail_sync_lease`) and skips a mailbox
+already syncing, counting it in `skipped` rather than failing.
+
+Issue #23 offers `0 * * * *` as a "Hobby hourly" fallback. That does not
+exist — hourly is more frequent than daily and fails deployment the same
+way `*/15` does. Noted so nobody "restores" the hourly expression
+believing it is a safe downgrade; the place to change the cadence is the
+workflow, not `vercel.json`.
 
 ### The secret — set this before the cron can work
 
@@ -353,17 +373,21 @@ move with that count:
   Gmail publishes no per-second limit at all; the claim that it does was
   wrong here for the same reason it was wrong in `config.py`, whose
   `gmail_batch_size` note records the correction.
-- **Vercel** — 96 invocations/day of up to ~55 s ≈ ~1.5 GB-hours/day
-  worst case, ~45 GB-hours/month at 1 GB. Cron jobs are "included in all
-  plans" and they "invoke Vercel Functions … the same usage and pricing
-  limits will apply", so this is ordinary function usage rather than a
-  second meter. Whether ~45 GB-hours/month sits inside this account's
-  included allowance has **not** been checked against the plan's own
-  numbers — see [Cron usage and
+- **Vercel** — 97 invocations/day of up to ~55 s ≈ ~1.5 GB-hours/day
+  worst case, ~45 GB-hours/month at 1 GB. That is 96 from the GitHub
+  Actions schedule plus 1 from the daily platform cron: **moving the
+  cadence off Vercel did not move the function usage**, because both
+  schedulers invoke the same Vercel Function. Cron jobs are "included in
+  all plans" and they "invoke Vercel Functions … the same usage and
+  pricing limits will apply", so this is ordinary function usage rather
+  than a second meter — and an externally-triggered request was always
+  ordinary function usage too. Whether ~45 GB-hours/month sits inside
+  this account's included allowance has **not** been checked against the
+  plan's own numbers — see [Cron usage and
   pricing](https://vercel.com/docs/cron-jobs/usage-and-pricing) before
-  budgeting on it. Pro allows 100 cron jobs per project at a
-  once-per-minute minimum interval, so one job at `*/15` is well inside
-  the schedule limits.
+  budgeting on it. The one platform cron declared here is inside Hobby's
+  schedule limit by construction: daily is the most frequent expression
+  that plan accepts.
 - **Supabase** — **two** connections for the whole enumeration, however
   many users are enrolled (one for the membership query, one held open
   across every cursor probe), plus a handful per user actually synced

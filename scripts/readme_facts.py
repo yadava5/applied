@@ -1586,25 +1586,86 @@ def _vercel() -> dict:
     return json.loads((REPO / VERCEL_JSON).read_text(encoding="utf-8"))
 
 
-def cron_runs_per_day() -> int:
-    """Cron invocations a day, from `vercel.json`'s own schedule.
+SYNC_CRON_WORKFLOW = ".github/workflows/sync-cron.yml"
 
-    Only the `*/N * * * *` shape is understood, which is the shape this project
-    uses. Anything else raises rather than guessing — a capacity figure derived
-    from a misread schedule is worse than one nobody registered.
+
+def _runs_per_day(schedule: str, where: str) -> int:
+    """Invocations a day for one cron expression.
+
+    Two shapes, because the project now uses two: `*/N * * * *` (every N
+    minutes) and `M H * * *` (once a day at a fixed time). Anything else raises
+    rather than guessing — a capacity figure derived from a misread schedule
+    is worse than one nobody registered.
     """
 
-    schedules = {c["schedule"] for c in _vercel()["crons"]}
-    if len(schedules) != 1:
-        raise SystemExit(f"  \u2717 {VERCEL_JSON}: {len(schedules)} distinct cron schedules")
-    schedule = schedules.pop()
-    head, _, rest = schedule.partition(" ")
-    if not head.startswith("*/") or rest.strip() != "* * * *":
-        raise SystemExit(f"  \u2717 {VERCEL_JSON}: cron schedule {schedule!r} is not `*/N * * * *`")
-    every = int(head[2:])
-    if 1440 % every:
-        raise SystemExit(f"  \u2717 {VERCEL_JSON}: */{every} does not divide the day evenly")
-    return 1440 // every
+    fields = schedule.split()
+    if len(fields) != 5:
+        raise SystemExit(
+            f"  \u2717 {where}: cron schedule {schedule!r} has {len(fields)} fields, not 5"
+        )
+    minute, hour, rest = fields[0], fields[1], fields[2:]
+    if rest != ["*", "*", "*"]:
+        raise SystemExit(
+            f"  \u2717 {where}: cron schedule {schedule!r} is not a plain daily "
+            f"or every-N-minutes expression"
+        )
+
+    if minute.startswith("*/") and hour == "*":
+        every = int(minute[2:])
+        if 1440 % every:
+            raise SystemExit(f"  \u2717 {where}: */{every} does not divide the day evenly")
+        return 1440 // every
+
+    if minute.isdigit() and hour.isdigit():
+        return 1
+
+    raise SystemExit(
+        f"  \u2717 {where}: cron schedule {schedule!r} is neither "
+        f"`*/N * * * *` nor `M H * * *`"
+    )
+
+
+def cron_runs_per_day() -> int:
+    """How many times `/cron/sync` is invoked a day, across BOTH schedulers.
+
+    IT IS NO LONGER ONE NUMBER FROM ONE FILE, and the sum is the point. The
+    fifteen-minute cadence moved to `.github/workflows/sync-cron.yml` because
+    Vercel's Hobby plan REFUSES a sub-daily cron expression at deploy time, so
+    `vercel.json` keeps a daily backstop. Both call the same route in the same
+    Vercel function, so what the capacity sentence in docs/DEPLOYMENT.md is
+    about — function invocations of `/cron/sync` a day — is the total, not
+    either half.
+
+    Derived from the two schedules rather than apportioned between them: each
+    term is read out of the file that declares it, so a change to either moves
+    this number and neither file can be edited without the docs noticing.
+    """
+
+    vercel_schedules = {c["schedule"] for c in _vercel()["crons"]}
+    if len(vercel_schedules) != 1:
+        raise SystemExit(
+            f"  \u2717 {VERCEL_JSON}: {len(vercel_schedules)} distinct cron schedules"
+        )
+    platform = _runs_per_day(vercel_schedules.pop(), VERCEL_JSON)
+
+    # Regex rather than a YAML parse: this checker is stdlib-only on purpose
+    # (readme-facts.yml installs nothing), which is what keeps it fast enough
+    # that nobody is tempted to make it optional.
+    hits = set(
+        re.findall(
+            r"^\s*-\s*cron:\s*['\"]([^'\"]+)['\"]",
+            read(SYNC_CRON_WORKFLOW),
+            re.MULTILINE,
+        )
+    )
+    if len(hits) != 1:
+        raise SystemExit(
+            f"  \u2717 {SYNC_CRON_WORKFLOW}: found {len(hits)} cron expressions, "
+            f"expected exactly 1"
+        )
+    scheduled = _runs_per_day(hits.pop(), SYNC_CRON_WORKFLOW)
+
+    return scheduled + platform
 
 
 def function_max_duration() -> int:
@@ -3210,7 +3271,10 @@ FACTS: dict[str, dict] = {
     },
     "cronRunsPerDay": {
         "kind": "static",
-        "describe": f"cron invocations a day, from {VERCEL_JSON}'s schedule",
+        "describe": (
+            f"/cron/sync invocations a day: {SYNC_CRON_WORKFLOW}'s schedule "
+            f"plus {VERCEL_JSON}'s daily backstop"
+        ),
         "compute": cron_runs_per_day,
         "sites": [
             {"re": r"— (\d+) invocations/day", "file": DEPLOYMENT_DOC},

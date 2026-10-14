@@ -1,0 +1,186 @@
+# Calls `/cron/sync` every fifteen minutes. The platform cron is now a daily
+# backstop; this is the thing that actually keeps the cadence.
+#
+# WHY THE SCHEDULE MOVED OFF VERCEL
+# ---------------------------------
+# `vercel.json` declared `*/15 * * * *`. On the Hobby plan that expression does
+# not merely get coarsened, it is REFUSED: "cron jobs can only run once per day.
+# Expressions that run more frequently will fail deployment." So the root
+# `vercel.json` cron is `0 7 * * *` — a shape that deploys on any plan — and
+# the fifteen-minute cadence lives here, where the scheduler is free.
+#
+# TWO SCHEDULERS, ON PURPOSE, and they are not redundant work:
+#
+#   * This workflow, every 15 min — BEST EFFORT. GitHub queues scheduled
+#     workflows rather than guaranteeing them, delays them under load, and
+#     DISABLES them outright after 60 days with no commit activity on the
+#     repository. A product behaviour resting on that alone would fail quietly.
+#   * The `vercel.json` cron, daily — THE BACKSTOP. It is the one schedule the
+#     platform itself guarantees, so the floor on "mail gets filed while nobody
+#     is looking" is a day even if this workflow is suspended or the repository
+#     goes quiet.
+#
+# The endpoint is idempotent with respect to overlap: `/cron/sync` takes a
+# per-user lease (`cloud/sync_state.acquire_gmail_sync_lease`) and skips a
+# mailbox already syncing, so the two schedulers colliding at 07:00 costs one
+# skipped user and nothing else.
+#
+# WHY NOT keep `*/15` and move the project to a paid plan: a plan is a billing
+# decision and not CI's to make. This arrangement is correct on Hobby and stays
+# correct on Pro.
+#
+# THE SECRET. `Authorization: Bearer <secret>` is one of the two carriers
+# `cloud/cron.py::_presented_secrets` accepts — the same header Vercel's own
+# scheduler builds from `CRON_SECRET` — so this is the identical authenticated
+# request the platform makes, from a different caller. It therefore needs
+# `CRON_SECRET` as a repository/environment secret holding the SAME value as
+# the Vercel environment variable of that name. One name, one value, two
+# places: rotating it means setting both, and rotating only one half gives a
+# 403 here every fifteen minutes (which is loud, and is the intended failure).
+#
+# Nothing below ever echoes the secret. It is passed to `curl` through the
+# environment and read from a `--config` file on stdin rather than put on the
+# command line, because a process list and `set -x` both leak an argument.
+name: Sync cron
+
+on:
+  schedule:
+    # Every fifteen minutes. GitHub's own docs call the shortest interval five
+    # minutes and warn that runs may be delayed, so treat this as "about every
+    # fifteen minutes" rather than a guarantee — which is exactly why the
+    # Vercel daily backstop stays.
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # One caller at a time, not keyed on `github.ref`: the point is one request
+  # against one deployment.
+  group: sync-cron
+  # NEVER cancel a run in flight. A `/cron/sync` call can take most of its 45 s
+  # run budget, and killing it mid-flight is how a sync stops without advancing
+  # a cursor. A superseded run also reports `cancelled`, which is the same
+  # conclusion a hang produces, so cancelling would blind the only signal here.
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call /cron/sync
+        # On the STEP, not the job (#702/#712): a job-level budget ends the job
+        # `cancelled` — indistinguishable from a supersede — while a step
+        # budget fails red. Sized for two attempts at the function's 60 s
+        # ceiling plus the 60 s wait between them.
+        timeout-minutes: 5
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          # The `jobtracker-api` production deployment. Not a secret — it is
+          # the public API host — and written out rather than hidden so that
+          # what this workflow talks to is readable from the workflow.
+          SYNC_URL: https://jobtracker-api-seven.vercel.app/cron/sync
+        run: |
+          set -uo pipefail
+
+          if [ -z "${CRON_SECRET}" ]; then
+            echo "::error::CRON_SECRET is not set for this repository."
+            echo "It must hold the SAME value as the jobtracker-api project's"
+            echo "CRON_SECRET environment variable in Vercel — that is the"
+            echo "secret cloud/cron.py compares against. Without it every call"
+            echo "below is a 403."
+            exit 1
+          fi
+
+          # The secret goes in via a curl config file on stdin. Put on the
+          # command line it would be visible in the runner's process list, and
+          # `-H "Authorization: Bearer ${CRON_SECRET}"` is also one `set -x`
+          # away from the log. curl reads `--config -` before connecting.
+          call() {
+            printf 'header = "Authorization: Bearer %s"\n' "${CRON_SECRET}" \
+              | curl --silent --show-error --config - \
+                     --request GET \
+                     --max-time 90 \
+                     --output /tmp/cron-sync-body.json \
+                     --write-out '%{http_code}' \
+                     "${SYNC_URL}"
+          }
+
+          report() {
+            # The response body is the run's own report — candidates, synced,
+            # skipped, stopped_by. Worth having in the log on every outcome:
+            # a 200 that synced nobody is a different fault from a 200 that
+            # synced everybody, and neither is visible in the status code.
+            echo "--- response body ---"
+            head -c 2000 /tmp/cron-sync-body.json || true
+            echo
+            echo "---------------------"
+          }
+
+          code="$(call)" || code="000"
+          echo "attempt 1: HTTP ${code}"
+          report
+
+          case "${code}" in
+            200)
+              echo "scheduled sync accepted"
+              exit 0
+              ;;
+            429)
+              # SUCCESS WITH A NOTICE, and the honest description of why.
+              #
+              # The per-user lease is what 429 MEANS in this app
+              # (`cloud/gmail_oauth.py::SyncAlreadyRunning`), but the aggregate
+              # `/cron/sync` route does not currently propagate it: it catches
+              # `SyncAlreadyRunning` per user, counts it in `skipped`, and
+              # still answers 200 (`cloud/cron.py`, the `except
+              # SyncAlreadyRunning` branch). So a 429 reaching this step would
+              # have to come from somewhere the route does not produce today —
+              # a platform-level rate limit, or a future change that lets the
+              # lease reach the top.
+              #
+              # It is treated as success anyway, because in every one of those
+              # cases it means "something is already doing this work", which is
+              # not a fault and must not email the owner every fifteen minutes.
+              echo "::notice::/cron/sync answered 429 — read as 'a sync is already in flight'. Not retried and not a failure."
+              exit 0
+              ;;
+          esac
+
+          # Anything else: ONE retry after 60 s, then fail. One rather than
+          # several because the schedule itself is the real retry — the next run
+          # is fifteen minutes away — and a job that keeps retrying turns a
+          # genuine outage into a slow job instead of an email. The 60 s wait is
+          # for the case this exists to absorb: a cold start or a single bad
+          # instance, not a down deployment.
+          echo "::warning::unexpected HTTP ${code} from /cron/sync; retrying once in 60 s"
+          sleep 60
+
+          code="$(call)" || code="000"
+          echo "attempt 2: HTTP ${code}"
+          report
+
+          case "${code}" in
+            200)
+              echo "scheduled sync accepted on retry"
+              exit 0
+              ;;
+            429)
+              echo "::notice::/cron/sync answered 429 on retry — a sync is already in flight. Not a failure."
+              exit 0
+              ;;
+            403)
+              echo "::error::/cron/sync answered 403. The secret this workflow sent does not match the deployment's. CRON_SECRET here and CRON_SECRET in the jobtracker-api Vercel environment must hold the same value; rotating one without the other produces exactly this."
+              exit 1
+              ;;
+            000)
+              echo "::error::/cron/sync could not be reached at all (curl failed twice, no HTTP status). The deployment may be down."
+              exit 1
+              ;;
+            *)
+              echo "::error::/cron/sync answered HTTP ${code} twice. The scheduled sync did not run; the body is above."
+              exit 1
+              ;;
+          esac
