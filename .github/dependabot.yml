@@ -97,6 +97,27 @@ updates:
     schedule:
       interval: "monthly"
     open-pull-requests-limit: 5
+    # SQLMODEL AND SQLALCHEMY ARE HELD, AND THE HOLD IS NOT A PREFERENCE.
+    # sqlmodel 0.0.45 changed what a plain `datetime` field compiles to:
+    # `UTCDateTime`, tz-aware, and it refuses a naive write against columns the
+    # upgrade does not migrate. The manifests cap both at `<0.0.45` / `<2.1`
+    # and the full reason is written out next to those pins in the root
+    # requirements.txt. Dependabot cannot see a cap as a decision — it refiled
+    # #983 and #985 against it — so these entries stop it re-proposing a bump
+    # that cannot land until the tz-aware migration is done.
+    #
+    # LIFTING THEM IS TRACKED SEPARATELY, not here: the migration is an Alembic
+    # contract step on 16 production columns plus ~46 producer and ~190 test
+    # sites, and when it lands these two entries and both caps come out in the
+    # same change. Deleting the entries alone only restores the noise.
+    #
+    # `versions` rather than `update-types`, deliberately: a PATCH inside the
+    # allowed range must still arrive, and only the range itself is refused.
+    ignore:
+      - dependency-name: "sqlmodel"
+        versions: [">=0.0.45"]
+      - dependency-name: "sqlalchemy"
+        versions: [">=2.1"]
     groups:
       pip:
         patterns: ["*"]
@@ -147,11 +168,27 @@ updates:
     # The four advisories the cap held open (PYSEC-2026-2288/2289/2290 and
     # PYSEC-2025-217) are closed by the new floor rather than accepted.
     #
+    # THE TWO IGNORES BELOW ARE A DIFFERENT KIND OF HOLD and must not be read
+    # as that cap returning. backend/pyproject.toml carries the same
+    # `<0.0.45` / `<2.1` bounds as the root requirements.txt, for the reason
+    # written out beside those pins: sqlmodel 0.0.45 makes a plain `datetime`
+    # field compile to a tz-aware `UTCDateTime` that refuses naive writes,
+    # against columns the upgrade does not migrate. These entries repeat the
+    # root entry's because ignore rules are per-entry and this one owns
+    # pyproject.toml, which nothing else can see. Lifting them is tracked with
+    # the tz-aware migration, not here, and both entries plus both caps come
+    # out in that one change.
+    #
     # PR #681 -- "update sentence-transformers requirement from >=5.7.0 to
     # >=6.0.0" -- went red on four jobs precisely BECAUSE of the cap: ST 6.0.1
     # declares `transformers<6.0.0,>=5.0.0`, unsatisfiable against `<5`. That
     # red was correct and is what this change resolves; ST 6.0.0 is now the
     # declared floor.
+    ignore:
+      - dependency-name: "sqlmodel"
+        versions: [">=0.0.45"]
+      - dependency-name: "sqlalchemy"
+        versions: [">=2.1"]
     groups:
       pip-backend:
         patterns: ["*"]
