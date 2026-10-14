@@ -281,7 +281,7 @@ a second sync:
 |---|---|---|---|
 | "Sync now" | The user | 60 s | The path that completes a first backfill |
 | Arrival auto-sync | `apps/web/components/dashboard/SyncBar.tsx` when the board is stale, with a per-tab cooldown | 60 s | Why "the board never refreshes" is no longer true |
-| `GET\|POST /cron/sync` | Vercel Cron, `*/15 * * * *` | 10 s per user, 45 s per run | The only one that runs **while nobody is looking** |
+| `GET\|POST /cron/sync` | `.github/workflows/sync-cron.yml`, `*/15 * * * *` (best effort), plus a Vercel Cron backstop at `0 7 * * *` | 10 s per user, 45 s per run | The only one that runs **while nobody is looking** |
 
 The cron is what makes "something happened while you were gone" a real
 event: the change ledger can otherwise only report changes the open tab
@@ -322,8 +322,11 @@ not from a stream.
   `jobtracker.main_cloud.app`.
 - `vercel.json` (repo root — the `jobtracker-api` project's config; the
   web project reads `apps/web/vercel.json`) — routes every path to
-  `api/index.py`, caps it at `maxDuration: 60`, and declares the
-  `*/15 * * * *` cron for `/cron/sync` (C7, shipped).
+  `api/index.py`, caps it at `maxDuration: 60`, and declares the DAILY
+  `0 7 * * *` backstop cron for `/cron/sync` (C7, shipped). The
+  fifteen-minute cadence is `.github/workflows/sync-cron.yml`, not this
+  file: the Hobby plan fails a deployment carrying a sub-daily cron
+  expression. See [Schedule](DEPLOYMENT.md#schedule).
 - `requirements.txt` (repo root) — Vercel-safe dependency set, no torch
   or keyring; `backend/requirements.txt` keeps the full desktop set.
 
