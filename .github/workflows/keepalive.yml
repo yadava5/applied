@@ -1,0 +1,197 @@
+# Keeps the production Postgres from being idled out, by touching it.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# Between 2026-09-29 and 2026-10-05 this project's database was PAUSED and the
+# product was down, and nothing in the repository could have told anyone.
+#
+# The chain, verified rather than assumed. A Vercel account block stopped every
+# function on the account: zero invocations on all projects for seven
+# consecutive days. The `*/15` platform cron was the only thing touching this
+# database, so the database saw no traffic for those same seven days. The
+# Supabase free tier pauses a project at seven idle days. It paused.
+#
+# WHY IT CANNOT RUN ON VERCEL, which is the whole design:
+#
+#   1. The outage WAS Vercel. A keep-alive hosted on the thing that stopped is
+#      not a keep-alive; it is a second copy of the same single point of
+#      failure. This runs on GitHub Actions for exactly that reason.
+#   2. `/health` could not have caught it either. Its docstring says "No
+#      database hit" and it means it — `main_cloud.py`'s health route answers
+#      200 off process state alone, so an uptime check pointed at it reports
+#      green against a paused database. The probe below therefore opens a real
+#      connection and reads a real row.
+#
+# SIX HOURS, NOT DAILY. The window being defended is seven days; a six-hourly
+# probe tolerates 27 consecutive failures before the pause it prevents could
+# happen, so a transient GitHub or network fault is not an incident.
+#
+# HOW A FAILURE REACHES A HUMAN. There is no alerting integration here and
+# none is wanted: GitHub emails the repository owner when a SCHEDULED workflow
+# fails, so a non-zero exit from the probe is the notification. That is the
+# only reason this job must fail loudly rather than warn — see the explicit
+# result check in the last step.
+#
+# THE ONE WAY THIS SILENTLY STOPS. GitHub disables `schedule` triggers on a
+# repository after 60 DAYS WITH NO COMMIT ACTIVITY. On a repository that goes
+# quiet for two months, this workflow stops running without failing, which is
+# the worst of both — so if the database is ever found paused again, check that
+# scheduled workflows are still enabled BEFORE looking for a bug in here. The
+# `workflow_dispatch` below is also how you re-enable it: a manual run is
+# allowed on a repository whose schedules have been suspended.
+#
+# WHAT IT DELIBERATELY DOES NOT DO. No DDL, no writes, no `alembic` — a
+# `SELECT 1` and nothing else. `db-migrate.yml` owns schema changes and this
+# file must never grow into a second thing that can touch the schema.
+name: Keep-alive
+
+on:
+  schedule:
+    # Every six hours. Scheduled workflows are queued, not guaranteed, and
+    # GitHub delays them under load; the margin above is sized for that.
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Named for the workflow and NOT keyed on `github.ref`, because the point is
+  # one prober against one database, whatever ref dispatched it.
+  group: keepalive
+  # NEVER cancel. A superseded run reads `cancelled`, which is the same
+  # conclusion a timeout or a manual cancel produces, so cancelling would turn
+  # the only notification channel this has into noise. Two overlapping
+  # `SELECT 1`s cost nothing; losing the signal costs the thing this guards.
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    # Same environment, and the same secret, as `db-migrate.yml`. `DIRECT_URL`
+    # is the port-5432 direct connection string; reusing it rather than adding
+    # a second secret means there is one credential to rotate, and a rotation
+    # that breaks the migration breaks this probe within six hours instead of
+    # being discovered on the next merge to main.
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          # 3.11, like every other Python job in this repository. The probe is
+          # stdlib plus psycopg and would run on anything; pinning keeps it off
+          # whatever ubuntu-latest ships this month.
+          python-version: "3.11"
+
+      - name: Install psycopg
+        timeout-minutes: 5
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
+        run: |
+          # ONE package, and its constraint is READ OUT OF the manifest that
+          # already declares it rather than retyped here. A second copy of
+          # `psycopg[binary]>=3.3.5` is a second thing to forget: this job and
+          # the migration must talk to the database through the same driver, or
+          # a probe can pass on a driver the migration does not use. That exact
+          # failure happened once already — see the long note in
+          # `jobtracker/database/migration_url.py`.
+          pin="$(grep -E '^psycopg' backend/requirements-migrate.txt)"
+          if [ -z "${pin}" ]; then
+            echo "::error::no psycopg line in backend/requirements-migrate.txt."
+            echo "This step reads its pin from that file on purpose. If the"
+            echo "dependency moved, point this grep at its new home rather"
+            echo "than hard-coding a version here."
+            exit 1
+          fi
+          echo "installing ${pin}"
+          pip install "${pin}"
+
+      - name: Check the credential is present
+        env:
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        run: |
+          # Fails fast and by name, the way db-migrate.yml does. Without this,
+          # an unset secret surfaces as a psycopg parse error on an empty
+          # string and reads like the database refused the connection.
+          if [ -z "${DIRECT_URL}" ]; then
+            echo "::error::DIRECT_URL is not set for the 'production' environment."
+            echo "It is the same secret db-migrate.yml uses: the Supabase"
+            echo "DIRECT (port 5432) connection string."
+            exit 1
+          fi
+
+      - name: SELECT 1
+        timeout-minutes: 5
+        env:
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        run: |
+          python - <<'PY'
+          import importlib.util
+          import os
+          import pathlib
+          import sys
+
+          import psycopg
+
+          # The URL normaliser is LOADED BY PATH rather than imported as
+          # `jobtracker.database.migration_url`, which is how db-migrate.yml
+          # reaches it. That import would need the whole app installed:
+          # `jobtracker/database/__init__.py` imports `connection`, which
+          # imports SQLAlchemy, so in a psycopg-only environment the package
+          # import dies with `ModuleNotFoundError: No module named
+          # 'sqlalchemy'`. Verified, not guessed.
+          #
+          # The alternative was to inline the scheme stripping, and that is the
+          # thing `migration_url.py`'s own docstring exists to refuse: two
+          # copies of one rule drifted before, and the guard passed on a URL
+          # the migration then died on. So this reads the same file the
+          # migration reads, and the only thing it skips is the package
+          # `__init__` it does not need.
+          source = pathlib.Path("backend/jobtracker/database/migration_url.py")
+          if not source.is_file():
+              print(f"::error::{source} is missing. This probe shares its URL "
+                    "normalisation with db-migrate.yml; it will not guess at a "
+                    "replacement.")
+              sys.exit(1)
+          spec = importlib.util.spec_from_file_location(
+              "jobtracker_migration_url", source
+          )
+          migration_url = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(migration_url)
+
+          # Strips any SQLAlchemy driver suffix — `postgresql+asyncpg://`,
+          # `postgresql+psycopg://`, the legacy `postgres://` — down to the
+          # libpq URL psycopg.connect accepts.
+          url = migration_url.to_libpq_url(os.environ["DIRECT_URL"])
+
+          try:
+              with psycopg.connect(url, connect_timeout=15) as conn:
+                  row = conn.execute("SELECT 1").fetchone()
+          except psycopg.Error as exc:
+              # NON-ZERO IS THE POINT. This is the notification: a scheduled
+              # workflow that fails emails the repository owner, and nothing
+              # else in this repository can see a paused database.
+              print("::error::Cannot reach the production database. If this is "
+                    "the Supabase free tier the project may have been PAUSED "
+                    "after 7 idle days — restore it from the dashboard, then "
+                    "re-run this workflow to confirm. Nothing was written.")
+              print(f"::error::{type(exc).__name__}: {exc}")
+              sys.exit(1)
+
+          # A connection that opens and then answers nothing is a different
+          # fault from one that refuses, and it must not pass as "reachable".
+          if row != (1,):
+              print(f"::error::SELECT 1 returned {row!r}, not (1,). The "
+                    "connection opened, so this is not an idle pause.")
+              sys.exit(1)
+
+          print("database reachable: SELECT 1 -> 1")
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a", encoding="utf-8") as fh:
+                  fh.write("Production Postgres answered `SELECT 1`.\n")
+          PY
