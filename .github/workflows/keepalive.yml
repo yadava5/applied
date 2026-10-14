@@ -32,13 +32,15 @@
 # only reason this job must fail loudly rather than warn — see the explicit
 # result check in the last step.
 #
-# THE ONE WAY THIS SILENTLY STOPS. GitHub disables `schedule` triggers on a
-# repository after 60 DAYS WITH NO COMMIT ACTIVITY. On a repository that goes
-# quiet for two months, this workflow stops running without failing, which is
-# the worst of both — so if the database is ever found paused again, check that
-# scheduled workflows are still enabled BEFORE looking for a bug in here. The
-# `workflow_dispatch` below is also how you re-enable it: a manual run is
-# allowed on a repository whose schedules have been suspended.
+# THE ONE WAY THIS SILENTLY STOPS. "In a public repository, scheduled workflows
+# are automatically disabled when no repository activity has occurred in 60
+# days." On a repository that goes quiet for two months this workflow stops
+# running WITHOUT FAILING, which is the worst of both — so if the database is
+# ever found paused again, check that scheduled workflows are still enabled
+# BEFORE looking for a bug in here. Re-enabling is "Enable workflow" on the
+# Actions tab or `gh workflow enable keepalive.yml`. Whether a
+# `workflow_dispatch` works on a suspended workflow without that step is NOT
+# documented either way, so do the explicit enable rather than relying on it.
 #
 # WHAT IT DELIBERATELY DOES NOT DO. No DDL, no writes, no `alembic` — a
 # `SELECT 1` and nothing else. `db-migrate.yml` owns schema changes and this

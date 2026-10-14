@@ -270,7 +270,7 @@ WHERE schemaname='public' AND tablename='gmail_sync_enrollment';
 
 This is deliberate and the reasoning is recorded in `GmailSyncEnrollment`'s
 docstring, under the heading "THE DELIBERATE EXPOSURE"
-(`backend/jobtracker/database/models.py:1164-1171`). Two features need a
+(`backend/jobtracker/database/models.py:1230-1237`). Two features need a
 deployment-wide answer rather than a per-user one: the scheduled sync must
 enumerate candidate users — `list_enrolled_user_ids`,
 `backend/jobtracker/cloud/cron.py:342` — and the Gmail connection cap must
