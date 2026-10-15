@@ -1130,7 +1130,7 @@ def test_check_reds_when_a_registered_version_drifts(tmp_path, capsys) -> None:
 
     tool = _load()
     pristine = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    drifted = pristine.replace("Next.js 16.3.3 (App Router", "Next.js 16.3.0 (App Router")
+    drifted = pristine.replace("Next.js 16.4.0 (App Router", "Next.js 16.3.0 (App Router")
     assert drifted != pristine, "the Framework row moved; update this fixture"
     tool.REPO = _mirror_repo(tmp_path, drifted)
 
