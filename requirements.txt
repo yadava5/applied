@@ -95,7 +95,7 @@ email-validator>=2.3.0
 # exist only to stop Dependabot refiling a bump that cannot land. The gate that
 # keeps the declarations honest in the meantime is
 # `backend/tests/test_every_datetime_field_declares_its_storage.py`.
-sqlmodel>=0.0.42,<0.0.45
+sqlmodel>=0.0.44,<0.0.45
 sqlalchemy[asyncio]>=2.0.52,<2.1
 asyncpg>=0.31.0
 
