@@ -61,7 +61,7 @@ dependencies = [
     # were — the shared FLOOR is declared in the root manifest (#704) and this
     # file is the packaged app's own metadata, not a second place to raise one.
     # Both bounds lift together with that file's, after the tz migration.
-    "sqlmodel>=0.0.14,<0.0.45",
+    "sqlmodel>=0.0.44,<0.0.45",
     "sqlalchemy[asyncio]>=2.0.25,<2.1",
     "google-api-python-client>=2.198.0",
     "google-auth-httplib2>=0.1.1",
