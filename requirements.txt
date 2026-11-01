@@ -48,7 +48,7 @@
 # Web Framework
 # -----------------------------------------------------------------------------
 fastapi>=0.141.1
-pydantic>=2.13.5
+pydantic>=2.14.1
 pydantic-settings>=2.15.0     # GHSA-4xgf-cpjx-pc3j
 email-validator>=2.3.0
 
